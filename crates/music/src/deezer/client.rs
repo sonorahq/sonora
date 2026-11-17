@@ -3,7 +3,7 @@
 //! account — profile, favorites, playlists — plus the `media.deezer.com/v1/get_url` call that
 //! hands out the encrypted stream urls.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -26,6 +26,8 @@ use crate::{
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
 const PUBLIC: &str = "https://api.deezer.com";
 const MEDIA: &str = "https://media.deezer.com/v1/get_url";
+/// The cookie the web player sets to the family profile picked after `user.loginMulti`.
+const FAMILY_COOKIE: &str = "familyUserId";
 /// Trades the `arl` cookie for the short-lived bearer token the newer Deezer hosts take.
 const ARL_LOGIN: &str = "https://auth.deezer.com/login/arl?jo=p&rto=c&i=c";
 /// Where the web app uploads a playlist picture, answering a token that names it.
@@ -167,6 +169,9 @@ struct Session {
     /// The `sid` session cookie `deezer.ping` hands out; the `checkForm` token is bound to
     /// it, so every gateway call has to carry both.
     sid: String,
+    /// Every other cookie the gateway has set, sent back on each call the way a browser would.
+    /// It also holds `familyUserId`, which names the family profile the session goes on as.
+    jar: BTreeMap<String, String>,
     profile: UserProfile,
     /// The `checkForm` token every later gateway call carries.
     api_token: String,
@@ -176,6 +181,21 @@ struct Session {
     plan: usize,
     /// Whether the account belongs to a family plan, whose other profiles it can switch to.
     family: bool,
+}
+
+impl Session {
+    /// The `Cookie` header a gateway call carries: the arl, the sid once there is one, and
+    /// everything in the jar.
+    fn cookies(&self) -> String {
+        let mut header = format!("arl={}", self.arl);
+        if !self.sid.is_empty() {
+            header.push_str(&format!("; sid={}", self.sid));
+        }
+        for (name, value) in &self.jar {
+            header.push_str(&format!("; {name}={value}"));
+        }
+        header
+    }
 }
 
 #[derive(Clone)]
@@ -220,6 +240,9 @@ impl DeezerClient {
     /// the session then switches to that family profile and fails if it cannot.
     pub async fn connect(arl: &str, profile: Option<&str>) -> Result<Self> {
         let client = Self::unopened(arl)?;
+        if let Some(profile) = profile {
+            client.remember_member(profile).await;
+        }
         client.ping().await?;
         client.refresh().await?;
         if client.inner.session.read().await.profile.id.is_empty() {
@@ -253,6 +276,7 @@ impl DeezerClient {
                 session: RwLock::new(Session {
                     arl: arl.to_owned(),
                     sid: String::new(),
+                    jar: BTreeMap::new(),
                     profile: UserProfile {
                         id: String::new(),
                         display_name: String::new(),
@@ -277,15 +301,17 @@ impl DeezerClient {
     /// error, because the `checkForm` token is bound to that session.
     async fn ping(&self) -> Result<()> {
         let url = format!("{GATEWAY}?method=deezer.ping&input=3&api_version=1.0&api_token=");
-        let arl = self.arl().await;
-        let text = self
+        let cookies = self.inner.session.read().await.cookies();
+        let response = self
             .inner
             .http
             .get(url)
-            .header("Cookie", format!("arl={arl}"))
+            .header("Cookie", cookies)
             .send()
             .await
-            .context("cannot reach the deezer gateway for deezer.ping")?
+            .context("cannot reach the deezer gateway for deezer.ping")?;
+        self.adopt_cookies(response.headers()).await;
+        let text = response
             .text()
             .await
             .context("cannot read the deezer gateway answer")?;
@@ -368,6 +394,7 @@ impl DeezerClient {
     /// still answers as someone else afterwards. Switching to the signed-in profile does nothing.
     pub async fn switch(&self, id: &str) -> Result<()> {
         if self.user_id().await == id {
+            self.remember_member(id).await;
             return Ok(());
         }
         let account = id
@@ -377,6 +404,7 @@ impl DeezerClient {
         self.gw("user.loginMulti", json!({ "account_id": account }))
             .await
             .context("cannot switch to that deezer profile")?;
+        self.remember_member(id).await;
         if let Err(error) = self.gw("deezer.userAutolog", json!({})).await {
             log::debug!("deezer: userAutolog after a profile switch failed: {error:#}");
         }
@@ -399,6 +427,18 @@ impl DeezerClient {
 
     async fn user_id(&self) -> String {
         self.inner.session.read().await.profile.id.clone()
+    }
+
+    /// Sets the `familyUserId` cookie the web player keeps for the picked family profile. The
+    /// gateway reads it when it logs a session in from the `arl`, which would otherwise answer
+    /// as the account owner.
+    async fn remember_member(&self, id: &str) {
+        self.inner
+            .session
+            .write()
+            .await
+            .jar
+            .insert(FAMILY_COOKIE.to_owned(), id.to_owned());
     }
 
     /// A bearer token for `auth.deezer.com`'s newer hosts, minted from the `arl`. It lives a
@@ -518,15 +558,12 @@ impl DeezerClient {
             escape::component(method),
             escape::component(api_token)
         );
-        let (arl, sid) = {
-            let session = self.inner.session.read().await;
-            (session.arl.clone(), session.sid.clone())
-        };
+        let cookies = self.inner.session.read().await.cookies();
         let response = self
             .inner
             .http
             .post(url)
-            .header("Cookie", format!("arl={arl}; sid={sid}"))
+            .header("Cookie", cookies)
             .header("Content-Type", "text/plain;charset=UTF-8")
             .body(body.to_string())
             .send()
@@ -552,33 +589,48 @@ impl DeezerClient {
         Ok(answer.get("results").cloned().unwrap_or(Value::Null))
     }
 
-    /// Takes the `arl` and `sid` cookies a gateway answer sets, so the calls after it carry
-    /// them. A new arl also replaces the stored one when that one belongs to this session. An
-    /// arl that does not look like one, such as a deleted cookie, is ignored.
+    /// Takes the cookies a gateway answer sets, so the calls after it carry them the way a
+    /// browser would. A new arl also replaces the stored one when that one belongs to this
+    /// session. An arl that does not look like one, such as a deleted cookie, is ignored.
     async fn adopt_cookies(&self, headers: &reqwest::header::HeaderMap) {
         let mut arl = None;
         let mut sid = None;
+        let mut others = Vec::new();
         for header in headers.get_all(reqwest::header::SET_COOKIE) {
-            let Some((name, value)) = header
-                .to_str()
-                .ok()
-                .and_then(|cookie| cookie.split(';').next())
-                .and_then(|pair| pair.split_once('='))
-            else {
+            let Some(cookie) = header.to_str().ok() else {
                 continue;
             };
-            match name.trim() {
+            let mut parts = cookie.split(';');
+            let Some((name, value)) = parts.next().and_then(|pair| pair.split_once('=')) else {
+                continue;
+            };
+            let (name, value) = (name.trim(), value.trim());
+            let expired = value.is_empty()
+                || value == "deleted"
+                || parts.any(|attribute| {
+                    attribute
+                        .trim()
+                        .to_ascii_lowercase()
+                        .strip_prefix("max-age=")
+                        .is_some_and(|age| age.trim().starts_with(['0', '-']))
+                });
+            match name {
                 "arl" => arl = auth::arl(value).ok(),
-                "sid" if !value.trim().is_empty() && value.trim() != "deleted" => {
-                    sid = Some(value.trim().to_owned());
-                }
-                _ => {}
+                "sid" if !expired => sid = Some(value.to_owned()),
+                "sid" => {}
+                _ => others.push((name.to_owned(), (!expired).then(|| value.to_owned()))),
             }
         }
-        if arl.is_none() && sid.is_none() {
+        if arl.is_none() && sid.is_none() && others.is_empty() {
             return;
         }
         let mut session = self.inner.session.write().await;
+        for (name, value) in others {
+            match value {
+                Some(value) => session.jar.insert(name, value),
+                None => session.jar.remove(&name),
+            };
+        }
         if let Some(arl) = arl
             && arl != session.arl
         {
