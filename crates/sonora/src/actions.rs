@@ -1,4 +1,4 @@
-use gpui::{App, Context, Menu, MenuItem, OsAction};
+use gpui::{App, Context, Global, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
     CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize, MinimizeWindow,
@@ -13,6 +13,26 @@ use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
 /// How far one font size shortcut moves the size, the same step as the buttons in Settings.
 const FONT_STEP: f32 = 1.;
 
+/// Present while a tray click closes the window, so Sonora stays in the tray even with close to
+/// tray turned off.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct HidingToTray;
+
+impl Global for HidingToTray {}
+
+/// Closes the window into the tray. Sonora keeps running whatever the close to tray setting says,
+/// since the tray it was hidden from brings it back.
+#[cfg(target_os = "linux")]
+pub fn hide_to_tray(cx: &mut App) {
+    let Some(window) = cx.windows().first().copied() else {
+        return;
+    };
+    cx.set_global(HidingToTray);
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .ok();
+}
+
 pub fn register(lingers: bool, cx: &mut App) {
     bind_keys(cx);
 
@@ -25,7 +45,11 @@ pub fn register(lingers: bool, cx: &mut App) {
         if !cx.windows().is_empty() {
             return;
         }
-        let close_to_tray = Sonora::global(cx).settings.read(cx).close_to_tray();
+        let hiding = cx.has_global::<HidingToTray>();
+        if hiding {
+            cx.remove_global::<HidingToTray>();
+        }
+        let close_to_tray = hiding || Sonora::global(cx).settings.read(cx).close_to_tray();
         match lingers && close_to_tray {
             true => crate::dock::show(false),
             false => cx.quit(),
