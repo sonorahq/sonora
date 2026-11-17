@@ -391,7 +391,9 @@ impl MusicApi for YouTubeClient {
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
         let mut detail = self.api.playlist_page(playlist_id).await?;
         detail.tracks = self.api.swap_playable(detail.tracks).await;
-        Ok(wire::playlist_detail(detail))
+        let mut detail = wire::playlist_detail(detail);
+        name_owned_playlist(&mut detail.playlist, &self.account);
+        Ok(detail)
     }
 
     async fn playlist_continuation(
@@ -525,6 +527,15 @@ pub(crate) fn library_playlist(source: ytmusic::Playlist, account: &str) -> Opti
     Some(playlist)
 }
 
+/// Names an owned playlist after the account, as the library listing does. YouTube leaves the
+/// author out of an owned playlist's page, so without this its creator line vanishes once the
+/// page loads. A playlist that is not the listener's keeps whatever author the page names.
+fn name_owned_playlist(playlist: &mut Playlist, account: &str) {
+    if playlist.owned && playlist.owner.is_empty() {
+        playlist.owner = account.to_owned();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -597,5 +608,47 @@ mod tests {
             .expect("the tile is a playlist");
 
         assert!(library_playlist(source, "Zefanya").is_none());
+    }
+
+    /// The page of a playlist as the provider reports it, with the author it names.
+    fn page(author: Option<&str>, owned: bool) -> Playlist {
+        wire::playlist(
+            ytmusic::Playlist {
+                id: "PLpage".into(),
+                title: "Page".into(),
+                author: author.map(str::to_string),
+                owned,
+                public: None,
+                track_count: Some(3),
+                thumbnails: Vec::new(),
+            },
+            owned,
+            false,
+        )
+    }
+
+    #[test]
+    fn an_owned_playlist_page_names_the_listener() {
+        let mut playlist = page(None, true);
+        name_owned_playlist(&mut playlist, "Zefanya");
+
+        assert_eq!(playlist.owner, "Zefanya");
+    }
+
+    #[test]
+    fn a_saved_playlist_page_keeps_its_author() {
+        let mut playlist = page(Some("Someone Else"), false);
+        name_owned_playlist(&mut playlist, "Zefanya");
+
+        assert!(!playlist.owned);
+        assert_eq!(playlist.owner, "Someone Else");
+    }
+
+    #[test]
+    fn a_playlist_page_without_a_creator_names_nobody() {
+        let mut playlist = page(None, false);
+        name_owned_playlist(&mut playlist, "Zefanya");
+
+        assert!(playlist.owner.is_empty());
     }
 }
