@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
 
+### Fixed
+
+- Clicking a song or other suggestion under the search page field opens it again instead of just closing the list.
+
 ## [0.50.1] - 2026-11-17
 
 ### Added
