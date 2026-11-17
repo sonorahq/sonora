@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
+- Sonora downloads new versions in the background and installs them the next time it starts, on Windows, macOS and the AppImage. Turn this off under Settings, About, Install updates automatically.
 
 ### Fixed
 

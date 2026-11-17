@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -30,10 +30,10 @@ pub(super) enum Install {
     Setup,
     /// An app bundle Sonora can write beside, outside Homebrew and the Nix store.
     #[cfg(target_os = "macos")]
-    Bundle(std::path::PathBuf),
+    Bundle(PathBuf),
     /// An AppImage, replaced file for file.
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    AppImage(std::path::PathBuf),
+    AppImage(PathBuf),
     /// A package manager or a portable copy, either of which Sonora leaves alone.
     Managed,
 }
@@ -62,19 +62,54 @@ impl Install {
         }
     }
 
-    /// Puts the downloaded asset in place of the running copy and arranges for the new one to
-    /// start once this process has quit, which the caller does right after. Blocks on disk work
-    /// and, on macOS, on `hdiutil`.
-    pub(super) fn apply(&self, download: &Path) -> Result<()> {
+    /// Readies a downloaded asset beside what it replaces, so that [`Self::swap`] only has to
+    /// move it into place. Returns the path `swap` takes. Blocks on disk work and, on macOS, on
+    /// `hdiutil`.
+    pub(super) fn prepare(&self, download: &Path) -> Result<PathBuf> {
         match self {
             #[cfg(target_os = "windows")]
-            Self::Setup => setup(download),
+            Self::Setup => Ok(download.to_path_buf()),
             #[cfg(target_os = "macos")]
-            Self::Bundle(bundle) => swap_bundle(download, bundle),
+            Self::Bundle(bundle) => unpack_bundle(download, bundle),
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            Self::AppImage(image) => swap_image(download, image),
+            Self::AppImage(image) => stage_image(download, image),
             Self::Managed => anyhow::bail!("a package manager updates this copy of sonora"),
         }
+    }
+
+    /// Puts a prepared update in place of the running copy and arranges for the new one to
+    /// start once this process has quit, which the caller does right after. On Windows the
+    /// installer does both, and asks for elevation when Sonora was installed for all users.
+    pub(super) fn swap(&self, prepared: &Path) -> Result<()> {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Setup => setup(prepared),
+            #[cfg(target_os = "macos")]
+            Self::Bundle(bundle) => swap_bundle(prepared, bundle),
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            Self::AppImage(image) => swap_image(prepared, image),
+            Self::Managed => anyhow::bail!("a package manager updates this copy of sonora"),
+        }
+    }
+
+    /// Prepares the downloaded asset and puts it in place at once.
+    pub(super) fn apply(&self, download: &Path) -> Result<()> {
+        let prepared = self.prepare(download)?;
+        self.swap(&prepared)
+    }
+}
+
+/// Deletes a file or a folder with everything in it. One that is already gone, or that another
+/// process still holds open, is left for a later launch to retry.
+pub(super) fn discard(path: &Path) {
+    let removed = match path.is_dir() {
+        true => std::fs::remove_dir_all(path),
+        false => std::fs::remove_file(path),
+    };
+    if let Err(error) = removed
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("updates: cannot delete {}: {error}", path.display());
     }
 }
 
@@ -124,7 +159,7 @@ fn detect() -> Install {
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn detect() -> Install {
     let image = std::env::var_os("APPIMAGE")
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .filter(|image| image.is_file());
     match image {
         Some(image) if image.parent().is_some_and(writable) => Install::AppImage(image),
@@ -154,10 +189,10 @@ fn setup(installer: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Copies Sonora.app off the disk image beside the running bundle, deletes the image, then
-/// trades the two bundles by renaming, so a failure part way leaves the old one where it was.
+/// Copies Sonora.app off the disk image into a hidden bundle beside the running one and deletes
+/// the image. Returns the hidden bundle.
 #[cfg(target_os = "macos")]
-fn swap_bundle(image: &Path, bundle: &Path) -> Result<()> {
+fn unpack_bundle(image: &Path, bundle: &Path) -> Result<PathBuf> {
     let mount = tempfile::tempdir().context("cannot make a mount point")?;
     run(Command::new("/usr/bin/hdiutil")
         .args([
@@ -186,11 +221,20 @@ fn swap_bundle(image: &Path, bundle: &Path) -> Result<()> {
     }
     copied?;
     std::fs::remove_file(image).ok();
+    Ok(staged)
+}
 
+/// Trades the running bundle for the unpacked one by renaming, so a failure part way leaves the
+/// old one where it was, then schedules the new one to open.
+#[cfg(target_os = "macos")]
+fn swap_bundle(staged: &Path, bundle: &Path) -> Result<()> {
+    if !staged.is_dir() {
+        anyhow::bail!("the unpacked update is gone");
+    }
     let retired = bundle.with_file_name(".Sonora.app.old");
     remove(&retired)?;
     std::fs::rename(bundle, &retired).context("cannot move the old version aside")?;
-    if let Err(error) = std::fs::rename(&staged, bundle) {
+    if let Err(error) = std::fs::rename(staged, bundle) {
         std::fs::rename(&retired, bundle).ok();
         return Err(error).context("cannot put the new version in place");
     }
@@ -200,10 +244,10 @@ fn swap_bundle(image: &Path, bundle: &Path) -> Result<()> {
     relaunch(Command::new("/usr/bin/open").arg(bundle))
 }
 
-/// Writes the new image beside the old one and renames it over. The running image survives,
-/// since its file stays open under the old inode.
+/// Copies the new image into a hidden, executable file beside the old one, so the later rename
+/// stays on one filesystem. Returns the hidden file.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn swap_image(download: &Path, image: &Path) -> Result<()> {
+fn stage_image(download: &Path, image: &Path) -> Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt as _;
 
     let staged = image.with_file_name(".sonora-update.AppImage");
@@ -211,7 +255,14 @@ fn swap_image(download: &Path, image: &Path) -> Result<()> {
     std::fs::remove_file(download).ok();
     std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
         .context("cannot make the new AppImage executable")?;
-    std::fs::rename(&staged, image).context("cannot put the new AppImage in place")?;
+    Ok(staged)
+}
+
+/// Renames the staged image over the old one and schedules it to start. The running image
+/// survives, since its file stays open under the old inode.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn swap_image(staged: &Path, image: &Path) -> Result<()> {
+    std::fs::rename(staged, image).context("cannot put the new AppImage in place")?;
     let mut start = Command::new(image);
     for variable in ["APPDIR", "APPIMAGE", "ARGV0", "OWD"] {
         start.env_remove(variable);
