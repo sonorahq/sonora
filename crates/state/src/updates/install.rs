@@ -179,14 +179,54 @@ fn writable(folder: &Path) -> bool {
 }
 
 /// Runs the Inno Setup installer silently. It waits for Sonora to quit, upgrades it and starts
-/// it again.
+/// it again. It is told which install to upgrade, since left to itself it picks whichever
+/// earlier install it finds first. One under Program Files, or in any folder this user cannot
+/// write to, is an install for all users, and the installer asks for elevation to upgrade it.
 #[cfg(target_os = "windows")]
 fn setup(installer: &Path) -> Result<()> {
+    let folder = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.to_path_buf()));
+    let everyone = folder.is_some_and(|folder| {
+        let shared = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .any(|programs| folder.starts_with(programs));
+        shared || !writable(&folder)
+    });
+    let scope = match everyone {
+        true => "/ALLUSERS",
+        false => "/CURRENTUSER",
+    };
     Command::new(installer)
-        .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/relaunch=1"])
+        .args([
+            "/SILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            scope,
+            "/relaunch=1",
+        ])
         .spawn()
         .context("cannot start the installer")?;
     Ok(())
+}
+
+/// Whether this user can create files in `folder`, found by making and deleting a probe file.
+#[cfg(target_os = "windows")]
+fn writable(folder: &Path) -> bool {
+    let probe = folder.join(format!(".sonora-write-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
+            std::fs::remove_file(&probe).ok();
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Copies Sonora.app off the disk image into a hidden bundle beside the running one and deletes
