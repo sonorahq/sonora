@@ -116,7 +116,7 @@ pub(crate) async fn batched(
     Ok(())
 }
 
-fn track_from(uri: &str, track: &TrackMessage) -> Track {
+pub(crate) fn track_from(uri: &str, track: &TrackMessage) -> Track {
     let (artists, artist_refs) = artists_from(&track.artist);
 
     Track {

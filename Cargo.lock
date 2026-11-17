@@ -7687,6 +7687,7 @@ dependencies = [
  "i18n",
  "icons",
  "image",
+ "jiff",
  "libc",
  "log",
  "moka",

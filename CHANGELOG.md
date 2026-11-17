@@ -11,6 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Click the tray icon on Linux to show Sonora's window, or to hide it into the tray when it is open.
 - Choose Wide under Settings, Appearance, Page width to let pages fill a large window again instead of staying centred.
+- Stats page for Spotify, Last.fm or your recorded plays, with your top artists, songs and albums, genres, moods, release years, a listening clock, milestones and a summary of your listening style, over a window or any dates you pick.
 
 ### Fixed
 

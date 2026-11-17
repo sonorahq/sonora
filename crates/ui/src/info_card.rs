@@ -20,6 +20,8 @@ pub struct InfoCard {
     plain: bool,
     untitled: bool,
     flush: bool,
+    /// Something to set at the right of the title row, such as badges that describe the card.
+    trailing: Option<AnyElement>,
 }
 
 impl InfoCard {
@@ -34,6 +36,7 @@ impl InfoCard {
             plain: false,
             untitled: false,
             flush: false,
+            trailing: None,
         }
     }
 
@@ -64,6 +67,12 @@ impl InfoCard {
     /// pad themselves run edge to edge and read as one surface.
     pub fn flush(mut self) -> Self {
         self.flush = true;
+        self
+    }
+
+    /// Sets `element` at the right end of the title row, level with the title.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing = Some(element.into_any_element());
         self
     }
 
@@ -105,6 +114,7 @@ impl RenderOnce for InfoCard {
             plain,
             untitled,
             flush,
+            trailing,
         } = self;
 
         let theme = *cx.theme();
@@ -126,7 +136,17 @@ impl RenderOnce for InfoCard {
                         this.border_1().border_color(theme.border)
                     })
             })
-            .when(!untitled, |this| this.child(eyebrow(title.clone(), cx)))
+            .when(!untitled, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(eyebrow(title.clone(), cx))
+                        .children(trailing),
+                )
+            })
             .children(children);
 
         card.style().refine(&overrides);
