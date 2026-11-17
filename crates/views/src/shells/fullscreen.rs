@@ -904,13 +904,14 @@ impl FullscreenView {
         let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let time_left = self.settings.read(cx).player_bar_time_left();
         let end = end_clock(elapsed, total, time_left);
+        let width = text * clock_ems(total, time_left);
 
         let bubble = self
             .over_seek
             .or(self.pending)
             .map(|at| (at, clock(total.mul_f32(at))));
 
-        let label = move |id: &'static str, value: SharedString, width: Pixels, align_end: bool| {
+        let label = move |id: &'static str, value: SharedString, align_end: bool| {
             ui::spoken(id, value)
                 .w(width)
                 .flex_none()
@@ -928,12 +929,7 @@ impl FullscreenView {
             .items_center()
             .gap_2()
             .w_full()
-            .child(label(
-                "fullscreen-elapsed",
-                clock(elapsed),
-                text * clock_ems(total, false),
-                true,
-            ))
+            .child(label("fullscreen-elapsed", clock(elapsed), true))
             .child(
                 div().flex_1().min_w_0().child(
                     Scrubber::new(&self.seek, progress)
@@ -956,13 +952,8 @@ impl FullscreenView {
                 ),
             )
             .child(
-                label(
-                    "fullscreen-total",
-                    end.text,
-                    text * clock_ems(total, time_left),
-                    false,
-                )
-                .when_some(end.spoken, |this, spoken| this.aria_value(spoken)),
+                label("fullscreen-total", end.text, false)
+                    .when_some(end.spoken, |this, spoken| this.aria_value(spoken)),
             )
     }
 
