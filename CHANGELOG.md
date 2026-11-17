@@ -16,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The fullscreen player counts down the time left when Show time left is on, as the player bar does.
 - The account menu no longer lists YouTube Music when you are signed in elsewhere and only used guest mode before. Guest mode shows there under its own name while you use it.
 - Clicking outside a text field takes the cursor out of it, so typing stops there.
 - The Cut, Copy, Paste and Select all menu of the quick search field is drawn at the usual size.

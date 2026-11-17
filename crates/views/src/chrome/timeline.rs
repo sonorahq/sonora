@@ -10,12 +10,7 @@ use i18n::t;
 use state::{AppSettings, Playback, Sonora};
 use ui::{Scrubber, ScrubberState, clock, tabular};
 
-use crate::shared::transport::{fraction, moved};
-
-const CLOCK_SHORT: f32 = 3.4;
-const CLOCK_LONG: f32 = 5.4;
-/// The extra room both clocks take, in ems, while the right one leads with a minus sign.
-const CLOCK_SIGN: f32 = 0.6;
+use crate::shared::transport::{clock_ems, end_clock, fraction, moved};
 
 /// The window y of the middle of the seek line as the player bar last painted it.
 #[derive(Default)]
@@ -140,14 +135,7 @@ impl Render for Timeline {
         let (elapsed, total) = playback.shown_time(cx);
         let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let time_left = self.settings.read(cx).player_bar_time_left();
-        let clock_width = clock_text
-            * (match total.as_secs() >= 3600 {
-                true => CLOCK_LONG,
-                false => CLOCK_SHORT,
-            } + match time_left {
-                true => CLOCK_SIGN,
-                false => 0.,
-            });
+        let clock_width = clock_text * clock_ems(total, time_left);
 
         let bubble = self
             .over
@@ -198,13 +186,9 @@ impl Render for Timeline {
             )
             .child(match time_left {
                 true => {
-                    let left = clock(total.saturating_sub(elapsed));
-                    clock_label(
-                        "player-time-left",
-                        t!("player-time-left", time = &left),
-                        false,
-                    )
-                    .aria_value(t!("player-time-left-spoken", time = &left))
+                    let end = end_clock(elapsed, total, time_left);
+                    clock_label("player-time-left", end.text, false)
+                        .when_some(end.spoken, |this, spoken| this.aria_value(spoken))
                 }
                 false => clock_label("player-duration", clock(total), false),
             })
