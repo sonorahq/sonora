@@ -695,6 +695,31 @@ impl Device {
     }
 }
 
+/// Raises the calling thread to time-critical priority on Windows, for a thread that decodes into
+/// the output queue. WASAPI's own thread already runs in real time, so on a busy CPU it is the
+/// decoder that starves and playback breaks up. The decoder sleeps whenever the queue is full, so
+/// the raise costs other programs little. Repeated calls on one thread do nothing, and so does
+/// every call on other systems.
+pub(crate) fn raise_decoder_priority() {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+        };
+        thread_local! {
+            static RAISED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        if RAISED.replace(true) {
+            return;
+        }
+        let raised =
+            unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) };
+        if let Err(error) = raised {
+            log::warn!("output: cannot raise the decoder thread's priority: {error}");
+        }
+    }
+}
+
 /// Holds the calling thread in COM's multithreaded apartment until it exits. Every cpal call goes
 /// through `host` first, so a thread joins it before cpal would put it in a single-threaded one.
 ///
