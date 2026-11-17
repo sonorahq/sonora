@@ -496,6 +496,35 @@ async fn option_card_reads_as_a_named_radio(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn page_width_card_keeps_its_id_role_and_name(cx: &mut TestAppContext) {
+    // The Appearance page builds its page width cards with a SharedString id, so this does too.
+    let lines = open_probe(cx, |window, cx| {
+        let element = OptionCard::new(gpui::SharedString::from("page-width-wide"))
+            .label("Wide")
+            .selected(true)
+            .on_click(|_, _, _| {})
+            .render(window, cx)
+            .into_element();
+        snapshot("page-width-card", &element)
+    });
+    let lines = rendered(&lines, "page-width-card");
+    assert!(
+        lines.iter().any(|line| line.contains("role=RadioButton")),
+        "page width card exposes no Role::RadioButton, screen readers skip it: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("page-width-wide")),
+        "page width card loses its stable id: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("name=Some(\"Wide\")")),
+        "page width card exposes no accessible name for its label: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn card_reads_its_description_and_choice(cx: &mut TestAppContext) {
     let lines = open_probe(cx, |window, cx| {
         let element = Card::new("album", "Abbey Road")

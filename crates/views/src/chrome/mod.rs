@@ -40,6 +40,7 @@ use gpui::prelude::*;
 use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use state::AppSettings;
+use state::{PageWidth, Sonora};
 use ui::{ActiveTheme as _, MIN_CONTENT, Room, eyebrow};
 
 /// The radius every element touching a corner of the window rounds that corner with, or `None`
@@ -74,6 +75,15 @@ pub(crate) fn section_label(key: &'static str, cx: &App) -> gpui::Stateful<Div> 
 pub(crate) fn cap(min: Pixels, max: Pixels, keep: Pixels, window: &Window) -> Pixels {
     let room = window.viewport_size().width - keep;
     max.min(room.max(min))
+}
+
+/// The width a page takes out of a content area of `content`. The centred layout stops at
+/// `page`, and the wide layout takes the whole of `content`.
+fn page_fit(content: Pixels, page: Pixels, width: PageWidth) -> Pixels {
+    match width {
+        PageWidth::Centered => content.min(page),
+        PageWidth::Wide => content,
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -151,9 +161,11 @@ impl Chrome {
         Room::of(Self::content(window, cx))
     }
 
-    /// The width a page lays itself out in, which is the content area up to `metrics.page`.
+    /// The width a page lays itself out in. The centred layout stops it at `metrics.page`, and
+    /// the wide layout lets it fill the content area. This is the one place the choice is read.
     pub fn page(window: &Window, cx: &App) -> Pixels {
-        Self::content(window, cx).min(cx.theme().metrics.page)
+        let width = Sonora::global(cx).settings.read(cx).page_width();
+        page_fit(Self::content(window, cx), cx.theme().metrics.page, width)
     }
 
     /// How much wider than its page the content area is on each side. A page adds it to its
@@ -166,5 +178,34 @@ impl Chrome {
     /// Classifies chrome that spans the whole window, including the space under sidebars.
     pub fn window_room(window: &Window) -> Room {
         Room::of(window.viewport_size().width)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::px;
+    use state::PageWidth;
+
+    use super::page_fit;
+
+    #[test]
+    fn centred_pages_stop_at_the_page_width_on_a_wide_window() {
+        assert_eq!(
+            page_fit(px(2400.), px(1600.), PageWidth::Centered),
+            px(1600.)
+        );
+    }
+
+    #[test]
+    fn centred_pages_fill_a_window_narrower_than_the_page_width() {
+        assert_eq!(
+            page_fit(px(1200.), px(1600.), PageWidth::Centered),
+            px(1200.)
+        );
+    }
+
+    #[test]
+    fn wide_pages_fill_the_content_area_even_past_the_page_width() {
+        assert_eq!(page_fit(px(2400.), px(1600.), PageWidth::Wide), px(2400.));
     }
 }
