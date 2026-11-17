@@ -33,6 +33,9 @@ const NEUTRAL_PIVOT: f32 = 0.5;
 /// The least lightness gap `legible` leaves between a tint and the surface under it.
 const LEGIBLE_DISTANCE: f32 = 0.34;
 const SYSTEM_FILLS: bool = cfg!(target_os = "windows");
+/// Whether the compositor can make the window see-through on its own, such as a Hyprland or
+/// KWin rule that dims an unfocused window. Window blur then stays available at full opacity.
+pub const COMPOSITOR_OPACITY: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
 
 /// What a fill keeps of itself once the window is fully see-through. The page
 /// background has no floor — a clear window is the point — but everything drawn
@@ -78,10 +81,11 @@ impl WindowBlur {
 }
 
 /// The window background a look asks the platform for. Blur needs something to show through,
-/// so only a see-through window gets it, and only an opaque one can take the platform's own
-/// fill. A platform that cannot blur draws a blurred background as a plain see-through one.
+/// so it goes to a see-through window, or to any window where the compositor can make it
+/// see-through. Only an opaque window can take the platform's own fill. A platform that cannot
+/// blur draws a blurred background as a plain see-through one.
 pub fn backdrop(blur_window: bool, transparent: bool) -> WindowBackgroundAppearance {
-    match blur_window && transparent {
+    match blur_window && (transparent || COMPOSITOR_OPACITY) {
         true => WindowBackgroundAppearance::Blurred,
         false => match SYSTEM_FILLS && !transparent {
             true => WindowBackgroundAppearance::Opaque,

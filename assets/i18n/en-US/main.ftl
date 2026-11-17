@@ -799,6 +799,7 @@ settings-blur = Blur UI
 settings-blur-detail = Frost the menus and floating controls over whatever they cover
 settings-blur-window = Blur window
 settings-blur-window-detail = Draw the window over a blurred desktop. Needs an opacity below 100%
+settings-blur-window-compositor-detail = Draw the window over a blurred desktop wherever it is see-through, from this opacity or from your compositor
 settings-font = Font size
 settings-font-detail = Base text size, everything else scales with it
 settings-font-value = { $size } px
