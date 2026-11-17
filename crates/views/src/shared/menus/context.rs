@@ -357,14 +357,12 @@ impl ItemMenu {
             .filter(|track| track.playable)
             .cloned()
             .collect();
-        let ordered_queue = Sonora::global(cx).playback.read(cx).can_order_queue();
         let next = queue_item(
             "play-next",
             counted("menu-play-next", "menu-play-tracks-next", count),
             "icons/list-start.svg",
             &queued,
             QueuePlacement::Next,
-            ordered_queue,
         );
         let queue = queue_item(
             "add-to-queue",
@@ -372,7 +370,6 @@ impl ItemMenu {
             "icons/list-plus.svg",
             &queued,
             QueuePlacement::End,
-            true,
         );
         let last = queue_item(
             "play-last",
@@ -380,7 +377,6 @@ impl ItemMenu {
             "icons/list-end.svg",
             &queued,
             QueuePlacement::Last,
-            ordered_queue,
         );
         // A provider that lists no station tracks gets no station item at all, rather than one
         // that plays the seed and stops.
@@ -537,10 +533,9 @@ fn queue_item(
     icon: &'static str,
     queued: &[Track],
     placement: QueuePlacement,
-    enabled: bool,
 ) -> MenuItem {
     let item = MenuItem::new(id, label).icon(icon);
-    if queued.is_empty() || !enabled {
+    if queued.is_empty() {
         return item.disabled();
     }
     let queued = queued.to_vec();
@@ -1047,7 +1042,7 @@ pub(crate) fn album_menu(
                 cx,
             ),
             vec![add_to_playlist],
-            collection_queue_items(from, playback, cx),
+            collection_queue_items(from, playback),
             vec![copy_link_item(
                 "copy-album-link",
                 MediaKind::Album,
@@ -1126,7 +1121,7 @@ pub(crate) fn artist_menu(
                     }),
             ]
             .into_iter()
-            .chain(collection_queue_items(queued_from, playback, cx))
+            .chain(collection_queue_items(queued_from, playback))
             .collect(),
             vec![copy_link_item(
                 "copy-artist-link",
@@ -1264,7 +1259,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
         item_shell("playlist-context-menu", tiles),
         vec![
             open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
-            collection_queue_items(from, playback, cx),
+            collection_queue_items(from, playback),
             actions,
             match imported {
                 true => Vec::new(),
@@ -1288,7 +1283,7 @@ pub(crate) fn liked_menu(playback: Entity<Playback>, cx: &App) -> Menu {
         Menu::new("liked-context-menu").min_w(ITEM_MENU_WIDTH),
         vec![
             open_item(Destination::from(&pin), "menu-go-to-playlist", cx),
-            collection_queue_items(from, playback, cx),
+            collection_queue_items(from, playback),
             vec![pin_action(&pin, cx)],
         ],
     )
@@ -1350,7 +1345,7 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
         Menu::new("pin-context-menu").min_w(ITEM_MENU_WIDTH),
         vec![
             vec![open],
-            transport_items(pin, playback, cx),
+            transport_items(pin, playback),
             vec![copy_link_item("copy-pin-link", kind, Some(&copied), cx)],
             vec![pin_action(pin, cx)],
         ],
@@ -1370,8 +1365,7 @@ fn open_key(kind: PinKind) -> &'static str {
 }
 
 /// The three queue placements share both their labels and their loading path.
-fn collection_queue_items(origin: Origin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
-    let ordered_queue = playback.read(cx).can_order_queue();
+fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<MenuItem> {
     [
         (
             "play-collection-next",
@@ -1396,20 +1390,18 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>, cx: &App) 
     .map(|(id, label, icon, placement)| {
         let origin = origin.clone();
         let playback = playback.clone();
-        let item = MenuItem::new(id, i18n::lookup(label, None)).icon(icon);
-        if placement != QueuePlacement::End && !ordered_queue {
-            return item.disabled();
-        }
-        item.on_click(move |_, _, cx| {
-            playback.update(cx, |playback, cx| {
-                playback.enqueue_collection(origin.clone(), placement, cx)
-            });
-        })
+        MenuItem::new(id, i18n::lookup(label, None))
+            .icon(icon)
+            .on_click(move |_, _, cx| {
+                playback.update(cx, |playback, cx| {
+                    playback.enqueue_collection(origin.clone(), placement, cx)
+                });
+            })
     })
     .collect()
 }
 
-fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
+fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
     let played = Origin::from(pin);
     let mut items = match pin.kind {
         PinKind::Song | PinKind::Artist => {
@@ -1430,7 +1422,7 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuI
         _ => Vec::new(),
     };
     if pin.kind != PinKind::Song {
-        items.extend(collection_queue_items(played, playback, cx));
+        items.extend(collection_queue_items(played, playback));
     }
     items
 }
