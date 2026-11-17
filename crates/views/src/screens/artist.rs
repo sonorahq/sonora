@@ -938,6 +938,7 @@ impl ArtistView {
                         tile: card,
                         columns,
                         tabs: None,
+                        note: None,
                     },
                     window,
                     cx,
