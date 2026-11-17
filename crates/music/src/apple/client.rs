@@ -53,6 +53,10 @@ const CONTAINER_ALBUM: u8 = 3;
 /// How many rows a library or track listing asks for at a time, which is Apple's maximum.
 const PAGE: usize = 100;
 
+/// How many seconds Apple's clock may run behind ours when a new playlist is looked up by the
+/// time it was made.
+const CLOCK_SKEW: i64 = 120;
+
 /// How many search hits to ask for. Apple refuses a search page larger than this outright.
 const HITS: usize = 25;
 
@@ -72,10 +76,12 @@ const FAN: usize = 12;
 /// The library listings, and the includes each is read with. Named once so the pages and the
 /// favorites drawn over them ask for the same listing and share one fetch.
 ///
-/// A library song carries no date of its own, on any route or with any `extend`. The listing
-/// comes oldest first, which is what a Date added sort follows instead. The songs still ask
-/// for the library album they sit under, so a song with no catalog copy keeps its album, cut
-/// down to one field. The include is scoped to the library rows on purpose: an untyped
+/// A library song carries no date of its own, on any route or with any `extend`. Apple lists
+/// songs by name unless told otherwise, so the listing asks to be sorted by date added, newest
+/// first, and a Date added sort follows that order. Newest first means the [`PAGES`] cap drops
+/// the oldest songs of a huge library rather than its latest additions. The songs still ask for
+/// the library album they sit under, so a song with no catalog copy keeps its album, cut down
+/// to one field. The include is scoped to the library rows on purpose: an untyped
 /// `include=catalog` would expand the catalog of every included album too, and a page grows
 /// fivefold.
 const SONGS: &str = "/me/library/songs";
@@ -85,6 +91,7 @@ const SONGS_QUERY: &[(&str, &str)] = &[
     ("include[library-songs]", "catalog,albums,artists"),
     ("include[songs]", "artists,albums"),
     ("fields[library-albums]", "dateAdded"),
+    ("sort", "-dateAdded"),
 ];
 const CATALOG_QUERY: &[(&str, &str)] = &[("include", "catalog")];
 const ALBUMS_QUERY: &[(&str, &str)] = &[("include", "catalog,artists"), ALBUM_ARTISTS];
@@ -1943,7 +1950,13 @@ impl MusicApi for AppleClient {
         Ok(crate::distinct_covers(&tracks, wanted))
     }
 
+    /// Apple sometimes answers a create with 201 and a body that names no playlist, though the
+    /// playlist was made. The id is then read from the library as the one owned playlist with
+    /// this name added since just before the request, and more than one such playlist fails.
     async fn create_playlist(&self, name: &str) -> Result<String> {
+        let asked = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs() as i64);
         let body = self
             .post(
                 "/me/library/playlists",
@@ -1951,12 +1964,32 @@ impl MusicApi for AppleClient {
                 Some(serde_json::json!({ "attributes": { "name": name } })),
             )
             .await?;
-        wire::answer::<IgnoredAny>(&body)
+        let named = wire::answer::<IgnoredAny>(&body)
             .data
             .first()
             .and_then(|row| row.id.as_str())
-            .map(str::to_owned)
-            .context("apple music named no new playlist")
+            .map(str::to_owned);
+        if let Some(id) = named {
+            return Ok(id);
+        }
+        log::warn!(
+            "apple: a new playlist was answered without an id, looking it up: {:.300}",
+            body
+        );
+        let added: Vec<String> = self
+            .walk("/me/library/playlists", PAGE, &[], |row| {
+                let attributes = row.attributes.as_ref()?;
+                let fresh = wire::moment(attributes.date_added.as_str())? >= asked - CLOCK_SKEW;
+                let ours = attributes.can_edit.as_bool() == Some(true)
+                    && attributes.name.as_str() == Some(name);
+                (fresh && ours).then(|| row.id.as_str().map(str::to_owned))?
+            })
+            .await?;
+        match <[String; 1]>::try_from(added) {
+            Ok([id]) => Ok(id),
+            Err(added) if added.is_empty() => bail!("apple music named no new playlist"),
+            Err(_) => bail!("apple music named no new playlist, and several match its name"),
+        }
     }
 
     async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
