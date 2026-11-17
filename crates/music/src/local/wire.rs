@@ -249,12 +249,11 @@ fn numbered(stem: &str) -> Option<String> {
     None
 }
 
-/// One file as a scan reads it: the track, and the tags its album is grouped, dated and labelled by.
-/// The index stores it whole, so a new field makes every stored row unreadable and each file is read
-/// again once.
+/// A scanned track and its album metadata, serialized together in the local index.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Tagged {
-    /// Tag-reader schema version. Missing or unsupported versions invalidate the cached row.
+    /// Tag-reader schema version. The index rejects missing (zero) or unsupported versions.
+    #[serde(default)]
     pub metadata_version: u8,
     pub track: Track,
     /// The album artist the tags name, `None` when they name none.
