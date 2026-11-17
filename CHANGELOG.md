@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Clicking a song or other suggestion under the search page field opens it again instead of just closing the list.
+
 ## [0.50.1] - 2026-11-17
 
 ### Added
