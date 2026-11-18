@@ -454,7 +454,7 @@ login-profile-detail = 이 계정에 두 개 이상의 프로필이 있습니다
 login-choose-title = { $provider }에 로그인
 login-choose-detail = { $provider }에 로그인할 방법을 선택하세요.
 login-providers = 음악 서비스
-login-welcome-title = Sonora에 오신 것을 환영합니다.
+login-welcome-title = Sonora에 오신 것을 환영합니다!
 login-welcome-detail = 나중에 설정에서 음악 서비스를 더 추가할 수 있습니다.
 login-or = 또는
 
