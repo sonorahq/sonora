@@ -172,6 +172,7 @@ enum Slot {
     AdaptiveMenu,
     Version,
     Updates,
+    AutoUpdate,
     Channel,
     Log,
     License,
@@ -1037,6 +1038,10 @@ impl SettingsView {
                 t!("settings-check-updates"),
                 t!("settings-check-updates-detail"),
             ),
+            Slot::AutoUpdate => (
+                t!("settings-auto-update"),
+                t!("settings-auto-update-detail"),
+            ),
             Slot::Channel => (
                 t!("settings-update-channel"),
                 t!("settings-update-channel-detail"),
@@ -1156,6 +1161,7 @@ impl SettingsView {
             Slot::KeybindsReset => self.keybinds_reset_row(cx),
             Slot::Version => self.version_row(),
             Slot::Updates => self.updates_row(cx),
+            Slot::AutoUpdate => self.auto_update_row(cx),
             Slot::Channel => self.channel_row(cx),
             Slot::Log => self.log_row(cx),
             Slot::License => self.license_row(cx),

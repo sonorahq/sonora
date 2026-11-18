@@ -494,6 +494,9 @@ struct Values {
     romanization_scripts: RomanizationScripts,
     adaptive_menu: bool,
     check_updates: bool,
+    /// Whether a release found is downloaded in the background and installed the next time
+    /// Sonora starts, rather than only offered.
+    auto_update: bool,
     /// The release channel chosen in settings, by its id. Empty follows the running build's own
     /// channel, and a copy a package manager installed ignores it.
     update_channel: String,
@@ -765,6 +768,7 @@ impl Default for Values {
             romanization_scripts: RomanizationScripts::default(),
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows") || updates_itself(),
+            auto_update: true,
             update_channel: String::new(),
             close_to_tray: true,
             tray_icon: true,
@@ -1327,6 +1331,10 @@ impl AppSettings {
 
     pub fn check_updates(&self) -> bool {
         self.values.check_updates
+    }
+
+    pub fn auto_update(&self) -> bool {
+        self.values.auto_update
     }
 
     pub fn close_to_tray(&self) -> bool {
@@ -1999,6 +2007,11 @@ impl AppSettings {
 
     pub fn set_check_updates(&mut self, check_updates: bool, cx: &mut Context<Self>) {
         self.values.check_updates = check_updates;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_auto_update(&mut self, auto_update: bool, cx: &mut Context<Self>) {
+        self.values.auto_update = auto_update;
         self.schedule_save(cx);
     }
 

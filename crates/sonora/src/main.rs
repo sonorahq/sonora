@@ -91,6 +91,10 @@ fn main() -> ExitCode {
         single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
     }
+    // Only the instance that owns the socket may replace Sonora, never a hand-off to one that runs.
+    if state::start_staged(!args.is_empty()) {
+        return ExitCode::SUCCESS;
+    }
     // reqwest is built without a crypto provider, and opensubsonic still compiles aws-lc-rs in
     // beside ring, so rustls cannot pick one by itself. Every client uses ring from here on. A
     // second install only means another crate got there first.
