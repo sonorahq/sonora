@@ -222,8 +222,8 @@ const SHORTCUTS: &[Shortcut] = &[
         section: Section::Navigation,
         scope: Scope::Anywhere,
         bind: bind::<OpenSearch>,
-        defaults: &["cmd-f", "ctrl-f", "ctrl-l"],
-        mac: &["cmd-l"],
+        defaults: &["cmd-f", "ctrl-f"],
+        mac: &[],
     },
     Shortcut {
         id: "toggle-powerbar",
