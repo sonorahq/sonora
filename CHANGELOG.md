@@ -72,6 +72,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Shelves on Home end at the same edge as Quick picks, and their arrows sit level with the shelf titles.
 - Pressing play on a cover in the search suggestions plays it and closes the list, instead of only closing the list.
 - Song titles in track lists sit in the middle of their rows.
+- The Releases filter labels on artist pages sit in the middle of their buttons.
 
 ## [0.50.2] - 2026-11-18
 
