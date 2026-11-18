@@ -1815,6 +1815,13 @@ impl Playback {
         }
         self.fetch = None;
         let start = self.burst();
+        // Next on the last song of a repeating queue wraps like the end of the song does
+        if self.repeat == Repeat::All && self.queue.read(cx).ahead() == 0 {
+            if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
+                self.follow_after(track, start, cx);
+            }
+            return;
+        }
         self.follow_queue(start, cx);
     }
 
