@@ -64,12 +64,15 @@ const MEMBERS: [Member; 5] = [
 
 impl SettingsView {
     pub(super) fn about_groups(&self) -> Vec<Group> {
-        let channel = state::updates_itself().then_some(Slot::Channel);
+        let itself = state::updates_itself()
+            .then_some([Slot::AutoUpdate, Slot::Channel])
+            .into_iter()
+            .flatten();
         vec![
             Group::untitled().rows(
                 [Slot::Version, Slot::Updates]
                     .into_iter()
-                    .chain(channel)
+                    .chain(itself)
                     .chain([Slot::Log, Slot::License, Slot::Source]),
             ),
         ]
@@ -101,6 +104,21 @@ impl SettingsView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_check_updates(!on, cx));
+                }))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn auto_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).auto_update();
+
+        self.row(
+            t!("settings-auto-update"),
+            Switch::new("auto-update", on)
+                .name(t!("settings-auto-update"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_auto_update(!on, cx));
                 }))
                 .into_any_element(),
         )
