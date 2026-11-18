@@ -342,6 +342,15 @@ impl SearchView {
         self.choose(kept, cx);
     }
 
+    /// Moves the keyboard from the field to the page after a press started playback, so Space
+    /// and the other playback keys reach the player instead of typing into the field. A click in
+    /// the field or Ctrl+L brings the keyboard back.
+    fn leave_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.typing(window, cx) {
+            window.focus(&self.focus, cx);
+        }
+    }
+
     /// Ends a press on the panel. A click it made has landed by now, and the panel goes on
     /// showing only while the field still has the keyboard.
     fn let_go(&mut self, cx: &mut Context<Self>) {
@@ -880,8 +889,9 @@ impl SearchView {
     }
 
     /// The play button of a hit. Playing from it files the hit in the search history and puts
-    /// the panel away, as choosing the row would. The button stops the click before the panel's
-    /// own `on_click` sees it, so the close happens here.
+    /// the panel away, as choosing the row would, and hands the keyboard to the page so Space
+    /// pauses what it started. The button stops the click before the panel's own `on_click`
+    /// sees it, so the close happens here.
     fn transport(&self, hit: &Hit, me: &WeakEntity<Self>, cx: &App) -> Option<(bool, Play)> {
         let me = me.clone();
         let chosen = hit.clone();
@@ -890,7 +900,7 @@ impl SearchView {
                 let current = track.id.is_some() && track.id == self.playback_status.0;
                 let playing = current && self.playback_status.1 == Some(true);
                 let track = track.clone();
-                let play: Play = Box::new(move |_, _, cx| {
+                let play: Play = Box::new(move |_, window, cx| {
                     chosen.remember(cx);
                     me.update(cx, |this, cx| {
                         this.playback.update(cx, |playback, cx| match current {
@@ -898,6 +908,7 @@ impl SearchView {
                             false => playback.play_radio(&track, cx),
                         });
                         this.close_panel(cx);
+                        this.leave_field(window, cx);
                     })
                     .ok();
                 });
@@ -912,12 +923,13 @@ impl SearchView {
             }
         };
         let playing = self.playback.read(cx).engaged(&origin, cx);
-        let play: Play = Box::new(move |_, _, cx| {
+        let play: Play = Box::new(move |_, window, cx| {
             chosen.remember(cx);
             me.update(cx, |this, cx| {
                 this.playback
                     .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
                 this.close_panel(cx);
+                this.leave_field(window, cx);
             })
             .ok();
         });
@@ -1308,8 +1320,9 @@ fn opens(hit: &Hit) -> bool {
     !matches!(hit, Hit::Artist(artist) if artist.id.is_none())
 }
 
-/// What a press on the card of `hit` does: a song starts its radio and anything else opens its
-/// page. The hit moves to the top of the search history.
+/// What a press on the card of `hit` does: a song starts its radio and hands the keyboard to
+/// the page, so Space pauses it, and anything else opens its page. The hit moves to the top of
+/// the search history.
 fn pressed(
     hit: &Hit,
     me: &WeakEntity<SearchView>,
@@ -1317,12 +1330,14 @@ fn pressed(
     let me = me.clone();
     let hit = hit.clone();
 
-    move |_, _, cx| {
+    move |_, window, cx| {
         hit.remember(cx);
         me.update(cx, |this, cx| match &hit {
-            Hit::Song(track) => this
-                .playback
-                .update(cx, |playback, cx| playback.play_radio(track, cx)),
+            Hit::Song(track) => {
+                this.playback
+                    .update(cx, |playback, cx| playback.play_radio(track, cx));
+                this.leave_field(window, cx);
+            }
             Hit::Artist(artist) => {
                 if let Some(id) = &artist.id {
                     navigate(Destination::Artist(id.clone().into()), cx);
