@@ -74,24 +74,26 @@ fn reap(data: &Path, program: &Path) {
     let pid = std::fs::read_to_string(data.join(PID))
         .ok()
         .and_then(|pid| pid.trim().parse::<u32>().ok());
-    let name = program.file_name().and_then(OsStr::to_str);
-    if let (Some(pid), Some(name)) = (pid, name)
-        && ended(pid, name)
+    if let Some(pid) = pid
+        && ended(pid, program, data)
     {
         log::info!("soloist: ended a program an earlier run left behind (pid {pid})");
         // The kill only sends the signal, and the program that starts next would meet the folder
         // still held. This blocks the engine's thread, and only after a crash.
         let deadline = Instant::now() + RELEASE;
-        while alive(pid, name) && Instant::now() < deadline {
+        while alive(pid, program) && Instant::now() < deadline {
             std::thread::sleep(RELEASE_POLL);
         }
     }
     std::fs::remove_file(data.join(PID)).ok();
 }
 
-/// Whether process `pid` still runs the program `name`.
+/// Whether process `pid` still runs the program.
 #[cfg(windows)]
-fn alive(pid: u32, name: &str) -> bool {
+fn alive(pid: u32, program: &Path) -> bool {
+    let Some(name) = program.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
     binary::command(Path::new("tasklist"))
         .args([
             "/NH",
@@ -109,15 +111,18 @@ fn alive(pid: u32, name: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn alive(pid: u32, _name: &str) -> bool {
+fn alive(pid: u32, _program: &Path) -> bool {
     // SAFETY: signal 0 sends nothing, it only asks whether the process exists.
     libc::pid_t::try_from(pid).is_ok_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
-/// Kills process `pid` when it runs the program `name`, and says whether it did. The name check
-/// keeps a pid that another program took over safe.
+/// Kills process `pid` when it runs the program, and says whether it did. The image name keeps a
+/// pid that another program took over safe.
 #[cfg(windows)]
-fn ended(pid: u32, name: &str) -> bool {
+fn ended(pid: u32, program: &Path, _data: &Path) -> bool {
+    let Some(name) = program.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
     binary::command(Path::new("taskkill"))
         .args([
             "/F",
@@ -130,21 +135,36 @@ fn ended(pid: u32, name: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// What process `pid` was started with, whole, or `None` when it does not run. The arguments of
+/// `/proc` are separated by NULs.
+#[cfg(target_os = "linux")]
+fn command_line(pid: libc::pid_t) -> Option<String> {
+    let line = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(String::from_utf8_lossy(&line).replace('\0', " "))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn command_line(pid: libc::pid_t) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Kills process `pid` when it was started with this program on this data folder, and says
+/// whether it did. The command line shows both even where the Nix package's loader is the process
+/// the system names, and tells a program of ours from another Soloist that took the pid.
 #[cfg(unix)]
-fn ended(pid: u32, name: &str) -> bool {
+fn ended(pid: u32, program: &Path, data: &Path) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
-    let named = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()
-        .is_ok_and(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .ends_with(name)
-        });
-    // SAFETY: `kill` only sends a signal, and the pid was just checked to run the program.
-    named && unsafe { libc::kill(pid, libc::SIGKILL) } == 0
+    let ours = command_line(pid).is_some_and(|line| {
+        line.contains(&*program.to_string_lossy()) && line.contains(&*data.to_string_lossy())
+    });
+    // SAFETY: `kill` only sends a signal, and the pid was just checked to run our program.
+    ours && unsafe { libc::kill(pid, libc::SIGKILL) } == 0
 }
 
 /// Has the program told to stop when the thread that starts it ends, which is the engine's own
