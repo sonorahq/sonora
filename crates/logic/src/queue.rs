@@ -47,6 +47,8 @@ pub struct Resume<O> {
     pub manual: usize,
 }
 
+/// A track as a saved queue keeps it: what the queue and the player bar show of it, which is
+/// enough to list it and to ask the provider for it again.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Stub {
@@ -389,6 +391,9 @@ fn in_order<'a, T: PartialEq + 'a>(sequence: impl Iterator<Item = &'a T>, source
     sequence.eq(source.iter())
 }
 
+/// The index a song at `from` ends up at when it is dropped into `gap` of a list of `len`, the gap
+/// `n` being the one in front of the song at `n`. Taking the song out first moves every gap
+/// behind it down by one.
 pub fn gap_target(from: usize, gap: usize, len: usize) -> usize {
     let gap = gap.min(len);
     if gap > from { gap - 1 } else { gap }
