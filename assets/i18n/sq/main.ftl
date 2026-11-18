@@ -610,7 +610,6 @@ settings-startup = Shfaq në nisje
 settings-startup-detail = Ekrani që hap Sonora në nisje
 settings-entries = Zërat e shiritit anësor
 settings-entries-detail = Seksionet e listuara në shiritin anësor
-settings-entries-pick = Zgjidh zërat
 settings-language = Gjuha
 settings-language-detail = Gjuha që Sonora përdor në të gjithë ndërfaqen
 settings-language-system = Sistemi

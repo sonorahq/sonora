@@ -69,6 +69,10 @@ impl NavEntry {
         }
     }
 
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|entry| entry.id() == id)
+    }
+
     pub fn key(self) -> &'static str {
         match self {
             Self::Home => "nav-home",

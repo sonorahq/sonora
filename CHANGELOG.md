@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Drag the rows of the left sidebar into the order you like, in the sidebar itself or under Settings, General, Sidebar entries.
+
 ### Fixed
 
 - Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.

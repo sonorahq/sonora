@@ -519,6 +519,9 @@ struct Values {
     /// The optional sidebar rows the user added, which stay out of the sidebar otherwise.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     added_nav: Vec<String>,
+    /// The sidebar rows by id in the order the user dragged them into. Empty keeps the default.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    nav_order: Vec<String>,
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
@@ -781,6 +784,7 @@ impl Default for Values {
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
             added_nav: Vec::new(),
+            nav_order: Vec::new(),
             silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
             unscrobbled: BTreeSet::new(),
@@ -2383,6 +2387,20 @@ impl AppSettings {
             true => self.values.added_nav.push(entry.to_owned()),
             false => self.values.added_nav.retain(|known| known != entry),
         }
+        self.schedule_save(cx);
+    }
+
+    /// The sidebar row ids in the order the user placed them, empty until they move one. It may
+    /// miss rows added since or name rows that are gone, so the caller reconciles it.
+    pub fn nav_order(&self) -> &[String] {
+        &self.values.nav_order
+    }
+
+    pub fn set_nav_order(&mut self, order: Vec<String>, cx: &mut Context<Self>) {
+        if self.values.nav_order == order {
+            return;
+        }
+        self.values.nav_order = order;
         self.schedule_save(cx);
     }
 
