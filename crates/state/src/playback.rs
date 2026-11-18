@@ -1863,9 +1863,12 @@ impl Playback {
     /// Asks the engine to fetch the track that plays after this one. With `segue` it is also
     /// lined up to follow gaplessly, which waits for the end because the queue can still change.
     fn preload_upcoming(&mut self, segue: bool, cx: &Context<Self>) {
-        let next = match self.repeat != Repeat::One {
-            true => self.queue.read(cx).upcoming().next().cloned(),
-            false => None,
+        let queue = self.queue.read(cx);
+        let next = match self.repeat {
+            Repeat::One => None,
+            // the end of the queue wraps to its first song, which `advance` rewinds to
+            Repeat::All if !queue.has_next() => queue.past().next().or(queue.current()).cloned(),
+            _ => queue.upcoming().next().cloned(),
         };
         let Some(next) = next else {
             self.preloaded = None;

@@ -902,7 +902,8 @@ impl Brain {
         };
         self.next = None;
         self.unmute();
-        if self.heard.status == Status::Playing {
+        // not only while `Playing`: a track it went on to is often still `Buffering`
+        if self.heard.status != Status::Idle {
             self.send("pause", json!({}));
         }
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
