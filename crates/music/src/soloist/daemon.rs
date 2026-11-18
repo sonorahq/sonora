@@ -68,8 +68,8 @@ const RELEASE_POLL: Duration = Duration::from_millis(100);
 /// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the
 /// program refuses to start beside it, so nothing would play. The caller holds `RUNNING`, so a
 /// program still alive under the recorded pid is nobody's.
-// shortcut: a pid another `soloist` took since the crash is ended too, add a start-time check if
-// that is ever seen.
+// shortcut: a pid another `soloist` on the same program and data folder took since the crash is
+// ended too, which only a second Sonora could cause.
 fn reap(data: &Path, program: &Path) {
     let pid = std::fs::read_to_string(data.join(PID))
         .ok()
@@ -116,14 +116,36 @@ fn alive(pid: u32, _program: &Path) -> bool {
     libc::pid_t::try_from(pid).is_ok_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
-/// Kills process `pid` when it runs the program, and says whether it did. The image name keeps a
-/// pid that another program took over safe.
+/// What process `pid` was started with, whole, or `None` when it does not run. PowerShell is
+/// slow to start, so callers ask only about a pid that `alive` found.
 #[cfg(windows)]
-fn ended(pid: u32, program: &Path, _data: &Path) -> bool {
+fn command_line(pid: u32) -> Option<String> {
+    let output = binary::command(Path::new("powershell"))
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"),
+        ])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Kills process `pid` when it was started with this program on this data folder, and says
+/// whether it did. The command line tells a program of ours from another Soloist that took the
+/// pid, and the image name keeps anything else safe.
+#[cfg(windows)]
+fn ended(pid: u32, program: &Path, data: &Path) -> bool {
     let Some(name) = program.file_name().and_then(OsStr::to_str) else {
         return false;
     };
-    binary::command(Path::new("taskkill"))
+    let ours = alive(pid, program)
+        && command_line(pid).is_some_and(|line| {
+            let line = line.to_lowercase();
+            line.contains(&program.to_string_lossy().to_lowercase())
+                && line.contains(&data.to_string_lossy().to_lowercase())
+        });
+    ours && binary::command(Path::new("taskkill"))
         .args([
             "/F",
             "/PID",
