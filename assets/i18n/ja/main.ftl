@@ -574,7 +574,6 @@ settings-startup = 起動時に表示
 settings-startup-detail = 起動時に Sonora が開く画面
 settings-entries = サイドバー項目
 settings-entries-detail = サイドバーに表示するセクション
-settings-entries-pick = 項目を選ぶ
 settings-language = 言語
 settings-language-detail = インターフェース全体で Sonora が使う言語
 settings-language-system = システム

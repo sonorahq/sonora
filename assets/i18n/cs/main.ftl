@@ -634,7 +634,6 @@ settings-startup = Zobrazit při startu
 settings-startup-detail = Obrazovka, kterou Sonora otevře po spuštění
 settings-entries = Položky postranního panelu
 settings-entries-detail = Sekce uvedené v postranním panelu
-settings-entries-pick = Vyber položky
 settings-language = Jazyk
 settings-language-detail = Jazyk, který Sonora používá v celém rozhraní
 settings-language-system = Podle systému

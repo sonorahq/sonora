@@ -1,13 +1,21 @@
+use std::rc::Rc;
+
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, SharedString, Window};
+use gpui::{AnyElement, App, Context, DragMoveEvent, SharedString, Window, div};
 use i18n::{Language, t};
 use router::{NavEntry, Screen};
-use ui::{MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch};
+use ui::{
+    ActiveTheme as _, Edge, MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch,
+    Text, drop_gap, drop_marker, grip,
+};
 
 use super::appearance::corner;
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, LANGUAGES, SettingsView, Slot};
-use crate::shared::nav::{entry_shown, set_entry_shown};
+use crate::shared::nav::{
+    DraggedNav, entry_shown, nav_order, place_entry, set_entry_shown, useful_gap,
+};
 use crate::shared::popups::matches_query;
 
 const STARTUP: &str = "startup";
@@ -136,27 +144,161 @@ impl SettingsView {
         )
     }
 
+    /// Every sidebar row in one list, in the order the sidebar shows them, each with its own
+    /// switch. The movable rows can be dragged anywhere among them, hidden ones included, and
+    /// the pinned section closes the list since it always closes the sidebar.
     pub(super) fn entries_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let picker = Picker::new(ENTRIES, &self.popovers, t!("settings-entries-pick"))
-            .width(Picker::REGULAR)
-            .sticky()
-            .items(NavEntry::ALL.map(|entry| {
-                let shown = entry_shown(entry, self.settings.read(cx));
+        let order: Rc<[NavEntry]> = nav_order(self.settings.read(cx)).into();
+        let count = order.len();
+        let total = count + 1;
+        let mut entries: Vec<AnyElement> = order
+            .iter()
+            .enumerate()
+            .map(|(place, entry)| self.entry(place, *entry, order.clone(), total, cx))
+            .collect();
+        entries.push(self.pins_entry((count, total), cx));
 
-                MenuItem::new(entry.id(), i18n::lookup(entry.key(), None))
-                    .selected(shown)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.update(cx, |settings, cx| {
-                            set_entry_shown(entry, !shown, settings, cx)
-                        });
+        let list = div()
+            .id(ENTRIES)
+            .role(Role::List)
+            .aria_label(t!("settings-entries"))
+            .flex()
+            .flex_col()
+            .children(entries)
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<DraggedNav>, _, cx| {
+                    if !event.bounds.contains(&event.event.position)
+                        && this.nav_drop_gap.take().is_some()
+                    {
                         cx.notify();
-                    }))
+                    }
+                }),
+            )
+            .on_drop(cx.listener(move |this, dragged: &DraggedNav, _, cx| {
+                let Some(gap) = this.nav_drop_gap.take() else {
+                    return;
+                };
+                let before = order.get(gap).copied();
+                let entry = dragged.entry;
+                this.settings
+                    .update(cx, |settings, cx| place_entry(entry, before, settings, cx));
+                cx.notify();
             }));
 
-        self.row(
-            t!("settings-entries"),
-            picker.name(t!("settings-entries")).into_any_element(),
+        self.stacked(t!("settings-entries"), list)
+    }
+
+    /// The switch that shows or hides one sidebar row.
+    fn entry_switch(&self, entry: NavEntry, cx: &mut Context<Self>) -> Switch {
+        let shown = entry_shown(entry, self.settings.read(cx));
+
+        Switch::new(
+            SharedString::from(format!("entry-on-{}", entry.id())),
+            shown,
         )
+        .name(i18n::lookup(entry.key(), None))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.settings.update(cx, |settings, cx| {
+                set_entry_shown(entry, !shown, settings, cx)
+            });
+            cx.notify();
+        }))
+    }
+
+    /// One movable row at `place` in `order`: the grip it is dragged by, its name, muted while
+    /// it is hidden, and its switch. The whole row drags, the grip only shows that it does.
+    fn entry(
+        &self,
+        place: usize,
+        entry: NavEntry,
+        order: Rc<[NavEntry]>,
+        total: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = *cx.theme();
+        let name = i18n::lookup(entry.key(), None);
+        let shown = entry_shown(entry, self.settings.read(cx));
+        let count = order.len();
+        let edge = match self.nav_drop_gap {
+            Some(gap) if gap == place => Some(Edge::Above),
+            Some(gap) if gap == count && place + 1 == count => Some(Edge::Below),
+            _ => None,
+        };
+
+        div()
+            .id(SharedString::from(format!("entry-{}", entry.id())))
+            .role(Role::ListItem)
+            .aria_label(name.clone())
+            .aria_position_in_set(place + 1)
+            .aria_size_of_set(total)
+            .relative()
+            .h(theme.metrics.list_row)
+            .flex()
+            .items_center()
+            .gap_3()
+            .cursor_grab()
+            .child(grip(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .when(!shown, |label| label.text_color(theme.muted_foreground))
+                    .child(name),
+            )
+            .child(self.entry_switch(entry, cx))
+            .on_drag(DraggedNav::new(entry), |dragged, position, _, cx| {
+                cx.new(|_| dragged.at(position))
+            })
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<DraggedNav>, _, cx| {
+                    // The rows touch, so only the one under the cursor answers, and the list
+                    // clears the gap once the cursor leaves it.
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let gap = drop_gap(event.bounds, event.event.position, place)
+                        .and_then(|gap| useful_gap(gap, event.drag(cx).entry, &order));
+                    if this.nav_drop_gap != gap {
+                        this.nav_drop_gap = gap;
+                        cx.notify();
+                    }
+                }),
+            )
+            .when_some(edge, |row, edge| row.child(drop_marker(edge, cx)))
+            .into_any_element()
+    }
+
+    /// The pinned section's row, placed by its index and the list's length. It always closes
+    /// the sidebar, so it has no grip and does not move.
+    fn pins_entry(&self, (index, total): (usize, usize), cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let entry = NavEntry::Pins;
+        let name = i18n::lookup(entry.key(), None);
+        let shown = entry_shown(entry, self.settings.read(cx));
+
+        div()
+            .id(SharedString::from(format!("entry-{}", entry.id())))
+            .role(Role::ListItem)
+            .aria_label(name.clone())
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(total)
+            .h(theme.metrics.list_row)
+            .flex()
+            .items_center()
+            .gap_3()
+            // Lines its name up with the movable rows, whose grip stands where this is empty.
+            .child(div().flex_none().size(theme.text(Text::Body)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .when(!shown, |label| label.text_color(theme.muted_foreground))
+                    .child(name),
+            )
+            .child(self.entry_switch(entry, cx))
+            .into_any_element()
     }
 
     pub(super) fn language_row(&self, cx: &mut Context<Self>) -> AnyElement {
