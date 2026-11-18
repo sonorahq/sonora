@@ -120,6 +120,11 @@ impl Engine {
         self.ask(Command::Next(track_id.to_owned()));
     }
 
+    /// Takes back the track `line_up` named, as when what comes next changed.
+    pub(crate) fn line_down(&self) {
+        self.ask(Command::Unline);
+    }
+
     pub(crate) fn set_gain(&self, gain: f32) {
         self.ask(Command::Volume(percent(gain)));
     }
@@ -183,6 +188,7 @@ enum Command {
     Seek(Duration),
     Volume(u8),
     Next(String),
+    Unline,
 }
 
 /// What a daemon is started with, beyond the key.
@@ -301,6 +307,9 @@ struct Brain {
     next: Option<String>,
     /// The track put on the daemon's queue to follow the current one.
     fed: Option<String>,
+    /// Whether Sonora took back the track on the daemon's queue. It cannot be taken off, so it is
+    /// stopped when the daemon goes on to it.
+    recalled: bool,
     /// The tracks on the daemon's queue as it last listed them. The account's own queued
     /// tracks are among them, and those are not Sonora's to move or skip.
     queue: Vec<String>,
@@ -329,6 +338,7 @@ impl Brain {
             heard: Heard::default(),
             next: None,
             fed: None,
+            recalled: false,
             queue: Vec::new(),
             adopted: None,
             reported: Instant::now(),
@@ -371,9 +381,18 @@ impl Brain {
             }
             Command::Next(id) => {
                 if self.setup.gapless {
-                    self.next = Some(format!("{TRACK_PREFIX}{id}"));
+                    let uri = format!("{TRACK_PREFIX}{id}");
+                    // the track already on the daemon's queue is the one wanted after all
+                    if self.fed.as_ref() == Some(&uri) {
+                        self.recalled = false;
+                    }
+                    self.next = Some(uri);
                     self.feed();
                 }
+            }
+            Command::Unline => {
+                self.next = None;
+                self.recalled = self.fed.is_some();
             }
         }
     }
@@ -395,6 +414,7 @@ impl Brain {
             .filter(|(known, _)| *known == uri)
             .map(|(_, duration)| *duration);
         self.next = None;
+        self.recalled = false;
         self.unmute();
         self.report(PlaybackEvent::Loading {
             id: Some(id.clone()),
@@ -802,7 +822,7 @@ impl Brain {
             return;
         }
         if !same {
-            return match self.fed.as_ref() == Some(&self.heard.uri) {
+            return match self.fed.as_ref() == Some(&self.heard.uri) && !self.recalled {
                 true => self.hand_over(),
                 false => {
                     // past the one track it was given the daemon went on by itself
@@ -902,7 +922,8 @@ impl Brain {
         };
         self.next = None;
         self.unmute();
-        if self.heard.status == Status::Playing {
+        // not only while `Playing`: a track it went on to is often still `Buffering`
+        if self.heard.status != Status::Idle {
             self.send("pause", json!({}));
         }
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
@@ -953,6 +974,7 @@ impl Brain {
         self.muted = false;
         self.next = None;
         self.fed = None;
+        self.recalled = false;
         self.adopted = None;
         self.queue.clear();
         match end {

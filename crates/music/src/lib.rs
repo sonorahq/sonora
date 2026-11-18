@@ -761,6 +761,10 @@ pub trait Player: Send + Sync {
     /// Fetches a track ahead of time so a later `load` starts at once. `segue` marks the next
     /// queue item, which a gapless engine may already line up behind the current one.
     fn preload(&self, track_id: &str, segue: bool) -> Result<()>;
+
+    /// Takes back what `preload` lined up behind the current track, as when a change of repeat
+    /// altered what follows it. An engine that cannot is left as it is.
+    fn unline(&self) {}
     fn play(&self);
     fn pause(&self);
 

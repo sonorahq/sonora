@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, BufReader};
@@ -18,6 +18,15 @@ const GRACE: Duration = Duration::from_secs(2);
 
 /// What marks a line the program only prints with all its logs on.
 const INTERNAL: &str = " [f:";
+
+/// The file in the data folder that names the program this app started last.
+const PID: &str = "sonora.pid";
+
+/// How long a program that was just killed gets to let go of the data folder.
+const RELEASE: Duration = Duration::from_secs(2);
+
+/// How often to look whether a killed program has let go of the data folder.
+const RELEASE_POLL: Duration = Duration::from_millis(100);
 
 /// Held for as long as a program runs on the data folder. The program refuses to start while
 /// another one has the folder, and an engine that is being replaced lets go of it a moment after
@@ -46,9 +55,157 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     tie(&mut command);
-    command
+    reap(data, &path);
+    let child = command
         .spawn()
-        .with_context(|| format!("cannot start {}", path.display()))
+        .with_context(|| format!("cannot start {}", path.display()))?;
+    if let Some(pid) = child.id()
+        && let Err(error) = std::fs::write(data.join(PID), pid.to_string())
+    {
+        log::warn!("soloist: cannot record the program's pid: {error}");
+    }
+    Ok(child)
+}
+
+/// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the
+/// program refuses to start beside it, so nothing would play. The caller holds `RUNNING`, so a
+/// program still alive under the recorded pid is nobody's, unless a second Sonora started it on
+/// the same folder.
+fn reap(data: &Path, program: &Path) {
+    let pid = std::fs::read_to_string(data.join(PID))
+        .ok()
+        .and_then(|pid| pid.trim().parse::<u32>().ok());
+    if let Some(pid) = pid
+        && ended(pid, program, data)
+    {
+        log::info!("soloist: ended a program an earlier run left behind (pid {pid})");
+        // The kill only sends the signal, and the program that starts next would meet the folder
+        // still held. This blocks the engine's thread, and only after a crash.
+        let deadline = Instant::now() + RELEASE;
+        while alive(pid, program) && Instant::now() < deadline {
+            std::thread::sleep(RELEASE_POLL);
+        }
+    }
+    std::fs::remove_file(data.join(PID)).ok();
+}
+
+/// Whether process `pid` still runs the program.
+#[cfg(windows)]
+fn alive(pid: u32, program: &Path) -> bool {
+    let Some(name) = program.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    binary::command(Path::new("tasklist"))
+        .args([
+            "/NH",
+            "/FI",
+            &format!("PID eq {pid}"),
+            "/FI",
+            &format!("IMAGENAME eq {name}"),
+        ])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .to_lowercase()
+                .contains(&name.to_lowercase())
+        })
+}
+
+#[cfg(unix)]
+fn alive(pid: u32, _program: &Path) -> bool {
+    // SAFETY: signal 0 sends nothing, it only asks whether the process exists.
+    libc::pid_t::try_from(pid).is_ok_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
+}
+
+/// Whether a command line is this program started on exactly this data folder. The folder is
+/// matched as the whole `--data-dir` value, since a sibling such as `soloist-2` or the cache
+/// folder would share its prefix.
+fn started_with(line: &str, program: &Path, data: &Path) -> bool {
+    // Windows paths ignore case, and those of the other systems tell `/srv/A` from `/srv/a`
+    let fold = |text: &str| match cfg!(windows) {
+        true => text.to_lowercase(),
+        false => text.to_owned(),
+    };
+    let line = fold(&line.replace('"', ""));
+    let flag = fold(&format!("--data-dir {}", data.to_string_lossy()));
+    line.contains(&fold(&program.to_string_lossy()))
+        && line.match_indices(&flag).any(|(at, _)| {
+            line[at + flag.len()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+        })
+}
+
+/// What process `pid` was started with, whole, or `None` when it does not run. PowerShell is
+/// slow to start, so callers ask only about a pid that `alive` found.
+#[cfg(windows)]
+fn command_line(pid: u32) -> Option<String> {
+    let output = binary::command(Path::new("powershell"))
+        .args([
+            "-NoProfile",
+            "-Command",
+            // the output is read as UTF-8, and PowerShell writes the OEM code page by default
+            &format!(
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+                 (Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+            ),
+        ])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Kills process `pid` when it was started with this program on this data folder, and says
+/// whether it did. The command line tells a program of ours from another Soloist that took the
+/// pid, and the image name keeps anything else safe.
+#[cfg(windows)]
+fn ended(pid: u32, program: &Path, data: &Path) -> bool {
+    let Some(name) = program.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    let ours = alive(pid, program)
+        && command_line(pid).is_some_and(|line| started_with(&line, program, data));
+    ours && binary::command(Path::new("taskkill"))
+        .args([
+            "/F",
+            "/PID",
+            &pid.to_string(),
+            "/FI",
+            &format!("IMAGENAME eq {name}"),
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// What process `pid` was started with, whole, or `None` when it does not run. The arguments of
+/// `/proc` are separated by NULs.
+#[cfg(target_os = "linux")]
+fn command_line(pid: libc::pid_t) -> Option<String> {
+    let line = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(String::from_utf8_lossy(&line).replace('\0', " "))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn command_line(pid: libc::pid_t) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-ww", "-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Kills process `pid` when it was started with this program on this data folder, and says
+/// whether it did. The command line shows both even where the Nix package's loader is the process
+/// the system names, and tells a program of ours from another Soloist that took the pid.
+#[cfg(unix)]
+fn ended(pid: u32, program: &Path, data: &Path) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let ours = command_line(pid).is_some_and(|line| started_with(&line, program, data));
+    // SAFETY: `kill` only sends a signal, and the pid was just checked to run our program.
+    ours && unsafe { libc::kill(pid, libc::SIGKILL) } == 0
 }
 
 /// Has the program told to stop when the thread that starts it ends, which is the engine's own
