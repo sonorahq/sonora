@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
 - Shelves on Home end at the same edge as Quick picks, and their arrows sit level with the shelf titles.
 - Pressing play on a cover in the search suggestions plays it and closes the list, instead of only closing the list.
+- Song titles in track lists sit in the middle of their rows.
 
 ## [0.50.2] - 2026-11-18
 
