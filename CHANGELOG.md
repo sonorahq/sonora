@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.
+- Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
+
 ## [0.50.2] - 2026-11-18
 
 ### Added
