@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Press Ctrl+L (⌘L on macOS) to jump to the search field from anywhere, even while typing in another field or from the fullscreen player.
 
+### Changed
+
+- The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
+
 ### Fixed
 
 - Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.
