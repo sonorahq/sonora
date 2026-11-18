@@ -1357,12 +1357,17 @@ mod tests {
 
     #[test]
     fn restoring_keeps_both_copies_of_a_repeated_track() {
-        let source = vec![entry("a"), entry("b"), entry("a")];
-        let mut upcoming = VecDeque::from(vec![entry("a"), entry("a"), entry("b")]);
+        let copy = |uid: &str| Entry {
+            uid: uid.to_owned(),
+            ..entry("a")
+        };
+        let source = vec![copy("first"), entry("b"), copy("second")];
+        let mut upcoming = VecDeque::from(vec![copy("second"), copy("first"), entry("b")]);
 
         restore(&mut upcoming, &source, None);
 
-        assert_eq!(ids(&upcoming), ["a", "b", "a"]);
+        let uids: Vec<_> = upcoming.iter().map(|entry| entry.uid.as_str()).collect();
+        assert_eq!(uids, ["first", "test-b", "second"]);
     }
 
     #[test]
