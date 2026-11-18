@@ -27,6 +27,8 @@ const SHORT_COMMIT: usize = 7;
 /// How often a running Sonora asks GitHub again, so a copy left open in the tray for days still
 /// hears about a release.
 const POLL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Held while an update is prepared or cleared away.
+static STAGING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
@@ -159,7 +161,7 @@ impl Updates {
             this.state = UpdateState::Quiet;
             cx.notify();
             if moved || !automatic {
-                this.io.spawn_blocking(Staged::clear);
+                forget(&this.io);
             }
             this.look(moved, cx);
         });
@@ -245,6 +247,9 @@ impl Updates {
         let UpdateState::Ready(release) = &self.state else {
             return;
         };
+        if self.task.is_some() {
+            return;
+        }
         let version = release.version.clone();
         let channel = self.channel;
         let io = self.io.clone();
@@ -333,12 +338,8 @@ impl Updates {
                         cx.notify();
                     }
                 }
-                Ok(staged) => {
-                    this.task = None;
-                    if let Some(prepared) = staged.prepared {
-                        this.io.spawn_blocking(move || install::discard(&prepared));
-                    }
-                }
+                // The change in settings that brought this about already cleared the update.
+                Ok(_) => this.task = None,
                 Err(error) => {
                     log::warn!("updates: cannot stage {}: {error:#}", release.version);
                     this.offer(release, cx);
@@ -430,10 +431,21 @@ async fn latest(http: &reqwest::Client, channel: Channel) -> Result<Option<Relea
     }))
 }
 
+/// Deletes the staged update on tokio once no preparation is running.
+fn forget(io: &Io) {
+    io.spawn(async {
+        let _staging = STAGING.lock().await;
+        tokio::task::spawn_blocking(Staged::clear).await.ok();
+    });
+}
+
 /// Downloads `release` and prepares it beside the running copy, unless an earlier run already
 /// did. The result is not written down yet, which is left to the caller. A version an earlier
 /// launch put in place without it starting is refused, so the card offers it instead.
+/// One stage runs at a time, and a clear waits for it, since a look a change in settings
+/// abandoned keeps running on tokio and prepares into the same place beside the running copy.
 async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> Result<Staged> {
+    let _staging = STAGING.lock().await;
     let earlier = tokio::task::spawn_blocking(Staged::read).await?;
     if let Some(earlier) =
         earlier.filter(|earlier| earlier.version == release.version && earlier.channel == channel)

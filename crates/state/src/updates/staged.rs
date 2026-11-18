@@ -64,10 +64,14 @@ impl Staged {
         }
     }
 
-    /// Deletes the staged update, its prepared files and everything else in the update folder.
+    /// Deletes the staged update, its prepared files, whatever an abandoned preparation left
+    /// beside the running copy and everything else in the update folder.
     pub fn clear() {
         if let Some(prepared) = Self::read().and_then(|staged| staged.prepared) {
             super::install::discard(&prepared);
+        }
+        if let Some(beside) = Install::current().beside() {
+            super::install::discard(&beside);
         }
         if let Some(folder) = folder() {
             super::install::discard(&folder);
