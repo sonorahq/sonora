@@ -120,9 +120,14 @@ fn alive(pid: u32, _program: &Path) -> bool {
 /// matched as the whole `--data-dir` value, since a sibling such as `soloist-2` or the cache
 /// folder would share its prefix.
 fn started_with(line: &str, program: &Path, data: &Path) -> bool {
-    let line = line.replace('"', "").to_lowercase();
-    let flag = format!("--data-dir {}", data.to_string_lossy().to_lowercase());
-    line.contains(&program.to_string_lossy().to_lowercase())
+    // Windows paths ignore case, and those of the other systems tell `/srv/A` from `/srv/a`
+    let fold = |text: &str| match cfg!(windows) {
+        true => text.to_lowercase(),
+        false => text.to_owned(),
+    };
+    let line = fold(&line.replace('"', ""));
+    let flag = fold(&format!("--data-dir {}", data.to_string_lossy()));
+    line.contains(&fold(&program.to_string_lossy()))
         && line.match_indices(&flag).any(|(at, _)| {
             line[at + flag.len()..]
                 .chars()
@@ -139,7 +144,11 @@ fn command_line(pid: u32) -> Option<String> {
         .args([
             "-NoProfile",
             "-Command",
-            &format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"),
+            // the output is read as UTF-8, and PowerShell writes the OEM code page by default
+            &format!(
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+                 (Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+            ),
         ])
         .output()
         .ok()?;
