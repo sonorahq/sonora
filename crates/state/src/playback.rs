@@ -1867,7 +1867,7 @@ impl Playback {
         let next = match self.repeat {
             Repeat::One => None,
             // the end of the queue wraps to its first song, which `advance` rewinds to
-            Repeat::All if !queue.has_next() => queue.past().next().or(queue.current()).cloned(),
+            Repeat::All if queue.ahead() == 0 => queue.past().next().or(queue.current()).cloned(),
             _ => queue.upcoming().next().cloned(),
         };
         let Some(next) = next else {
@@ -2116,7 +2116,7 @@ impl Playback {
                 Some(track) => self.load_after(&track, Start::Segue, cx),
                 None => self.segue_queue(cx),
             },
-            Repeat::All if !self.queue.read(cx).has_next() => {
+            Repeat::All if self.queue.read(cx).ahead() == 0 => {
                 self.fetch = None;
                 if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
                     self.follow_after(track, Start::Segue, cx);
