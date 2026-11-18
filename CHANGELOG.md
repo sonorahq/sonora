@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.50.2] - 2026-11-18
+
 ### Added
 
 - Click the tray icon on Linux to show Sonora's window, or to hide it into the tray when it is open.
@@ -27,6 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Blur window stays available on Linux at 100% opacity, so a compositor that makes Sonora see-through, such as when it is unfocused, blurs the desktop behind it.
 - Soloist plays again after Sonora crashed, instead of the leftover Soloist blocking every song.
 - Repeat All goes back to the first song again with Soloist, instead of carrying on into other songs.
+- The Turkish, Korean and Indonesian translations are complete again, so no screen falls back to English.
 
 ## [0.50.1] - 2026-11-17
 
@@ -2795,7 +2798,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.2...HEAD
+[0.50.2]: https://github.com/sonorahq/sonora/compare/v0.50.1...v0.50.2
 [0.50.1]: https://github.com/sonorahq/sonora/compare/v0.50.0...v0.50.1
 [0.50.0]: https://github.com/sonorahq/sonora/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/sonorahq/sonora/compare/v0.49.0...v0.49.1
