@@ -8,6 +8,7 @@ use state::Playback;
 use ui::{ActiveTheme as _, Button, Card, eyebrow, heading, snapped, vacant};
 
 use crate::shared::cards;
+use crate::shared::shelves::heading_line;
 use crate::shared::track_card::{ContextHandler, StartHandler, TrackCard};
 
 const ROWS: usize = 5;
@@ -245,7 +246,9 @@ impl RenderOnce for Picks {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .pb_1()
+                            // As tall as the title's line and at the bottom of the header with
+                            // it, so the arrows centre on the title.
+                            .h(heading_line(window, cx))
                             .child(
                                 Button::new(SharedString::from(format!("{id}-previous")))
                                     .small()
