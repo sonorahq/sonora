@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, BufReader};
@@ -60,6 +60,10 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
 
 /// The file in the data folder that names the program this app started last.
 const PID: &str = "sonora.pid";
+/// How long a program that was just killed gets to let go of the data folder, and how often to
+/// look.
+const RELEASE: Duration = Duration::from_secs(2);
+const RELEASE_POLL: Duration = Duration::from_millis(100);
 
 /// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the
 /// program refuses to start beside it, so nothing would play. The caller holds `RUNNING`, so a
@@ -75,8 +79,39 @@ fn reap(data: &Path, program: &Path) {
         && ended(pid, name)
     {
         log::info!("soloist: ended a program an earlier run left behind (pid {pid})");
+        // The kill only sends the signal, and the program that starts next would meet the folder
+        // still held. This blocks the engine's thread, and only after a crash.
+        let deadline = Instant::now() + RELEASE;
+        while alive(pid, name) && Instant::now() < deadline {
+            std::thread::sleep(RELEASE_POLL);
+        }
     }
     std::fs::remove_file(data.join(PID)).ok();
+}
+
+/// Whether process `pid` still runs the program `name`.
+#[cfg(windows)]
+fn alive(pid: u32, name: &str) -> bool {
+    binary::command(Path::new("tasklist"))
+        .args([
+            "/NH",
+            "/FI",
+            &format!("PID eq {pid}"),
+            "/FI",
+            &format!("IMAGENAME eq {name}"),
+        ])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .to_lowercase()
+                .contains(&name.to_lowercase())
+        })
+}
+
+#[cfg(unix)]
+fn alive(pid: u32, _name: &str) -> bool {
+    // SAFETY: signal 0 sends nothing, it only asks whether the process exists.
+    libc::pid_t::try_from(pid).is_ok_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
 /// Kills process `pid` when it runs the program `name`, and says whether it did. The name check
