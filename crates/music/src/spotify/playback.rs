@@ -356,6 +356,10 @@ impl MusicPlayer for Official {
         Ok(())
     }
 
+    fn unline(&self) {
+        self.engine.line_down();
+    }
+
     fn play(&self) {
         self.engine.play();
     }

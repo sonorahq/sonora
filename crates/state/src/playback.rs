@@ -2061,6 +2061,11 @@ impl Playback {
             return;
         }
         self.repeat = repeat;
+        // what was lined up behind the track was chosen under the old mode
+        self.preloaded = None;
+        if let Some(engine) = self.active_engine() {
+            engine.unline();
+        }
         self.settings
             .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
         cx.notify();
