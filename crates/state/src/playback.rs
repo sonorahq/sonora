@@ -1036,6 +1036,10 @@ impl Playback {
         {
             return;
         }
+        // A gapless join only ever happens inside one engine. Lining a track up in the engine
+        // the current track does not play through would join it to whatever that engine last
+        // held, and the load that follows would resume that track instead of this one.
+        let segue = segue && music::is_local_id(id) == self.local_active();
         if self
             .preloaded
             .as_ref()
