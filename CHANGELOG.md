@@ -74,11 +74,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When songs of one Navidrome or Subsonic album carry their own covers, the fullscreen player and the system media controls show each song's own cover.
 - The nightly update channel finds new nightly builds again. A nightly installed before November 19 does not see them, so install the latest nightly by hand once.
 - Shelves on Home end at the same edge as Quick picks, and their arrows sit level with the shelf titles.
-- Pressing play on a cover in the search suggestions plays it and closes the list, instead of only closing the list.
+- Play and pause on a cover in the search suggestions work on the first click and leave the list open, instead of only closing the list.
 - Song titles in track lists sit in the middle of their rows.
 - The Releases filter labels on artist pages sit in the middle of their buttons.
 - TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
 - Space pauses and resumes right after you play something from the search page, instead of typing a space into the search field.
+- Escape closes the search suggestions and leaves the search field in one press.
 
 ## [0.50.2] - 2026-11-18
 
