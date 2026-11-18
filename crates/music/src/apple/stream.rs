@@ -67,6 +67,9 @@ pub struct Key {
     pub uri: String,
     /// The key id, decoded from the tail of `uri`.
     pub id: Vec<u8>,
+    /// The catalog id the license is asked for. The license endpoint refuses a library id, so a
+    /// library song is licensed under the `songId` web playback names for it.
+    pub song: String,
 }
 
 /// A track ready to decode: decrypting as it is read, with its first seconds already in.
@@ -86,6 +89,10 @@ pub struct Loaded {
 struct Facts {
     key_uri: String,
     key_id: Vec<u8>,
+    /// Empty in a file kept before library songs played. Every such file was licensed under the
+    /// id it is kept by.
+    #[serde(default)]
+    song_id: String,
     duration_ms: Option<u64>,
     extended: bool,
 }
@@ -132,13 +139,14 @@ pub async fn prepare(
             let total = response.content_length();
             let source = match shelf {
                 Some(shelf) => {
-                    let (key_uri, key_id) = match &resolved.key {
-                        Some(key) => (key.uri.clone(), key.id.clone()),
-                        None => (String::new(), Vec::new()),
+                    let (key_uri, key_id, song_id) = match &resolved.key {
+                        Some(key) => (key.uri.clone(), key.id.clone(), key.song.clone()),
+                        None => (String::new(), Vec::new(), String::new()),
                     };
                     let facts = Facts {
                         key_uri,
                         key_id,
+                        song_id,
                         duration_ms: resolved
                             .duration
                             .map(|duration| duration.as_millis() as u64),
@@ -181,7 +189,10 @@ pub async fn prepare(
     .context("the widevine challenge task failed")??;
 
     log::info!("apple: requesting license");
-    let license = license(http, &challenge, &key.uri, adam_id, &bearer, user_token).await?;
+    let license = license(
+        http, &challenge, &key.uri, adam_id, &key.song, &bearer, user_token,
+    )
+    .await?;
     let cdm = tokio::task::spawn_blocking(move || -> Result<Cdm> {
         cdm.accept(&license)?;
         Ok(cdm)
@@ -210,6 +221,10 @@ async fn recall(shelf: &Shelf, adam_id: &str, variant: &str) -> Option<(Media, R
     let key = (!facts.key_uri.is_empty()).then_some(Key {
         uri: facts.key_uri,
         id: facts.key_id,
+        song: match facts.song_id.is_empty() {
+            true => adam_id.to_owned(),
+            false => facts.song_id,
+        },
     });
     let media = match key.is_some() {
         true => {
@@ -299,6 +314,7 @@ pub async fn resolve(
                 key: Some(Key {
                     uri: key_uri,
                     id: key_id,
+                    song: song_id(song).unwrap_or_else(|| adam_id.to_owned()),
                 }),
                 duration: duration(song),
                 extended: flavor == FLAVORS[1],
@@ -390,6 +406,16 @@ fn duration(song: &serde_json::Value) -> Option<Duration> {
     .flatten()
     .find_map(serde_json::Value::as_u64)?;
     Some(Duration::from_millis(millis))
+}
+
+/// The catalog id web playback names for a song. It is the one a license is asked for, and for
+/// a library song it is the catalog id it was matched to, even one the catalog has since pulled.
+fn song_id(song: &serde_json::Value) -> Option<String> {
+    match song.get("songId")? {
+        serde_json::Value::String(id) if !id.is_empty() => Some(id.clone()),
+        serde_json::Value::Number(id) => Some(id.to_string()),
+        _ => None,
+    }
 }
 
 async fn read_playlist(http: &reqwest::Client, url: &str) -> Result<String> {
@@ -495,13 +521,15 @@ fn absolute(url: &str, base: &str) -> String {
     }
 }
 
-/// Exchanges the CDM's challenge for a license. Nothing about the license is logged: it is the
-/// wrapped content key.
+/// Exchanges the CDM's challenge for a license for `adam_id`, the id the track was resolved by,
+/// asked for under `song`, the catalog id web playback named. Nothing about the license is
+/// logged: it is the wrapped content key.
 async fn license(
     http: &reqwest::Client,
     challenge: &[u8],
     key_uri: &str,
     adam_id: &str,
+    song: &str,
     bearer: &str,
     user_token: &str,
 ) -> Result<Vec<u8>> {
@@ -509,7 +537,7 @@ async fn license(
         "challenge": STANDARD.encode(challenge),
         "key-system": "com.widevine.alpha",
         "uri": key_uri,
-        "adamId": adam_id,
+        "adamId": song,
         "isLibrary": AppleClient::is_mine(adam_id),
         "user-initiated": true,
     });
