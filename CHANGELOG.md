@@ -68,6 +68,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
 - When songs of one Navidrome or Subsonic album carry their own covers, the fullscreen player and the system media controls show each song's own cover.
 - The nightly update channel finds new nightly builds again. A nightly installed before November 19 does not see them, so install the latest nightly by hand once.
+- Shelves on Home end at the same edge as Quick picks, and their arrows sit level with the shelf titles.
 
 ## [0.50.2] - 2026-11-18
 
