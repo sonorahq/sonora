@@ -559,7 +559,11 @@ async fn engine_loop<F: Fetch>(
                 match command {
                     Command::Load { id, at, play, seamless } => {
                         let joined = segued.as_deref() == Some(id.as_str());
+                        // Only an engine that is still sounding can be carried on from. A
+                        // silenced one holds a track paused where it stopped, and resuming it
+                        // would play that track instead of this one.
                         if seamless
+                            && wanted
                             && at.is_none()
                             && (current.as_deref() == Some(id.as_str()) || joined)
                         {
