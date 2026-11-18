@@ -46,9 +46,70 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     tie(&mut command);
-    command
+    reap(data, &path);
+    let child = command
         .spawn()
-        .with_context(|| format!("cannot start {}", path.display()))
+        .with_context(|| format!("cannot start {}", path.display()))?;
+    if let Some(pid) = child.id()
+        && let Err(error) = std::fs::write(data.join(PID), pid.to_string())
+    {
+        log::warn!("soloist: cannot record the program's pid: {error}");
+    }
+    Ok(child)
+}
+
+/// The file in the data folder that names the program this app started last.
+const PID: &str = "sonora.pid";
+
+/// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the
+/// program refuses to start beside it, so nothing would play. The caller holds `RUNNING`, so a
+/// program still alive under the recorded pid is nobody's.
+// shortcut: a pid another `soloist` took since the crash is ended too, add a start-time check if
+// that is ever seen.
+fn reap(data: &Path, program: &Path) {
+    let pid = std::fs::read_to_string(data.join(PID))
+        .ok()
+        .and_then(|pid| pid.trim().parse::<u32>().ok());
+    let name = program.file_name().and_then(OsStr::to_str);
+    if let (Some(pid), Some(name)) = (pid, name)
+        && ended(pid, name)
+    {
+        log::info!("soloist: ended a program an earlier run left behind (pid {pid})");
+    }
+    std::fs::remove_file(data.join(PID)).ok();
+}
+
+/// Kills process `pid` when it runs the program `name`, and says whether it did. The name check
+/// keeps a pid that another program took over safe.
+#[cfg(windows)]
+fn ended(pid: u32, name: &str) -> bool {
+    binary::command(Path::new("taskkill"))
+        .args([
+            "/F",
+            "/PID",
+            &pid.to_string(),
+            "/FI",
+            &format!("IMAGENAME eq {name}"),
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[cfg(unix)]
+fn ended(pid: u32, name: &str) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    let named = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .ends_with(name)
+        });
+    // SAFETY: `kill` only sends a signal, and the pid was just checked to run the program.
+    named && unsafe { libc::kill(pid, libc::SIGKILL) } == 0
 }
 
 /// Has the program told to stop when the thread that starts it ends, which is the engine's own
