@@ -20,7 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Song titles in track lists sit in the middle of their rows.
 - The Releases filter labels on artist pages sit in the middle of their buttons.
 - TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
-- Space pauses and resumes right after you play something from the search page, instead of typing a space into the search field.
+- Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
 - Escape closes the search suggestions and leaves the search field in one press.
 
 ## [0.50.2] - 2026-11-18
