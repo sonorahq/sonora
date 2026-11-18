@@ -103,7 +103,6 @@ settings-startup = Açılışta göster
 settings-startup-detail = Sonora'nın açılışta gösterdiği ekran
 settings-entries = Kenar çubuğu girdileri
 settings-entries-detail = Kenar çubuğunda listelenen bölümler
-settings-entries-pick = Girdileri seç
 settings-language = Dil
 settings-language-detail = Sonora'nın arayüz genelinde kullandığı dil
 settings-language-system = Sistem

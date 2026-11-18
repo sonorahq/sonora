@@ -57,7 +57,6 @@ nav-history = Recents
 nav-home = Home
 nav-search = Search
 nav-library = Your Library
-sidebar-library = Library
 nav-settings = Settings
 account-manage = Manage accounts
 nav-songs = Songs

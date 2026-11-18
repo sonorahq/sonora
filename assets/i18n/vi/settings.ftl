@@ -146,7 +146,6 @@ settings-startup = Mở với
 settings-startup-detail = Màn hình Sonora mở khi khởi động
 settings-entries = Mục thanh bên
 settings-entries-detail = Các mục hiển thị trong thanh bên
-settings-entries-pick = Chọn mục
 settings-language = Ngôn ngữ
 settings-language-detail = Ngôn ngữ Sonora dùng trong toàn bộ giao diện
 settings-language-system = Hệ thống

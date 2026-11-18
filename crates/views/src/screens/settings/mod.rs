@@ -258,6 +258,9 @@ pub struct SettingsView {
     /// Where a lyrics source dragged over the priority list would land, as a gap between the
     /// enabled sources. `None` while the drop would leave the order as it is.
     lyrics_drop_gap: Option<usize>,
+    /// Where a sidebar row dragged over the entries list would land, as a gap between the
+    /// movable rows. `None` while the drop would leave the order as it is.
+    nav_drop_gap: Option<usize>,
     scrollbar: Entity<Scrollbar>,
     /// The page that opened a drill-in and where its tab was scrolled, so the way back to that
     /// page or to the drill-in's parent lands there again.
@@ -476,6 +479,7 @@ impl SettingsView {
             query: String::new(),
             reveal: None,
             lyrics_drop_gap: None,
+            nav_drop_gap: None,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             drilled_from: None,
             layout_revision: 0,
@@ -1483,6 +1487,7 @@ impl Render for SettingsView {
         }
         if !cx.has_active_drag() {
             self.lyrics_drop_gap = None;
+            self.nav_drop_gap = None;
         }
         self.load_fonts(cx);
 

@@ -57,7 +57,6 @@ nav-history = Gần đây
 nav-home = Trang chủ
 nav-search = Tìm kiếm
 nav-library = Thư viện
-sidebar-library = Thư viện
 nav-settings = Cài đặt
 account-manage = Quản lý tài khoản
 nav-songs = Bài hát

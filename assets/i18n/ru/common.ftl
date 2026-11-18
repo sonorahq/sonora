@@ -50,7 +50,6 @@ nav-history = История
 nav-home = Главная
 nav-search = Поиск
 nav-library = Моя медиатека
-sidebar-library = Медиатека
 nav-settings = Настройки
 account-manage = Управление аккаунтами
 nav-songs = Треки

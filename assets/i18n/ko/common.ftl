@@ -57,7 +57,6 @@ nav-history = 재생 기록
 nav-home = 홈
 nav-search = 검색
 nav-library = 내 라이브러리
-sidebar-library = 라이브러리
 nav-settings = 설정
 account-manage = 계정 관리
 nav-songs = 곡

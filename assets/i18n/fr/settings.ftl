@@ -104,7 +104,6 @@ settings-startup = Afficher au démarrage
 settings-startup-detail = L'écran sur lequel Sonora s'ouvre
 settings-entries = Entrées de la barre latérale
 settings-entries-detail = Les sections affichées dans la barre latérale
-settings-entries-pick = Choisir les entrées
 settings-language = Langue
 settings-language-detail = La langue utilisée par Sonora dans l'interface
 settings-language-system = Système

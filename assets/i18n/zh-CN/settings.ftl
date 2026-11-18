@@ -104,7 +104,6 @@ settings-startup = 欢迎页
 settings-startup-detail = Sonora 启动时打开的页面
 settings-entries = 侧边栏项
 settings-entries-detail = 侧边栏中显示的项
-settings-entries-pick = 选择项
 settings-language = 语言
 settings-language-detail = Sonora 在整个界面中使用的语言
 settings-language-system = 系统

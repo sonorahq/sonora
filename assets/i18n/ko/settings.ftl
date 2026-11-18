@@ -159,7 +159,6 @@ settings-provider-detail = Sonora 실행 시 처음 열리는 서비스 제공�
 settings-provider-last-used = 마지막으로 사용한 항목
 settings-entries = 사이드바 항목
 settings-entries-detail = 사이드바에 표시되는 섹션 목록
-settings-entries-pick = 항목 선택
 settings-language = 언어
 settings-language-detail = Sonora 인터페이스 전반에 사용되는 언어
 settings-language-system = 시스템 기본값

@@ -161,7 +161,6 @@ settings-provider-detail = The provider Sonora opens on launch
 settings-provider-last-used = Last used
 settings-entries = Sidebar entries
 settings-entries-detail = The sections listed in the sidebar
-settings-entries-pick = Choose entries
 settings-language = Language
 settings-language-detail = The language Sonora uses across the interface
 settings-language-system = System

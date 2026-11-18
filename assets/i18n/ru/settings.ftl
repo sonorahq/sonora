@@ -109,7 +109,6 @@ settings-startup = Показывать при запуске
 settings-startup-detail = Экран, который Sonora открывает при старте
 settings-entries = Разделы боковой панели
 settings-entries-detail = Разделы, которые видны в боковой панели
-settings-entries-pick = Выбрать разделы
 settings-language = Язык
 settings-language-detail = Язык интерфейса Sonora
 settings-language-system = Системный

@@ -221,7 +221,6 @@ nav-return-top = Başa dön
 # power
 wake-reason = Müzik çalıyor
 
-sidebar-library = Kitaplık
 account-manage = Hesapları yönet
 nav-trail = Gezinme geçmişi
 downloads-active = İndiriliyor

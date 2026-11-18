@@ -57,7 +57,6 @@ nav-history = Riwayat
 nav-home = Beranda
 nav-search = Cari
 nav-library = Koleksi Anda
-sidebar-library = Perpustakaan
 nav-settings = Pengaturan
 account-manage = Kelola akun
 nav-songs = Lagu

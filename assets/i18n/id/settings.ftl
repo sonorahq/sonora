@@ -157,7 +157,6 @@ settings-provider-detail = Penyedia yang dibuka Sonora saat diluncurkan
 settings-provider-last-used = Terakhir dipakai
 settings-entries = Menu bilah sisi
 settings-entries-detail = Bagian-bagian yang ditampilkan di bilah sisi
-settings-entries-pick = Pilih menu
 settings-language = Bahasa
 settings-language-detail = Bahasa yang digunakan di seluruh antarmuka Sonora
 settings-language-system = Bawaan sistem
