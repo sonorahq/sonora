@@ -1872,6 +1872,8 @@ impl Playback {
     fn preload_upcoming(&mut self, segue: bool, cx: &Context<Self>) {
         let queue = self.queue.read(cx);
         let next = match self.repeat {
+            // nothing plays after the track a sleep request ends on
+            _ if self.sleep == Some(Sleep::EndOfTrack) => None,
             Repeat::One => None,
             // the end of the queue wraps to its first song, which `advance` rewinds to
             Repeat::All if queue.ahead() == 0 => queue.past().next().or(queue.current()).cloned(),
@@ -2061,14 +2063,19 @@ impl Playback {
             return;
         }
         self.repeat = repeat;
-        // what was lined up behind the track was chosen under the old mode
+        self.unline();
+        self.settings
+            .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
+        cx.notify();
+    }
+
+    /// Takes back the track lined up behind the current one, for a change that alters what
+    /// follows it.
+    fn unline(&mut self) {
         self.preloaded = None;
         if let Some(engine) = self.active_engine() {
             engine.unline();
         }
-        self.settings
-            .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
-        cx.notify();
     }
 
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
@@ -2416,6 +2423,9 @@ impl Playback {
     /// Replaces the active sleep request, dropping its timer task when cancelled or superseded.
     /// A timer that runs out while music plays pauses it and says so on a toast.
     pub fn set_sleep(&mut self, sleep: Option<Sleep>, cx: &mut Context<Self>) {
+        if sleep == Some(Sleep::EndOfTrack) {
+            self.unline();
+        }
         self.sleep = sleep;
         self.sleep_task = match sleep {
             Some(Sleep::After(after)) => Some(cx.spawn(async move |this, cx| {
