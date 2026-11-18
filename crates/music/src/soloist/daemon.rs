@@ -116,6 +116,21 @@ fn alive(pid: u32, _program: &Path) -> bool {
     libc::pid_t::try_from(pid).is_ok_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
+/// Whether a command line is this program started on exactly this data folder. The folder is
+/// matched as the whole `--data-dir` value, since a sibling such as `soloist-2` or the cache
+/// folder would share its prefix.
+fn started_with(line: &str, program: &Path, data: &Path) -> bool {
+    let line = line.replace('"', "").to_lowercase();
+    let flag = format!("--data-dir {}", data.to_string_lossy().to_lowercase());
+    line.contains(&program.to_string_lossy().to_lowercase())
+        && line.match_indices(&flag).any(|(at, _)| {
+            line[at + flag.len()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+        })
+}
+
 /// What process `pid` was started with, whole, or `None` when it does not run. PowerShell is
 /// slow to start, so callers ask only about a pid that `alive` found.
 #[cfg(windows)]
@@ -140,11 +155,7 @@ fn ended(pid: u32, program: &Path, data: &Path) -> bool {
         return false;
     };
     let ours = alive(pid, program)
-        && command_line(pid).is_some_and(|line| {
-            let line = line.to_lowercase();
-            line.contains(&program.to_string_lossy().to_lowercase())
-                && line.contains(&data.to_string_lossy().to_lowercase())
-        });
+        && command_line(pid).is_some_and(|line| started_with(&line, program, data));
     ours && binary::command(Path::new("taskkill"))
         .args([
             "/F",
@@ -182,9 +193,7 @@ fn ended(pid: u32, program: &Path, data: &Path) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
-    let ours = command_line(pid).is_some_and(|line| {
-        line.contains(&*program.to_string_lossy()) && line.contains(&*data.to_string_lossy())
-    });
+    let ours = command_line(pid).is_some_and(|line| started_with(&line, program, data));
     // SAFETY: `kill` only sends a signal, and the pid was just checked to run our program.
     ours && unsafe { libc::kill(pid, libc::SIGKILL) } == 0
 }
