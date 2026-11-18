@@ -191,9 +191,9 @@ pub struct Attributes<'a> {
     pub kind: Leaf<'a>,
     #[serde(deserialize_with = "loose")]
     pub genre_names: Vec<Leaf<'a>>,
-    /// Present whenever Apple sent play parameters at all, which is what makes a song
-    /// streamable.
-    #[serde(deserialize_with = "loose")]
+    /// Present whenever Apple sent play parameters, which is what makes a song streamable. Apple
+    /// sends null for a song that does not stream, and that reads as absent.
+    #[serde(deserialize_with = "nullable")]
     pub play_params: Option<PlayParams<'a>>,
     #[serde(deserialize_with = "loose")]
     pub artwork: Artwork<'a>,
@@ -359,6 +359,9 @@ struct Seen<'a>(PhantomData<Leaf<'a>>);
 
 /// Reads one element or member through [`Loose`].
 struct Seed<T>(PhantomData<T>);
+
+/// The visitor behind [`nullable`].
+struct Nullable<T>(PhantomData<T>);
 
 /// Reads the library songs of one listing in order and keeps their ids apart. Two library copies
 /// of one catalog song would both take the catalog id, so every copy after the first plays through
@@ -553,6 +556,26 @@ impl<'de, T: Loose<'de>> Visitor<'de> for Loosely<T> {
 
     fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<T, A::Error> {
         T::array(seq)
+    }
+}
+
+impl<'de, T: Loose<'de>> Visitor<'de> for Nullable<T> {
+    type Value = Option<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_none<E>(self) -> Result<Option<T>, E> {
+        Ok(None)
+    }
+
+    fn visit_unit<E>(self) -> Result<Option<T>, E> {
+        Ok(None)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Option<T>, D::Error> {
+        T::loose(deserializer).map(Some)
     }
 }
 
@@ -860,9 +883,10 @@ pub fn library_song(value: &Resource, root: &str) -> Option<Track> {
     // and the album's would group songs by album, so the song goes undated. The library listing
     // asks Apple for its songs newest first, which `Capabilities::song_arrival` says, so they
     // still sort by when they were added.
-    let mut track = match found {
-        Some(found) => {
-            let mut track = song_as(found, id, root)?;
+    // A catalog row sent with nothing but its id cannot build a track, so the library row does.
+    let built = found.and_then(|found| Some((found, song_as(found, id.clone(), root)?)));
+    let mut track = match built {
+        Some((found, mut track)) => {
             if let Some(own) = attributes {
                 if let Some(name) = text(&own.name) {
                     track.name = name;
@@ -1322,6 +1346,13 @@ fn whole<'a, T: Loose<'a>>(text: &'a str) -> Option<T> {
 /// Reads a field through [`Loose`], for `deserialize_with`.
 fn loose<'de, D: Deserializer<'de>, T: Loose<'de>>(deserializer: D) -> Result<T, D::Error> {
     T::loose(deserializer)
+}
+
+/// Reads a field like [`loose`] does, except that null reads as nothing.
+fn nullable<'de, D: Deserializer<'de>, T: Loose<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    deserializer.deserialize_option(Nullable(PhantomData))
 }
 
 /// An artwork template with its placeholders filled in one pass: the sides with `width` and

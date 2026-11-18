@@ -1707,6 +1707,9 @@ impl MusicApi for AppleClient {
             MediaKind::Playlist => bail!("a playlist joins the library through its own call"),
         };
         match present {
+            true if Self::is_mine(id) => {
+                bail!("apple music cannot add a removed library copy {id} back")
+            }
             true => {
                 let key = format!("ids[{kind}]");
                 self.post("/me/library", &[(key.as_str(), id)], None)
