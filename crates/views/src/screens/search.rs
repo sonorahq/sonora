@@ -107,6 +107,10 @@ pub(crate) struct SearchView {
     /// Whether a press that started on the panel is still down. The panel stays up until it
     /// lets go, so the click lands even when the press took the focus from the field.
     pressing: bool,
+    /// Whether the panel stays up although the field let go of the keyboard, after play or pause
+    /// on one of its covers handed the keyboard to the page. Escape, a press outside, choosing a
+    /// row or a full search put it away.
+    held_open: bool,
     /// Whether `search_for` filled the field, so the focus that comes with opening the page
     /// leaves the panel put away.
     handed: bool,
@@ -176,6 +180,8 @@ impl SearchView {
         .detach();
         let field = input.read(cx).focus_handle(cx);
         cx.on_focus(&field, window, |this, _, cx| {
+            // The field owns the panel again, so a hold from a cover's play button ends here.
+            this.held_open = false;
             this.dismissed = std::mem::take(&mut this.hush);
             this.pick = None;
             cx.notify();
@@ -220,6 +226,7 @@ impl SearchView {
             dismissed: false,
             hush: false,
             pressing: false,
+            held_open: false,
             handed: false,
             pick: None,
             picked: None,
@@ -310,11 +317,11 @@ impl SearchView {
         offers
     }
 
-    /// Whether the panel shows: the field has the keyboard, or a press on the panel is still
-    /// down, nothing put the panel away, and it has rows or is still waiting on the first
-    /// suggestions.
+    /// Whether the panel shows: the field has the keyboard, a press on the panel is still down
+    /// or a cover's play button held the panel up, nothing put the panel away, and it has rows
+    /// or is still waiting on the first suggestions.
     fn panel_open(&self, window: &Window, cx: &App) -> bool {
-        if self.dismissed || !(self.typing(window, cx) || self.pressing) {
+        if self.dismissed || !(self.typing(window, cx) || self.pressing || self.held_open) {
             return false;
         }
         let waiting = !self.typed.trim().is_empty() && self.suggestions.read(cx).is_loading();
@@ -342,25 +349,53 @@ impl SearchView {
         self.choose(kept, cx);
     }
 
-    /// Moves the keyboard from the field to the page after a press started playback, so Space
-    /// and the other playback keys reach the player instead of typing into the field. A click in
-    /// the field or Ctrl+L brings the keyboard back.
+    /// Moves the keyboard to the page after a press started playback, so Space and the other
+    /// playback keys reach the player instead of typing into the field. The press may have
+    /// left the keyboard nowhere, as it does on Windows, so the page takes it then too. A click
+    /// in the field or Ctrl+L brings the keyboard back.
     fn leave_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.typing(window, cx) {
+        if self.typing(window, cx) || !self.focus.contains_focused(window, cx) {
             window.focus(&self.focus, cx);
         }
     }
 
-    /// Ends a press on the panel. A click it made has landed by now, and the panel goes on
-    /// showing only while the field still has the keyboard.
+    /// Files a hit played from its cover in the search history. A recent row played in the
+    /// panel is already there and keeps its place, so the rows do not move under the pointer.
+    fn file(&self, hit: &Hit, window: &Window, cx: &mut App) {
+        if self.panel_open(window, cx) && self.typed.trim().is_empty() {
+            return;
+        }
+        hit.remember(cx);
+    }
+
+    /// After play or pause on a cover: the panel, when it shows, stays up while the keyboard
+    /// moves to the page.
+    fn keep_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.held_open |= self.panel_open(window, cx);
+        self.leave_field(window, cx);
+        cx.notify();
+    }
+
+    /// Ends a press on the panel once the click it made has landed. The release reaches this
+    /// in the capture phase, before any click handler, so the flag drops once this event's
+    /// handlers have all run and a cover's play button still sees the panel up. Afterwards the panel shows only while the
+    /// field has the keyboard or that button held it up.
     fn let_go(&mut self, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.pressing) {
-            cx.notify();
+        if self.pressing {
+            let this = cx.weak_entity();
+            cx.defer(move |cx| {
+                this.update(cx, |this, cx| {
+                    this.pressing = false;
+                    cx.notify();
+                })
+                .ok();
+            });
         }
     }
 
     fn close_panel(&mut self, cx: &mut Context<Self>) {
         self.dismissed = true;
+        self.held_open = false;
         self.pick = None;
         cx.notify();
     }
@@ -403,7 +438,8 @@ impl SearchView {
     }
 
     /// Acts on a panel row. A hit, from the history or suggested, opens the way it does in the
-    /// results and moves to the top of the history.
+    /// results and moves to the top of the history. The keyboard stays where it is, so a row
+    /// taken with Enter from the field leaves the field ready for the next search.
     fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
         match offer {
             Offer::Link(query) => {
@@ -420,24 +456,32 @@ impl SearchView {
         }
     }
 
+    /// Drops `hit` from the search history. A panel held up with its last row gone lets go,
+    /// so it does not come back by itself when the history fills again.
     fn forget(&mut self, hit: &Hit, cx: &mut Context<Self>) {
         hit.forget(cx);
         self.pick = None;
+        if self.offers(cx).is_empty() {
+            self.held_open = false;
+        }
         cx.notify();
     }
 
-    /// Escape on the page: it puts the panel away first and lets go of the field second. An
+    /// Escape in the field: it puts the panel away and lets go of the field in one press. An
     /// escape with neither goes on to the workspace.
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        if self.panel_open(window, cx) {
+        let open = self.panel_open(window, cx);
+        let typing = self.typing(window, cx);
+        if !open && !typing {
+            cx.propagate();
+            return;
+        }
+        if open {
             self.close_panel(cx);
-            return;
         }
-        if self.typing(window, cx) {
+        if typing {
             window.focus(&self.focus, cx);
-            return;
         }
-        cx.propagate();
     }
 
     fn offer_row(
@@ -696,6 +740,10 @@ impl SearchView {
     }
 
     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+        // The results under a held panel stay put until it goes.
+        if self.panel_open(window, cx) {
+            return;
+        }
         let stacked = stacked(window, cx);
         let Some((column, _)) = self.cursor else {
             return;
@@ -710,6 +758,10 @@ impl SearchView {
     }
 
     fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+        // The results under a held panel stay put until it goes.
+        if self.panel_open(window, cx) {
+            return;
+        }
         let stacked = stacked(window, cx);
         let Some((column, _)) = self.cursor else {
             return;
@@ -724,6 +776,19 @@ impl SearchView {
     }
 
     fn activate_hit(&mut self, _: &Activate, window: &mut Window, cx: &mut Context<Self>) {
+        // A panel held up over the page takes Enter for the row the arrow keys are on, as the
+        // field does.
+        let picked = self
+            .pick
+            .filter(|_| self.panel_open(window, cx))
+            .and_then(|at| self.offers(cx).into_iter().nth(at));
+        if let Some(offer) = picked {
+            self.take(offer, cx);
+            return;
+        }
+        if self.panel_open(window, cx) {
+            return;
+        }
         if self.on_best {
             if let Some(best) = self.search.read(cx).best().cloned() {
                 self.open_hit(best, cx);
@@ -767,7 +832,13 @@ impl SearchView {
         }
     }
 
+    /// Escape on the results: it puts a panel still showing away first, then lets go of the
+    /// result the arrow keys are on.
     fn deselect_hit(&mut self, _: &Deselect, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panel_open(window, cx) {
+            self.close_panel(cx);
+            return;
+        }
         let on_best = std::mem::take(&mut self.on_best);
         if self.cursor.take().is_none() && !on_best {
             return;
@@ -888,10 +959,9 @@ impl SearchView {
             })
     }
 
-    /// The play button of a hit. Playing from it files the hit in the search history and puts
-    /// the panel away, as choosing the row would, and hands the keyboard to the page so Space
-    /// pauses what it started. The button stops the click before the panel's own `on_click`
-    /// sees it, so the close happens here.
+    /// The play button of a hit. Playing from it files the hit in the search history and hands
+    /// the keyboard to the page, so Space pauses what it started. A panel it was pressed in stays
+    /// up, so play and pause can be pressed again there; choosing the row is what puts it away.
     fn transport(&self, hit: &Hit, me: &WeakEntity<Self>, cx: &App) -> Option<(bool, Play)> {
         let me = me.clone();
         let chosen = hit.clone();
@@ -901,14 +971,13 @@ impl SearchView {
                 let playing = current && self.playback_status.1 == Some(true);
                 let track = track.clone();
                 let play: Play = Box::new(move |_, window, cx| {
-                    chosen.remember(cx);
                     me.update(cx, |this, cx| {
+                        this.file(&chosen, window, cx);
                         this.playback.update(cx, |playback, cx| match current {
                             true => playback.toggle_play(cx),
                             false => playback.play_radio(&track, cx),
                         });
-                        this.close_panel(cx);
-                        this.leave_field(window, cx);
+                        this.keep_panel(window, cx);
                     })
                     .ok();
                 });
@@ -924,12 +993,11 @@ impl SearchView {
         };
         let playing = self.playback.read(cx).engaged(&origin, cx);
         let play: Play = Box::new(move |_, window, cx| {
-            chosen.remember(cx);
             me.update(cx, |this, cx| {
+                this.file(&chosen, window, cx);
                 this.playback
                     .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
-                this.close_panel(cx);
-                this.leave_field(window, cx);
+                this.keep_panel(window, cx);
             })
             .ok();
         });
