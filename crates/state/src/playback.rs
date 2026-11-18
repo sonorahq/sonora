@@ -3245,6 +3245,7 @@ impl Playback {
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
+            | BackendEvent::Blocked
                 if self.resume_ready =>
             {
                 self.resume_ready = false;
@@ -3398,6 +3399,7 @@ impl Playback {
                 self.gate(cx);
                 cx.emit(PlaybackEvent::EndedPlayback);
             }
+            BackendEvent::Blocked => self.network_blocked(cx),
         }
         cx.notify();
     }
@@ -3495,6 +3497,21 @@ impl Playback {
         }
         self.blocked_until = Some(Instant::now() + wait);
         self.load_from(&track, at, Start::Retry, cx);
+    }
+
+    /// Holds the track the provider would not load because it refuses the network the app
+    /// connects from. Every other track would fail the same way, so the queue stays put, and
+    /// pressing play tries again once the listener has changed networks.
+    fn network_blocked(&mut self, cx: &mut Context<Self>) {
+        let provider = self
+            .session
+            .read(cx)
+            .provider_name()
+            .unwrap_or("this provider")
+            .to_owned();
+        log::warn!("playback: {provider} refuses requests from this network, waiting for play");
+        Toasts::about(Outcome::Failed, "toast-network-blocked", provider, cx);
+        self.hold(self.position, cx);
     }
 
     /// Turns down a track that has to be streamed while the network is gone. Whatever plays

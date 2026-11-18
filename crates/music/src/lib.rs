@@ -715,6 +715,9 @@ pub enum PlaybackEvent {
     },
     Refused,
     Gated,
+    /// The provider refuses the network the app connects from, so no track will load until the
+    /// network changes.
+    Blocked,
     /// The audio output was lost or changed, so the engine is gone. `heard` is the track being
     /// heard and how far into it the output had played, when the engine knew. A restart resumes
     /// there rather than where a clock that kept running during the switch would say.
@@ -1019,6 +1022,9 @@ pub enum SignInProblem {
     /// The server did not accept the username and password typed for a new sign-in.
     Password,
     Network,
+    /// The provider refuses the network the app connects from, as Google does for some VPN
+    /// servers. Another network gets through.
+    Blocked,
     Cancelled,
     Refused,
 }
@@ -1048,6 +1054,7 @@ impl std::fmt::Display for SignInFailure {
             SignInProblem::Credentials => "the stored credentials are no longer valid",
             SignInProblem::Password => "the server did not accept that username and password",
             SignInProblem::Network => "the provider could not be reached",
+            SignInProblem::Blocked => "the provider refuses requests from this network",
             SignInProblem::Cancelled => "authorization was cancelled in the browser",
             SignInProblem::Refused => "Spotify refused the session",
         };

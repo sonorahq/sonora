@@ -71,10 +71,10 @@ pub(crate) fn unreachable(id: &str, cx: &App) -> bool {
 /// The page-filling state for a screen that cannot load, with a button that tries again.
 /// `reason` is what a load came back with, or `None` when the app already knows the network is
 /// gone and the screen never tried. A reason that reads as a lost connection becomes the same
-/// No connection state, and a rate limit becomes a Service is busy state. Anything else shows
-/// `label` over a plain sentence, because the reason is an error chain meant for the log and
-/// never for the user. In offline mode every screen says so instead, with a button that goes
-/// online.
+/// No connection state, a rate limit becomes a Service is busy state, and a provider refusing
+/// the network says a VPN may be the cause. Anything else shows `label` over a plain sentence,
+/// because the reason is an error chain meant for the log and never for the user. In offline
+/// mode every screen says so instead, with a button that goes online.
 pub(crate) fn lost(
     id: impl Into<ElementId>,
     label: SharedString,
@@ -93,6 +93,9 @@ pub(crate) fn lost(
         Some(reason) if music::trouble::busy(reason) => Vacancy::new(t!("trouble-busy"))
             .detail(t!("trouble-busy-detail"))
             .icon("icons/gauge.svg"),
+        Some(reason) if music::trouble::blocked(reason) => Vacancy::new(t!("trouble-blocked"))
+            .detail(t!("trouble-blocked-detail"))
+            .icon("icons/circle-alert.svg"),
         Some(_) => Vacancy::new(label)
             .detail(t!("trouble-failed-detail"))
             .icon("icons/circle-alert.svg"),
@@ -167,6 +170,7 @@ fn reason(problem: SignInProblem) -> &'static str {
         SignInProblem::Credentials => "login-problem-credentials",
         SignInProblem::Password => "login-problem-password",
         SignInProblem::Network => "login-problem-network",
+        SignInProblem::Blocked => "login-problem-blocked",
         SignInProblem::Cancelled => "login-problem-cancelled",
         SignInProblem::Refused => "login-problem-refused",
     }

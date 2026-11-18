@@ -43,6 +43,10 @@ const BUSY: &[&str] = &[
     "service unavailable",
 ];
 
+/// The fragment a failure carries when the provider refuses the network itself. Both
+/// `ytmusic::NetworkBlocked` and `SignInProblem::Blocked` say it.
+const BLOCKED: &str = "refuses requests from this network";
+
 /// Whether a failure reads as a lost connection rather than something the provider refused.
 /// Every provider flattens its errors into one line before a screen sees them, so this matches
 /// the reason's text and never inspects the error chain.
@@ -56,4 +60,10 @@ pub fn offline(reason: &str) -> bool {
 pub fn busy(reason: &str) -> bool {
     let reason = reason.to_lowercase();
     BUSY.iter().any(|fragment| reason.contains(fragment))
+}
+
+/// Whether a failure reads as the provider refusing the network the app connects from, as
+/// Google does for some VPN servers. Like `offline`, it matches the flattened reason's text.
+pub fn blocked(reason: &str) -> bool {
+    reason.to_lowercase().contains(BLOCKED)
 }

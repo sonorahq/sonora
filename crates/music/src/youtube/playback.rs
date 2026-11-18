@@ -167,6 +167,10 @@ impl Fetch for YouTube {
         error.downcast_ref::<ytmusic::SignInRequired>().is_some()
     }
 
+    fn blocked(&self, error: &anyhow::Error) -> bool {
+        error.is::<ytmusic::NetworkBlocked>()
+    }
+
     async fn downloaded(&self, loaded: &Loaded) {
         loaded.stream.finished().await;
     }
