@@ -19,6 +19,15 @@ const GRACE: Duration = Duration::from_secs(2);
 /// What marks a line the program only prints with all its logs on.
 const INTERNAL: &str = " [f:";
 
+/// The file in the data folder that names the program this app started last.
+const PID: &str = "sonora.pid";
+
+/// How long a program that was just killed gets to let go of the data folder.
+const RELEASE: Duration = Duration::from_secs(2);
+
+/// How often to look whether a killed program has let go of the data folder.
+const RELEASE_POLL: Duration = Duration::from_millis(100);
+
 /// Held for as long as a program runs on the data folder. The program refuses to start while
 /// another one has the folder, and an engine that is being replaced lets go of it a moment after
 /// its successor asks.
@@ -58,18 +67,10 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
     Ok(child)
 }
 
-/// The file in the data folder that names the program this app started last.
-const PID: &str = "sonora.pid";
-/// How long a program that was just killed gets to let go of the data folder, and how often to
-/// look.
-const RELEASE: Duration = Duration::from_secs(2);
-const RELEASE_POLL: Duration = Duration::from_millis(100);
-
 /// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the
 /// program refuses to start beside it, so nothing would play. The caller holds `RUNNING`, so a
-/// program still alive under the recorded pid is nobody's.
-// shortcut: a pid another `soloist` on the same program and data folder took since the crash is
-// ended too, which only a second Sonora could cause.
+/// program still alive under the recorded pid is nobody's, unless a second Sonora started it on
+/// the same folder.
 fn reap(data: &Path, program: &Path) {
     let pid = std::fs::read_to_string(data.join(PID))
         .ok()
@@ -188,7 +189,7 @@ fn command_line(pid: libc::pid_t) -> Option<String> {
 #[cfg(all(unix, not(target_os = "linux")))]
 fn command_line(pid: libc::pid_t) -> Option<String> {
     let output = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
+        .args(["-ww", "-p", &pid.to_string(), "-o", "command="])
         .output()
         .ok()?;
     Some(String::from_utf8_lossy(&output.stdout).into_owned())

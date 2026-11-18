@@ -1876,7 +1876,9 @@ impl Playback {
             _ if self.sleep == Some(Sleep::EndOfTrack) => None,
             Repeat::One => None,
             // the end of the queue wraps to its first song, which `advance` rewinds to
-            Repeat::All if queue.ahead() == 0 => queue.past().next().or(queue.current()).cloned(),
+            Repeat::All if queue.ahead() == 0 => {
+                queue.past().next().or_else(|| queue.current()).cloned()
+            }
             _ => queue.upcoming().next().cloned(),
         };
         let Some(next) = next else {
