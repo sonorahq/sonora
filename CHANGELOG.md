@@ -30,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
 - Press Ctrl+L (⌘L on macOS) to jump to the search field from anywhere, even while typing in another field or from the fullscreen player.
 
+### Changed
+
+- The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
+
 ### Fixed
 
 - The playback buttons in the Windows taskbar preview are sharper, with bolder skip icons that follow the display scale.
