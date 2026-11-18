@@ -104,6 +104,9 @@ pub(crate) struct SearchView {
     /// Keeps the next focus of the field from reopening the panel, for a focus the page moves
     /// there itself.
     hush: bool,
+    /// Whether a press that started on the panel is still down. The panel stays up until it
+    /// lets go, so the click lands even when the press took the focus from the field.
+    pressing: bool,
     /// Whether `search_for` filled the field, so the focus that comes with opening the page
     /// leaves the panel put away.
     handed: bool,
@@ -216,6 +219,7 @@ impl SearchView {
             typed: String::new(),
             dismissed: false,
             hush: false,
+            pressing: false,
             handed: false,
             pick: None,
             picked: None,
@@ -306,10 +310,11 @@ impl SearchView {
         offers
     }
 
-    /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
-    /// has rows or is still waiting on the first suggestions.
+    /// Whether the panel shows: the field has the keyboard, or a press on the panel is still
+    /// down, nothing put the panel away, and it has rows or is still waiting on the first
+    /// suggestions.
     fn panel_open(&self, window: &Window, cx: &App) -> bool {
-        if self.dismissed || !self.typing(window, cx) {
+        if self.dismissed || !(self.typing(window, cx) || self.pressing) {
             return false;
         }
         let waiting = !self.typed.trim().is_empty() && self.suggestions.read(cx).is_loading();
@@ -335,6 +340,14 @@ impl SearchView {
             .and_then(|key| offers.iter().position(|offer| offer.key() == *key));
         let kept = found.or_else(|| offers.len().checked_sub(1).map(|last| at.min(last)));
         self.choose(kept, cx);
+    }
+
+    /// Ends a press on the panel. A click it made has landed by now, and the panel goes on
+    /// showing only while the field still has the keyboard.
+    fn let_go(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.pressing) {
+            cx.notify();
+        }
     }
 
     fn close_panel(&mut self, cx: &mut Context<Self>) {
@@ -517,7 +530,16 @@ impl SearchView {
             .flex_col()
             .gap_px()
             // A hit opens and files itself through its own card, so the panel only goes away
-            // once a click inside it has landed.
+            // once a click inside it has landed. The press holds the panel up until then, as
+            // it can take the focus from the field first.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, _| {
+                this.pressing |= event.button == MouseButton::Left;
+            }))
+            .capture_any_mouse_up(cx.listener(|this, _, _, cx| this.let_go(cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.let_go(cx)),
+            )
             .on_click(cx.listener(|this, _, _, cx| this.close_panel(cx)))
             .children(waiting.into_iter().flatten())
             .children(offers.iter().enumerate().map(|(at, offer)| {
@@ -857,8 +879,9 @@ impl SearchView {
             })
     }
 
-    /// The play button of a hit. Playing from it files the hit in the search history, as opening
-    /// it would.
+    /// The play button of a hit. Playing from it files the hit in the search history and puts
+    /// the panel away, as choosing the row would. The button stops the click before the panel's
+    /// own `on_click` sees it, so the close happens here.
     fn transport(&self, hit: &Hit, me: &WeakEntity<Self>, cx: &App) -> Option<(bool, Play)> {
         let me = me.clone();
         let chosen = hit.clone();
@@ -874,6 +897,7 @@ impl SearchView {
                             true => playback.toggle_play(cx),
                             false => playback.play_radio(&track, cx),
                         });
+                        this.close_panel(cx);
                     })
                     .ok();
                 });
@@ -893,6 +917,7 @@ impl SearchView {
             me.update(cx, |this, cx| {
                 this.playback
                     .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+                this.close_panel(cx);
             })
             .ok();
         });
