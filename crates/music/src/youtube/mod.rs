@@ -23,8 +23,8 @@ use crate::youtube::playback::Factory;
 
 use crate::{
     AccountChoices, AccountKind, Arrival, Capabilities, InputSource, MusicProvider,
-    PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInPrompt, UserProfile,
-    WebSignIn, credentials,
+    PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInFailure, SignInProblem,
+    SignInPrompt, UserProfile, WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
@@ -250,6 +250,9 @@ impl YouTubeProvider {
                 ))
             }
             Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
+            Err(error) if error.is::<ytmusic::NetworkBlocked>() => {
+                Err(error.context(SignInFailure(SignInProblem::Blocked)))
+            }
             Err(error) => {
                 log::warn!("youtube: the cached cookies are no longer usable: {error:#}");
                 Ok(None)
