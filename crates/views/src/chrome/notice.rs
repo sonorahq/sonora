@@ -114,19 +114,24 @@ impl AppNotice {
         let installable = updates.installable();
         let (version, page) = match &state {
             UpdateState::Quiet => return None,
-            UpdateState::Offered(release) => (release.version.clone(), release.page.clone()),
+            UpdateState::Offered(release) | UpdateState::Ready(release) => {
+                (release.version.clone(), release.page.clone())
+            }
             _ => (String::new(), String::new()),
         };
         let working = matches!(state, UpdateState::Fetching);
         let failed = matches!(state, UpdateState::Failed);
+        let ready = matches!(state, UpdateState::Ready(_));
 
-        let title = match failed {
-            true => t!("update-failed"),
-            false => t!("update-available", version = version.as_str()),
+        let title = match (failed, ready) {
+            (true, _) => t!("update-failed"),
+            (false, true) => t!("update-ready", version = version.as_str()),
+            (false, false) => t!("update-available", version = version.as_str()),
         };
-        let detail = (!failed).then(|| match installable {
-            true => t!("update-detail", running = state::version()),
-            false => t!("update-detail-notes", running = state::version()),
+        let detail = (!failed).then(|| match (ready, installable) {
+            (true, _) => t!("update-ready-detail", running = state::version()),
+            (false, true) => t!("update-detail", running = state::version()),
+            (false, false) => t!("update-detail-notes", running = state::version()),
         });
 
         let close = self.updates.clone();
@@ -135,8 +140,17 @@ impl AppNotice {
         let settings = self.settings.clone();
         let notes = (!page.is_empty())
             .then(|| link(SharedString::from("update-notes"), t!("update-notes"), page));
-        let actions = (installable && !failed)
-            .then(|| {
+        let actions = match (ready, installable && !failed) {
+            (true, _) => Some(
+                Button::new("update-restart")
+                    .primary()
+                    .small()
+                    .label(t!("update-restart"))
+                    .on_click(move |_, _, cx| {
+                        install.update(cx, |updates, cx| updates.restart(cx));
+                    }),
+            ),
+            (false, true) => Some(
                 Button::new("update-now")
                     .primary()
                     .small()
@@ -147,10 +161,12 @@ impl AppNotice {
                     })
                     .on_click(move |_, _, cx| {
                         install.update(cx, |updates, cx| updates.install(cx));
-                    })
-            })
-            .into_iter()
-            .collect();
+                    }),
+            ),
+            (false, false) => None,
+        }
+        .into_iter()
+        .collect();
 
         Some(Card {
             id: "update",

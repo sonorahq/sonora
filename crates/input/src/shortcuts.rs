@@ -204,7 +204,7 @@ const SHORTCUTS: &[Shortcut] = &[
         section: Section::Navigation,
         scope: Scope::Anywhere,
         bind: bind::<NavigateBack>,
-        defaults: &["alt-left"],
+        defaults: &["alt-left", "back"],
         mac: &["cmd-["],
     },
     Shortcut {
@@ -213,7 +213,7 @@ const SHORTCUTS: &[Shortcut] = &[
         section: Section::Navigation,
         scope: Scope::Anywhere,
         bind: bind::<NavigateForward>,
-        defaults: &["alt-right"],
+        defaults: &["alt-right", "forward"],
         mac: &["cmd-]"],
     },
     Shortcut {
