@@ -82,6 +82,10 @@ pub struct Descriptors {
     pub moods: Vec<String>,
     /// Beats per minute, where the provider analysed the audio.
     pub bpm: Option<f32>,
+    /// Positivity from 0 to 1, where the provider analysed the audio.
+    pub valence: Option<f32>,
+    /// Intensity from 0 to 1, where the provider analysed the audio.
+    pub energy: Option<f32>,
 }
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a

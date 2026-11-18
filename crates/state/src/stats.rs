@@ -7,18 +7,20 @@ use futures::StreamExt as _;
 use gpui::{App, Context, Entity, Task};
 use music::scrobble::{self, Service};
 use music::{
-    Album, Board, CoverSize, Descriptors, ListeningStats, Milestone, MusicApi, Overview,
-    SavedArtist, StatsPeriod, Track, album_key, album_of, compare, credits, milestone_numbers,
-    tag_key,
+    Album, Board, CoverSize, Descriptors, HourMood, ListeningStats, Milestone, MusicApi, Overview,
+    SavedArtist, StatsPeriod, TimeSlice, Track, album_key, album_of, compare, credits, infer_mood,
+    mean_tempo, milestone_numbers, tag_key, tempo_bands,
 };
 use storage::Database;
 
 use crate::history::Store;
 use crate::{AppSettings, History, Io, Session, SessionEvent, join};
 
+type ScrobblerCache = HashMap<(&'static str, Option<(i64, i64)>), (Instant, ListeningStats)>;
+
 /// How many ranked artists, songs and albums of a scrobbler chart are matched to the catalogue up
 /// front. Further entries are matched when opened.
-const MATCHED: usize = 10;
+const MATCHED: usize = 12;
 /// How many recorded artists get a portrait, and how many are requested at once.
 const PORTRAITS: usize = 100;
 const PORTRAIT_BATCH: usize = 25;
@@ -200,6 +202,8 @@ pub struct Stats {
     matched_for: Option<String>,
     /// The latest answer for each window of a source, so that coming back to one is instant.
     windows: HashMap<(StatsSource, StatsPeriod), (Instant, ListeningStats)>,
+    /// Cached dated scrobbler stats, keyed by service id and date range.
+    scrobbler_windows: ScrobblerCache,
 }
 
 impl Stats {
@@ -216,6 +220,7 @@ impl Stats {
                 this.log = Log::default();
                 this.since = None;
                 this.windows.clear();
+                this.scrobbler_windows.clear();
                 this.matched.clear();
                 this.history_task = None;
                 this.refresh(cx);
@@ -259,6 +264,7 @@ impl Stats {
             matched: HashMap::new(),
             matched_for: None,
             windows: HashMap::new(),
+            scrobbler_windows: HashMap::new(),
         }
     }
 
@@ -390,7 +396,7 @@ impl Stats {
             cx.background_executor().timer(wait).await;
             this.update(cx, |this, cx| {
                 match scrobbled {
-                    true => this.refresh(cx),
+                    true => this.reload(cx),
                     false => this.data = this.aggregated(),
                 }
                 cx.notify();
@@ -410,16 +416,22 @@ impl Stats {
         }
     }
 
-    /// Reloads whatever the selected source shows.
+    /// Reloads whatever the selected source shows, bypassing any cached window.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.windows.remove(&(self.source, self.period));
+        if let StatsSource::Scrobbler(id) = self.source {
+            self.scrobbler_windows.remove(&(id, self.log.dates));
+        }
+        self.reload(cx);
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
         self.loaded = None;
         self.task = None;
         self.matching = None;
         self.opening = None;
         self.failed = false;
         self.loading = false;
-        self.data = ListeningStats::default();
         let client = self.session.read(cx).client();
         let ranks = client
             .as_ref()
@@ -428,9 +440,25 @@ impl Stats {
             self.source = StatsSource::Recorded;
         }
         match (self.source, client) {
-            (StatsSource::Provider, Some(client)) => self.load_provider(client, cx),
-            (StatsSource::Scrobbler(id), client) => self.load_scrobbler(id, client, cx),
-            _ => self.load_recorded(false, cx),
+            (StatsSource::Provider, Some(client)) => {
+                self.data = ListeningStats::default();
+                self.load_provider(client, cx);
+            }
+            (StatsSource::Scrobbler(id), client) => {
+                if let Some((at, cached)) = self.scrobbler_windows.get(&(id, self.log.dates))
+                    && at.elapsed() < FRESH
+                {
+                    let mut cached = cached.clone();
+                    cached.milestones = self.log.scrobbled_milestones.clone();
+                    self.finish(Ok(cached), "scrobbler rankings", cx);
+                    return;
+                }
+                self.load_scrobbler(id, client, cx);
+            }
+            _ => {
+                self.data = ListeningStats::default();
+                self.load_recorded(false, cx);
+            }
         }
         cx.notify();
     }
@@ -640,14 +668,23 @@ impl Stats {
                 }
                 if let (Ok(data), Some(client)) = (&result, client) {
                     let data = data.clone();
+                    let known_descriptors = this.log.descriptors.clone();
                     this.matching = Some(io.clone().load(
-                        async move { Ok(match_catalogue(data, client.as_ref(), known).await) },
-                        |this, result, cx| {
+                        async move {
+                            Ok(
+                                match_catalogue(data, client.as_ref(), known, known_descriptors)
+                                    .await,
+                            )
+                        },
+                        move |this, result, cx| {
                             this.matching = None;
                             match result {
-                                Ok((mut data, found)) => {
+                                Ok((mut data, found, new_descriptors)) => {
                                     this.matched.extend(found);
+                                    this.log.descriptors.extend(new_descriptors);
                                     data.milestones = this.log.scrobbled_milestones.clone();
+                                    this.scrobbler_windows
+                                        .insert((id, dates), (Instant::now(), data.clone()));
                                     this.data = data;
                                 }
                                 Err(error) => log::debug!("stats: cannot match chart: {error:#}"),
@@ -656,6 +693,10 @@ impl Stats {
                         },
                         cx,
                     ));
+                }
+                if let Ok(data) = &result {
+                    this.scrobbler_windows
+                        .insert((id, dates), (Instant::now(), data.clone()));
                 }
                 if let (Ok(data), None) = (&result, dates) {
                     this.windows.insert(
@@ -851,7 +892,12 @@ async fn match_catalogue(
     mut data: ListeningStats,
     client: &dyn MusicApi,
     known: HashMap<String, Option<Found>>,
-) -> (ListeningStats, HashMap<String, Option<Found>>) {
+    mut known_descriptors: HashMap<String, Descriptors>,
+) -> (
+    ListeningStats,
+    HashMap<String, Option<Found>>,
+    HashMap<String, Descriptors>,
+) {
     let top = |len: usize| len.min(MATCHED);
     let entries: Vec<Entry> = data.artists[..top(data.artists.len())]
         .iter()
@@ -908,7 +954,80 @@ async fn match_catalogue(
         }
     }
     enlarge_ranked(&mut data, client);
-    (data, fresh)
+    let missing_ids: Vec<String> = data
+        .tracks
+        .iter()
+        .filter_map(|row| row.item.id.as_ref())
+        .filter(|id| !known_descriptors.contains_key(*id))
+        .cloned()
+        .collect();
+    let fresh_descriptors = fetch_descriptors(client, missing_ids).await;
+    known_descriptors.extend(fresh_descriptors.clone());
+    apply_scrobbler_descriptors(&mut data, &known_descriptors);
+    (data, fresh, fresh_descriptors)
+}
+
+/// Fills moods, tags, tempo, collaboration share and fallback genres on a matched scrobbler
+/// chart, weighting each matched track by its play count.
+fn apply_scrobbler_descriptors(
+    data: &mut ListeningStats,
+    descriptors: &HashMap<String, Descriptors>,
+) {
+    let (mut genres, mut moods, mut tags) = (Board::default(), Board::default(), Board::default());
+    let mut tempos = Vec::new();
+    let (mut collab_plays, mut matched_plays) = (0usize, 0usize);
+    for row in &data.tracks {
+        let weight = row.count.unwrap_or(1).max(1);
+        if !row.item.artist_refs.is_empty() {
+            matched_plays += weight;
+            if row.item.artist_refs.len() > 1 {
+                collab_plays += weight;
+            }
+        }
+        let Some(id) = row.item.id.as_ref() else {
+            continue;
+        };
+        let Some(found) = descriptors.get(id) else {
+            continue;
+        };
+        if let Some(bpm) = found.bpm {
+            tempos.push((bpm, weight));
+        }
+        for (board, names) in [
+            (&mut genres, &found.genres),
+            (&mut moods, &found.moods),
+            (&mut tags, &found.tags),
+        ] {
+            let mut seen = HashSet::new();
+            for name in names {
+                if let Some(key) = tag_key(name).filter(|key| seen.insert(key.clone())) {
+                    board.add(key, weight, || name.trim().to_owned());
+                }
+            }
+        }
+    }
+    if data.genres.is_empty() {
+        data.genres = genres.ranked();
+    }
+    let (ranked_moods, ranked_tags) = match moods.is_empty() {
+        false => (moods.ranked(), tags.ranked()),
+        true => (tags.ranked(), Vec::new()),
+    };
+    if data.moods.is_empty() {
+        data.moods = ranked_moods;
+    }
+    if data.tags.is_empty() {
+        data.tags = ranked_tags;
+    }
+    if data.tempos.is_empty() {
+        data.tempos = tempo_bands(&tempos);
+    }
+    if data.overview.avg_bpm.is_none() {
+        data.overview.avg_bpm = mean_tempo(&tempos);
+    }
+    if data.overview.collab_share.is_none() && matched_plays > 0 {
+        data.overview.collab_share = Some((collab_plays * 100 / matched_plays) as u8);
+    }
 }
 
 /// Gives the ranked songs and albums large covers.
@@ -998,7 +1117,10 @@ fn aggregate(
     let none = Descriptors::default();
     let (mut time, mut times) = (0u64, Vec::new());
     let mut new_artists = HashSet::new();
-    let (mut plays, mut new_tracks) = (0, 0);
+    let (mut plays, mut new_tracks, mut collabs) = (0, 0, 0);
+    let mut tempos = Vec::new();
+    let mut play_samples = Vec::new();
+    let mut seen_in_window = HashSet::new();
     for track in tracks {
         let (Some(at), Some(id)) = (track.added_at, track.id.as_ref()) else {
             continue;
@@ -1007,7 +1129,10 @@ fn aggregate(
             continue;
         }
         plays += 1;
-        new_tracks += usize::from(first_play.tracks.get(id) == Some(&at));
+        let is_new = first_play.tracks.get(id) == Some(&at);
+        let is_replay = !seen_in_window.insert(id.clone());
+        new_tracks += usize::from(is_new);
+        collabs += usize::from(track.artist_refs.len() > 1);
         time += track.duration.as_secs();
         times.push(at);
         songs.add(id.clone(), 1, || track.clone());
@@ -1020,11 +1145,44 @@ fn aggregate(
             }
             artists.add(key, 1, || artist);
         }
-        let (own_genres, own_moods, own_tags) = descriptors
-            .get(id)
+        let descriptor = descriptors.get(id);
+        let bpm = descriptor
+            .and_then(|found| found.bpm)
+            .filter(|bpm| *bpm > 0.);
+        if let Some(bpm) = bpm {
+            tempos.push((bpm, 1));
+        }
+        let (valence, energy) = descriptor
+            .map(|found| {
+                let (inferred_v, inferred_e) = infer_mood(&found.moods, &found.tags);
+                (found.valence.or(inferred_v), found.energy.or(inferred_e))
+            })
+            .unwrap_or_else(|| infer_mood(&[], &track.tags));
+        let (own_genres, own_moods, own_tags) = descriptor
             .map_or((&track.tags, &none.moods, &none.tags), |found| {
                 (&found.genres, &found.moods, &found.tags)
             });
+        let mood_source = match own_moods.is_empty() {
+            false => own_moods,
+            true => own_tags,
+        };
+        let mut play_mood_keys = Vec::new();
+        for name in mood_source {
+            if let Some(key) = tag_key(name)
+                && !play_mood_keys.contains(&key)
+            {
+                play_mood_keys.push(key);
+            }
+        }
+        play_samples.push(PlaySample {
+            at,
+            valence,
+            energy,
+            bpm,
+            is_new,
+            is_replay,
+            mood_keys: play_mood_keys,
+        });
         for (board, names) in [
             (&mut genres, own_genres),
             (&mut moods, own_moods),
@@ -1051,20 +1209,171 @@ fn aggregate(
             new_tracks: Some(new_tracks),
             replay_share: Some((plays.saturating_sub(songs.len()) * 100 / plays) as u8),
             avg_length: Some(time / plays as u64),
+            avg_bpm: mean_tempo(&tempos),
+            collab_share: Some((collabs * 100 / plays) as u8),
             ..Default::default()
         }
         .timed(&times),
     };
+    let (ranked_moods, ranked_tags) = match moods.is_empty() {
+        false => (moods.ranked(), tags.ranked()),
+        true => (tags.ranked(), Vec::new()),
+    };
+    let top_mood_keys: Vec<String> = ranked_moods
+        .iter()
+        .take(4)
+        .filter_map(|row| tag_key(&row.item))
+        .collect();
+    let timeline = build_timeline(&play_samples, &top_mood_keys, dates);
+    let hourly_mood = build_hourly_mood(&play_samples);
     ListeningStats {
         tracks: songs.ranked(),
         artists: artists.ranked(),
         albums: albums.ranked(),
         genres: genres.ranked(),
-        moods: moods.ranked(),
-        tags: tags.ranked(),
+        moods: ranked_moods,
+        tags: ranked_tags,
+        tempos: tempo_bands(&tempos),
+        timeline,
+        hourly_mood,
         overview,
         ..Default::default()
     }
+}
+
+struct PlaySample {
+    at: i64,
+    valence: Option<f32>,
+    energy: Option<f32>,
+    bpm: Option<f32>,
+    is_new: bool,
+    is_replay: bool,
+    mood_keys: Vec<String>,
+}
+
+/// Buckets play samples into chronological slices for mood, tempo, discovery and top-mood shares.
+fn build_timeline(
+    samples: &[PlaySample],
+    top_moods: &[String],
+    dates: Option<(i64, i64)>,
+) -> Vec<TimeSlice> {
+    if samples.len() < 2 {
+        return Vec::new();
+    }
+    let (min_at, max_at) = match dates {
+        Some((from, to)) if to > from => (from, to),
+        _ => (
+            samples.iter().map(|s| s.at).min().unwrap_or(0),
+            samples.iter().map(|s| s.at).max().unwrap_or(0),
+        ),
+    };
+    let span = (max_at - min_at).max(1);
+    let buckets = ((span / 86_400).max(1) as usize).min(24);
+    #[derive(Default, Clone)]
+    struct Acc {
+        v_sum: f32,
+        v_n: usize,
+        e_sum: f32,
+        e_n: usize,
+        bpm_sum: f32,
+        bpm_n: usize,
+        bpm_min: Option<f32>,
+        bpm_max: Option<f32>,
+        new_n: usize,
+        replay_n: usize,
+        mood_n: [usize; 4],
+        plays: usize,
+    }
+    let mut acc = vec![Acc::default(); buckets];
+    for sample in samples {
+        let clamped = sample.at.clamp(min_at, max_at);
+        let slot = (((clamped - min_at) as f64 / span as f64) * buckets as f64) as usize;
+        let entry = &mut acc[slot.min(buckets - 1)];
+        if let Some(v) = sample.valence {
+            entry.v_sum += v;
+            entry.v_n += 1;
+        }
+        if let Some(e) = sample.energy {
+            entry.e_sum += e;
+            entry.e_n += 1;
+        }
+        if let Some(bpm) = sample.bpm {
+            entry.bpm_sum += bpm;
+            entry.bpm_n += 1;
+            entry.bpm_min = Some(entry.bpm_min.map_or(bpm, |m| m.min(bpm)));
+            entry.bpm_max = Some(entry.bpm_max.map_or(bpm, |m| m.max(bpm)));
+        }
+        entry.new_n += usize::from(sample.is_new);
+        entry.replay_n += usize::from(sample.is_replay);
+        for (idx, key) in top_moods.iter().enumerate() {
+            if sample.mood_keys.contains(key) {
+                entry.mood_n[idx] += 1;
+            }
+        }
+        entry.plays += 1;
+    }
+    let slices: Vec<TimeSlice> = acc
+        .into_iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.plays > 0)
+        .map(|(slot, entry)| {
+            let plays = entry.plays as f32;
+            TimeSlice {
+                at: min_at + (span * slot as i64) / buckets as i64,
+                valence: (entry.v_n > 0).then(|| entry.v_sum / entry.v_n as f32),
+                energy: (entry.e_n > 0).then(|| entry.e_sum / entry.e_n as f32),
+                bpm: (entry.bpm_n > 0).then(|| entry.bpm_sum / entry.bpm_n as f32),
+                bpm_min: entry.bpm_min,
+                bpm_max: entry.bpm_max,
+                discovery: entry.new_n as f32 / plays,
+                replay: entry.replay_n as f32 / plays,
+                mood_shares: (0..top_moods.len())
+                    .map(|idx| entry.mood_n[idx] as f32 / plays)
+                    .collect(),
+                plays: entry.plays,
+            }
+        })
+        .collect();
+    match slices.len() >= 2 {
+        true => slices,
+        false => Vec::new(),
+    }
+}
+
+/// Averages positivity and energy across each local hour of the day (`0..24`).
+fn build_hourly_mood(samples: &[PlaySample]) -> Vec<HourMood> {
+    let zone = jiff::tz::TimeZone::system();
+    let mut acc = [(0f32, 0usize, 0f32, 0usize, 0usize); 24];
+    for sample in samples {
+        if sample.valence.is_none() && sample.energy.is_none() {
+            continue;
+        }
+        let Ok(stamp) = jiff::Timestamp::from_second(sample.at) else {
+            continue;
+        };
+        let hour = stamp.to_zoned(zone.clone()).hour() as usize;
+        let entry = &mut acc[hour.min(23)];
+        if let Some(v) = sample.valence {
+            entry.0 += v;
+            entry.1 += 1;
+        }
+        if let Some(e) = sample.energy {
+            entry.2 += e;
+            entry.3 += 1;
+        }
+        entry.4 += 1;
+    }
+    let has_data = acc.iter().filter(|entry| entry.4 > 0).count() >= 2;
+    if !has_data {
+        return Vec::new();
+    }
+    acc.into_iter()
+        .map(|(v_sum, v_n, e_sum, e_n, plays)| HourMood {
+            valence: (v_n > 0).then(|| v_sum / v_n as f32),
+            energy: (e_n > 0).then(|| e_sum / e_n as f32),
+            plays,
+        })
+        .collect()
 }
 
 /// When each artist and each song was first played in the log.

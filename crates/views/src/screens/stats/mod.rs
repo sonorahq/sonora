@@ -59,6 +59,9 @@ pub(crate) struct StatsView {
     end: Entity<Input>,
     invalid: bool,
     rails: Vec<Rail>,
+    tempo_over_time: bool,
+    mood_over_time: bool,
+    clock_mood: bool,
 }
 
 impl StatsView {
@@ -95,6 +98,9 @@ impl StatsView {
             end,
             invalid: false,
             rails: Kind::ALL.iter().map(|_| Rail::new(host)).collect(),
+            tempo_over_time: false,
+            mood_over_time: false,
+            clock_mood: false,
         }
     }
 
@@ -194,6 +200,7 @@ impl StatsView {
         let (traits, times) = (data.traits(), data.overview.clone());
         let (genres, tags, years) = (data.genres.clone(), data.tags.clone(), data.years.clone());
         let (tempos, milestones) = (data.tempos.clone(), data.milestones.clone());
+        let (timeline, hourly_mood) = (data.timeline.clone(), data.hourly_mood.clone());
         // Moods the app names itself are Fluent keys, and a provider's own are plain words.
         let moods: Vec<_> = data
             .moods
@@ -231,9 +238,131 @@ impl StatsView {
                 .then(|| self.distribution(tag, title.clone(), &terms, layout.width, cx));
             (tag, title, None, body)
         };
-        let (clock, note) = match self.clock(&times, cx) {
+        let (clock, clock_note) = match self.clock(&times, cx) {
             Some((grid, note)) => (Some(grid), note),
             None => (None, None),
+        };
+        let (hourly_graph, hourly_legend) = match self.hourly_mood(&hourly_mood, cx) {
+            Some((graph, legend)) => (Some(graph), legend),
+            None => (None, None),
+        };
+        let (clock_body, clock_note) = match (self.clock_mood, hourly_graph) {
+            (true, Some(graph)) => (
+                Some(graph),
+                self.section_note(
+                    hourly_legend,
+                    "stats-clock-view",
+                    self.clock_mood,
+                    (t!("stats-view-activity"), t!("stats-view-mood")),
+                    cx.listener(|this, active: &bool, _, cx| {
+                        this.clock_mood = *active;
+                        cx.notify();
+                    }),
+                    cx,
+                ),
+            ),
+            (_, has_hourly) => {
+                let note = match has_hourly.is_some() {
+                    true => self.section_note(
+                        clock_note,
+                        "stats-clock-view",
+                        false,
+                        (t!("stats-view-activity"), t!("stats-view-mood")),
+                        cx.listener(|this, active: &bool, _, cx| {
+                            this.clock_mood = *active;
+                            cx.notify();
+                        }),
+                        cx,
+                    ),
+                    false => clock_note,
+                };
+                (clock, note)
+            }
+        };
+
+        let (tempo_graph, _) = match self.tempo_history(&timeline, cx) {
+            Some((graph, legend)) => (Some(graph), legend),
+            None => (None, None),
+        };
+        let tempo_bands = self.tempo(&tempos, cx);
+        let (tempo_body, tempo_note) = match (self.tempo_over_time, tempo_graph) {
+            (true, Some(graph)) => (
+                Some(graph),
+                self.section_note(
+                    bpm,
+                    "stats-tempo-view",
+                    true,
+                    (t!("stats-view-bands"), t!("stats-view-over-time")),
+                    cx.listener(|this, active: &bool, _, cx| {
+                        this.tempo_over_time = *active;
+                        cx.notify();
+                    }),
+                    cx,
+                ),
+            ),
+            (_, has_time) => {
+                let note = match has_time.is_some() {
+                    true => self.section_note(
+                        bpm,
+                        "stats-tempo-view",
+                        false,
+                        (t!("stats-view-bands"), t!("stats-view-over-time")),
+                        cx.listener(|this, active: &bool, _, cx| {
+                            this.tempo_over_time = *active;
+                            cx.notify();
+                        }),
+                        cx,
+                    ),
+                    false => bpm,
+                };
+                (tempo_bands, note)
+            }
+        };
+
+        let (mood_graph, mood_legend) = match self.mood_history(&timeline, cx) {
+            Some((graph, legend)) => (Some(graph), legend),
+            None => (None, None),
+        };
+        let mood_strip = (!moods.is_empty()).then(|| {
+            self.distribution(
+                "stats-top-moods",
+                t!("stats-top-moods"),
+                &moods,
+                layout.width,
+                cx,
+            )
+        });
+        let (mood_body, mood_note) = match (self.mood_over_time, mood_graph) {
+            (true, Some(graph)) => (
+                Some(graph),
+                self.section_note(
+                    mood_legend,
+                    "stats-mood-view",
+                    true,
+                    (t!("stats-view-breakdown"), t!("stats-view-over-time")),
+                    cx.listener(|this, active: &bool, _, cx| {
+                        this.mood_over_time = *active;
+                        cx.notify();
+                    }),
+                    cx,
+                ),
+            ),
+            (_, has_time) => {
+                let note = has_time.and_then(|_| {
+                    self.section_note(
+                        None,
+                        "stats-mood-view",
+                        false,
+                        (t!("stats-view-breakdown"), t!("stats-view-over-time")),
+                        cx.listener(|this, active: &bool, _, cx| {
+                            this.mood_over_time = *active;
+                            cx.notify();
+                        }),
+                        cx,
+                    )
+                });
+                (mood_strip, note)
+            }
         };
         // The page reads from how much was listened to, to what the listening was like, to
         // when it happened.
@@ -253,13 +382,23 @@ impl StatsView {
             (
                 "stats-tempo",
                 t!("stats-tempo-title"),
-                bpm,
-                self.tempo(&tempos, cx),
+                tempo_note,
+                tempo_body,
             ),
             terms("stats-top-genres", t!("stats-top-genres"), genres),
-            terms("stats-top-moods", t!("stats-top-moods"), moods),
+            (
+                "stats-top-moods",
+                t!("stats-top-moods"),
+                mood_note,
+                mood_body,
+            ),
             terms("stats-top-tags", t!("stats-top-tags"), tags),
-            ("stats-clock", t!("stats-clock-title"), note, clock),
+            (
+                "stats-clock",
+                t!("stats-clock-title"),
+                clock_note,
+                clock_body,
+            ),
             (
                 "stats-milestones",
                 t!("stats-milestones-title"),
@@ -282,6 +421,47 @@ impl StatsView {
             sections.push(ui::vacant(t!("stats-empty"), cx).into_any_element());
         }
         sections
+    }
+
+    fn section_note(
+        &self,
+        extra: Option<AnyElement>,
+        id: &'static str,
+        active: bool,
+        labels: (SharedString, SharedString),
+        on_toggle: impl Fn(&bool, &mut gpui::Window, &mut App) + 'static,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let on_toggle = Rc::new(on_toggle);
+        let on_a = on_toggle.clone();
+        let on_b = on_toggle;
+        let tabs = TabBar::new(id)
+            .name(id)
+            .items([
+                Button::new(SharedString::from(format!("{id}-a")))
+                    .label(labels.0)
+                    .small()
+                    .ghost()
+                    .selected(!active)
+                    .on_click(move |_, window, cx| on_a(&false, window, cx)),
+                Button::new(SharedString::from(format!("{id}-b")))
+                    .label(labels.1)
+                    .small()
+                    .ghost()
+                    .selected(active)
+                    .on_click(move |_, window, cx| on_b(&true, window, cx)),
+            ])
+            .into_any_element();
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(cx.theme().metrics.pad)
+                .child(tabs)
+                .children(extra)
+                .into_any_element(),
+        )
     }
 }
 

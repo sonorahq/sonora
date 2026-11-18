@@ -1,12 +1,16 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 
-use gpui::{AnyElement, App, Context, Hsla, Pixels, SharedString, div, relative};
+use gpui::{
+    AnyElement, App, Bounds, Context, Hsla, PathBuilder, Pixels, Point, SharedString, Window,
+    canvas, div, point, px, relative,
+};
 use i18n::t;
-use music::{Overview, Ranked};
+use music::{HourMood, Overview, Ranked, TimeSlice};
 use ui::{ActiveTheme as _, Perch, Text, Tipped as _};
 
 use super::StatsView;
+use super::timeline::date_label;
 
 /// The hours labelled under the listening clock.
 const HOUR_MARKS: [usize; 5] = [0, 6, 12, 18, 23];
@@ -127,6 +131,11 @@ const TILE_OPACITY: f32 = 0.8;
 const MIN_SHARE: usize = 2;
 /// How wide a character of a label is, as a multiple of its text size.
 const GLYPH: f32 = 0.65;
+/// Stroke width and dot radius for the mood-over-time line graph.
+const LINE_WIDTH: Pixels = px(2.);
+const GUIDE_WIDTH: Pixels = px(1.);
+const DOT_RADIUS: Pixels = px(3.);
+const DOT_SEGMENTS: usize = 12;
 
 impl StatsView {
     /// Packs the ranked terms into rounded tiles whose widths follow their shares. A name shows
@@ -203,6 +212,412 @@ impl StatsView {
                     }))
             }))
             .into_any_element()
+    }
+}
+
+/// One plotted line in [`StatsView::line_chart`].
+struct LineSeries {
+    name: SharedString,
+    color: Hsla,
+    points: Vec<(f32, f32)>,
+}
+
+/// A filled min–max band behind a line chart: fill colour and `(x, low, high)` points.
+type RangeBand = (Hsla, Vec<(f32, f32, f32)>);
+
+impl StatsView {
+    /// Plots positivity (`valence`) and intensity (`energy`) over the listening window.
+    pub(super) fn mood_history(
+        &self,
+        slices: &[TimeSlice],
+        cx: &App,
+    ) -> Option<(AnyElement, Option<AnyElement>)> {
+        if slices.len() < 2 {
+            return None;
+        }
+        let theme = *cx.theme();
+        let (first_at, last_at, span) = time_span(slices)?;
+        let valence_label = t!("stats-mood-history-valence");
+        let energy_label = t!("stats-mood-history-energy");
+        let series = vec![
+            LineSeries {
+                name: valence_label.clone(),
+                color: theme.primary,
+                points: slices
+                    .iter()
+                    .filter_map(|s| s.valence.map(|v| ((s.at - first_at) as f32 / span, v)))
+                    .collect(),
+            },
+            LineSeries {
+                name: energy_label.clone(),
+                color: series_color(&theme, 1),
+                points: slices
+                    .iter()
+                    .filter_map(|s| s.energy.map(|e| ((s.at - first_at) as f32 / span, e)))
+                    .collect(),
+            },
+        ];
+        let tips = slices
+            .iter()
+            .map(|s| {
+                let mut parts = vec![date_label(s.at)];
+                if let Some(v) = s.valence {
+                    parts.push(format!("{valence_label} {}%", (v * 100.).round() as u8));
+                }
+                if let Some(e) = s.energy {
+                    parts.push(format!("{energy_label} {}%", (e * 100.).round() as u8));
+                }
+                parts.push(t!("stats-badge-plays", count = s.plays, value = s.plays).to_string());
+                SharedString::from(parts.join(" · "))
+            })
+            .collect();
+        let (from, to) = (date_label(first_at), date_label(last_at));
+        self.line_chart(
+            "stats-mood-history",
+            t!(
+                "stats-mood-history-label",
+                from = from.clone(),
+                to = to.clone()
+            ),
+            series,
+            None,
+            tips,
+            (from, to),
+            cx,
+        )
+    }
+
+    /// Plots average tempo (BPM) over the listening window, with a filled band between the
+    /// slowest and fastest track in each slice.
+    pub(super) fn tempo_history(
+        &self,
+        slices: &[TimeSlice],
+        cx: &App,
+    ) -> Option<(AnyElement, Option<AnyElement>)> {
+        if slices.iter().filter_map(|s| s.bpm).count() < 2 {
+            return None;
+        }
+        let theme = *cx.theme();
+        let (first_at, last_at, span) = time_span(slices)?;
+        let min_bpm = slices
+            .iter()
+            .filter_map(|s| s.bpm_min.or(s.bpm))
+            .fold(f32::INFINITY, f32::min);
+        let max_bpm = slices
+            .iter()
+            .filter_map(|s| s.bpm_max.or(s.bpm))
+            .fold(f32::NEG_INFINITY, f32::max);
+        let range = (max_bpm - min_bpm).max(20.);
+        let floor_bpm = (min_bpm - range * 0.1).max(0.);
+        let ceil_bpm = max_bpm + range * 0.1;
+        let denom = (ceil_bpm - floor_bpm).max(1.);
+        let norm = |bpm: f32| (bpm - floor_bpm) / denom;
+        let series = vec![LineSeries {
+            name: t!("stats-tempo-title"),
+            color: theme.primary,
+            points: slices
+                .iter()
+                .filter_map(|s| {
+                    s.bpm
+                        .map(|bpm| ((s.at - first_at) as f32 / span, norm(bpm)))
+                })
+                .collect(),
+        }];
+        let band = slices
+            .iter()
+            .filter_map(|s| {
+                let low = s.bpm_min.or(s.bpm)?;
+                let high = s.bpm_max.or(s.bpm)?;
+                Some(((s.at - first_at) as f32 / span, norm(low), norm(high)))
+            })
+            .collect::<Vec<_>>();
+        let band = (band.len() >= 2).then_some((theme.primary.opacity(0.16), band));
+        let tips = slices
+            .iter()
+            .map(|s| {
+                let mut parts = vec![date_label(s.at)];
+                if let Some(bpm) = s.bpm {
+                    parts.push(t!("stats-tempo-bpm", bpm = bpm.round() as u16).to_string());
+                }
+                if let (Some(low), Some(high)) = (s.bpm_min, s.bpm_max)
+                    && (high - low).round() >= 1.
+                {
+                    parts.push(format!("{}–{}", low.round() as u16, high.round() as u16));
+                }
+                parts.push(t!("stats-badge-plays", count = s.plays, value = s.plays).to_string());
+                SharedString::from(parts.join(" · "))
+            })
+            .collect();
+        let (from, to) = (date_label(first_at), date_label(last_at));
+        self.line_chart(
+            "stats-tempo-history",
+            t!(
+                "stats-tempo-history-label",
+                from = from.clone(),
+                to = to.clone()
+            ),
+            series,
+            band,
+            tips,
+            (from, to),
+            cx,
+        )
+    }
+
+    /// Plots positivity and energy across local hours of the day (`00:00`–`23:00`).
+    pub(super) fn hourly_mood(
+        &self,
+        hours: &[HourMood],
+        cx: &App,
+    ) -> Option<(AnyElement, Option<AnyElement>)> {
+        if hours.len() != 24 {
+            return None;
+        }
+        let theme = *cx.theme();
+        let valence_label = t!("stats-mood-history-valence");
+        let energy_label = t!("stats-mood-history-energy");
+        let series = vec![
+            LineSeries {
+                name: valence_label.clone(),
+                color: theme.primary,
+                points: hours
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(h, m)| m.valence.map(|v| (h as f32 / 23., v)))
+                    .collect(),
+            },
+            LineSeries {
+                name: energy_label.clone(),
+                color: series_color(&theme, 1),
+                points: hours
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(h, m)| m.energy.map(|e| (h as f32 / 23., e)))
+                    .collect(),
+            },
+        ];
+        let tips = hours
+            .iter()
+            .enumerate()
+            .map(|(h, m)| {
+                let mut parts = vec![hour_label(h)];
+                if let Some(v) = m.valence {
+                    parts.push(format!("{valence_label} {}%", (v * 100.).round() as u8));
+                }
+                if let Some(e) = m.energy {
+                    parts.push(format!("{energy_label} {}%", (e * 100.).round() as u8));
+                }
+                parts.push(t!("stats-badge-plays", count = m.plays, value = m.plays).to_string());
+                SharedString::from(parts.join(" · "))
+            })
+            .collect();
+        self.line_chart(
+            "stats-hourly-mood",
+            t!("stats-hourly-mood-label"),
+            series,
+            None,
+            tips,
+            (hour_label(0), hour_label(23)),
+            cx,
+        )
+    }
+
+    /// Shared multi-series line chart with a 50% guide, optional filled range band, legend
+    /// badges, hover tooltips and end labels.
+    #[allow(clippy::too_many_arguments)]
+    fn line_chart(
+        &self,
+        id: &'static str,
+        label: SharedString,
+        series: Vec<LineSeries>,
+        band: Option<RangeBand>,
+        tips: Vec<SharedString>,
+        ends: (String, String),
+        cx: &App,
+    ) -> Option<(AnyElement, Option<AnyElement>)> {
+        let active: Vec<LineSeries> = series.into_iter().filter(|s| s.points.len() >= 2).collect();
+        if active.is_empty() {
+            return None;
+        }
+        let theme = *cx.theme();
+        let guide_color = theme.muted_foreground.opacity(0.2);
+        let legend = (active.len() > 1).then(|| {
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(theme.metrics.pad)
+                .children(
+                    active
+                        .iter()
+                        .map(|s| legend_item(s.color, s.name.clone(), cx)),
+                )
+                .into_any_element()
+        });
+        let painted: Vec<(Hsla, Vec<(f32, f32)>)> =
+            active.into_iter().map(|s| (s.color, s.points)).collect();
+
+        let graph = div()
+            .id(id)
+            .role(Role::Group)
+            .aria_label(label)
+            .flex()
+            .flex_col()
+            .gap(theme.metrics.pad / 2.)
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(theme.metrics.cover * 0.75)
+                    .border_b_1()
+                    .border_color(theme.muted_foreground.opacity(0.25))
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _| {
+                                paint_lines(bounds, &painted, band.as_ref(), guide_color, window);
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .child(div().absolute().inset_0().flex().children(
+                        tips.into_iter().enumerate().map(|(at, tip)| {
+                            div()
+                                .id((id, at))
+                                .flex_1()
+                                .h_full()
+                                .tip_label(tip, Perch::Above)
+                        }),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .child(ui::faint(cx).child(ends.0))
+                    .child(ui::faint(cx).child(ends.1)),
+            )
+            .into_any_element();
+
+        Some((graph, legend))
+    }
+}
+
+fn time_span(slices: &[TimeSlice]) -> Option<(i64, i64, f32)> {
+    let first = slices.first()?.at;
+    let last = slices.last()?.at;
+    Some((first, last, (last - first).max(1) as f32))
+}
+
+fn series_color(theme: &ui::Theme, index: usize) -> Hsla {
+    match index {
+        0 => theme.primary,
+        _ => theme.primary_of(Hsla {
+            h: (theme.primary.h + index as f32 * HUE_STEP).fract(),
+            ..theme.primary
+        }),
+    }
+}
+
+fn legend_item(color: Hsla, label: SharedString, cx: &App) -> AnyElement {
+    let theme = *cx.theme();
+    div()
+        .flex()
+        .items_center()
+        .gap(theme.metrics.pad / 2.)
+        .child(
+            div()
+                .size(theme.metrics.pad * 0.75)
+                .rounded_full()
+                .bg(color),
+        )
+        .child(ui::faint(cx).child(label))
+        .into_any_element()
+}
+
+fn paint_lines(
+    bounds: Bounds<Pixels>,
+    series: &[(Hsla, Vec<(f32, f32)>)],
+    band: Option<&RangeBand>,
+    guide_color: Hsla,
+    window: &mut Window,
+) {
+    let inset = DOT_RADIUS;
+    let width = (bounds.size.width - inset * 2.).max(px(1.));
+    let height = (bounds.size.height - inset * 2.).max(px(1.));
+    let left = bounds.left() + inset;
+    let top = bounds.top() + inset;
+
+    let mid_y = top + height * 0.5;
+    let mut guide = PathBuilder::stroke(GUIDE_WIDTH);
+    guide.add_polygon(&[point(left, mid_y), point(left + width, mid_y)], false);
+    if let Ok(path) = guide.build() {
+        window.paint_path(path, guide_color);
+    }
+
+    if let Some((fill_color, raw)) = band
+        && raw.len() >= 2
+    {
+        let mut polygon: Vec<Point<Pixels>> = raw
+            .iter()
+            .map(|&(x, _, high)| {
+                point(
+                    left + width * x.clamp(0., 1.),
+                    top + height * (1. - high.clamp(0., 1.)),
+                )
+            })
+            .collect();
+        polygon.extend(raw.iter().rev().map(|&(x, low, _)| {
+            point(
+                left + width * x.clamp(0., 1.),
+                top + height * (1. - low.clamp(0., 1.)),
+            )
+        }));
+        let mut area = PathBuilder::fill();
+        area.add_polygon(&polygon, true);
+        if let Ok(path) = area.build() {
+            window.paint_path(path, *fill_color);
+        }
+    }
+
+    for (color, raw) in series.iter().rev() {
+        let pts: Vec<Point<Pixels>> = raw
+            .iter()
+            .map(|&(x, y)| {
+                point(
+                    left + width * x.clamp(0., 1.),
+                    top + height * (1. - y.clamp(0., 1.)),
+                )
+            })
+            .collect();
+        paint_series(&pts, *color, window);
+    }
+}
+
+fn paint_series(points: &[Point<Pixels>], color: Hsla, window: &mut Window) {
+    if points.len() < 2 {
+        return;
+    }
+    let mut path = PathBuilder::stroke(LINE_WIDTH);
+    path.add_polygon(points, false);
+    if let Ok(built) = path.build() {
+        window.paint_path(built, color);
+    }
+    for &center in points {
+        let ring: Vec<Point<Pixels>> = (0..DOT_SEGMENTS)
+            .map(|step| {
+                let angle = step as f32 / DOT_SEGMENTS as f32 * std::f32::consts::TAU;
+                point(
+                    center.x + DOT_RADIUS * angle.cos(),
+                    center.y + DOT_RADIUS * angle.sin(),
+                )
+            })
+            .collect();
+        let mut dot = PathBuilder::fill();
+        dot.add_polygon(&ring, true);
+        if let Ok(built) = dot.build() {
+            window.paint_path(built, color);
+        }
     }
 }
 

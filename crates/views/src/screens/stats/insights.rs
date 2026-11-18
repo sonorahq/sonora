@@ -277,6 +277,13 @@ fn wording(which: Trait) -> (&'static str, SharedString, SharedString) {
         Trait::Rising => ("icons/rocket.svg", "rising"),
         Trait::FastLane => ("icons/zap.svg", "fast-lane"),
         Trait::SlowBurner => ("icons/snail.svg", "slow-burner"),
+        Trait::Sunlit => ("icons/sun.svg", "sunlit"),
+        Trait::Melancholic => ("icons/moon.svg", "melancholic"),
+        Trait::MoodShifter => ("icons/shuffle.svg", "mood-shifter"),
+        Trait::SteadyVibe => ("icons/blend.svg", "steady-vibe"),
+        Trait::MidnightMellow => ("icons/sunset.svg", "midnight-mellow"),
+        Trait::MorningBoost => ("icons/sunrise.svg", "morning-boost"),
+        Trait::Accelerating => ("icons/gauge.svg", "accelerating"),
     };
     let key = format!("stats-trait-{slug}");
     (

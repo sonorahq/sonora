@@ -153,12 +153,48 @@ pub struct ListeningStats {
     /// How many songs play at each tempo, in bands of ten beats per minute named by their
     /// slowest, slowest first.
     pub tempos: Vec<(u16, usize)>,
+    /// Chronological slices of mood, tempo, discovery and top-mood shares over the period.
+    pub timeline: Vec<TimeSlice>,
+    /// Average mood for each local hour of the day (`0..24`), when mood data is known.
+    pub hourly_mood: Vec<HourMood>,
     /// Plays of the whole history that reached a round number, oldest first.
     pub milestones: Vec<Milestone>,
     /// Plays in each equal slice of the account's history, for a source that can read them.
     pub density: Vec<usize>,
     /// The figures of the selected period.
     pub overview: Overview,
+}
+
+/// One chronological slice of listening activity, holding mood, tempo, discovery and mood shares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimeSlice {
+    /// The start of the slice, in Unix seconds.
+    pub at: i64,
+    /// Average positivity from 0 to 1, when known.
+    pub valence: Option<f32>,
+    /// Average intensity from 0 to 1, when known.
+    pub energy: Option<f32>,
+    /// Average tempo in beats per minute, when known.
+    pub bpm: Option<f32>,
+    /// Slowest and fastest tempo in this slice, when known.
+    pub bpm_min: Option<f32>,
+    pub bpm_max: Option<f32>,
+    /// Share of plays in this slice that were first-time discoveries (`0.0..=1.0`).
+    pub discovery: f32,
+    /// Share of plays in this slice that were replays (`0.0..=1.0`).
+    pub replay: f32,
+    /// Share (`0.0..=1.0`) of each top mood (up to 4, matching `ListeningStats::moods`).
+    pub mood_shares: Vec<f32>,
+    /// Total plays in this slice.
+    pub plays: usize,
+}
+
+/// Average positivity and intensity for one local hour of the day.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HourMood {
+    pub valence: Option<f32>,
+    pub energy: Option<f32>,
+    pub plays: usize,
 }
 
 /// A play that reached a round number in the listener's whole history.
@@ -194,7 +230,7 @@ pub fn milestone_numbers(total: usize) -> Vec<usize> {
 }
 
 /// How many traits at most are shown, the first that the figures support.
-const MOST_TRAITS: usize = 6;
+const MOST_TRAITS: usize = 4;
 
 /// What a listener's figures say about how they listen, each a short label to wear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +253,13 @@ pub enum Trait {
     Rising,
     FastLane,
     SlowBurner,
+    Sunlit,
+    Melancholic,
+    MoodShifter,
+    SteadyVibe,
+    MidnightMellow,
+    MorningBoost,
+    Accelerating,
 }
 
 impl ListeningStats {
@@ -291,17 +334,24 @@ impl ListeningStats {
             ..=100 => Some(Trait::SlowBurner),
             _ => None,
         });
+        let (tone, swing, momentum) = timeline_traits(&self.timeline);
+        let tone = tone.or_else(|| mood_list_trait(&self.moods));
+        let circadian = hourly_mood_trait(&self.hourly_mood);
         [
             hour,
-            days,
             novelty,
             taste,
-            era,
+            tone,
             tempo,
-            collaborator,
+            era,
+            days,
             superfan,
+            collaborator,
             daily,
             rising,
+            swing,
+            circadian,
+            momentum,
         ]
         .into_iter()
         .flatten()
@@ -429,6 +479,78 @@ pub fn tag_key(tag: &str) -> Option<String> {
     (!key.is_empty() && key != "music").then_some(key)
 }
 
+/// Groups tempos in beats per minute into bands of ten, slowest first, weighted by play count.
+pub fn tempo_bands(tempos: &[(f32, usize)]) -> Vec<(u16, usize)> {
+    let mut grouped: BTreeMap<u16, usize> = BTreeMap::new();
+    for &(bpm, weight) in tempos {
+        if bpm > 0. && weight > 0 {
+            let band = (bpm.round() as u16 / 10) * 10;
+            *grouped.entry(band).or_default() += weight;
+        }
+    }
+    grouped.into_iter().collect()
+}
+
+/// Weighted mean tempo in beats per minute, if any valid tempos are present.
+pub fn mean_tempo(tempos: &[(f32, usize)]) -> Option<u16> {
+    let (sum, total) = tempos
+        .iter()
+        .filter(|(bpm, weight)| *bpm > 0. && *weight > 0)
+        .fold((0f64, 0usize), |(sum, total), &(bpm, weight)| {
+            (sum + f64::from(bpm) * weight as f64, total + weight)
+        });
+    (total > 0).then(|| (sum / total as f64).round() as u16)
+}
+
+/// Infers `(valence, energy)` in `0.0..=1.0` from discrete mood keys or descriptive tags when
+/// raw audio features are unavailable.
+pub fn infer_mood(moods: &[String], tags: &[String]) -> (Option<f32>, Option<f32>) {
+    let (mut v_sum, mut v_count) = (0f32, 0usize);
+    let (mut e_sum, mut e_count) = (0f32, 0usize);
+    let mut push = |valence: Option<f32>, energy: Option<f32>| {
+        if let Some(v) = valence {
+            v_sum += v;
+            v_count += 1;
+        }
+        if let Some(e) = energy {
+            e_sum += e;
+            e_count += 1;
+        }
+    };
+    for term in moods.iter().chain(tags) {
+        let lower = term.trim().to_lowercase();
+        match lower.as_str() {
+            "stats-mood-positive" | "happy" | "upbeat" | "cheerful" | "joyful" | "feel good" => {
+                push(Some(0.8), None);
+            }
+            "stats-mood-negative" | "angry" | "aggressive" | "dark" | "intense" => {
+                push(Some(0.2), Some(0.75));
+            }
+            "stats-mood-sad" | "sad" | "melancholy" | "melancholic" | "depressing" | "lonely" => {
+                push(Some(0.15), Some(0.25));
+            }
+            "stats-mood-energetic" | "energetic" | "energy" | "hype" | "workout" | "driving" => {
+                push(None, Some(0.85));
+            }
+            "stats-mood-calming" | "calm" | "calming" | "chill" | "relaxing" | "ambient"
+            | "sleep" | "peaceful" | "soft" | "mellow" => {
+                push(None, Some(0.2));
+            }
+            "stats-mood-danceable" | "dance" | "danceable" | "party" | "groovy" | "disco" => {
+                push(Some(0.65), Some(0.75));
+            }
+            "stats-mood-acoustic" | "acoustic" | "folk" | "unplugged" => {
+                push(None, Some(0.35));
+            }
+            _ => {}
+        }
+    }
+    (
+        (v_count > 0).then(|| (v_sum / v_count as f32).clamp(0., 1.)),
+        (e_count > 0).then(|| (e_sum / e_count as f32).clamp(0., 1.)),
+    )
+}
+
 /// The first and last day of the longest run of consecutive calendar days, from the days in order.
 fn longest_streak(days: impl Iterator<Item = Date>) -> Option<(Date, Date)> {
     let mut best: Option<(Date, Date, usize)> = None;
@@ -448,4 +570,89 @@ fn longest_streak(days: impl Iterator<Item = Date>) -> Option<(Date, Date)> {
         previous = Some(day);
     }
     best.map(|(start, end, _)| (start, end))
+}
+
+fn timeline_traits(timeline: &[TimeSlice]) -> (Option<Trait>, Option<Trait>, Option<Trait>) {
+    let valences: Vec<f32> = timeline.iter().filter_map(|s| s.valence).collect();
+    let energies: Vec<f32> = timeline.iter().filter_map(|s| s.energy).collect();
+    let tone = (!valences.is_empty())
+        .then(|| {
+            let avg = valences.iter().sum::<f32>() / valences.len() as f32;
+            match avg {
+                v if v >= 0.65 => Some(Trait::Sunlit),
+                v if v <= 0.35 => Some(Trait::Melancholic),
+                _ => None,
+            }
+        })
+        .flatten();
+
+    let span_of = |vals: &[f32]| -> Option<f32> {
+        (vals.len() >= 4).then(|| {
+            let min = vals.iter().copied().fold(f32::INFINITY, f32::min);
+            let max = vals.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            max - min
+        })
+    };
+    let v_span = span_of(&valences);
+    let e_span = span_of(&energies);
+    let swing = match (v_span, e_span) {
+        (Some(v), _) | (_, Some(v)) if v >= 0.35 => Some(Trait::MoodShifter),
+        (Some(v), Some(e)) if valences.len() >= 5 && v <= 0.12 && e <= 0.12 => {
+            Some(Trait::SteadyVibe)
+        }
+        _ => None,
+    };
+
+    let bpms: Vec<f32> = timeline.iter().filter_map(|s| s.bpm).collect();
+    let momentum = if bpms.len() >= 4 {
+        let mid = bpms.len() / 2;
+        let first = bpms[..mid].iter().sum::<f32>() / mid as f32;
+        let second = bpms[mid..].iter().sum::<f32>() / (bpms.len() - mid) as f32;
+        (second - first >= 10.).then_some(Trait::Accelerating)
+    } else if energies.len() >= 4 {
+        let mid = energies.len() / 2;
+        let first = energies[..mid].iter().sum::<f32>() / mid as f32;
+        let second = energies[mid..].iter().sum::<f32>() / (energies.len() - mid) as f32;
+        (second - first >= 0.12).then_some(Trait::Accelerating)
+    } else {
+        None
+    };
+
+    (tone, swing, momentum)
+}
+
+fn mood_list_trait(moods: &[Ranked<String>]) -> Option<Trait> {
+    let top: Vec<&str> = moods.iter().take(2).map(|m| m.item.as_str()).collect();
+    if top.contains(&"stats-mood-positive") {
+        Some(Trait::Sunlit)
+    } else if top.contains(&"stats-mood-sad") || top.contains(&"stats-mood-negative") {
+        Some(Trait::Melancholic)
+    } else {
+        None
+    }
+}
+
+fn hourly_mood_trait(hours: &[HourMood]) -> Option<Trait> {
+    if hours.len() != 24 {
+        return None;
+    }
+    let avg_energy = |indices: &[usize]| -> Option<f32> {
+        let vals: Vec<f32> = indices.iter().filter_map(|&h| hours[h].energy).collect();
+        (vals.len() >= 2).then(|| vals.iter().sum::<f32>() / vals.len() as f32)
+    };
+    let night = avg_energy(&[22, 23, 0, 1, 2, 3]);
+    let day = avg_energy(&[9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    if let (Some(night), Some(day)) = (night, day)
+        && day - night >= 0.12
+    {
+        return Some(Trait::MidnightMellow);
+    }
+    let morning = avg_energy(&[5, 6, 7, 8, 9, 10, 11]);
+    let evening = avg_energy(&[18, 19, 20, 21, 22]);
+    if let (Some(morning), Some(evening)) = (morning, evening)
+        && morning - evening >= 0.12
+    {
+        return Some(Trait::MorningBoost);
+    }
+    None
 }

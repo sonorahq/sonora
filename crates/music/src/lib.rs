@@ -73,8 +73,9 @@ pub use smart::{
 pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use sponsorblock::{SkipSegment, SponsorBlock};
 pub use stats::{
-    Board, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, Trait, album_key, album_of,
-    compare, credits, milestone_numbers, tag_key,
+    Board, HourMood, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, TimeSlice, Trait,
+    album_key, album_of, compare, credits, infer_mood, mean_tempo, milestone_numbers, tag_key,
+    tempo_bands,
 };
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";

@@ -11,8 +11,7 @@ use tokio::net::TcpListener;
 
 use super::{Account, Link, Play, Secret, Service};
 use crate::{
-    Album, ListeningStats, Milestone, Overview, Ranked, SavedArtist, Track, compare,
-    milestone_numbers,
+    Album, ListeningStats, Milestone, Overview, Ranked, SavedArtist, Track, milestone_numbers,
 };
 use crate::{escape, tag_key};
 use serde_json::Value;
@@ -30,7 +29,7 @@ const ACTIVITY_PAGES: usize = 4;
 /// How many slices of the account's history are asked about at once.
 const DENSITY_AT_ONCE: usize = 8;
 /// How many slices the account's history is cut into to show when it was played.
-const SLICES: usize = 24;
+const SLICES: usize = 12;
 /// How many ranked artists, songs and albums are kept, and how many rows a weekly chart can hold.
 const RANKED: usize = 50;
 const CHART_ROWS: usize = 1000;
@@ -194,26 +193,41 @@ impl Service for AudioScrobbler {
     async fn stats(&self, account: &Account, dates: Option<(i64, i64)>) -> Result<ListeningStats> {
         ensure!(self.stats_dated(), "{} does not expose stats", self.id);
         let user = account.name.as_str();
-        let profile = [("user", user)];
-        let tags = [("user", user), ("limit", "30")];
-        // A range is also read for the equal stretch before it, to see how the listening moved.
+        let ranged = dates.is_some();
         let earlier = dates.map(|(from, to)| (2 * from - to - 1, from - 1));
-        let (charts, info, tags, activity, before) = tokio::join!(
+        let (charts, info, tags, activity, plays_before) = tokio::join!(
             self.charts(account, dates),
-            self.read("user.getInfo", &profile, account),
-            self.read("user.getTopTags", &tags, account),
+            async {
+                match ranged {
+                    true => None,
+                    false => self
+                        .read("user.getInfo", &[("user", user)], account)
+                        .await
+                        .ok(),
+                }
+            },
+            async {
+                match ranged {
+                    true => None,
+                    false => self
+                        .read(
+                            "user.getTopTags",
+                            &[("user", user), ("limit", "30")],
+                            account,
+                        )
+                        .await
+                        .ok(),
+                }
+            },
             self.activity(account, dates),
             async {
                 match earlier {
-                    Some(range) => Some(tokio::join!(
-                        self.charts(account, Some(range)),
-                        self.plays_between(account, range)
-                    )),
+                    Some(range) => self.plays_between(account, range).await,
                     None => None,
                 }
             },
         );
-        let mut charts = charts?;
+        let charts = charts?;
         let mut overview = Overview {
             artists: charts.distinct[0],
             tracks: charts.distinct[1],
@@ -222,45 +236,18 @@ impl Service for AudioScrobbler {
         };
         if let Some((plays, times)) = activity {
             overview.plays = Some(plays);
-            // Only the latest plays are read, so their days and streaks say nothing of the rest.
             let complete = times.len() >= plays;
             overview = overview.timed(&times);
             if !complete {
                 overview = overview.partial();
             }
         }
-        if let Some((Ok(before), plays_before @ Some(1..))) = before {
-            let key = |name: &str, artist: &str| format!("{name}\u{1}{artist}");
-            compare(
-                &mut charts.artists,
-                before.artists.iter().map(|row| row.item.name.clone()),
-                |artist| artist.name.clone(),
-            );
-            compare(
-                &mut charts.tracks,
-                before
-                    .tracks
-                    .iter()
-                    .map(|row| key(&row.item.name, &row.item.artists)),
-                |track| key(&track.name, &track.artists),
-            );
-            compare(
-                &mut charts.albums,
-                before
-                    .albums
-                    .iter()
-                    .map(|row| key(&row.item.name, &row.item.artists)),
-                |album| key(&album.name, &album.artists),
-            );
+        if let Some(was) = plays_before.filter(|&count| count > 0) {
             overview.change = overview
                 .plays
-                .zip(plays_before)
-                .map(|(now, was)| ((now as i64 - was as i64) * 100 / was as i64) as i32);
+                .map(|now| ((now as i64 - was as i64) * 100 / was as i64) as i32);
         }
-        let user = info
-            .as_ref()
-            .ok()
-            .map(|info| info.get("user").unwrap_or(info));
+        let user = info.as_ref().map(|info| info.get("user").unwrap_or(info));
         overview.since = user.and_then(registered);
         if let (None, Some(user)) = (dates, user) {
             // The window is the whole account, so its totals are the account's.
@@ -278,7 +265,7 @@ impl Service for AudioScrobbler {
                 ..overview
             };
         }
-        let genres = tags
+        let genres: Vec<Ranked<String>> = tags
             .map(|tags| {
                 rows(&tags, "toptags", "tag")
                     .into_iter()
@@ -506,20 +493,27 @@ impl AudioScrobbler {
     }
 
     /// How many plays there are between two dates (or ever), and the start times of the latest
-    /// of them, newest first. Every page is asked for at once, since the first only says how
-    /// many there are, and a page past the end comes back empty.
+    /// of them, newest first. Reads page 1 first so short windows with few plays do not fetch
+    /// empty trailing pages.
     async fn activity(
         &self,
         account: &Account,
         dates: Option<(i64, i64)>,
     ) -> Option<(usize, Vec<i64>)> {
-        let pages =
-            (1..=ACTIVITY_PAGES).map(|page| self.recent(account, ACTIVITY_PAGE, page, dates));
-        let mut chunks = futures::future::join_all(pages).await.into_iter();
-        let first = chunks.next()??;
+        let first = self.recent(account, ACTIVITY_PAGE, 1, dates).await?;
         let plays = attr_total(&first, "recenttracks")?;
+        let page_size: usize = ACTIVITY_PAGE.parse().unwrap_or(200);
+        let needed = plays.div_ceil(page_size).clamp(1, ACTIVITY_PAGES);
+        let rest = match needed > 1 {
+            true => {
+                let pages =
+                    (2..=needed).map(|page| self.recent(account, ACTIVITY_PAGE, page, dates));
+                futures::future::join_all(pages).await
+            }
+            false => Vec::new(),
+        };
         let times = std::iter::once(first)
-            .chain(chunks.flatten())
+            .chain(rest.into_iter().flatten())
             .flat_map(|chunk| {
                 rows(&chunk, "recenttracks", "track")
                     .into_iter()

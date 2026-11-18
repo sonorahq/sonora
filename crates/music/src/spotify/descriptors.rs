@@ -35,6 +35,8 @@ pub(crate) async fn read(
             if let Some(features) = sound.get(id) {
                 found.moods = features.moods().into_iter().map(str::to_owned).collect();
                 found.bpm = Some(features.tempo).filter(|bpm| *bpm > 0.);
+                found.valence = Some(features.valence.clamp(0., 1.));
+                found.energy = Some(features.energy.clamp(0., 1.));
             }
             (id.clone(), found)
         })
