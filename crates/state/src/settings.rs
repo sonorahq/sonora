@@ -484,8 +484,9 @@ struct Values {
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
     /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
-    /// come from. The source order then only settles lyrics of the same kind.
-    lyrics_word_synced_first: bool,
+    /// come from. The source order then only settles lyrics of the same kind. It took a new key
+    /// when it came on by default, so settings saved while it was off pick up the new default.
+    lyrics_prefer_word_synced: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -759,7 +760,7 @@ impl Default for Values {
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
-            lyrics_word_synced_first: false,
+            lyrics_prefer_word_synced: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -1283,7 +1284,7 @@ impl AppSettings {
 
     /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
     pub fn lyrics_word_synced_first(&self) -> bool {
-        self.values.lyrics_word_synced_first
+        self.values.lyrics_prefer_word_synced
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1937,7 +1938,7 @@ impl AppSettings {
     }
 
     pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
-        self.values.lyrics_word_synced_first = first;
+        self.values.lyrics_prefer_word_synced = first;
         self.schedule_save(cx);
     }
 
