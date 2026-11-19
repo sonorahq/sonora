@@ -20,7 +20,9 @@ def shipped():
     source = LANGUAGES.read_text(encoding="utf-8")
     blocks = {}
     for name in ("id", "label"):
-        match = re.search(rf"fn {name}\(self\) -> &'static str \{{(.*?)\n    \}}", source, re.S)
+        match = re.search(
+            rf"fn {name}\(self\) -> &'static str \{{(.*?)\n    \}}", source, re.S
+        )
         if not match:
             sys.exit(f"cannot find Language::{name} in {LANGUAGES}")
         blocks[name] = dict(ARM.findall(match.group(1)))
@@ -34,17 +36,18 @@ def shipped():
 
 
 def keys(locale):
-    path = LOCALES / locale / "main.ftl"
-    if not path.is_file():
-        sys.exit(f"cannot find {path}")
+    folder = LOCALES / locale
+    if not folder.is_dir():
+        sys.exit(f"cannot find {folder}")
 
     found = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line or line[0] in " #.*[" or " =" not in line:
-            continue
-        key = line.split(" =", 1)[0]
-        if key and not key.startswith("-"):
-            found.add(key)
+    for path in sorted(folder.glob("*.ftl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line[0] in " #.*[" or " =" not in line:
+                continue
+            key = line.split(" =", 1)[0]
+            if key and not key.startswith("-"):
+                found.add(key)
     return found
 
 

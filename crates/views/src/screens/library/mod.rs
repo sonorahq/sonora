@@ -727,7 +727,7 @@ impl LibraryView {
             true => (
                 t!("library-liked-songs"),
                 "icons/heart-filled.svg",
-                t!("detail-playlist"),
+                t!("kind-playlist"),
             ),
             false => (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-library")),
         };

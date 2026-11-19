@@ -20,7 +20,7 @@ pub(crate) struct Credentials {
 impl Credentials {
     pub(crate) fn new(cx: &mut App) -> Self {
         let fields = Self {
-            server: cx.new(|cx| Input::new("login-server-hint", cx).name("login-server-label")),
+            server: cx.new(|cx| Input::new("login-server-hint", cx).name("common-server-address")),
             username: cx.new(|cx| Input::new("", cx).name("login-username-hint")),
             password: cx.new(|cx| Input::new("", cx).name("login-password-hint").masked()),
         };
@@ -193,7 +193,7 @@ impl RenderOnce for CredentialsPrompt {
             .close_button()
             .child(
                 Form::new("server-form")
-                    .field(Field::new(&fields.server, cx).label(t!("login-server-label")))
+                    .field(Field::new(&fields.server, cx).label(t!("common-server-address")))
                     .field(Field::new(&fields.username, cx).label(t!("login-username-hint")))
                     .field(Field::new(&fields.password, cx).label(t!("login-password-hint")))
                     .on_submit(move |_, window, cx| submitted(&(), window, cx))

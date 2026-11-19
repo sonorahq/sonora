@@ -98,7 +98,7 @@ impl SettingsView {
                 .iter()
                 .find(|(provider, _)| *provider == slug)
                 .map(|(_, name)| SharedString::from(*name))
-                .unwrap_or_else(|| t!("settings-provider-unavailable", name = slug)),
+                .unwrap_or_else(|| t!("common-unavailable", name = slug)),
         };
 
         let mut picker = Picker::new(PROVIDER, &self.popovers, current)

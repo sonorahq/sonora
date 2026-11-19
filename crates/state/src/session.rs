@@ -792,7 +792,7 @@ impl Session {
             landing: sign_in.landing.to_string(),
             domain: sign_in.domain.to_string(),
             proof: sign_in.proof.iter().map(ToString::to_string).collect(),
-            title: t!("login-window-title", provider = provider.name()).to_string(),
+            title: t!("login-choose-title", provider = provider.name()).to_string(),
             agent: sign_in.agent.map(str::to_owned),
             script: None,
         };

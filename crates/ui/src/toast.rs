@@ -215,8 +215,8 @@ impl RenderOnce for Toast {
         // runs inside carry no nodes of their own.
         let name = message.clone();
         // the percentage drawn beside a progress ring is read after the detail
-        let percent = progress
-            .map(|done| i18n::t!("toast-percent", percent = (done * 100.).floor() as usize));
+        let percent =
+            progress.map(|done| i18n::t!("unit-percent", value = (done * 100.).floor() as usize));
         let about = match (detail.clone(), percent) {
             (Some(detail), Some(percent)) => {
                 Some(SharedString::from(format!("{detail}, {percent}")))
@@ -280,8 +280,8 @@ impl RenderOnce for Toast {
                     .flex_none()
                     .text_color(theme.muted_foreground)
                     .child(i18n::t!(
-                        "toast-percent",
-                        percent = (done * 100.).floor() as usize
+                        "unit-percent",
+                        value = (done * 100.).floor() as usize
                     ))
             }))
             .when(cancel.is_some() || action.is_some(), |body| {

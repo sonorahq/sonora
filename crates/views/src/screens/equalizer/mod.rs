@@ -530,7 +530,7 @@ impl EqualizerView {
             .items_center()
             .gap_1()
             .child(
-                action("equalizer-undo", "icons/undo-2.svg", "equalizer-undo")
+                action("equalizer-undo", "icons/undo-2.svg", "common-undo")
                     .disabled(!undo)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.equalizer
@@ -538,7 +538,7 @@ impl EqualizerView {
                     })),
             )
             .child(
-                action("equalizer-redo", "icons/redo-2.svg", "equalizer-redo")
+                action("equalizer-redo", "icons/redo-2.svg", "common-redo")
                     .disabled(!redo)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.equalizer
@@ -667,7 +667,7 @@ impl EqualizerView {
             .child(
                 Scrubber::new(state, ((gain - low) / (high - low)) as f32)
                     .name(title.clone())
-                    .value(t!("equalizer-decibels-value", db = signed.clone()))
+                    .value(t!("unit-db", value = signed.clone()))
                     .colors(theme.muted, theme.muted, theme.foreground)
                     .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
                         let gain = tone_gain(*fraction);
@@ -679,7 +679,7 @@ impl EqualizerView {
         let value = Button::new(reset)
             .small()
             .w(theme.metrics.cover * TONE_VALUE)
-            .label(t!("equalizer-decibels-value", db = signed))
+            .label(t!("unit-db", value = signed))
             .tooltip("equalizer-tone-reset")
             .disabled(gain == 0.)
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -727,7 +727,7 @@ impl EqualizerView {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_preamp(choice, cx)))
             }),
         );
-        let level = t!("equalizer-decibels-value", db = figure(resolved, 1));
+        let level = t!("unit-db", value = figure(resolved, 1));
         let value = match auto {
             true => figure_cell(
                 "equalizer-preamp-value",

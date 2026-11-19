@@ -74,7 +74,7 @@ impl EqualizerView {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 Ok(Err(error)) => {
                     log::warn!("equalizer: cannot open the file dialog: {error:#}");
-                    cx.update(|cx| Toasts::show(Outcome::Failed, "equalizer-dialog-failed", cx));
+                    cx.update(|cx| Toasts::show(Outcome::Failed, "toast-file-dialog-failed", cx));
                     None
                 }
                 _ => None,
@@ -133,7 +133,7 @@ impl EqualizerView {
                 Ok(Ok(path)) => path,
                 Ok(Err(error)) => {
                     log::warn!("equalizer: cannot open the file dialog: {error:#}");
-                    cx.update(|cx| Toasts::show(Outcome::Failed, "equalizer-dialog-failed", cx));
+                    cx.update(|cx| Toasts::show(Outcome::Failed, "toast-file-dialog-failed", cx));
                     None
                 }
                 Err(_) => None,
@@ -176,13 +176,13 @@ impl EqualizerView {
                 .into_any_element()
         };
         let import = pair(
-            button("equalizer-paste", t!("equalizer-paste"))
+            button("equalizer-paste", t!("common-paste"))
                 .on_click(cx.listener(|this, _, _, cx| this.paste(cx))),
             button("equalizer-import-file", t!("equalizer-import-file"))
                 .on_click(cx.listener(|this, _, _, cx| this.import_file(cx))),
         );
         let export = pair(
-            button("equalizer-copy", t!("equalizer-copy"))
+            button("equalizer-copy", t!("common-copy"))
                 .on_click(cx.listener(|this, _, _, cx| this.copy(cx))),
             button("equalizer-export-file", t!("equalizer-export-file"))
                 .on_click(cx.listener(|this, _, _, cx| this.export_file(cx))),

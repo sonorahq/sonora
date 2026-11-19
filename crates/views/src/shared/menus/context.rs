@@ -147,7 +147,7 @@ impl ItemMenu {
             true => MenuItem::new(
                 "remove-from-playlist",
                 counted(
-                    "menu-remove-from-playlist",
+                    "confirm-remove-playlist-title",
                     "menu-remove-tracks-from-playlist",
                     count,
                 ),
@@ -157,7 +157,7 @@ impl ItemMenu {
             false => MenuItem::new(
                 "remove-from-playlist",
                 counted(
-                    "menu-remove-from-playlist",
+                    "confirm-remove-playlist-title",
                     "menu-remove-tracks-from-playlist",
                     count,
                 ),
@@ -181,7 +181,7 @@ impl ItemMenu {
         let forget = MenuItem::new(
             "remove-from-history",
             counted(
-                "menu-remove-from-history",
+                "confirm-remove-history-title",
                 "menu-remove-tracks-from-history",
                 tracks.len(),
             ),
@@ -359,21 +359,21 @@ impl ItemMenu {
             .collect();
         let next = queue_item(
             "play-next",
-            counted("menu-play-next", "menu-play-tracks-next", count),
+            t!("menu-play-next", count = count.max(1)),
             "icons/list-start.svg",
             &queued,
             QueuePlacement::Next,
         );
         let queue = queue_item(
             "add-to-queue",
-            counted("menu-add-to-queue", "menu-add-tracks-to-queue", count),
+            t!("menu-add-to-queue", count = count.max(1)),
             "icons/list-plus.svg",
             &queued,
             QueuePlacement::End,
         );
         let last = queue_item(
             "play-last",
-            counted("menu-play-last", "menu-play-tracks-last", count),
+            t!("menu-play-last", count = count.max(1)),
             "icons/list-end.svg",
             &queued,
             QueuePlacement::Last,
@@ -474,7 +474,7 @@ impl ItemMenu {
         let pinnable = (!many).then(|| track.pin()).flatten();
         let edit = (!many && imported).then(|| {
             let track = track.clone();
-            MenuItem::new("edit-tags", t!("menu-edit-tags"))
+            MenuItem::new("edit-tags", t!("tags-edit-title"))
                 .icon("icons/pencil.svg")
                 .on_click(move |_, window, cx| TagEditor::open(track.clone(), window, cx))
         });
@@ -483,7 +483,7 @@ impl ItemMenu {
             let ids = ids.clone();
             MenuItem::new(
                 "delete-track-files",
-                counted("menu-delete-track-file", "menu-delete-track-files", count),
+                t!("menu-delete-track-files", count = count.max(1)),
             )
             .icon("icons/trash-2.svg")
             .on_click(move |_, _, cx| Confirm::delete_track_files(ids.clone(), cx))
@@ -494,7 +494,7 @@ impl ItemMenu {
             false => Some(
                 MenuItem::new(
                     "add-to-playlist",
-                    counted("menu-add-to-playlist", "menu-add-tracks-to-playlist", count),
+                    t!("menu-add-to-playlist", count = count.max(1)),
                 )
                 .icon("icons/square-plus.svg")
                 .submenu(
@@ -1209,7 +1209,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
             .capabilities_of(Shelf::of(&playlist.id))
             .smart_playlists)
         .then(|| {
-            MenuItem::new("smart-playlist-rules", t!("menu-smart-playlist-rules"))
+            MenuItem::new("smart-playlist-rules", t!("smart-rules-edit-title"))
                 .icon("icons/list-plus.svg")
                 .on_click({
                     let playlist = playlist.clone();
@@ -1227,7 +1227,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     let actions = match playlist.owned {
         true => visibility
             .into_iter()
-            .chain([MenuItem::new("edit-playlist", t!("menu-edit-playlist"))
+            .chain([MenuItem::new("edit-playlist", t!("playlist-edit-title"))
                 .icon("icons/pencil.svg")
                 .on_click({
                     let playlist = playlist.clone();
@@ -1236,16 +1236,16 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
                     }
                 })])
             .chain(smart_rules)
-            .chain(
-                [MenuItem::new("delete-playlist", t!("menu-delete-playlist"))
+            .chain([
+                MenuItem::new("delete-playlist", t!("playlist-delete-title"))
                     .icon("icons/trash-2.svg")
                     .on_click({
                         let playlist = playlist.clone();
                         move |_, window, cx| {
                             PlaylistEditor::open(Edit::Delete(playlist.clone()), window, cx);
                         }
-                    })],
-            )
+                    }),
+            ])
             .chain(imported.then(|| {
                 MenuItem::new("export-playlist", t!("menu-export-playlist"))
                     .icon("icons/square-arrow-out-up-right.svg")
@@ -1523,7 +1523,7 @@ pub(crate) fn new_playlist_menu(
                 .on_click(on_create),
         )
         .items(smart.then(|| {
-            MenuItem::new("create-smart-playlist", t!("menu-new-smart-playlist"))
+            MenuItem::new("create-smart-playlist", t!("smart-rules-create-title"))
                 .icon("icons/list-plus.svg")
                 .on_click(move |_, window, cx| {
                     SmartPlaylistEditor::open(SmartEdit::Create { shelf }, window, cx);

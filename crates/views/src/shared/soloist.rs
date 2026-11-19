@@ -34,9 +34,9 @@ impl SoloistSetup {
         let soloist = Sonora::global(cx).soloist.clone();
         cx.observe(&soloist, |_, _, cx| cx.notify()).detach();
         let key = cx.new(|cx| {
-            Input::new("soloist-key-hint", cx)
+            Input::new("common-api-key", cx)
                 .masked()
-                .name("soloist-key-hint")
+                .name("common-api-key")
         });
         cx.observe(&key, |_, _, cx| cx.notify()).detach();
         Self {
@@ -105,7 +105,7 @@ impl SoloistSetup {
             progress(
                 [
                     t!("soloist-step-download"),
-                    t!("soloist-step-key"),
+                    t!("common-api-key"),
                     t!("soloist-step-pair"),
                 ],
                 match step {
@@ -230,7 +230,7 @@ impl Render for SoloistSetup {
             SoloistStep::Pairing => modal.action(
                 Button::new("soloist-back")
                     .ghost()
-                    .label(t!("soloist-back"))
+                    .label(t!("nav-back"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.soloist.update(cx, |soloist, cx| soloist.back(cx));
                     })),
@@ -240,7 +240,7 @@ impl Render for SoloistSetup {
                     Button::new("soloist-cancel")
                         .ghost()
                         .label(match step {
-                            SoloistStep::Consent => t!("soloist-later"),
+                            SoloistStep::Consent => t!("common-not-now"),
                             _ => t!("common-cancel"),
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),

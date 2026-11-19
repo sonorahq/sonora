@@ -66,7 +66,7 @@ impl RailTab {
 
     fn label(self) -> SharedString {
         match self {
-            Self::Albums => t!("album-tab-albums"),
+            Self::Albums => t!("nav-albums"),
             Self::Artists => t!("album-tab-artists"),
         }
     }
@@ -466,7 +466,7 @@ impl DetailView {
         let listed = self.detail.read(cx).tracks();
         let duration: std::time::Duration = listed.iter().map(|track| track.duration).sum();
         let eyebrow = match kind {
-            Collection::Playlist => t!("detail-playlist"),
+            Collection::Playlist => t!("kind-playlist"),
             Collection::Album => i18n::lookup(cards::release_key(release), None),
         };
 

@@ -70,7 +70,7 @@ impl ConnectName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-spotify-connect-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Both => "settings-spotify-connect-name-both",
             Self::Computer => "settings-spotify-connect-name-computer",
             Self::Custom => "settings-spotify-connect-name-custom",
@@ -119,7 +119,7 @@ impl DiscordName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-discord-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Provider => "settings-discord-name-provider",
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",

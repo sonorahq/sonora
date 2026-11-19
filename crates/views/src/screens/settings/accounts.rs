@@ -154,7 +154,7 @@ impl SettingsView {
 
         drill(
             "music-folders",
-            t!("settings-local-folder"),
+            t!("settings-music-folders"),
             Some(value),
             cx,
         )
@@ -376,7 +376,7 @@ impl SettingsView {
                 )
                 .child(
                     Button::new("library-retry")
-                        .label(t!("settings-subsonic-library-retry"))
+                        .label(t!("trouble-retry"))
                         .small()
                         .outline()
                         .on_click(cx.listener(|this, _, _, cx| this.open_library_picker(cx))),
@@ -437,7 +437,7 @@ impl SettingsView {
         // that is the longest part, so it says so rather than showing nothing.
         let note = match (scanning, scan.done()) {
             (Some(progress), _) => Some(match progress.percent() {
-                Some(percent) => t!("settings-scan-progress", percent = percent),
+                Some(percent) => t!("unit-percent", value = percent),
                 None => t!("settings-scan-walking"),
             }),
             (None, Some(took)) => Some(t!("settings-scan-done", seconds = text::lapsed(took))),
@@ -464,7 +464,7 @@ impl SettingsView {
             div()
                 .id("local-folders")
                 .role(Role::List)
-                .aria_label(t!("settings-local-folder"))
+                .aria_label(t!("settings-music-folders"))
                 .flex()
                 .flex_col()
                 .children(items)

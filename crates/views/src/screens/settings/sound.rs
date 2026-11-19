@@ -104,7 +104,7 @@ impl SettingsView {
             }
         };
         let rate = current
-            .map(|rate| t!("settings-sample-rate-value", khz = f64::from(rate) / 1_000.))
+            .map(|rate| t!("unit-khz", value = f64::from(rate) / 1_000.))
             .unwrap_or_else(|| t!("settings-output-idle"));
         let rate = ui::spoken("sample-rate-value", rate);
         let stepper = current

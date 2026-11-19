@@ -138,7 +138,7 @@ impl HistoryView {
         PageHero::new("history-hero", t!("nav-history"))
             .fallback("icons/rotate-ccw-clock.svg")
             .accent()
-            .eyebrow(t!("detail-playlist"))
+            .eyebrow(t!("kind-playlist"))
             .meta(strip)
             .actions(
                 div().flex().items_center().child(

@@ -122,7 +122,7 @@ impl DownloadsButton {
                 subject: Subject::Song,
                 ..
             } => base("download-heading-songs".into())
-                .child(faint(cx).child(t!("downloads-songs")))
+                .child(faint(cx).child(t!("nav-songs")))
                 .into_any_element(),
             Row::Heading {
                 subject,
