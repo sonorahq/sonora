@@ -739,9 +739,11 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
 
-  # The nightly prerelease is one release whose assets every nightly replaces. Its tag moves to a
-  # commit on top of the main it built, which adds nix/nightly.json so the flake at that tag
-  # installs the binaries beside it.
+  # The nightly prerelease is one release, tagged `nightly-build`, whose assets every nightly
+  # replaces. The tag and the `nightly` branch, the flake ref of the nightly channel, move to a
+  # commit on top of the main it built, which adds nix/nightly.json so the flake there builds the
+  # nightly version. Immutable releases must stay off for the repository, since an immutable
+  # release freezes its tag and assets and retires the tag name for good, as it did to `nightly`.
   nightly:
     needs: [build, bundle, appimage]
     if: ${{ inputs.nightly }}
@@ -777,7 +779,7 @@ jobs:
           jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
             '{version: $version, commit: $commit}' > nix/nightly.json
 
-      - name: move the nightly tag
+      - name: move the nightly branch and tag
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
@@ -787,7 +789,7 @@ jobs:
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "chore(nix): point the flake at nightly $NIGHTLY"
-          git push --force origin HEAD:refs/tags/nightly
+          git push --atomic --force origin HEAD:refs/heads/nightly HEAD:refs/tags/nightly-build
 
       # Replacing the assets in place rather than recreating the release keeps watchers from
       # being notified of a new release every night.
@@ -809,11 +811,11 @@ jobs:
             fi
             printf '\nFor a portable executable, keep sonora-build.json beside it to preserve its nightly version and update channel.\n'
           } > notes.md
-          if gh release view nightly > /dev/null 2>&1; then
-            gh release upload nightly dist/* --clobber
-            gh release edit nightly --prerelease --title "Nightly $NIGHTLY" --notes-file notes.md
+          if gh release view nightly-build > /dev/null 2>&1; then
+            gh release upload nightly-build dist/* --clobber
+            gh release edit nightly-build --prerelease --title "Nightly $NIGHTLY" --notes-file notes.md
           else
-            gh release create nightly dist/* \
+            gh release create nightly-build dist/* \
               --verify-tag \
               --prerelease \
               --latest=false \

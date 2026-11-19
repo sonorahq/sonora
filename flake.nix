@@ -63,8 +63,8 @@
             ];
         };
 
-      # The nightly's version. Only the commit the nightly workflow tags `nightly` carries this
-      # file, and its presence makes the package a nightly build.
+      # The nightly's version. Only the commit the nightly workflow puts on the `nightly` branch
+      # carries this file, and its presence makes the package a nightly build.
       nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
         lib.importJSON ./nix/nightly.json
       );
@@ -221,7 +221,7 @@
             }
           );
 
-          # Compiles the checked-out tree. At the `nightly` tag it takes the nightly's version, commit
+          # Compiles the checked-out tree. On the `nightly` branch it takes the nightly's version, commit
           # and update channel, which the app reads at compile time.
           sonora = craneLib.buildPackage (
             commonArgs

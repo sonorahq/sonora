@@ -20,6 +20,9 @@ pub use staged::start_staged;
 
 const RELEASES: &str = "https://api.github.com/repos/sonorahq/sonora/releases";
 const SUMS: &str = "SHA256SUMS";
+/// The tag of the one nightly prerelease. The older `nightly` release is immutable and frozen, so
+/// its tag can never be reused.
+const NIGHTLY_TAG: &str = "nightly-build";
 /// What the nightly workflow puts before the version label in the nightly release's title.
 const NIGHTLY_TITLE: &str = "Nightly ";
 /// How many leading hex digits of a commit hash the version row shows, as `git` abbreviates it.
@@ -78,7 +81,7 @@ impl Channel {
     fn url(self) -> String {
         match self {
             Self::Stable => format!("{RELEASES}/latest"),
-            Self::Nightly => format!("{RELEASES}/tags/nightly"),
+            Self::Nightly => format!("{RELEASES}/tags/{NIGHTLY_TAG}"),
         }
     }
 }
