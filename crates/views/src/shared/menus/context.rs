@@ -1021,17 +1021,20 @@ pub(crate) fn album_menu(
 ) -> Menu {
     let album_id = album.id.clone();
     let from = Origin::album(album_id.clone()).named(album.name.clone());
-    let add_to_playlist = MenuItem::new("add-album-to-playlist", t!("menu-add-to-playlist"))
-        .icon("icons/square-plus.svg")
-        .submenu(
-            menus.playlist_rows(
-                Addition::Album(album_id.clone()),
-                Shelf::of(&album_id),
-                Vec::new(),
-                cx,
-            ),
-            menus.playlist_submenu.clone(),
-        );
+    let add_to_playlist = MenuItem::new(
+        "add-album-to-playlist",
+        t!("menu-add-to-playlist", count = 1),
+    )
+    .icon("icons/square-plus.svg")
+    .submenu(
+        menus.playlist_rows(
+            Addition::Album(album_id.clone()),
+            Shelf::of(&album_id),
+            Vec::new(),
+            cx,
+        ),
+        menus.playlist_submenu.clone(),
+    );
 
     sections(
         item_shell("album-context-menu", album_tiles(&album, cx)),
@@ -1390,7 +1393,9 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<Men
     .map(|(id, label, icon, placement)| {
         let origin = origin.clone();
         let playback = playback.clone();
-        MenuItem::new(id, i18n::lookup(label, None))
+        let mut args = i18n::FluentArgs::new();
+        args.set("count", 1);
+        MenuItem::new(id, i18n::lookup(label, Some(&args)))
             .icon(icon)
             .on_click(move |_, _, cx| {
                 playback.update(cx, |playback, cx| {
