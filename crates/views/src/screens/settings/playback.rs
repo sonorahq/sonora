@@ -6,10 +6,10 @@ use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, di
 use i18n::t;
 use music::drm::Origin;
 use music::{Codec, Encoding, Offer, Quality, Transcode};
-use state::{CdmState, Sleep, SoloistState};
+use state::{CdmState, Sleep, SoloistState, Sonora, StarRatings};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
-use super::rows::{Announced as _, grid, segmented};
+use super::rows::{Announced as _, Row, grid, segmented};
 use super::{Group, SettingsView, Slot};
 use crate::shared::confirm::{Confirm, Kind};
 
@@ -29,6 +29,36 @@ const SLEEP_MAGNET_WEIGHT: usize = 4;
 const SLEEP_LAST: usize = (SLEEP_MAX_MINUTES - SLEEP_MIN_MINUTES + 1) as usize
     + SLEEP_MAGNETS.len() * (SLEEP_MAGNET_WEIGHT - 1)
     + 1;
+
+/// Rating preferences in the order they appear in the playback group.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RatingSetting {
+    Stars,
+    Halves,
+    Hearts,
+    AutoLike,
+}
+
+impl RatingSetting {
+    const ALL: [Self; 4] = [Self::Stars, Self::Halves, Self::Hearts, Self::AutoLike];
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Stars => "settings-star-ratings",
+            Self::Halves => "settings-half-ratings",
+            Self::Hearts => "settings-rating-hearts",
+            Self::AutoLike => "settings-rating-auto-like",
+        }
+    }
+
+    pub(super) fn copy(self) -> (SharedString, SharedString) {
+        let key = self.key();
+        (
+            i18n::lookup(key, None),
+            i18n::lookup(&format!("{key}-detail"), None),
+        )
+    }
+}
 
 impl SettingsView {
     pub(super) fn playback_groups(&self, cx: &App) -> Vec<Group> {
@@ -68,6 +98,19 @@ impl SettingsView {
             );
         }
         groups.extend(self.sessions_groups(cx));
+        // Hearts and stars are separate systems, so the group holds the heart switch whether or
+        // not the provider can rate.
+        let ratings = Sonora::global(cx).ratings.read(cx);
+        let rated = ratings.supported(cx);
+        let rows = RatingSetting::ALL
+            .into_iter()
+            .filter(|setting| match setting {
+                RatingSetting::Hearts => true,
+                RatingSetting::Halves => rated && ratings.half_stars(cx),
+                _ => rated,
+            })
+            .map(Slot::Rating);
+        groups.push(Group::new("settings-group-ratings", "icons/star-filled.svg").rows(rows));
         groups.extend(self.connect_groups(cx));
         groups
     }
@@ -120,6 +163,71 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// Renders a rating preference for both the playback group and settings search.
+    pub(super) fn rating_setting_row(
+        &self,
+        setting: RatingSetting,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut options = self.settings.read(cx).star_ratings();
+        let field: fn(&mut StarRatings) -> &mut bool = match setting {
+            RatingSetting::Stars => |ratings| &mut ratings.enabled,
+            RatingSetting::Halves => |ratings| &mut ratings.half_ratings,
+            RatingSetting::Hearts => |ratings| &mut ratings.hearts,
+            RatingSetting::AutoLike => {
+                return self
+                    .rating_auto_like_row(setting.key(), !(options.enabled && options.hearts));
+            }
+        };
+        let key = setting.key();
+        let nested = setting == RatingSetting::Halves;
+        let unavailable = nested && !options.enabled;
+        let on = *field(&mut options);
+        let title = i18n::lookup(key, None);
+        let row = Row::new(
+            title.clone(),
+            Switch::new(key, on)
+                .name(title)
+                .disabled(unavailable)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_star_ratings(|ratings| *field(ratings) = !on, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+        .disabled(unavailable);
+        match nested {
+            true => row.nested(),
+            false => row,
+        }
+        .into_any_element()
+    }
+
+    /// The interactive star preview sets the auto-like threshold, or switches it off. It stands
+    /// under the hearts switch and is out of use, and covered so it takes no clicks, while
+    /// `unavailable`.
+    fn rating_auto_like_row(&self, key: &str, unavailable: bool) -> AnyElement {
+        let stars = crate::shared::rating::Rating::threshold();
+        Row::new(
+            i18n::lookup(key, None),
+            div()
+                .relative()
+                .child(stars)
+                .when(unavailable, |this| {
+                    this.child(
+                        ui::Shield::new("rating-auto-like-shield")
+                            .absolute()
+                            .size_full(),
+                    )
+                })
+                .into_any_element(),
+        )
+        .nested()
+        .disabled(unavailable)
+        .into_any_element()
     }
 
     /// The switch that keeps played tracks on disk. Soloist streams every track and keeps its

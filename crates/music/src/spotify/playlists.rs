@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
@@ -25,6 +25,9 @@ use crate::spotify::pace::{self, paced};
 use crate::spotify::{collection, profiles, wire};
 use crate::{Contributor, GenreItem, GenreSection, Playlist, PlaylistDetail, Track, escape};
 
+const FOLDER: &str = "Rated";
+const START: &str = "spotify:start-group:";
+const END: &str = "spotify:end-group";
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const ROOTLIST_LIMIT: usize = 10000;
@@ -38,6 +41,9 @@ const COVER_LIMITS: CoverLimits = CoverLimits {
     bytes: 256 * 1024,
 };
 
+/// The Rated folder's closing index and its rating playlist ids.
+type Folder = (usize, Vec<(String, u8)>);
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Uploaded {
@@ -49,7 +55,48 @@ struct Registered {
     picture: String,
 }
 
+/// Finds the numeric rating playlists directly inside Rated.
+pub(super) async fn rating_playlists(session: &Session) -> Result<Vec<(String, u8)>> {
+    Ok(rated_folder(&fetch_rootlist(session).await?)?
+        .map(|(_, playlists)| playlists)
+        .unwrap_or_default())
+}
+
+/// Creates a numeric playlist inside Rated, in one edit with the folder when it is missing.
+pub(super) async fn create_rating_playlist(session: &Session, rating: u8) -> Result<String> {
+    let root = fetch_rootlist(session).await?;
+    let folder = rated_folder(&root)?;
+    let id = create_unlisted(session, &crate::models::rating_label(rating)).await?;
+    let mut op = add_op(&format!("{PLAYLIST_PREFIX}{id}"));
+    let add = op.add.mut_or_insert_default();
+    add.items[0]
+        .attributes
+        .mut_or_insert_default()
+        .set_public(false);
+    match folder {
+        Some((end, _)) => {
+            add.add_last = None;
+            add.set_from_index(end as i32);
+        }
+        None => {
+            let group = format!("{:016x}", fastrand::u64(..));
+            add.items
+                .insert(0, item(&format!("{START}{group}:{FOLDER}")));
+            add.items.push(item(&format!("{END}:{group}")));
+        }
+    }
+    rootlist_edit(session, &changes(root.revision.as_deref(), op)).await?;
+    Ok(id)
+}
+
 pub async fn create(session: &Session, name: &str) -> Result<String> {
+    let id = create_unlisted(session, name).await?;
+    add_to_library(session, &id).await?;
+    Ok(id)
+}
+
+/// Creates a playlist that the caller will place in the rootlist.
+async fn create_unlisted(session: &Session, name: &str) -> Result<String> {
     let body = changes(None, rename_op(name));
     let reply = post(session, "/playlist/v2/playlist", &body)
         .await
@@ -65,8 +112,6 @@ pub async fn create(session: &Session, name: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("cannot read the created playlist id"))?;
 
     rename(session, &id, name).await?;
-
-    add_to_library(session, &id).await?;
 
     Ok(id)
 }
@@ -361,6 +406,29 @@ pub async fn name_blanks(session: &Session, sections: &mut Vec<GenreSection>) {
         });
     }
     sections.retain(|section| !section.items.is_empty());
+}
+
+/// Reads ids and timestamps directly from the playlist, without fetching song metadata.
+pub(super) async fn entries(
+    session: &Session,
+    playlist_id: &str,
+) -> Result<Vec<(String, Option<i64>)>> {
+    let content = snapshot(session, playlist_id).await?;
+    ensure!(
+        !content.contents.truncated(),
+        "cannot read every playlist entry"
+    );
+    Ok(content
+        .contents
+        .items
+        .iter()
+        .filter_map(|item| {
+            Some((
+                item.uri().strip_prefix(TRACK_PREFIX)?.to_owned(),
+                wire::seconds(item.attributes.timestamp()),
+            ))
+        })
+        .collect())
 }
 
 pub async fn playlist_tracks(session: &Session, playlist_id: &str) -> Result<Vec<Track>> {
@@ -696,6 +764,50 @@ fn position(content: &SelectedListContent, uri: &str) -> Option<i32> {
     let contents = &content.contents;
     let offset = contents.items.iter().position(|item| item.uri() == uri)? as i32;
     Some(contents.pos() + offset)
+}
+
+/// Finds the top-level Rated folder and the rating playlists directly inside it.
+fn rated_folder(root: &SelectedListContent) -> Result<Option<Folder>> {
+    ensure!(
+        !root.contents.truncated(),
+        "cannot read the complete Rated folder"
+    );
+    let contents = &root.contents;
+    let mut depth = 0usize;
+    let mut rated = None;
+    let mut found = None;
+    let mut playlists = Vec::new();
+    for (index, item) in contents.items.iter().enumerate() {
+        let uri = item.uri();
+        let name = contents
+            .meta_items
+            .get(index)
+            .map(|meta| meta.attributes.name());
+        if let Some(group) = uri.strip_prefix(START) {
+            let label = group.split_once(':').map(|(_, label)| label);
+            let label = percent_encoding::percent_decode_str(label.unwrap_or_default());
+            if depth == 0 && (label.decode_utf8_lossy() == FOLDER || name == Some(FOLDER)) {
+                ensure!(found.is_none(), "more than one Rated folder exists");
+                rated = Some(1);
+            }
+            depth += 1;
+        } else if uri.starts_with(END) {
+            if rated == Some(depth) {
+                found = Some((index, std::mem::take(&mut playlists)));
+                rated = None;
+            }
+            depth = depth.saturating_sub(1);
+        } else if rated == Some(depth)
+            && let Some(id) = uri.strip_prefix(PLAYLIST_PREFIX)
+        {
+            let name = name.context("cannot read rating playlist names")?;
+            if let Some(rating) = crate::models::parse_rating(name) {
+                playlists.push((id.to_owned(), rating));
+            }
+        }
+    }
+    ensure!(rated.is_none(), "cannot read the complete Rated folder");
+    Ok(found)
 }
 
 #[cfg(test)]

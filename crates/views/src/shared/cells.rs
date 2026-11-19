@@ -427,7 +427,6 @@ pub(crate) fn title<F>(
     explicit: Option<SharedString>,
     press: Option<Tap>,
     status: Option<AnyElement>,
-    is_liked: Option<AnyElement>,
 ) -> AnyElement {
     let value = value.into();
     let text = div()
@@ -465,7 +464,6 @@ pub(crate) fn title<F>(
             )
         })
         .when_some(status, |this, status| this.child(status))
-        .when_some(is_liked, |this, is_liked| this.child(is_liked))
         .into_any_element()
 }
 

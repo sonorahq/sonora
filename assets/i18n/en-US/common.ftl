@@ -15,6 +15,7 @@ common-previous = Previous
 common-next = Next
 common-dismiss = Dismiss
 common-clear = Clear
+common-rating = Rating
 common-undo = Undo
 common-redo = Redo
 common-cut = Cut
@@ -48,6 +49,10 @@ unit-gb = { $value } GB
 unit-mb = { $value } MB
 unit-fps = { $value } FPS
 unit-px = { $value } px
+unit-stars = { $value ->
+    [one] { $value } star
+   *[other] { $value } stars
+    }
 runtime-seconds = { $seconds }s
 runtime-minutes = { $minutes }m { $seconds }s
 runtime-hours = { $hours }h { $minutes }m
