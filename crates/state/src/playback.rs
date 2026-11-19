@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Result;
 use futures::future::BoxFuture;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use logic::station::{self, unheard};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
@@ -109,15 +110,6 @@ const MUTE_THRESHOLD: f32 = 0.001;
 /// The level a mute button restores when the volume was already zero.
 const DEFAULT_UNMUTE_VOLUME: f32 = 0.7;
 const SIMILAR_LIMIT: usize = 20;
-
-/// How few tracks may be left to play before radio asks for the next batch of suggestions.
-/// Asking this early keeps the wait for the station off the gap between two tracks.
-const RADIO_LOOKAHEAD: usize = 10;
-
-/// How many continuations in a row may bring nothing the queue has not heard before the station
-/// is dropped. An empty stretch lands with the queue still short, which asks for the next one
-/// straight away, so a provider serving the same tracks over would otherwise never be let go of.
-const STATION_DRY_LIMIT: u8 = 3;
 
 /// How many unreadable files a toast names before it cuts the list short.
 const LISTED_FILES: usize = 5;
@@ -478,11 +470,22 @@ impl From<&Pin> for Origin {
     }
 }
 
-/// A station the queue was started from, and the continuation its next stretch is fetched with.
+/// A station the queue was started from: the collection its tracks are tagged with, and the
+/// continuation its next stretch is fetched with.
 #[derive(Clone, PartialEq)]
 struct Station {
     origin: Origin,
-    next: String,
+    rest: station::Station,
+}
+
+impl Station {
+    /// The station of `origin`, a radio, that the provider continues at `next`.
+    fn of(origin: Origin, next: String) -> Self {
+        Self {
+            rest: station::Station::new(origin.id.clone(), next),
+            origin,
+        }
+    }
 }
 
 /// Where files dropped on the queue go: `gap` upcoming tracks in, before the track whose queue
@@ -1234,10 +1237,7 @@ impl Playback {
             },
             move |this, loaded, cx| match loaded {
                 Ok((tracks, next)) if this.origin(cx) == Some(&origin) => {
-                    this.station = next.map(|next| Station {
-                        origin: origin.clone(),
-                        next,
-                    });
+                    this.station = next.map(|next| Station::of(origin.clone(), next));
                     this.queue
                         .update(cx, |queue, cx| queue.extend_context(tracks, origin, cx));
                 }
@@ -1733,10 +1733,7 @@ impl Playback {
                 .update(cx, |queue, cx| queue.set_shuffle(true, cx));
         }
         let index = self.opener(&tracks, cx).unwrap_or_default();
-        let station = next.map(|next| Station {
-            origin: origin.clone(),
-            next,
-        });
+        let station = next.map(|next| Station::of(origin.clone(), next));
         if self.begin(tracks, index, Some(origin), cx) {
             self.station = station;
         }
@@ -1922,13 +1919,13 @@ impl Playback {
         self.queue.read(cx).current().cloned()
     }
 
-    /// Fetches the station's next stretch once fewer than `RADIO_LOOKAHEAD` tracks are left to
+    /// Fetches the station's next stretch once fewer than `station::LOOKAHEAD` tracks are left to
     /// play, so the queue never reaches its end while the provider has more. What the queue
     /// has already heard is left out. The station is the queue itself, so it goes on whether
     /// or not radio suggestions are on; a fetch that fails drops the continuation and hands the
     /// end of the queue back to `advance` through `stranded`.
     fn continue_station(&mut self, cx: &mut Context<Self>) {
-        if self.topping.is_some() || self.queue.read(cx).ahead() >= RADIO_LOOKAHEAD {
+        if self.topping.is_some() || !station::runs_low(self.queue.read(cx).ahead()) {
             return;
         }
         let Some(station) = self.station.clone() else {
@@ -1939,8 +1936,8 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
-        let seed = station.origin.id.clone();
-        let token = station.next.clone();
+        let seed = station.rest.seed().to_owned();
+        let token = station.rest.next().to_owned();
         self.topping = Some(Io::global(cx).load(
             async move {
                 let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
@@ -1954,16 +1951,10 @@ impl Playback {
                 }
                 match loaded {
                     Ok((tracks, next)) => {
-                        this.dry = match tracks.is_empty() {
-                            true => this.dry.saturating_add(1),
-                            false => 0,
-                        };
-                        this.station =
-                            next.filter(|_| this.dry < STATION_DRY_LIMIT)
-                                .map(|next| Station {
-                                    origin: station.origin.clone(),
-                                    next,
-                                });
+                        this.dry = station::dry_after(this.dry, tracks.len());
+                        this.station = next
+                            .filter(|_| !station::ran_dry(this.dry))
+                            .map(|next| Station::of(station.origin.clone(), next));
                         let idle = this.track.is_none() && !this.queue.read(cx).has_next();
                         this.queue.update(cx, |queue, cx| {
                             queue.extend_context(tracks, station.origin.clone(), cx)
@@ -1997,7 +1988,7 @@ impl Playback {
     }
 
     /// Fills the suggestions from the current track's radio when radio is on and there are
-    /// none, and tops them up once fewer than `RADIO_LOOKAHEAD` tracks are left to play, so the
+    /// none, and tops them up once fewer than `station::LOOKAHEAD` tracks are left to play, so the
     /// next batch has arrived long before the queue reaches it. What is already queued is left
     /// out, and the provider's best `SIMILAR_LIMIT` of the rest are kept. A failure is shown
     /// only when `asked`, that is when the user just turned radio on, since a top-up failing
@@ -2007,7 +1998,7 @@ impl Playback {
             return;
         }
         let held = self.queue.read(cx).similar().count();
-        if held > 0 && self.queue.read(cx).upcoming().len() >= RADIO_LOOKAHEAD {
+        if held > 0 && !station::runs_low(self.queue.read(cx).upcoming().len()) {
             return;
         }
         let Some(seed) = self.seed(cx) else {
@@ -3616,17 +3607,6 @@ impl Playback {
         }
         cx.notify();
     }
-}
-
-/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds.
-fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
-    tracks.retain(|track| {
-        track.playable
-            && track
-                .id
-                .as_ref()
-                .is_some_and(|id| !heard.contains(id.as_str()))
-    });
 }
 
 fn song_target(track: &Track) -> Option<Target> {
