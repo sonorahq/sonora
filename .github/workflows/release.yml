@@ -789,7 +789,7 @@ jobs:
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "chore(nix): point the flake at nightly $NIGHTLY"
-          git push --force origin HEAD:refs/heads/nightly HEAD:refs/tags/nightly-build
+          git push --atomic --force origin HEAD:refs/heads/nightly HEAD:refs/tags/nightly-build
 
       # Replacing the assets in place rather than recreating the release keeps watchers from
       # being notified of a new release every night.
