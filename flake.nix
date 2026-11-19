@@ -1,8 +1,8 @@
 {
   description = "A native, familiar music streaming client";
 
-  # CI builds the `stable` and `nightly` branches and every push to main for Linux and pushes the
-  # result here, so the package downloads instead of compiling.
+  # CI builds the `stable` and `nightly` branches and every push to main for Linux and Apple
+  # silicon macOS and pushes the result here, so the package downloads instead of compiling.
   nixConfig = {
     extra-substituters = [ "https://sonora.cachix.org" ];
     extra-trusted-public-keys = [
@@ -159,7 +159,11 @@
             version = cargoVersion;
             strictDeps = true;
             doCheck = false;
-            cargoExtraArgs = "--locked --package sonora";
+            # The Nix Apple SDK has no Metal compiler, so on macOS gpui compiles its shaders at launch
+            # instead of reaching for Xcode at build time.
+            cargoExtraArgs =
+              "--locked --package sonora"
+              + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin " --features runtime-shaders";
 
             nativeBuildInputs =
               with pkgs;
@@ -169,21 +173,6 @@
                 (lib.optionals stdenv.hostPlatform.isLinux [
                   makeWrapper
                   mold
-                ])
-                (lib.optionals stdenv.hostPlatform.isDarwin [
-                  (
-                    let
-                      pkgs' = import nixpkgs {
-                        inherit (stdenv.hostPlatform) system;
-                        config.allowUnfree = true;
-                      };
-                    in
-                    runCommandLocal "metal-shader-compiler" { } ''
-                      mkdir -p "$out/bin"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal "$out/bin/metal"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metallib "$out/bin/metallib"
-                    ''
-                  )
                 ])
               ];
             buildInputs =

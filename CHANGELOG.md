@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The Nix package builds on a Mac without Xcode, and an Apple silicon Mac downloads it from the binary cache instead of compiling it.
+
 ### Fixed
 
 - Your YouTube Music library lists every artist you follow, not only the first couple dozen.
