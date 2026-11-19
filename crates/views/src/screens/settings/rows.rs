@@ -21,8 +21,17 @@ pub(crate) struct Row {
     detail: Option<SharedString>,
     control: AnyElement,
     disabled: bool,
+    nested: bool,
     yielding: bool,
 }
+
+/// How far a nested row's label sits in, and where its elbow starts, as fractions of a list row.
+const INDENT: f32 = 0.6;
+const ELBOW_AT: f32 = 0.2;
+const ELBOW_WIDTH: f32 = 0.25;
+const ELBOW_HEIGHT: f32 = 0.5;
+/// The opacity of the elbow line joining a nested row to its parent.
+const ELBOW_OPACITY: f32 = 0.4;
 
 impl Row {
     pub(crate) fn new(title: SharedString, control: AnyElement) -> Self {
@@ -31,8 +40,16 @@ impl Row {
             detail: None,
             control,
             disabled: false,
+            nested: false,
             yielding: false,
         }
+    }
+
+    /// Indents the row under the one above it with an elbow, for a setting that only means
+    /// something while that one is on.
+    pub(crate) fn nested(mut self) -> Self {
+        self.nested = true;
+        self
     }
 
     /// Lets the control give up width before the label does, for a text field that still works
@@ -63,16 +80,33 @@ impl RenderOnce for Row {
             detail,
             control,
             disabled,
+            nested,
             yielding,
         } = self;
         let theme = *cx.theme();
+        let unit = theme.metrics.list_row;
 
         div()
+            .relative()
             .flex()
             .items_center()
             .justify_between()
             .gap_4()
-            .min_h(theme.metrics.list_row)
+            .min_h(unit)
+            .when(nested, |this| {
+                this.pl(unit * INDENT).child(
+                    div()
+                        .absolute()
+                        .left(unit * ELBOW_AT)
+                        .top_0()
+                        .h(unit * ELBOW_HEIGHT)
+                        .w(unit * ELBOW_WIDTH)
+                        .border_l_1()
+                        .border_b_1()
+                        .border_color(theme.muted_foreground.opacity(ELBOW_OPACITY))
+                        .rounded_bl(theme.radius),
+                )
+            })
             .when(disabled, |this| this.text_color(theme.muted_foreground))
             .child(
                 div()

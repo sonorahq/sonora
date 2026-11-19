@@ -890,6 +890,40 @@ impl MusicApi for JellyfinClient {
         self.favorite(track_id, saved).await
     }
 
+    /// Jellyfin keeps a user's rating of an item from 0 to 10, which is the half-star scale.
+    async fn track_ratings(&self) -> Result<(HashMap<String, u8>, HashMap<String, u8>)> {
+        // Only the id and user data are read, so the listing leaves out the extra fields and images.
+        let query = Query::kind("Audio")
+            .with("Fields", "")
+            .with("EnableImages", "false");
+        let rated = self
+            .all(query, |_, item| {
+                let rating = item.user_data.as_ref()?.rating?.round();
+                (1.0..=10.0)
+                    .contains(&rating)
+                    .then_some((item.id, rating as u8))
+            })
+            .await
+            .context("cannot load the song ratings")?;
+        Ok((rated.into_iter().collect(), HashMap::new()))
+    }
+
+    async fn write_native_rating(&self, track_id: &str, rating: Option<u8>) -> Result<bool> {
+        let id = escape::component(track_id);
+        // DELETE /UserItems/{id}/Rating clears the like, not the rating, so a clear writes 0,
+        // which the read leaves out.
+        let body = serde_json::json!({ "Rating": f64::from(rating.unwrap_or(0)) });
+        self.send(
+            Method::POST,
+            &format!("/UserItems/{id}/UserData"),
+            &self.user(),
+            Some(body),
+        )
+        .await
+        .with_context(|| format!("cannot rate {track_id}"))?;
+        Ok(true)
+    }
+
     async fn track(&self, track_id: &str) -> Result<Track> {
         let item = self.item_with(track_id, TRACK_FIELDS, "song").await?;
         Ok(self.covers.track(item))
