@@ -150,11 +150,32 @@
           src = cargoSource ./.;
           cargoVersion = (lib.importTOML "${src}/Cargo.toml").workspace.package.version;
 
+          # gpui_apple's build script reads gpui's sources from `../gpui`, but a vendored git crate sits
+          # in `<name>-<version>`, so on macOS the path is pointed at the vendored gpui instead.
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            inherit src;
+            overrideVendorGitCheckout =
+              packages: drv:
+              let
+                gpui = lib.findFirst (package: package.name == "gpui") null packages;
+              in
+              if pkgs.stdenv.hostPlatform.isDarwin && gpui != null then
+                drv.overrideAttrs (_: {
+                  postPatch = ''
+                    substituteInPlace crates/gpui_apple/build.rs \
+                      --replace-fail '"../gpui"' '"../gpui-${gpui.version}"'
+                  '';
+                })
+              else
+                drv;
+          };
+
           # What both the dependency build and the app build need to compile. Nothing in here may
           # depend on the app's own code or version, or every commit would rebuild the
           # dependencies too.
           commonArgs = {
             inherit src;
+            inherit cargoVendorDir;
             pname = "sonora";
             version = cargoVersion;
             strictDeps = true;
