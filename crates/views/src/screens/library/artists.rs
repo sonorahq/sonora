@@ -1,15 +1,15 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
+use ui::{ActiveTheme as _, Filter, FilterChange};
 
 use gpui::{AnyElement, App, Entity, SharedString};
-use i18n::t;
 use music::SavedArtist;
 use state::{Library, LibraryPart, LibraryState, Network, Origin, Playback, Shelf, Sonora};
 use ui::rank::{ESSENTIAL, HANDY};
 use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
+use crate::chrome::tools;
 use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER};
 use crate::shared::menus::artist_menu;
@@ -186,11 +186,7 @@ impl TableSource for ArtistSource {
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
         let mut axes = Vec::new();
         if self.catalog(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-favorites",
-                label: t!("filter-favorites"),
-                on: self.starred,
-            }));
+            axes.push(tools::flag("filter-favorites", self.starred));
         }
         axes.extend(self.reach.axes(self.artists(cx).mixed()));
         axes

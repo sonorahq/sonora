@@ -7,7 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Filter tracks by release year, play count, popularity, collaborations and tags, with genre, mood and BPM filters where available.
+
 ### Changed
+
+- Page controls sit beside their content, and the filter button shows active filters.
+- See mood, BPM and genre metadata for tracks where available.
 
 - Word-synced lyrics are shown ahead of line-synced ones by default again, whichever source has them. Turn Prioritize word-synced lyrics off in Lyrics sources to let the source order decide.
 - The Nix package builds on a Mac without Xcode, and an Apple silicon Mac downloads it from the binary cache instead of compiling it.

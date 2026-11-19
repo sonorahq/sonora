@@ -34,15 +34,15 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         cover,
         duration: Duration::from_secs(song.duration.unwrap_or(0).max(0) as u64),
         added_at: iso_8601_to_epoch(song.created.as_deref()),
-        added_by: None,
+        release_year: song.year.and_then(crate::calendar::release_year),
         playcount: song.play_count.map(|count| count as u64),
-        popularity: 0,
         explicit: song.explicit_status.as_deref() == Some("explicit"),
         track_number: song.track.unwrap_or(0).max(0) as u32,
         disc_number: song.disc_number.unwrap_or(1).max(1) as u32,
-        tags: genres(song.genres.as_deref(), song.genre),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        genres: genres(song.genres.as_deref(), song.genre),
+        moods: song.moods.unwrap_or_default(),
+        bpm: song.bpm.filter(|bpm| *bpm > 0).map(|bpm| bpm as f32),
+        ..Track::default()
     }
 }
 

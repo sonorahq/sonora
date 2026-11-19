@@ -30,9 +30,9 @@ const LIBRARY_PAGE: usize = 500;
 const SEARCH_TRACKS: usize = 50;
 const SEARCH_OTHERS: usize = 30;
 /// The fields every listing asks for beyond what Jellyfin sends anyway.
-const FIELDS: &str = "ChildCount,DateCreated,Genres";
+const FIELDS: &str = "ChildCount,DateCreated,Genres,Tags";
 /// The fields of a single track, which add who wrote it and what its file holds.
-const TRACK_FIELDS: &str = "ChildCount,DateCreated,Genres,People,MediaStreams";
+const TRACK_FIELDS: &str = "ChildCount,DateCreated,Genres,Tags,People,MediaStreams";
 /// The fields of an album page, which add the label.
 const ALBUM_FIELDS: &str = "ChildCount,DateCreated,Genres,Studios";
 /// The fields an artist page asks for, which add the biography.

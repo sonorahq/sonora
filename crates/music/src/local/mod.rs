@@ -67,6 +67,7 @@ impl LocalProvider {
             // nothing counts a play. A song's date is its file's, which says nothing about when
             // it went into a playlist, but a playlist only ever grows at its end.
             capabilities: Capabilities {
+                track_metadata: false,
                 follow_artists: true,
                 radio: false,
                 playcounts: false,

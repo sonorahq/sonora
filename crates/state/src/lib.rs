@@ -16,6 +16,7 @@ mod links;
 mod listening;
 mod logging;
 mod lyrics;
+mod metadata;
 mod mosaic;
 mod network;
 mod outputs;
@@ -114,7 +115,7 @@ use anyhow::Result;
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use music::{LyricsProvider, MusicProvider};
 use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 #[derive(Clone)]
 pub struct Io(Arc<Runtime>);
@@ -187,6 +188,15 @@ impl Io {
 
 pub(crate) async fn join<T>(handle: JoinHandle<Result<T>>) -> Result<T> {
     handle.await?
+}
+
+/// Cancels a tokio request when its waiting task is dropped.
+pub(crate) struct Abort(pub(crate) AbortHandle);
+
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Hands the free pages of the malloc heap back to the kernel after a burst of short-lived

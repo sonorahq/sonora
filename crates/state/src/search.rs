@@ -6,9 +6,8 @@ use gpui::{App, Context, Entity, Task};
 use music::link::{self, Linked};
 use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
 use serde::{Deserialize, Serialize};
-use tokio::task::AbortHandle;
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
+use crate::{Abort, Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -183,16 +182,6 @@ struct Scored {
     score: u32,
     popularity: u32,
     hit: Hit,
-}
-
-/// Aborts a provider request when the search task waiting on it is dropped, so a query the
-/// user typed past stops asking and stops retrying.
-struct Abort(AbortHandle);
-
-impl Drop for Abort {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// A search against the provider and the library, ranked into hits as the answers land. The

@@ -1299,8 +1299,6 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         artists: text(&attributes.artist_name).unwrap_or_default(),
         artist_refs: artist_refs(value, attributes),
         album: text(&attributes.album_name).unwrap_or_default(),
-        // Apple lists a song's own artist only
-        album_artist: String::new(),
         album_id: value
             .relationships
             .albums
@@ -1311,21 +1309,18 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         cover: artwork(attributes, ART),
         duration: Duration::from_millis(attributes.duration_in_millis.as_u64().unwrap_or(0)),
         added_at: moment(attributes.date_added.as_str()),
-        added_by: None,
-        playcount: None,
-        popularity: 0,
+        release_year: calendar::year(attributes.release_date.as_str()),
         explicit: attributes.content_rating.as_str() == Some("explicit"),
         track_number: number(&attributes.track_number),
         disc_number: number(&attributes.disc_number),
-        tags: attributes
+        genres: attributes
             .genre_names
             .iter()
             .filter_map(Leaf::as_str)
             .filter(|genre| *genre != root)
             .map(str::to_owned)
             .collect(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        ..Track::default()
     })
 }
 
@@ -1429,7 +1424,7 @@ mod tests {
         assert_eq!(track.duration, Duration::from_millis(447_000));
         assert!(track.explicit);
         assert!(track.playable);
-        assert_eq!(track.tags, vec!["Alternative"]);
+        assert_eq!(track.genres, vec!["Alternative"]);
         assert_eq!(
             track.cover.as_deref(),
             Some("https://is1.mzstatic.com/a/600x600bb.jpg")

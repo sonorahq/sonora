@@ -799,12 +799,14 @@ impl Values {
     }
 }
 
-/// One narrowed filter axis as stored per table: a flag that is on, or a range the user
-/// shrank. Whole ranges and flags that are off read as untouched and take no space.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A nonempty table filter stored in settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FilterValue {
     Flag(bool),
     Range(f32, f32),
+    /// The ids of the options picked on a choice filter.
+    Choice(Vec<String>),
+    Text(String),
 }
 
 /// Everything `state.sqlite` holds under the `runtime` key: values the app changes on its own
