@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Word-synced lyrics are shown ahead of line-synced ones by default again, whichever source has them. Turn Prioritize word-synced lyrics off in Lyrics sources to let the source order decide.
 - The Nix package builds on a Mac without Xcode, and an Apple silicon Mac downloads it from the binary cache instead of compiling it.
 
 ### Fixed
