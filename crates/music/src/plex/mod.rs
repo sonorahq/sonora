@@ -44,7 +44,10 @@ impl PlexProvider {
     /// Signs in to plex.tv in the listener's browser window, then settles on one server and one
     /// music library, asking only when the account has more than one of either.
     async fn link(prompt: &PromptSink, input: &mut InputSource) -> Result<ProviderSession> {
-        let http = reqwest::Client::new();
+        let http = reqwest::Client::builder()
+            .https_only(true)
+            .build()
+            .context("cannot build the plex http client")?;
         let client_id = auth::client_id()?;
 
         let pin = tv::create_pin(&http, &client_id).await?;
