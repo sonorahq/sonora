@@ -12,6 +12,7 @@ crates/
   sonora/     binary: main, window, actions, asset registry, HTTP client shim, tray, dock
   views/      screens, shells (Workspace, FullscreenView) and app chrome
   state/      GPUI entities holding app state, and all async orchestration
+  logic/      what the app decides about listening: play order, station rules, lyrics lookup (no GPUI)
   music/      provider traits and models in the root, one submodule per provider (no GPUI)
   storage/    the state.sqlite and cache.sqlite paths, schema and connection setup
   ui/         design system: theme, metrics, layout ladder and reusable elements
@@ -27,7 +28,7 @@ crates/
 Dependency direction is strict. Do not create a back edge:
 
 ```
-sonora → views → state → music
+sonora → views → state → logic → music
          state, music → storage
          state → webview
          music → widevine
@@ -39,6 +40,9 @@ sonora → views → state → music
   module. Only `sonora/src/main.rs` names a concrete provider.
 - `music` never depends on `gpui`. `ui` never knows about `music`, `state` or playback. Widgets
   that need app state live in `views/src/chrome/`.
+- `logic` never depends on `gpui` or a UI crate either. The Android app
+  links it next to `music`, so a rule both apps follow goes there and `state` wraps it in an
+  entity that redraws, saves and posts toasts.
 - `music::engine` is the one playback engine and `music::stream` the one progressive download. A
   provider implements `engine::Fetch` and `stream::Body` rather than writing its own. The engine
   applies loudness normalisation, so a provider only reports a track's level through
@@ -108,7 +112,7 @@ cargo clippy --workspace --all-targets
 ```
 
 The devShell has no `cargo` or `cargo-clippy`; those come from the system profile. The flake's
-default package compiles the working tree. CI caches the `stable` branch, the `nightly` tag and
+default package compiles the working tree. CI caches the `stable` branch, the `nightly` branch and
 main on sonora.cachix.org.
 `.cargo/config.toml` links with mold on `x86_64-unknown-linux-gnu`, so mold must be on PATH, or
 build with `RUSTFLAGS=""`. `crates/widevine` compiles C++, so a C++ compiler is needed too.

@@ -1,8 +1,8 @@
 {
   description = "A native, familiar music streaming client";
 
-  # CI builds the `stable` and `nightly` branches and every push to main for Linux and pushes the
-  # result here, so the package downloads instead of compiling.
+  # CI builds the `stable` and `nightly` branches and every push to main for Linux and Apple
+  # silicon macOS and pushes the result here, so the package downloads instead of compiling.
   nixConfig = {
     extra-substituters = [ "https://sonora.cachix.org" ];
     extra-trusted-public-keys = [
@@ -63,8 +63,8 @@
             ];
         };
 
-      # The nightly's version. Only the commit the nightly workflow tags `nightly` carries this
-      # file, and its presence makes the package a nightly build.
+      # The nightly's version. Only the commit the nightly workflow puts on the `nightly` branch
+      # carries this file, and its presence makes the package a nightly build.
       nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
         lib.importJSON ./nix/nightly.json
       );
@@ -150,16 +150,41 @@
           src = cargoSource ./.;
           cargoVersion = (lib.importTOML "${src}/Cargo.toml").workspace.package.version;
 
+          # gpui_apple's build script reads gpui's sources from `../gpui`, but a vendored git crate sits
+          # in `<name>-<version>`, so on macOS the path is pointed at the vendored gpui instead.
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            inherit src;
+            overrideVendorGitCheckout =
+              packages: drv:
+              let
+                gpui = lib.findFirst (package: package.name == "gpui") null packages;
+              in
+              if pkgs.stdenv.hostPlatform.isDarwin && gpui != null then
+                drv.overrideAttrs (_: {
+                  postPatch = ''
+                    substituteInPlace crates/gpui_apple/build.rs \
+                      --replace-fail '"../gpui"' '"../gpui-${gpui.version}"'
+                  '';
+                })
+              else
+                drv;
+          };
+
           # What both the dependency build and the app build need to compile. Nothing in here may
           # depend on the app's own code or version, or every commit would rebuild the
           # dependencies too.
           commonArgs = {
             inherit src;
+            inherit cargoVendorDir;
             pname = "sonora";
             version = cargoVersion;
             strictDeps = true;
             doCheck = false;
-            cargoExtraArgs = "--locked --package sonora";
+            # The Nix Apple SDK has no Metal compiler, so on macOS gpui compiles its shaders at launch
+            # instead of reaching for Xcode at build time.
+            cargoExtraArgs =
+              "--locked --package sonora"
+              + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin " --features runtime-shaders";
 
             nativeBuildInputs =
               with pkgs;
@@ -169,21 +194,6 @@
                 (lib.optionals stdenv.hostPlatform.isLinux [
                   makeWrapper
                   mold
-                ])
-                (lib.optionals stdenv.hostPlatform.isDarwin [
-                  (
-                    let
-                      pkgs' = import nixpkgs {
-                        inherit (stdenv.hostPlatform) system;
-                        config.allowUnfree = true;
-                      };
-                    in
-                    runCommandLocal "metal-shader-compiler" { } ''
-                      mkdir -p "$out/bin"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal "$out/bin/metal"
-                      ln -s ${pkgs'.darwin.xcode}/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metallib "$out/bin/metallib"
-                    ''
-                  )
                 ])
               ];
             buildInputs =
@@ -221,7 +231,7 @@
             }
           );
 
-          # Compiles the checked-out tree. At the `nightly` tag it takes the nightly's version, commit
+          # Compiles the checked-out tree. On the `nightly` branch it takes the nightly's version, commit
           # and update channel, which the app reads at compile time.
           sonora = craneLib.buildPackage (
             commonArgs

@@ -1,24 +1,42 @@
 use anyhow::{Context as _, Result};
-use serde_json::json;
+use serde_json::{Value, json};
 use ytmusic::nav::Nav as _;
 use ytmusic::{Client, YtMusic};
 
 use crate::SavedArtist;
 
 const LIBRARY_SUBSCRIPTIONS: &str = "FEmusic_library_corpus_artists";
+/// The most library pages read before the list is taken as whole.
+const MAX_PAGES: usize = 50;
 
+/// Every artist the account subscribes to. The library sends a couple dozen a page, so later
+/// pages are followed until the list runs out, and a page that fails fails the whole list.
 pub async fn saved(api: &YtMusic) -> Result<Vec<SavedArtist>> {
-    let response = api
+    let mut response = api
         .execute(
             "browse",
             Client::Music,
             json!({ "browseId": LIBRARY_SUBSCRIPTIONS }),
         )
-        .await?;
-    let renderers = ["musicTwoRowItemRenderer", "musicResponsiveListItemRenderer"]
-        .into_iter()
-        .flat_map(|kind| ytmusic::parse::find_renderers(&response, kind));
-    Ok(renderers.filter_map(saved_artist).collect())
+        .await
+        .context("cannot load the library artists")?;
+    let mut artists = Vec::new();
+    for page in 1.. {
+        artists.extend(
+            ["musicTwoRowItemRenderer", "musicResponsiveListItemRenderer"]
+                .into_iter()
+                .flat_map(|kind| ytmusic::parse::find_renderers(&response, kind))
+                .filter_map(saved_artist),
+        );
+        let Some(token) = next_page(&response).filter(|_| page < MAX_PAGES) else {
+            break;
+        };
+        response = api
+            .execute("browse", Client::Music, json!({ "continuation": token }))
+            .await
+            .with_context(|| format!("cannot load page {} of the library artists", page + 1))?;
+    }
+    Ok(artists)
 }
 
 /// The artists YouTube Music finds for `query`, from its search filtered to artists.
@@ -43,7 +61,7 @@ pub async fn search(api: &YtMusic, query: &str) -> Result<Vec<SavedArtist>> {
 
 /// An artist out of a library or search row. Only a channel id (`UC…`) counts, which leaves
 /// out the profiles and podcasts a row can also point at.
-fn saved_artist(renderer: &serde_json::Value) -> Option<SavedArtist> {
+fn saved_artist(renderer: &Value) -> Option<SavedArtist> {
     let id = renderer
         .str_at(&["navigationEndpoint", "browseEndpoint", "browseId"])
         .or_else(|| {
@@ -98,4 +116,24 @@ pub async fn set_saved(api: &YtMusic, artist_id: &str, saved: bool) -> Result<()
     .await
     .with_context(|| format!("cannot change subscription for artist {artist_id}"))?;
     Ok(())
+}
+
+/// The token for the library list's next page. Only the shelf or grid's own continuation
+/// counts, since the sort chips carry reload tokens that would start the list over.
+fn next_page(response: &Value) -> Option<String> {
+    [
+        "musicShelfRenderer",
+        "musicShelfContinuation",
+        "gridRenderer",
+        "gridContinuation",
+    ]
+    .into_iter()
+    .flat_map(|kind| ytmusic::parse::find_renderers(response, kind))
+    .find_map(ytmusic::parse::shelf_continuation)
+    .or_else(|| {
+        ytmusic::parse::find_renderers(response, "continuationItemRenderer")
+            .into_iter()
+            .find_map(|item| item.str_at(&["continuationEndpoint", "continuationCommand", "token"]))
+            .map(str::to_owned)
+    })
 }

@@ -1,10 +1,9 @@
 name: nix
 
-# Builds the flake's package for x86_64 and aarch64 Linux and pushes it to sonora.cachix.org. A push
-# to main caches main. release.yml runs it for every stable tag, moving the `stable` branch to the
-# tag once both builds are cached, and for every nightly tag. So a channel only ever points at a
-# commit the cache already holds. macOS is left out because its source build needs Xcode in the
-# Nix store.
+# Builds the flake's package for x86_64 and aarch64 Linux and for Apple silicon macOS and pushes it
+# to sonora.cachix.org. A push to main caches main. release.yml runs it for every stable tag, moving
+# the `stable` branch to the tag once every build is cached, and for every nightly. So a channel
+# only ever points at a commit the cache already holds.
 
 on:
   push:
@@ -65,6 +64,8 @@ jobs:
             os: ubuntu-24.04
           - system: aarch64-linux
             os: ubuntu-24.04-arm
+          - system: aarch64-darwin
+            os: macos-15
     steps:
       - uses: actions/checkout@v7
         with:

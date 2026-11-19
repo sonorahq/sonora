@@ -4319,6 +4319,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "logic"
+version = "0.50.2"
+dependencies = [
+ "anyhow",
+ "fastrand",
+ "log",
+ "music",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "longest-increasing-subsequence"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7689,6 +7702,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "logic",
  "moka",
  "mpris-server",
  "music",
@@ -10304,7 +10318,7 @@ dependencies = [
 [[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=99f7d14#99f7d141a7b35050ae69322822b72126a807b906"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=40bb80e#40bb80ef37aa39d3b373ef15f01abfd7f87fb30f"
 dependencies = [
  "anyhow",
  "async-trait",
