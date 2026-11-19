@@ -256,17 +256,20 @@ pub fn track(value: &Value) -> Option<Track> {
         cover: cover(&album, 300).or_else(|| cover(value, 300)),
         duration: Duration::from_secs(number(value, &["DURATION", "duration"]).unwrap_or(0)),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
-        added_by: None,
-        playcount: None,
+        release_year: calendar::year(
+            text(value, &["PHYSICAL_RELEASE_DATE", "release_date"])
+                .or_else(|| text(&album, &["release_date"])),
+        ),
         popularity: number(value, &["RANK", "rank", "RANK_SNG"])
             .map(|rank| (rank / 10_000).min(100) as u32)
             .unwrap_or(0),
         explicit: truthy(value, &["explicit_lyrics", "EXPLICIT_LYRICS"]),
         track_number: number(value, &["TRACK_NUMBER", "track_position"]).unwrap_or(0) as u32,
         disc_number: number(value, &["DISK_NUMBER"]).unwrap_or(1) as u32,
-        tags: Vec::new(),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        bpm: decimal(value, &["bpm"])
+            .map(|bpm| bpm as f32)
+            .filter(|bpm| bpm.is_finite() && *bpm > 0.),
+        ..Track::default()
     })
 }
 

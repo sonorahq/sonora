@@ -21,21 +21,52 @@ const UNKNOWN: &str = "Unknown";
 const BATCH: usize = 500;
 
 pub async fn saved_tracks(session: &Session) -> Result<Vec<Track>> {
+    let mut pages = saved_tracks_paged(session).await?;
+    let mut tracks = Vec::new();
+    while let Some(page) = pages.recv().await {
+        tracks.extend(page?.items);
+    }
+    Ok(tracks)
+}
+
+/// Streams saved tracks in collection order. Dropping the receiver cancels pending requests.
+pub(crate) async fn saved_tracks_paged(session: &Session) -> Result<crate::Pages<Track>> {
     let items = collection2::saved_items(session, collection2::COLLECTION, TRACK_PREFIX).await?;
     if items.is_empty() {
-        return Ok(Vec::new());
+        return Ok(crate::whole(Vec::new()));
     }
-
-    let uris: Vec<_> = items.iter().map(|item| item.uri.clone()).collect();
-    let mut known = metadata(session, &uris).await?;
-    Ok(items
-        .into_iter()
-        .filter_map(|item| {
-            let mut track = known.remove(&item.uri)?;
-            track.added_at = item.added_at;
-            Some(track)
-        })
-        .collect())
+    let total = Some(items.len());
+    let session = session.clone();
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        for items in items.chunks(BATCH) {
+            let read = async {
+                let uris: Vec<_> = items.iter().map(|item| item.uri.clone()).collect();
+                let mut known = metadata(&session, &uris).await?;
+                let tracks: Vec<_> = items
+                    .iter()
+                    .filter_map(|item| {
+                        let mut track = known.remove(&item.uri)?;
+                        track.added_at = item.added_at;
+                        Some(track)
+                    })
+                    .collect();
+                Ok(crate::Page {
+                    total,
+                    items: tracks,
+                })
+            };
+            let result = tokio::select! {
+                _ = sender.closed() => return,
+                result = read => result,
+            };
+            let failed = result.is_err();
+            if sender.send(result).await.is_err() || failed {
+                return;
+            }
+        }
+    });
+    Ok(receiver)
 }
 
 pub async fn track(session: &Session, track_id: &str) -> Result<Track> {
@@ -143,9 +174,11 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
         album_id: track.album.as_ref().and_then(|album| base62(album.gid())),
         cover: track.album.as_ref().and_then(cover_url),
         duration: Duration::from_millis(track.duration.unwrap_or_default().max(0) as u64),
-        added_at: None,
-        added_by: None,
-        playcount: None,
+        release_year: track
+            .album
+            .as_ref()
+            .and_then(|album| album.date.as_ref())
+            .and_then(|date| crate::calendar::release_year(date.year())),
         popularity: track.popularity.unwrap_or_default().clamp(0, 100) as u32,
         explicit: track.explicit.unwrap_or_default(),
         track_number: track.number.unwrap_or_default().max(0) as u32,
@@ -174,6 +207,7 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
                 })
             })
             .collect(),
+        ..Track::default()
     }
 }
 

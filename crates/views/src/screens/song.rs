@@ -330,7 +330,7 @@ impl SongView {
 
     fn discovery(&self, track: &Track, cx: &Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let tags = track.tags.clone();
+        let genres = track.genres.clone();
         let languages = match track.languages.is_empty() {
             true => t!("common-not-provided"),
             false => SharedString::from(
@@ -350,7 +350,7 @@ impl SongView {
                     .flex_col()
                     .gap_1()
                     .child(div().when_else(
-                        tags.is_empty(),
+                        genres.is_empty(),
                         |this| {
                             this.child(
                                 Fact::new(t!("song-genres"), t!("common-not-available"))
@@ -381,7 +381,7 @@ impl SongView {
                                             .flex_wrap()
                                             .justify_end()
                                             .gap_2()
-                                            .children(tags.into_iter().enumerate().map(
+                                            .children(genres.into_iter().enumerate().map(
                                                 |(index, tag)| {
                                                     ui::spoken(("song-genre", index), tag)
                                                         .max_w_full()
