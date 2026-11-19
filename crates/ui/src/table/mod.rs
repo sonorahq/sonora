@@ -60,6 +60,8 @@ const SKELETON_BAR: f32 = 0.3;
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
 
 pub const ROW_GROUP: &str = "table-row";
+/// The rule under a row, which its own height includes.
+const ROW_RULE: Pixels = px(1.);
 /// The list a row dragged within its own table names, so a drop on another row can tell it
 /// from a pin dragged in from elsewhere.
 const ROWS: &str = "table-rows";
@@ -80,6 +82,7 @@ pub enum RowMoves {
 pub struct Cell<F> {
     pub field: F,
     pub width: Pixels,
+    /// The height a drawn row's cells fill, without the rule under the row.
     pub height: Pixels,
     pub align: TextAlign,
     pub display: usize,
@@ -1425,6 +1428,13 @@ impl<S: TableSource> TableState<S> {
             .map(|display| {
                 let row = self.delegate.row(display);
                 let tail = display + 1 == count;
+                let ruled = !tail || bottom == Pixels::ZERO;
+                // A ruled row keeps its last pixel for the rule, so its cells centre their text
+                // on what is left above it.
+                let inner = match ruled {
+                    true => row_height - ROW_RULE,
+                    false => row_height,
+                };
                 let selected = marked.contains(&row);
                 let playing = self.delegate.source.playing(row, cx);
                 let cells: Vec<AnyElement> = (0..self.delegate.columns.len())
@@ -1433,7 +1443,7 @@ impl<S: TableSource> TableState<S> {
                         let cell = Cell {
                             field: column.spec.field,
                             width: self.delegate.inner_width(ix),
-                            height: row_height,
+                            height: inner,
                             align: column.spec.align,
                             display,
                             row,
@@ -1465,7 +1475,7 @@ impl<S: TableSource> TableState<S> {
                         this.rounded_bl(self.corners.bottom_left)
                             .rounded_br(self.corners.bottom_right)
                     })
-                    .when(!tail || bottom == Pixels::ZERO, |this| {
+                    .when(ruled, |this| {
                         this.border_b_1().border_color(theme.table_row_border)
                     })
                     .when(playing, |this| this.bg(theme.muted))

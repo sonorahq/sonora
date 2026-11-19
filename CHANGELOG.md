@@ -7,12 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
+
 ### Fixed
 
 - Your YouTube Music library lists every artist you follow, not only the first couple dozen.
 - A queue that mixes your own files with streaming songs plays the song it moves on to, instead of carrying on with an earlier local file while the player sits still.
 - Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.
 - Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
+- Shelves on Home end at the same edge as Quick picks, and their arrows sit level with the shelf titles.
+- Play and pause on a cover in the search suggestions work on the first click and leave the list open, instead of only closing the list.
+- Song titles in track lists sit in the middle of their rows.
+- The Releases filter labels on artist pages sit in the middle of their buttons.
+- TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
+- Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
+- Escape closes the search suggestions and leaves the search field in one press.
 
 ## [0.50.2] - 2026-11-18
 

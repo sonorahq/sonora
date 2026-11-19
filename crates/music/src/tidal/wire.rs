@@ -35,17 +35,18 @@ const HIRES: &str = "HIRES_LOSSLESS";
 pub struct Release {
     album: Album,
     twin: Twin,
+    explicit: bool,
     hires: bool,
     popularity: u64,
 }
 
 /// What two masters of one release share. The title, version and artist are compared without
-/// case or spacing.
+/// case or spacing. A clean and an explicit master of one release are twins too, as Tidal's own
+/// players list them once.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Twin {
     title: String,
     version: String,
-    explicit: bool,
     main_artist: String,
     release_date: String,
     tracks: u64,
@@ -234,10 +235,6 @@ pub fn release(wrapper: &Value) -> Option<Release> {
     let twin = Twin {
         title: normalized(text(value, "title").unwrap_or_default()),
         version: normalized(text(value, "version").unwrap_or_default()),
-        explicit: value
-            .get("explicit")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
         main_artist,
         release_date: text(value, "releaseDate").unwrap_or_default().to_owned(),
         tracks: number(value, "numberOfTracks").unwrap_or(0),
@@ -247,9 +244,14 @@ pub fn release(wrapper: &Value) -> Option<Release> {
         .and_then(|metadata| metadata.get("tags"))
         .and_then(Value::as_array)
         .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some(HIRES)));
+    let explicit = value
+        .get("explicit")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Some(Release {
         album,
         twin,
+        explicit,
         hires,
         popularity: number(value, "popularity").unwrap_or(0),
     })
@@ -276,9 +278,10 @@ pub fn without(releases: Vec<Release>, album_id: &str) -> Vec<Release> {
 }
 
 /// The albums of a catalogue listing with each release shown once. Tidal lists some releases
-/// twice under different ids, one master in hi-res and one not, so of two that agree on every
-/// field of [`Twin`] the hi-res one stays, then the more popular. The kept album takes the
-/// place where the first of them appeared.
+/// twice under different ids, one master explicit and one clean, or one in hi-res and one not,
+/// so of two that agree on every field of [`Twin`] the explicit one stays, as in Tidal's own
+/// players, then the hi-res one, then the more popular. The kept album takes the place where the
+/// first of them appeared.
 pub fn distinct(releases: Vec<Release>) -> Vec<Album> {
     let mut kept: Vec<Release> = Vec::with_capacity(releases.len());
     let mut seats: HashMap<Twin, usize> = HashMap::new();
@@ -286,7 +289,9 @@ pub fn distinct(releases: Vec<Release>) -> Vec<Album> {
         match seats.get(&release.twin) {
             Some(&seat) => {
                 let held = &kept[seat];
-                if (release.hires, release.popularity) > (held.hires, held.popularity) {
+                let rank =
+                    |release: &Release| (release.explicit, release.hires, release.popularity);
+                if rank(&release) > rank(held) {
                     kept[seat] = release;
                 }
             }
