@@ -748,6 +748,15 @@ impl SubsonicClient {
 
 #[async_trait]
 impl MusicApi for SubsonicClient {
+    /// Sizes a track or album cover up for the player and the system media controls. The
+    /// original is left to `cover_original`, so a whole scan never downloads for the player.
+    fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
+        match size {
+            CoverSize::Large => cover_url_at(&self.covers, cover, CoverSize::Large),
+            CoverSize::Full => None,
+        }
+    }
+
     fn cover_original(&self, cover: &str) -> Option<String> {
         cover_url_at(&self.covers, cover, CoverSize::Full)
     }

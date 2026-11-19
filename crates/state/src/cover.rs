@@ -90,8 +90,8 @@ impl Cover {
     }
 
     /// Follows the shown track. Both covers come straight from the track's thumbnail when the
-    /// provider can size it up, and the album is loaded only when it cannot. A later track of
-    /// the same album whose thumbnail cannot be sized up keeps the art already shown.
+    /// provider can size it up, and the album's art is loaded only when it cannot. A load
+    /// already running for the same album is kept rather than started again.
     fn follow(&mut self, cx: &mut Context<Self>) {
         let (album, thumbnail) = match self.playback.read(cx).shown_track(cx) {
             Some(track) => (track.album_id, track.cover),
@@ -104,18 +104,11 @@ impl Cover {
         let derive = |size| client.as_ref()?.cover_at(thumbnail.as_deref()?, size);
         let (large, full) = (derive(CoverSize::Large), derive(CoverSize::Full));
         self.thumbnail = thumbnail;
-
-        if album == self.album {
-            if large.is_some() {
-                self.large = large;
-                self.full = full;
-                cx.notify();
-            }
-            return;
+        if album != self.album {
+            self.task = None;
+            self.album = album.clone();
         }
 
-        self.task = None;
-        self.album = album.clone();
         let cached = album.as_ref().and_then(|id| self.cache.get(id)).cloned();
         self.large = large.or_else(|| cached.as_ref().map(|art| art.large.clone()));
         self.full = full.or_else(|| cached.and_then(|art| art.full));
@@ -124,7 +117,7 @@ impl Cover {
         let Some(id) = album else {
             return;
         };
-        if self.large.is_some() {
+        if self.large.is_some() || self.task.is_some() {
             return;
         }
         self.load(id, cx);
