@@ -23,8 +23,9 @@ use crate::chrome::timeline::Timeline;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
+use crate::shared::rating::{self, rating};
 use crate::shared::transport::{
-    COVER_FLIGHT, CoverAway, ShellSwap, like, moved, percent, transport, volume_icon,
+    COVER_FLIGHT, CoverAway, ShellSwap, moved, percent, transport, volume_icon,
 };
 use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume, turn_volume};
 
@@ -94,6 +95,8 @@ impl PlayerBar {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
         let devices = Sonora::global(cx).devices.clone();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();
@@ -418,17 +421,16 @@ impl PlayerBar {
             .when(explicit, |this| {
                 this.child(div().flex_none().child(Badge::explicit()))
             })
-            .child(like(track, &self.playback, cx));
+            .children(rating("player-ratings", track, Some(&self.playback), false));
         let headline = match centered {
             true => {
                 // Equal clearance on both sides keeps the title itself centered. Actions sit
                 // outside its measured width and remain reachable even for a truncated title.
-                let clearance = theme.metrics.control_small
-                    * match explicit {
-                        true => 2.,
-                        false => 1.,
-                    }
-                    + theme.metrics.pad;
+                let badge = match explicit {
+                    true => theme.metrics.control_small,
+                    false => px(0.),
+                };
+                let clearance = rating::width(cx) + badge + theme.metrics.pad;
                 div().w_full().flex().justify_center().px(clearance).child(
                     div()
                         .relative()

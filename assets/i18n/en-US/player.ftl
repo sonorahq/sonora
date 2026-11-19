@@ -98,3 +98,9 @@ lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
 lyrics-instrumental-break = Instrumental break
+
+# star ratings
+rating-set = Rate { $rating } out of 5 stars
+rating-clear = Clear rating
+rating-loading = Loading or saving rating…
+rating-retry = Could not load ratings. Select to retry.

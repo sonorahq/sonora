@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Rate songs with stars from the player, the right-click menu and every song list once you turn on Star ratings in Settings.
+- Hide the favorite heart in Settings.
+- 
 ### Changed
 
 - Word-synced lyrics are shown ahead of line-synced ones by default again, whichever source has them. Turn Prioritize word-synced lyrics off in Lyrics sources to let the source order decide.
