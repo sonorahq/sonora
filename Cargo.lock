@@ -3422,6 +3422,7 @@ dependencies = [
 name = "i18n"
 version = "0.50.2"
 dependencies = [
+ "embed",
  "fluent-bundle",
  "gpui",
  "log",

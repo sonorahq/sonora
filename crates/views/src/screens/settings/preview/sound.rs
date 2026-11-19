@@ -132,7 +132,7 @@ pub(in crate::screens::settings) fn preview(
             icon: "icons/gauge.svg",
             tint: None,
             label: t!("settings-signal-normalized"),
-            detail: gain.map(|db| t!("settings-signal-gain", db = signed(db))),
+            detail: gain.map(|db| t!("unit-db", value = signed(db))),
         });
     }
     if direct {
@@ -305,7 +305,7 @@ fn source(rate_hz: u32, encoding: Option<Encoding>) -> SharedString {
             | Encoding::Vorbis { kbps }
             | Encoding::Mp3 { kbps }
             | Encoding::Opus { kbps },
-        ) => Some(t!("settings-signal-kbps", kbps = i64::from(kbps))),
+        ) => Some(t!("unit-kbps", value = i64::from(kbps))),
         Some(Encoding::Flac { depth, .. } | Encoding::Alac { depth } | Encoding::Pcm { depth }) => {
             Some(t!("settings-signal-bits", depth = i64::from(depth)))
         }
@@ -323,7 +323,7 @@ fn source(rate_hz: u32, encoding: Option<Encoding>) -> SharedString {
 
 /// A rate as the steps show it, 44.1 kHz.
 fn rate(rate: u32) -> SharedString {
-    t!("settings-signal-khz", khz = khz(rate))
+    t!("unit-khz", value = khz(rate))
 }
 
 /// A rate in kilohertz, 44.1 rather than 44.100.

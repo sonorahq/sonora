@@ -416,8 +416,7 @@ impl SettingsView {
         })
         .detach();
 
-        let connect_name =
-            cx.new(|cx| Input::new("settings-spotify-connect-custom-hint", cx).compact());
+        let connect_name = cx.new(|cx| Input::new("settings-spotify-connect-name", cx).compact());
         let custom = settings.read(cx).spotify_connect_custom_name().to_owned();
         connect_name.update(cx, |input, cx| input.set_text(custom, cx));
         cx.observe(&connect_name, |this, input, cx| {
@@ -491,7 +490,7 @@ impl SettingsView {
             library_scroll: ScrollHandle::new(),
             selected_library,
             scrobbling,
-            scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
+            scrobble_first: cx.new(|cx| Input::new("common-api-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
             connect_name,
             sessions_server,
@@ -777,7 +776,7 @@ impl SettingsView {
                 (t!("settings-accounts"), format!("{detail} {names}").into())
             }
             Slot::LocalFolder => (
-                t!("settings-local-folder"),
+                t!("settings-music-folders"),
                 match self.session.read(cx).local_paths().is_empty() {
                     true => t!("settings-local-folder-empty"),
                     false => SharedString::default(),
@@ -901,9 +900,9 @@ impl SettingsView {
                 t!("settings-keep-tracks-detail"),
             ),
             Slot::CacheSize => (t!("settings-cache-size"), t!("settings-cache-size-detail")),
-            Slot::CacheUsage => (t!("settings-cache-used"), t!("settings-cache-used-detail")),
+            Slot::CacheUsage => (t!("settings-space-used"), t!("settings-cache-used-detail")),
             Slot::DownloadsUsage => (
-                t!("settings-downloads-used"),
+                t!("settings-space-used"),
                 t!("settings-downloads-used-detail"),
             ),
             Slot::OfflineMode => (
@@ -995,7 +994,7 @@ impl SettingsView {
             ),
             Slot::SessionsButton => (t!("settings-sessions-button"), SharedString::default()),
             Slot::SessionsOfficial => (t!("settings-sessions-official"), SharedString::default()),
-            Slot::SessionsServer => (t!("settings-sessions-server"), SharedString::default()),
+            Slot::SessionsServer => (t!("common-server-address"), SharedString::default()),
             Slot::Discord => (t!("settings-discord"), t!("settings-discord-detail")),
             Slot::DiscordName => (
                 t!("settings-discord-name"),

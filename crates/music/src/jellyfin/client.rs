@@ -1396,7 +1396,7 @@ impl MusicApi for JellyfinClient {
             shelf("home-recently-added", latest),
             shelf("home-most-played", most_played),
             shelf("home-favorite-albums", favorites),
-            shelf("home-playlists", playlists),
+            shelf("nav-playlists", playlists),
         ]
         .into_iter()
         .flatten()

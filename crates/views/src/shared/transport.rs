@@ -108,7 +108,7 @@ pub(crate) fn volume_icon(level: f32) -> &'static str {
 }
 
 pub(crate) fn percent(fraction: f32) -> SharedString {
-    t!("player-percent", value = (fraction * 100.).round())
+    t!("unit-percent", value = (fraction * 100.).round())
 }
 
 /// The heart that saves or drops `track`. A click toggles the track `playback` holds by then,

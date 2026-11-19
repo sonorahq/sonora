@@ -223,7 +223,7 @@ impl PlaylistEditor {
             ),
             (
                 "playlist-shelf-local",
-                t!("playlist-create-local"),
+                t!("common-local-files"),
                 Shelf::Local,
             ),
         ];
@@ -332,7 +332,7 @@ impl Render for PlaylistEditor {
             });
         let shelves = self.shelves(&edit, cx);
         let detail = match &edit {
-            Edit::Delete(playlist) => Some(t!("playlist-delete-confirm", name = &playlist.name)),
+            Edit::Delete(playlist) => Some(t!("confirm-delete-named", name = &playlist.name)),
             Edit::Again { playlist, .. } => {
                 Some(t!("playlist-again-confirm", name = &playlist.name))
             }

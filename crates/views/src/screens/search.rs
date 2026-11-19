@@ -1046,7 +1046,7 @@ impl SearchView {
 
     fn column(&self, kind: Kind, window: &Window, cx: &Context<Self>) -> AnyElement {
         let (id, title, only) = match kind {
-            Kind::Song => ("search-songs-heading", t!("search-songs"), SONGS),
+            Kind::Song => ("search-songs-heading", t!("nav-songs"), SONGS),
             Kind::Artist => ("search-artists-heading", t!("search-artists"), ARTISTS),
             Kind::Album | Kind::Playlist => (
                 "search-releases-heading",

@@ -1,5 +1,9 @@
 use unic_langid::{LanguageIdentifier, langid};
 
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/locales.rs"));
+}
+
 pub const AUTO: &str = "auto";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,27 +145,8 @@ impl Language {
         }
     }
 
-    pub(crate) fn source(self) -> &'static str {
-        match self {
-            Self::English => include_str!("../../../assets/i18n/en-US/main.ftl"),
-            Self::German => include_str!("../../../assets/i18n/de/main.ftl"),
-            Self::Spanish => include_str!("../../../assets/i18n/es/main.ftl"),
-            Self::French => include_str!("../../../assets/i18n/fr/main.ftl"),
-            Self::Italian => include_str!("../../../assets/i18n/it/main.ftl"),
-            Self::Indonesian => include_str!("../../../assets/i18n/id/main.ftl"),
-            Self::Japanese => include_str!("../../../assets/i18n/ja/main.ftl"),
-            Self::Korean => include_str!("../../../assets/i18n/ko/main.ftl"),
-            Self::Russian => include_str!("../../../assets/i18n/ru/main.ftl"),
-            Self::Ukrainian => include_str!("../../../assets/i18n/uk/main.ftl"),
-            Self::Polish => include_str!("../../../assets/i18n/pl/main.ftl"),
-            Self::Czech => include_str!("../../../assets/i18n/cs/main.ftl"),
-            Self::PortugueseBrazilian => include_str!("../../../assets/i18n/pt-BR/main.ftl"),
-            Self::PortugueseEuropean => include_str!("../../../assets/i18n/pt-PT/main.ftl"),
-            Self::ChineseSimplified => include_str!("../../../assets/i18n/zh-CN/main.ftl"),
-            Self::Turkish => include_str!("../../../assets/i18n/tr/main.ftl"),
-            Self::Albanian => include_str!("../../../assets/i18n/sq/main.ftl"),
-            Self::Vietnamese => include_str!("../../../assets/i18n/vi/main.ftl"),
-        }
+    pub(crate) fn sources(self) -> &'static [(&'static str, &'static str)] {
+        generated::sources(self.id())
     }
 }
 

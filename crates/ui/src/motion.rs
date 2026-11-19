@@ -184,7 +184,7 @@ impl Saver {
 
     pub fn label(self) -> SharedString {
         match self.rate() {
-            Some(fps) => t!("saver-fps", fps = fps),
+            Some(fps) => t!("unit-fps", value = fps),
             None => t!("saver-off"),
         }
     }

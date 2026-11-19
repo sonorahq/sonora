@@ -198,7 +198,7 @@ impl SettingsView {
                         cx.notify();
                     })),
                 Button::new("discord-button-sonora")
-                    .label(t!("settings-discord-name-sonora"))
+                    .label(t!("common-sonora"))
                     .small()
                     .ghost()
                     .selected(sonora)

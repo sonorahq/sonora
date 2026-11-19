@@ -890,8 +890,8 @@ impl ArtistView {
         Some(
             Button::new("artist-releases-more")
                 .label(match expanded {
-                    true => t!("artist-releases-less"),
-                    false => t!("artist-releases-more"),
+                    true => t!("common-show-less"),
+                    false => t!("common-show-all"),
                 })
                 .trailing(chevron(expanded))
                 .small()
@@ -974,8 +974,8 @@ impl ArtistView {
         let more = (self.popular.len() > LISTED).then(|| {
             Button::new("artist-popular-more")
                 .label(match expanded {
-                    true => t!("artist-popular-less"),
-                    false => t!("artist-popular-more"),
+                    true => t!("common-show-less"),
+                    false => t!("common-show-all"),
                 })
                 .trailing(chevron(expanded))
                 .small()

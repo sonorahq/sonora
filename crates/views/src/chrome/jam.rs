@@ -248,7 +248,7 @@ impl Render for JamJoin {
                                     .secondary()
                                     .h(theme.metrics.field)
                                     .icon("icons/clipboard-paste.svg")
-                                    .label(t!("devices-jam-paste"))
+                                    .label(t!("common-paste"))
                                     .on_click(move |_, window, cx| {
                                         let Some(text) =
                                             cx.read_from_clipboard().and_then(|item| item.text())
@@ -528,7 +528,7 @@ pub(crate) fn faces(
                     .bg(theme.secondary)
                     .text_size(theme.text(Text::Tiny))
                     .text_color(theme.muted_foreground)
-                    .child(t!("devices-jam-more", count = more)),
+                    .child(t!("common-more-count", count = more)),
             )
         })
 }

@@ -50,7 +50,7 @@ impl Kind {
             Self::Downloads => t!("confirm-remove-downloads"),
             Self::EqualizerProfile(ref name) => {
                 let name = equalizer_profile_label(name);
-                t!("equalizer-delete-confirm", name = &name)
+                t!("confirm-delete-named", name = &name)
             }
         }
     }

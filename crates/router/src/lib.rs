@@ -235,8 +235,8 @@ impl SettingsPage {
             Self::Scrobbling => "settings-page-scrobbling",
             Self::About => "settings-page-about",
             Self::Keybinds => "settings-page-keybinds",
-            Self::LyricsSources => "settings-page-lyrics-sources",
-            Self::MusicFolders => "settings-page-music-folders",
+            Self::LyricsSources => "settings-lyrics-sources",
+            Self::MusicFolders => "settings-music-folders",
         }
     }
 

@@ -303,7 +303,7 @@ impl SettingsView {
             .child(step("font-smaller", "−", "settings-font-smaller", -1.))
             .child(ui::spoken(
                 "settings-font-value",
-                t!("settings-font-value", size = look.font.round() as i64),
+                t!("unit-px", value = look.font.round() as i64),
             ))
             .child(step("font-larger", "+", "settings-font-larger", 1.));
 
@@ -429,7 +429,7 @@ impl SettingsView {
                     .child(
                         Scrubber::new(&self.opacity, value)
                             .name(t!("settings-opacity"))
-                            .value(t!("settings-opacity-value", percent = percent))
+                            .value(t!("unit-percent", value = percent))
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
                                 let transparency = (1. - *fraction) * MAX_TRANSPARENCY;
@@ -453,7 +453,7 @@ impl SettingsView {
             .child(
                 ui::spoken(
                     "settings-opacity-value",
-                    t!("settings-opacity-value", percent = percent),
+                    t!("unit-percent", value = percent),
                 )
                 .flex_none()
                 .w(theme.metrics.control * 1.5)

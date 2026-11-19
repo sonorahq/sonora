@@ -3368,7 +3368,7 @@ impl Playback {
                             true => {
                                 let toast = Toast::new(Outcome::Failed, "toast-widevine-failed")
                                     .note("toast-widevine-borrowed")
-                                    .open("toast-open-settings", Target::PlaybackSettings)
+                                    .open("nav-settings", Target::PlaybackSettings)
                                     .lasting();
                                 Toasts::post(toast, cx);
                             }
@@ -3592,7 +3592,7 @@ impl Playback {
         };
         let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
         let toast = match music::soloist::supported() {
-            true => toast.lead("toast-soloist-setup", Target::PlaybackSettings, |cx| {
+            true => toast.lead("soloist-setup-title", Target::PlaybackSettings, |cx| {
                 let soloist = Sonora::global(cx).soloist.clone();
                 soloist.update(cx, |soloist, cx| soloist.begin(cx));
             }),
