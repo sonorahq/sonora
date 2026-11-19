@@ -42,7 +42,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          # The nightly tag sits one commit above the main it built, the one that adds nix/nightly.json.
+          # The nightly branch sits one commit above the main it built, the one that adds nix/nightly.json.
           built="$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq '.parents[0].sha' 2> /dev/null || true)"
           if [ "$EVENT" = schedule ] && [ "$built" = "$GITHUB_SHA" ]; then
             echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          curl -fsSL "$base/releases/download/nightly/SHA256SUMS" > sums
+          curl -fsSL "$base/releases/download/nightly-build/SHA256SUMS" > sums
           sum() { awk -v file="$1" '$2 == file { print $1 }' sums; }
           source="$(curl -fsSL "$base/archive/$GITHUB_SHA.tar.gz" | sha256sum | cut -d ' ' -f 1)"
           x86_64="$(sum sonora-nightly-x86_64-unknown-linux-gnu)"
@@ -186,7 +186,7 @@ jobs:
           NUMBER: ${{ needs.gate.outputs.number }}
         run: |
           set -euo pipefail
-          sum="$(curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/nightly/SHA256SUMS" \
+          sum="$(curl -fsSL "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/nightly-build/SHA256SUMS" \
             | awk '$2 == "sonora-nightly-macos.dmg" { print $1 }')"
           test -n "$sum"
 
