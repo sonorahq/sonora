@@ -14,10 +14,14 @@ struct Art {
     full: Option<String>,
 }
 
+/// The large and full-resolution artwork of the shown track, for the surfaces that draw it
+/// bigger than a list thumbnail. It follows the track's own art whenever the provider can size
+/// it up, so tracks of one album that carry their own art each show it.
 pub struct Cover {
     session: Entity<Session>,
     playback: Entity<Playback>,
     album: Option<String>,
+    thumbnail: Option<String>,
     large: Option<String>,
     full: Option<String>,
     cache: HashMap<String, Art>,
@@ -47,6 +51,7 @@ impl Cover {
             session,
             playback,
             album: None,
+            thumbnail: None,
             large: None,
             full: None,
             cache: HashMap::new(),
@@ -77,40 +82,42 @@ impl Cover {
     fn forget(&mut self, cx: &mut Context<Self>) {
         self.task = None;
         self.album = None;
+        self.thumbnail = None;
         self.large = None;
         self.full = None;
         self.cache.clear();
         cx.notify();
     }
 
-    /// Follows the shown track's album. Both covers come straight from the track's thumbnail
-    /// when the provider can tell, and the album is loaded only when it cannot.
+    /// Follows the shown track. Both covers come straight from the track's thumbnail when the
+    /// provider can size it up, and the album's art is loaded only when it cannot. A load
+    /// already running for the same album is kept rather than started again.
     fn follow(&mut self, cx: &mut Context<Self>) {
         let (album, thumbnail) = match self.playback.read(cx).shown_track(cx) {
             Some(track) => (track.album_id, track.cover),
             None => (None, None),
         };
-        if album == self.album {
+        if album == self.album && thumbnail == self.thumbnail {
             return;
         }
-        self.task = None;
-        self.album = album.clone();
-        let cached = album.as_ref().and_then(|id| self.cache.get(id)).cloned();
         let client = album.as_deref().and_then(|id| self.client(id, cx));
         let derive = |size| client.as_ref()?.cover_at(thumbnail.as_deref()?, size);
-        self.large = cached
-            .as_ref()
-            .map(|art| art.large.clone())
-            .or_else(|| derive(CoverSize::Large));
-        self.full = cached
-            .and_then(|art| art.full)
-            .or_else(|| derive(CoverSize::Full));
+        let (large, full) = (derive(CoverSize::Large), derive(CoverSize::Full));
+        self.thumbnail = thumbnail;
+        if album != self.album {
+            self.task = None;
+            self.album = album.clone();
+        }
+
+        let cached = album.as_ref().and_then(|id| self.cache.get(id)).cloned();
+        self.large = large.or_else(|| cached.as_ref().map(|art| art.large.clone()));
+        self.full = full.or_else(|| cached.and_then(|art| art.full));
         cx.notify();
 
         let Some(id) = album else {
             return;
         };
-        if self.large.is_some() {
+        if self.large.is_some() || self.task.is_some() {
             return;
         }
         self.load(id, cx);
@@ -141,7 +148,7 @@ impl Cover {
                             return;
                         };
                         this.cache.insert(id.clone(), art.clone());
-                        if this.album.as_deref() == Some(id.as_str()) {
+                        if this.album.as_deref() == Some(id.as_str()) && this.large.is_none() {
                             this.large = Some(art.large);
                             let kept = this.full.take();
                             this.full = art.full.or(kept);
