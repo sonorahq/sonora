@@ -799,14 +799,9 @@ impl SidebarLeft {
 
         let session = self.session.read(cx);
         let signed_out = matches!(session.state(), SessionState::SignedOut);
-        let loading = session.is_pending();
         let providers: Vec<_> = session.providers().collect();
         let active_info = providers.iter().find(|info| info.active);
-        let is_guest = !signed_out
-            && active_info.is_some_and(|info| match loading {
-                true => info.guest,
-                false => !session.authenticated() || info.guest,
-            });
+        let is_guest = !signed_out && active_info.is_some_and(|info| info.guest || session.guest());
 
         let (label, logo): (SharedString, &'static str) = match (signed_out, is_guest, active_info)
         {
@@ -846,9 +841,11 @@ impl SidebarLeft {
         let guest = providers
             .iter()
             .find(|info| {
-                info.options
-                    .iter()
-                    .any(|option| matches!(option, SignIn::Anonymous))
+                (!info.stored || info.guest)
+                    && info
+                        .options
+                        .iter()
+                        .any(|option| matches!(option, SignIn::Anonymous))
             })
             .map(|guest| {
                 let slug = guest.slug;
