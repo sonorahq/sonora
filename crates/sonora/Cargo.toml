@@ -9,6 +9,8 @@ license.workspace = true
 profiler = ["gpui/profiler"]
 # patch running debug builds from `dx serve --hot-patch`, see CONTRIBUTING.md
 hot-reload = ["gpui/hot-reload"]
+# compile the Metal shaders at launch, so a build needs no Xcode, as the Nix package on macOS does
+runtime-shaders = ["gpui_platform/runtime_shaders"]
 
 [dependencies]
 anyhow.workspace = true
