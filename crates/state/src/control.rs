@@ -1008,7 +1008,7 @@ fn wire_origin(origin: &Origin) -> wire::Origin {
         Whence::Album => wire::OriginKind::Album,
         Whence::Playlist => wire::OriginKind::Playlist,
         Whence::Artist => wire::OriginKind::Artist,
-        Whence::Radio => wire::OriginKind::Radio,
+        Whence::Radio | Whence::Mix(_) => wire::OriginKind::Radio,
         Whence::Saved => wire::OriginKind::Liked,
         Whence::Local => wire::OriginKind::Local,
     };

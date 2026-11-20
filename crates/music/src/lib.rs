@@ -409,6 +409,18 @@ pub trait MusicApi: Send + Sync {
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)>;
 
+    /// The mix seeded by the `kind` collection `id`, which keeps going with songs like it. It
+    /// pages the way `track_radio` does. Only a provider that lists `kind` in
+    /// [`Capabilities::mixes`] is ever asked.
+    async fn mix(
+        &self,
+        _kind: Mix,
+        _id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        anyhow::bail!("mixes are not supported")
+    }
+
     async fn search(&self, query: &str) -> Result<Vec<Track>>;
 
     async fn search_albums(&self, _query: &str) -> Result<Vec<Album>> {
@@ -896,6 +908,15 @@ impl Shape {
     }
 }
 
+/// A collection a mix can be started from, the way a track seeds a radio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mix {
+    Album,
+    Playlist,
+    Artist,
+}
+
 /// Whether the listener can change what a catalog holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Catalog {
@@ -921,6 +942,8 @@ pub struct Capabilities {
     pub follow_artists: bool,
     /// A track can seed a station, which is what fills the queue behind it.
     pub radio: bool,
+    /// The collections that can start a mix through `MusicApi::mix`. Empty hides the item.
+    pub mixes: &'static [Mix],
     /// Tracks carry a play count worth a column of its own.
     pub playcounts: bool,
     /// The provider keeps sidebar pins of its own, listed by `pin_targets` and changed
@@ -974,6 +997,7 @@ impl Capabilities {
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
+        mixes: &[],
         playcounts: true,
         pins: false,
         transcode: false,
@@ -994,6 +1018,7 @@ impl Capabilities {
     pub const NONE: Self = Self {
         follow_artists: false,
         radio: false,
+        mixes: &[],
         playcounts: false,
         pins: false,
         transcode: false,

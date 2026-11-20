@@ -69,6 +69,7 @@ impl LocalProvider {
             capabilities: Capabilities {
                 follow_artists: true,
                 radio: false,
+                mixes: &[],
                 playcounts: false,
                 pins: false,
                 transcode: false,

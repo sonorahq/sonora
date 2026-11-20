@@ -18,6 +18,7 @@ menu-download = Download
 menu-remove-download = Remove download
 menu-downloading = Downloading. Click to stop
 menu-song-radio = Go to song radio
+menu-start-mix = Start mix
 menu-go-to-album = Go to album
 menu-go-to-artist = Go to artist
 menu-go-to-playlist = Go to playlist

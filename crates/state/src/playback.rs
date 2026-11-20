@@ -10,7 +10,7 @@ use logic::station::{self, unheard};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
-    Analyzer, Contributor, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent,
+    Analyzer, Contributor, Meter, Mix, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent,
     PlaybackEvents, PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
@@ -381,6 +381,8 @@ pub enum Whence {
     Playlist,
     Artist,
     Radio,
+    /// The radio of a whole album, playlist or artist, whose id the origin carries.
+    Mix(Mix),
     Saved,
     Local,
 }
@@ -421,6 +423,10 @@ impl Origin {
         Self::of(Whence::Radio, id)
     }
 
+    pub fn mix(kind: Mix, id: impl Into<String>) -> Self {
+        Self::of(Whence::Mix(kind), id)
+    }
+
     pub fn saved() -> Self {
         Self::of(Whence::Saved, String::new())
     }
@@ -457,13 +463,31 @@ impl Origin {
                 if !stations {
                     return Ok((vec![client.track(&self.id).await?], None));
                 }
-                let (mut tracks, next) = client.track_radio(&self.id, None).await?;
+                let (mut tracks, next) = self.station(client, None).await?;
+                tracks.retain(|track| track.playable);
+                return Ok((tracks, next));
+            }
+            Whence::Mix(_) => {
+                let (mut tracks, next) = self.station(client, None).await?;
                 tracks.retain(|track| track.playable);
                 return Ok((tracks, next));
             }
             Whence::Local => anyhow::bail!("local collections are supplied by the library"),
         };
         Ok((tracks, None))
+    }
+
+    /// The stretch of the station this origin names, from its start or from the continuation
+    /// `from`. Only a radio and a mix are stations.
+    async fn station(
+        &self,
+        client: &dyn MusicApi,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        match self.whence {
+            Whence::Mix(kind) => client.mix(kind, &self.id, from).await,
+            _ => client.track_radio(&self.id, from).await,
+        }
     }
 
     fn of(whence: Whence, id: impl Into<String>) -> Self {
@@ -1995,11 +2019,11 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
-        let seed = station.rest.seed().to_owned();
+        let seed = station.origin.clone();
         let token = station.rest.next().to_owned();
         self.topping = Some(Io::global(cx).load(
             async move {
-                let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
+                let (mut tracks, next) = seed.station(&*client, Some(&token)).await?;
                 unheard(&mut tracks, &heard);
                 anyhow::Ok((tracks, next))
             },
