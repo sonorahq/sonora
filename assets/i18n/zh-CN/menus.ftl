@@ -70,33 +70,6 @@ playlist-again-add = 再次添加
 # confirm
 
 # confirm
-confirm-remove-library-title = 从音乐库中移除
-confirm-remove-playlist-title = 从播放列表中移除
-confirm-remove-history-title = 从历史记录中移除
-confirm-remove-songs = { $count ->
-    [one] 从音乐库中移除此歌曲？
-   *[other] 从音乐库中移除 { $count } 首歌曲？
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] 从播放列表中移除此歌曲？
-   *[other] 从播放列表中移除 { $count } 首歌曲？
-}
-confirm-remove-history-songs = { $count ->
-    [one] 从收听历史中移除此歌曲？
-   *[other] 从收听历史中移除 { $count } 首歌曲？
-}
-confirm-remove-albums = { $count ->
-    [one] 从音乐库中移除此专辑？
-   *[other] 从音乐库中移除 { $count } 张专辑？
-}
-confirm-remove-artists = { $count ->
-    [one] 从收藏中移除此歌手？
-   *[other] 从收藏中移除 { $count } 位歌手？
-}
-confirm-remove-playlists = { $count ->
-    [one] 从音乐库中移除此播放列表？
-   *[other] 从音乐库中移除 { $count } 个播放列表？
-}
 confirm-delete-track-files-title = 删除歌曲文件？
 confirm-delete-track-files = 文件将从磁盘上永久删除。此操作无法撤销。
 confirm-uninstall-widevine-title = 卸载 Widevine 模块？

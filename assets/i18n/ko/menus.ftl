@@ -128,33 +128,6 @@ cover-zoom-out = 축소
 cover-zoom-fit = 창에 맞추기
 
 # confirm
-confirm-remove-library-title = 라이브러리에서 제거
-confirm-remove-playlist-title = 플레이리스트에서 제거
-confirm-remove-history-title = 재생 기록에서 제거
-confirm-remove-songs = { $count ->
-    [one] 라이브러리에서 이 곡을 제거하시겠습니까?
-   *[other] 라이브러리에서 { $count }곡을 제거하시겠습니까?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] 플레이리스트에서 이 곡을 제거하시겠습니까?
-   *[other] 플레이리스트에서 { $count }곡을 제거하시겠습니까?
-}
-confirm-remove-history-songs = { $count ->
-    [one] 재생 기록에서 이 곡을 제거하시겠습니까?
-   *[other] 재생 기록에서 { $count }곡을 제거하시겠습니까?
-}
-confirm-remove-albums = { $count ->
-    [one] 라이브러리에서 이 앨범을 제거하시겠습니까?
-   *[other] 라이브러리에서 앨범 { $count }개를 제거하시겠습니까?
-}
-confirm-remove-artists = { $count ->
-    [one] 즐겨찾기에서 이 아티스트를 제거하시겠습니까?
-   *[other] 즐겨찾기에서 아티스트 { $count }명을 제거하시겠습니까?
-}
-confirm-remove-playlists = { $count ->
-    [one] 라이브러리에서 이 플레이리스트를 제거하시겠습니까?
-   *[other] 라이브러리에서 플레이리스트 { $count }개를 제거하시겠습니까?
-}
 confirm-delete-track-files-title = 트랙 파일을 삭제하시겠습니까?
 confirm-delete-track-files = 파일이 디스크에서 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
 confirm-uninstall-widevine-title = Widevine 모듈을 제거하시겠습니까?

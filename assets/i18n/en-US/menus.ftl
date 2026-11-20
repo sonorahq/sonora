@@ -129,33 +129,6 @@ cover-zoom-out = Zoom out
 cover-zoom-fit = Fit to window
 
 # confirm
-confirm-remove-library-title = Remove from library
-confirm-remove-playlist-title = Remove from playlist
-confirm-remove-history-title = Remove from history
-confirm-remove-songs = { $count ->
-    [one] Remove this song from your library?
-   *[other] Remove { $count } songs from your library?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Remove this song from the playlist?
-   *[other] Remove { $count } songs from the playlist?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Remove this song from listening history?
-   *[other] Remove { $count } songs from listening history?
-}
-confirm-remove-albums = { $count ->
-    [one] Remove this album from your library?
-   *[other] Remove { $count } albums from your library?
-}
-confirm-remove-artists = { $count ->
-    [one] Remove this artist from Favorites?
-   *[other] Remove { $count } artists from Favorites?
-}
-confirm-remove-playlists = { $count ->
-    [one] Remove this playlist from your library?
-   *[other] Remove { $count } playlists from your library?
-}
 confirm-delete-track-files-title = Delete track files?
 confirm-delete-track-files = The file(s) will be permanently deleted from disk. This cannot be undone.
 confirm-uninstall-widevine-title = Uninstall the Widevine module?
