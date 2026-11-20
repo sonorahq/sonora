@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 
+### Fixed
+
+- With a light theme, the rest of the app no longer turns dark while the fullscreen player opens or closes.
+
 ## [0.50.3] - 2026-11-20
 
 ### Changed
