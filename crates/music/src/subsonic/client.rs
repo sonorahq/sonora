@@ -1703,19 +1703,18 @@ impl SubsonicClient {
         let mut seen = HashSet::new();
         let mut offset = 0i32;
         loop {
+            let options = Search3Options::new()
+                .artist_count(0)
+                .album_count(0)
+                .song_count(LIBRARY_PAGE)
+                .song_offset(offset);
+            let options = match scoped {
+                true => self.scoped(options),
+                false => options,
+            };
             let page = self
                 .client
-                .search3("", &{
-                    let options = Search3Options::new()
-                        .artist_count(0)
-                        .album_count(0)
-                        .song_count(LIBRARY_PAGE)
-                        .song_offset(offset);
-                    match scoped {
-                        true => self.scoped(options),
-                        false => options,
-                    }
-                })
+                .search3("", &options)
                 .await
                 .map_err(bare)
                 .context("cannot load the songs")?;

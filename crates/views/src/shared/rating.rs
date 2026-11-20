@@ -1,11 +1,12 @@
 use std::rc::Rc;
 
-use gpui::accesskit::Role;
+use gpui::accesskit::{Action, Role};
 use gpui::prelude::*;
 use gpui::{
-    App, Div, ElementId, Entity, MouseButton, Pixels, StyleRefinement, Window, div, px, svg,
+    App, Div, ElementId, Entity, Hsla, MouseButton, Pixels, StyleRefinement, Window, div, px, svg,
 };
 use i18n::t;
+use input::{ActivateRating, RATING_CONTEXT};
 use music::Track;
 use state::{Playback, Sonora};
 use ui::{ActiveTheme as _, Button, Metrics, Perch, Tipped as _};
@@ -25,6 +26,7 @@ pub(crate) struct Rating {
     track: Option<Track>,
     playback: Option<Entity<Playback>>,
     frosted: bool,
+    disabled: bool,
     hover: Option<Entity<Option<u8>>>,
 }
 
@@ -66,17 +68,19 @@ impl RenderOnce for Rating {
         let id = self.track.as_ref().and_then(|track| track.id.as_deref());
         let threshold = self.track.is_none();
         let active = threshold
-            || (ratings.enabled(cx)
-                && id.is_some_and(|id| !id.is_empty() && !music::is_local_id(id)));
+            || self
+                .track
+                .as_ref()
+                .is_some_and(|track| ratings.can_rate(track, cx));
         let halves = ratings.halves(cx);
         let hearts = options.hearts || threshold;
         let busy = id.is_some_and(|id| ratings.loading() || ratings.pending(id));
+        let blocked = busy || self.disabled;
         let value = match threshold {
             true => options.auto_like,
             false => id.and_then(|id| ratings.for_track(id)),
         };
-        let hovering = (*hovered.read(cx)).filter(|_| active && !busy);
-        let preview = hovering.or(value).unwrap_or(0);
+        let hovering = (*hovered.read(cx)).filter(|_| active && !blocked);
         let saved = match threshold {
             true => value.is_none(),
             false => id
@@ -115,6 +119,7 @@ impl RenderOnce for Rating {
             (false, false) => ("icons/heart.svg", "menu-add-to-library"),
         };
         let press = select.clone();
+        let off = select.clone();
         let mut leading = Button::new(match threshold {
             true => ElementId::from("rating-auto-like-off"),
             false => ElementId::from((self.id.clone(), "liked")),
@@ -128,9 +133,14 @@ impl RenderOnce for Rating {
             true => theme.primary,
             false => theme.muted_foreground,
         })
-        .disabled(disabled)
+        .disabled(disabled || self.disabled)
         .when(self.frosted, Button::frosted)
-        .on_click(move |_, _, cx| press(None, cx));
+        .on_click(move |_, _, cx| press(None, cx))
+        .when(threshold && !blocked, |button| {
+            keyboard(button, theme.secondary_active, true, move |cx| {
+                off(None, cx)
+            })
+        });
         if !active {
             leading.style().refine(&std::mem::take(self.base.style()));
             return match stars_only || !hearts {
@@ -138,15 +148,15 @@ impl RenderOnce for Rating {
                 false => leading.into_any_element(),
             };
         }
-        if failed {
-            return Button::new(self.id)
-                .ghost()
-                .small()
-                .icon("icons/refresh-cw.svg")
-                .tooltip_above("rating-retry")
-                .on_click(move |_, _, cx| entity.update(cx, |ratings, cx| ratings.retry(cx)))
-                .into_any_element();
-        }
+        let label = |selection| match (threshold, value == Some(selection)) {
+            (true, _) => t!(
+                "settings-rating-auto-like-set",
+                value = f64::from(selection) / 2.
+            ),
+            (false, true) => t!("rating-clear"),
+            (false, false) => t!("rating-set", rating = f64::from(selection) / 2.),
+        };
+        let preview = hovering.or(value).unwrap_or(0);
         let (hit, half, gap) = star_metrics(theme.metrics);
         let half = ui::snapped(half, window);
         let side = half * 2.;
@@ -154,7 +164,7 @@ impl RenderOnce for Rating {
         let ink = hovering.map_or(theme.foreground, |_| theme.primary);
         let reset = hovered.clone();
         let overrides = std::mem::take(self.base.style());
-        let mut row = self
+        let row = self
             .base
             .id(self.id)
             .flex()
@@ -166,7 +176,22 @@ impl RenderOnce for Rating {
                 (false, true) => row.child(div().mr(gap).child(leading)),
                 (false, false) => row.pl(top),
                 (true, _) => row,
-            })
+            });
+        if failed {
+            let retry = move |cx: &mut App| entity.update(cx, |ratings, cx| ratings.retry(cx));
+            let press = retry.clone();
+            let button = Button::new("rating-retry")
+                .ghost()
+                .small()
+                .icon("icons/refresh-cw.svg")
+                .tooltip_above("rating-retry")
+                .on_click(move |_, _, cx| press(cx));
+            let mut row = row.child(keyboard(button, theme.secondary_active, true, retry));
+            row.style().refine(&overrides);
+            return row.into_any_element();
+        }
+
+        let mut row = row
             .on_hover(move |over, _, cx| {
                 if !over {
                     reset.write(cx, None);
@@ -180,16 +205,11 @@ impl RenderOnce for Rating {
                     true => rating,
                     false => rating.next_multiple_of(2),
                 };
-                let label = match (self.track.is_some(), value == Some(selection)) {
-                    (false, _) => t!(
-                        "settings-rating-auto-like-set",
-                        value = f64::from(selection) / 2.
-                    ),
-                    (true, true) => t!("rating-clear"),
-                    (true, false) => t!("rating-set", rating = f64::from(selection) / 2.),
-                };
+                let label = label(selection);
                 let hover = hovered.clone();
                 let select = select.clone();
+                let accessible = select.clone();
+                let activate = select.clone();
                 div()
                     .id(("rating", usize::from(rating)))
                     .role(Role::Button)
@@ -213,7 +233,12 @@ impl RenderOnce for Rating {
                                 false => theme.muted_foreground.opacity(EMPTY),
                             }),
                     )
-                    .when(!busy, |half| {
+                    .when(halves || rating == selection, |half| {
+                        keyboard(half, theme.secondary_active, !blocked, move |cx| {
+                            activate(Some(selection), cx)
+                        })
+                    })
+                    .when(!blocked, |half| {
                         half.cursor_pointer()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_hover(move |over, _, cx| {
@@ -222,6 +247,9 @@ impl RenderOnce for Rating {
                                 }
                             })
                             .tip_label(label, Perch::Above)
+                            .on_a11y_action(Action::Click, move |_, _, cx| {
+                                accessible(Some(selection), cx)
+                            })
                             .on_click(move |_, _, cx| {
                                 cx.stop_propagation();
                                 select(Some(selection), cx);
@@ -242,8 +270,15 @@ impl Rating {
             track: None,
             playback: None,
             frosted: false,
+            disabled: false,
             hover: None,
         }
+    }
+
+    /// Keeps a visible threshold from accepting activation while its setting is unavailable.
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     /// Shares hover with a separate favourite tile, leaving only stars in this row.
@@ -257,8 +292,8 @@ impl Rating {
 /// room for it beside a title.
 pub(crate) fn width(cx: &App) -> Pixels {
     let sonora = Sonora::global(cx);
-    let hearts = sonora.settings.read(cx).star_ratings().hearts;
     let stars = sonora.ratings.read(cx).enabled(cx);
+    let hearts = sonora.settings.read(cx).star_ratings().hearts;
     measure(cx.theme().metrics, hearts, stars)
 }
 
@@ -283,4 +318,22 @@ fn measure(metrics: Metrics, hearts: bool, stars: bool) -> Pixels {
 fn star_metrics(metrics: Metrics) -> (Pixels, Pixels, Pixels) {
     let hit = metrics.control_small;
     (hit, hit * MARK / 2., metrics.pad / 4.)
+}
+
+fn keyboard<E: StatefulInteractiveElement>(
+    element: E,
+    focus_fill: Hsla,
+    enabled: bool,
+    activate: impl Fn(&mut App) + 'static,
+) -> E {
+    element
+        .tab_index(0)
+        .tab_stop(enabled)
+        .key_context(RATING_CONTEXT)
+        .focus_visible(|style| style.bg(focus_fill))
+        .on_action(move |_: &ActivateRating, _, cx| {
+            if enabled {
+                activate(cx);
+            }
+        })
 }

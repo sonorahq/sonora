@@ -62,7 +62,6 @@ impl Ratings {
                     this.loaded = false;
                     this.retry(cx);
                 }
-                SessionEvent::Reconnected => this.schedule_refresh(cx),
                 SessionEvent::WentOffline => this.refresh = None,
                 _ => {}
             }
@@ -71,7 +70,8 @@ impl Ratings {
         .detach();
         cx.subscribe(&library, |this, _, event, cx| {
             let changed = match event {
-                LibraryEvent::Refreshing => true,
+                // The library emits this for both reconnects and manual refreshes.
+                LibraryEvent::Refreshing => return this.schedule_refresh(cx),
                 LibraryEvent::PlaylistChanged(id)
                 | LibraryEvent::PlaylistGone(id)
                 | LibraryEvent::PlaylistBack(id)
@@ -81,11 +81,10 @@ impl Ratings {
                 }
                 _ => false,
             };
-            // A refresh someone asked for is never taken for the echo of a save.
-            let own = !matches!(event, LibraryEvent::Refreshing)
-                && (!this.saves.is_empty()
-                    || this.saved_at.is_some_and(|at| at.elapsed() < ECHO_WAIT));
-            if changed && !own {
+            if changed
+                && this.saves.is_empty()
+                && this.saved_at.is_none_or(|at| at.elapsed() >= ECHO_WAIT)
+            {
                 this.schedule_refresh(cx);
             }
         })
@@ -149,6 +148,11 @@ impl Ratings {
         self.shown.enabled && self.supported(cx)
     }
 
+    /// Whether this track can be rated on the current streaming account.
+    pub fn can_rate(&self, track: &Track, cx: &App) -> bool {
+        self.enabled(cx) && rating_id(track).is_some()
+    }
+
     /// The rating to show for `id`, including one still being saved.
     pub fn for_track(&self, id: &str) -> Option<u8> {
         match self.saves.get(id) {
@@ -194,7 +198,7 @@ impl Ratings {
     /// With auto-like on, a rating at or above the threshold likes the track and one below unlikes
     /// it. Clearing a rating leaves the like alone.
     pub fn rate(&mut self, track: Track, rating: u8, cx: &mut Context<Self>) {
-        let Some(id) = track.id.as_deref() else {
+        let Some(id) = rating_id(&track) else {
             return;
         };
         let wanted = (self.values.get(id).copied() != Some(rating)).then_some(rating);
@@ -289,25 +293,18 @@ impl Ratings {
                     };
                     let stars = |rating: u8| t!("unit-stars", value = f64::from(rating) / 2.);
                     let current = wanted.map(stars).unwrap_or_else(|| t!("common-off"));
-                    let detail = match previous {
-                        Some(from) => {
-                            let previous = stars(from);
-                            t!(
-                                "toast-rating-change",
-                                previous = &previous,
-                                current = &current
-                            )
+                    let previous_stars = previous.map(stars).unwrap_or_default();
+                    let detail = t!(
+                        "toast-rating-detail",
+                        previous = &previous_stars,
+                        current = &current,
+                        changed = if previous.is_some() { "yes" } else { "no" },
+                        favorite = match like {
+                            Some(true) => "liked",
+                            Some(false) => "unliked",
+                            None => "unchanged",
                         }
-                        None => current,
-                    };
-                    let detail = match like {
-                        Some(liked) => t!(
-                            "toast-rating-with-like",
-                            detail = &detail,
-                            liked = if liked { "yes" } else { "no" }
-                        ),
-                        None => detail,
-                    };
+                    );
                     let toast = Toast::new(Outcome::Done, key)
                         .name(track.name.clone())
                         .detail(detail);
@@ -393,4 +390,11 @@ impl Ratings {
         }
         cx.notify();
     }
+}
+
+fn rating_id(track: &Track) -> Option<&str> {
+    track
+        .id
+        .as_deref()
+        .filter(|id| !id.is_empty() && !music::is_local_id(id))
 }

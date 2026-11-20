@@ -405,7 +405,7 @@ impl ItemMenu {
                     .disabled(),
             ),
         };
-        let rated = (!many && !imported && Sonora::global(cx).ratings.read(cx).enabled(cx))
+        let rated = (!many && Sonora::global(cx).ratings.read(cx).can_rate(track, cx))
             .then(|| track.clone());
         let album = match (many, columns.album, track.album_id.clone()) {
             (true, _, _) | (false, true, _) => None,

@@ -206,28 +206,13 @@ impl SettingsView {
         .into_any_element()
     }
 
-    /// The interactive star preview sets the auto-like threshold, or switches it off. It stands
-    /// under the hearts switch and is out of use, and covered so it takes no clicks, while
-    /// `unavailable`.
+    /// Sets the auto-like threshold with stars or turns it off with the cross.
     fn rating_auto_like_row(&self, key: &str, unavailable: bool) -> AnyElement {
-        let stars = crate::shared::rating::Rating::threshold();
-        Row::new(
-            i18n::lookup(key, None),
-            div()
-                .relative()
-                .child(stars)
-                .when(unavailable, |this| {
-                    this.child(
-                        ui::Shield::new("rating-auto-like-shield")
-                            .absolute()
-                            .size_full(),
-                    )
-                })
-                .into_any_element(),
-        )
-        .nested()
-        .disabled(unavailable)
-        .into_any_element()
+        let stars = crate::shared::rating::Rating::threshold().disabled(unavailable);
+        Row::new(i18n::lookup(key, None), stars.into_any_element())
+            .nested()
+            .disabled(unavailable)
+            .into_any_element()
     }
 
     /// The switch that keeps played tracks on disk. Soloist streams every track and keeps its

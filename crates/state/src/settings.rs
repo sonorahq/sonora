@@ -189,8 +189,7 @@ pub enum SideTab {
 pub struct StarRatings {
     /// Whether ratings are shown.
     pub enabled: bool,
-    /// Whether the favorite heart stays beside the stars. The heart is the only control while
-    /// ratings are off, so it stays then.
+    /// Whether to show favorite hearts.
     pub hearts: bool,
     /// Whether a rating can be half a star, where the provider allows it.
     pub half_ratings: bool,
