@@ -93,6 +93,14 @@ Or:
 yay -S sonora
 ```
 
+#### Vylen Linux
+
+Install from the [official repository](https://vylen.gitlab.io/packages/#sonora)
+
+```sh
+sudo emerald install sonora
+```
+
 #### Flatpak
 
 ```sh
