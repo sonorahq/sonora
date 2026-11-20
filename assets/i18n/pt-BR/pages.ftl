@@ -1,14 +1,20 @@
 # login
+members-title = Participantes
+members-empty = Inicie uma sessão ou entre em uma para ver quem está ouvindo com você
 login-restoring = Verificando sua sessão salva…
 login-authorizing = Aguardando autorização no seu navegador…
 login-signed-in = Conectado como { $name }
 login-failed-title = Falha no login
 login-problem-region = O Spotify não abrirá uma sessão do país onde você está. Faça login do seu país de origem ou altere o país na sua conta do Spotify.
 login-problem-credentials = Sua sessão salva do Spotify não é mais válida. Faça login novamente para continuar.
+login-problem-password = O servidor não aceitou esse nome de usuário e senha. Confira os dados e tente novamente.
 login-problem-network = O Sonora não conseguiu acessar o serviço de música. Verifique sua conexão com a internet e tente novamente.
+login-problem-blocked = O serviço de música está recusando conexões da sua rede. Se você usa uma VPN, tente outro servidor ou desative-a.
 login-problem-cancelled = Você fechou a página do navegador antes de aprovar o login. Recomece para finalizar.
 login-problem-refused = O Spotify recusou o login. Aguarde um momento e tente novamente.
 login-problem-premium = O Sonora usa o Spotify Premium para reproduzir, e esta conta não possui o plano. Faça login com uma conta Premium para continuar.
+login-problem-subscription = Este ID Apple não tem uma assinatura ativa.
+login-subscription-check = Verificar Apple Music
 login-sign-in = Entrar com { $provider }
 login-connect-cookies = Colar cookies manualmente
 login-cookie-open = Abrir { $provider }
@@ -36,25 +42,43 @@ login-device-code = Digite este código em { $url }
 login-server-title = Conecte-se ao seu servidor Subsonic
 login-server-detail = Digite o endereço de qualquer servidor Subsonic ou OpenSubsonic (Navidrome, Airsonic, Gonic, …) e faça login com seu usuário e senha do servidor. A sessão permanece neste dispositivo.
 login-server-hint = https://music.example.com
+login-jellyfin-title = Conectar ao Jellyfin
+login-jellyfin-detail = Entre com sua conta do Jellyfin.
+login-quick-connect = Entrar com Quick Connect
 login-username-hint = Usuário
 login-password-hint = Senha
 login-server-submit = Conectar
 login-account-title = Escolha uma conta
 login-account-detail = Esta sessão está conectada a mais de uma conta Google. Escolha qual o Sonora deve usar.
+login-profile-title = Escolha um perfil
+login-profile-detail = Esta conta tem mais de um perfil. Escolha qual o Sonora deve usar.
 login-choose-title = Entrar no { $provider }
 login-choose-detail = Escolha como entrar no { $provider }.
 
 # album and playlist pages
 
 # artist page
+login-providers = Serviços de música
+login-welcome-title = Boas-vindas ao Sonora
+login-welcome-detail = Você pode adicionar mais serviços depois nas configurações.
+login-or = ou
 artist-eyebrow = Artista
 artist-monthly-listeners = { $count ->
     [one] { $value } ouvinte mensal
    *[other] { $value } ouvintes mensais
 }
+artist-followers = { $count ->
+    [one] { $value } seguidor
+   *[other] { $value } seguidores
+}
 artist-popular = Populares
 artist-popular-eyebrow = Explorar este artista
 artist-popular-empty = Nada para tocar deste artista ainda
+artist-favorite-songs = Suas músicas favoritas
+artist-favorite-songs-count = { $count ->
+    [one] { $count } música nas suas Favoritas
+   *[other] { $count } músicas nas suas Favoritas
+}
 artist-releases = Lançamentos
 artist-filter-all = Tudo
 artist-filter-singles = Singles
@@ -81,14 +105,19 @@ home-quick-picks = Escolhas rápidas
 home-quick-picks-empty = Curta algumas músicas e elas aparecerão aqui
 home-recently-added = Adicionados recentemente
 home-recently-played = Tocados recentemente
+home-most-played = Mais ouvidas
 home-favorite-albums = Álbuns favoritos
 home-artists = Artistas
 home-collection-albums = Álbuns da sua coleção
 
 # search page
+powerbar-title = Pesquisa rápida
+powerbar-open = Abrir
+powerbar-song = Ir para a música
 search-placeholder = O que você quer ouvir?
 search-browse = Explorar tudo
 search-submit = Buscar
+search-open-link = Abrir link no Sonora
 search-recent = Buscas recentes
 search-forget = Remover do histórico
 genre-empty = Nada para mostrar aqui ainda
@@ -123,6 +152,7 @@ song-genres = Gêneros
 song-language = Idioma
 song-content = Conteúdo
 song-explicit = Explícito
+song-local = Arquivo local
 song-clean = Limpo
 artist-about = Sobre o artista
 artist-about-fallback = Explore as músicas e lançamentos populares do artista.
@@ -130,6 +160,7 @@ artist-about-open = Ir para o artista
 song-copyright = © { $notice }
 
 # tags
+track-row-name = { $title } de { $artists }
 tags-edit-title = Editar tags
 tags-sheet-song = Música
 tags-sheet-album = Álbum

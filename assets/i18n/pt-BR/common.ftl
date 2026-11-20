@@ -29,6 +29,13 @@ common-not-now = Agora não
 common-not-connected = Não conectado
 common-sonora = Sonora
 common-more-count = +{ $count }
+option-variants = Variações de { $name }
+table-sorted-ascending = Em ordem crescente
+table-sorted-descending = Em ordem decrescente
+range-from = De
+range-to = Até
+rail-back = Rolar para trás
+rail-forward = Rolar para frente
 number-group = { "." }
 
 # units
@@ -50,7 +57,9 @@ nav-history = Histórico
 nav-home = Início
 nav-search = Buscar
 nav-library = Sua Biblioteca
+sidebar-library = Biblioteca
 nav-settings = Configurações
+account-manage = Gerenciar contas
 nav-songs = Músicas
 nav-albums = Álbuns
 nav-playlists = Playlists
@@ -58,6 +67,7 @@ nav-artists = Artistas
 nav-local = Música Local
 nav-back = Voltar
 nav-forward = Avançar
+nav-trail = Histórico de navegação
 nav-sidebar = Alternar barra lateral
 nav-sidebar-right = Mostrar ou ocultar letras e fila
 nav-pinned = Fixados
@@ -84,6 +94,14 @@ library-local-unconfigured = Configure sua biblioteca local
 
 # app menu
 app-refresh = Atualizar
+downloads-active = Baixando
+downloads-left = { $count ->
+    [one] Falta { $count } música
+   *[other] Faltam { $count } músicas
+}
+downloads-eta = Cerca de { $minutes } min restantes
+downloads-cancel = Cancelar download
+downloads-cancel-all = Cancelar todos os downloads
 app-sign-out = Sair
 app-quit = Sair do aplicativo
 app-settings = Ajustes…
@@ -98,6 +116,8 @@ app-minimize = Minimizar
 app-zoom = Zoom
 
 # tray menu
+window-maximize = Maximizar
+window-restore = Restaurar
 tray-show = Mostrar Sonora
 tray-play = Tocar
 tray-pause = Pausar
@@ -110,6 +130,7 @@ column-artist = Artista
 column-album = Álbum
 column-genre = Gênero
 column-date-added = Data de adição
+column-date-liked = Data de adição às Favoritas
 column-added-by = Adicionado por
 column-modified = Modificado
 column-length = Duração
@@ -137,6 +158,8 @@ filter-downloaded = Baixadas
 filter-owned = Suas
 
 # view
+filter-local-only = Apenas arquivos locais
+filter-streaming-only = Apenas streaming
 view-list = Lista
 view-cards = Grade
 
@@ -145,6 +168,7 @@ tool-sort = Ordenar
 tool-filters = Filtros
 
 # release kinds
+tool-account = Conta
 release-album = Álbum
 release-single = Single
 release-compilation = Compilação
