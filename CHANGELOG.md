@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 
+### Fixed
+
+- On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
+
 ## [0.50.3] - 2026-11-20
 
 ### Changed
