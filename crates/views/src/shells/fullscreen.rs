@@ -136,6 +136,9 @@ pub struct FullscreenView {
     volume: RisingVolume,
     over_pill: bool,
     over_transport: bool,
+    over_rating: Option<&'static str>,
+    rating_focus: FocusHandle,
+    rating_focused: bool,
     over_leave: bool,
     /// Whether the pointer rests on the bar along the bottom below `Room::Wide` or the pill over
     /// it, which keeps the controls awake.
@@ -250,6 +253,9 @@ impl FullscreenView {
             volume: RisingVolume::new("fullscreen-volume-slider"),
             over_pill: false,
             over_transport: false,
+            over_rating: None,
+            rating_focus: cx.focus_handle(),
+            rating_focused: false,
             over_leave: false,
             over_dock: false,
             large: None,
@@ -325,6 +331,7 @@ impl FullscreenView {
         // The transport may move between the dock and the strip, and the row it leaves never
         // says the pointer left it.
         self.over_transport = false;
+        self.over_rating = None;
         self.settings
             .update(cx, |settings, cx| settings.set_fullscreen_tab(panel, cx));
         if let Some(tab) = panel {
@@ -410,6 +417,14 @@ impl FullscreenView {
         self.stir(cx);
     }
 
+    /// Wakes the chrome when the pointer enters a control that keeps it visible.
+    fn park_hover(&mut self, hovering: bool, window: &Window, cx: &mut Context<Self>) {
+        if hovering && hovered(window) && !self.left {
+            self.poke(cx);
+        }
+        cx.notify();
+    }
+
     /// Whether anything under the pointer should hold the chrome awake. A hover flag only counts
     /// while the pointer is over the window: one set when it left stays set, and a stale flag
     /// would keep the controls up for good. A Jam invite or a panel's track menu drawn over the
@@ -419,12 +434,14 @@ impl FullscreenView {
         let parked = self.volume.parked()
             || self.over_pill
             || self.over_transport
+            || self.over_rating.is_some()
             || self.over_leave
             || self.over_dock
             || self.over_seek.is_some()
             || self.over_volume.is_some()
             || self.scrollbar_held(cx);
         (self.inside && parked)
+            || self.rating_focused
             || self.volume.held
             || self.pending.is_some()
             || self.context_menu.is_some()
@@ -438,6 +455,7 @@ impl FullscreenView {
         self.volume.unpark();
         self.over_pill = false;
         self.over_transport = false;
+        self.over_rating = None;
         self.over_leave = false;
         self.over_dock = false;
         self.over_seek = None;
@@ -1022,7 +1040,7 @@ impl FullscreenView {
         id: &'static str,
         size: Text,
         hide: f32,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> gpui::Div {
         div()
             .flex()
@@ -1041,9 +1059,19 @@ impl FullscreenView {
             )
             .child(
                 div()
+                    .id((gpui::ElementId::from(id), "controls"))
+                    .track_focus(&self.rating_focus)
                     .flex_none()
                     .opacity(1. - hide)
                     .when(hide >= 1., |this| this.invisible())
+                    .on_hover(cx.listener(move |this, hovering: &bool, window, cx| {
+                        if *hovering {
+                            this.over_rating = Some(id);
+                        } else if this.over_rating == Some(id) {
+                            this.over_rating = None;
+                        }
+                        this.park_hover(*hovering, window, cx);
+                    }))
                     .children(rating(
                         SharedString::from(format!("{id}-rating")),
                         Some(track),
@@ -1233,10 +1261,7 @@ impl FullscreenView {
         let gap = px(PILL_GAP);
         let linger = cx.listener(|this: &mut Self, hovering: &bool, window, cx| {
             this.over_pill = *hovering;
-            if *hovering && hovered(window) && !this.left {
-                this.poke(cx);
-            }
-            cx.notify();
+            this.park_hover(*hovering, window, cx);
         });
         let tab = move |id: &'static str, icon: &'static str, hint: &'static str, panel| {
             let showing = self.panel == panel;
@@ -1519,6 +1544,11 @@ impl Render for FullscreenView {
         if !narrow {
             self.over_dock = false;
         }
+        let rating_focused = self.rating_focus.contains_focused(window, cx);
+        if rating_focused && !self.rating_focused {
+            self.poke(cx);
+        }
+        self.rating_focused = rating_focused;
         let idle = self.hidden(window, cx);
         let switching = self.switching(window, cx);
         let leaving = self.leaving.as_mut().map(|leaving| {
@@ -1619,6 +1649,13 @@ impl Render for FullscreenView {
         let raster_side = snapped(far, window);
         let cover_scale = presentation_scale(presented_side, raster_side);
         let staged = self.panel.is_none() || split;
+        if self.over_rating.is_some_and(|id| {
+            (id == "fullscreen-artists") != staged
+                || hide >= 1.
+                || self.playback.read(cx).shown_track(cx).is_none()
+        }) {
+            self.over_rating = None;
+        }
         // The column settles by half of what the dock gives up and the meta by half of what the
         // cover grows, both straight along `hide` to a rest that sits on the device grid, so
         // neither steps a whole pixel at a time through layout in the slow tail of the spring.

@@ -9,11 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Rate songs with stars from the player, the right-click menu and every song list once you turn on Star ratings in Settings.
-- Hide the favorite heart in Settings.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
+- Rate songs with stars from the player, the right-click menu and every song list once you turn on Star ratings in Settings.
+- Hide the favorite heart in Settings.
 
 ### Changed
 

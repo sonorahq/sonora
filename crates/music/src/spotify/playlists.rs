@@ -418,16 +418,8 @@ pub(super) async fn entries(
         !content.contents.truncated(),
         "cannot read every playlist entry"
     );
-    Ok(content
-        .contents
-        .items
-        .iter()
-        .filter_map(|item| {
-            Some((
-                item.uri().strip_prefix(TRACK_PREFIX)?.to_owned(),
-                wire::seconds(item.attributes.timestamp()),
-            ))
-        })
+    Ok(track_items(&content)
+        .map(|(item, id)| (id.to_owned(), wire::seconds(item.attributes.timestamp())))
         .collect())
 }
 
@@ -438,12 +430,8 @@ pub async fn playlist_tracks(session: &Session, playlist_id: &str) -> Result<Vec
 
 pub async fn covers(session: &Session, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
     let content = snapshot(session, playlist_id).await?;
-    let uris: Vec<String> = content
-        .contents
-        .items
-        .iter()
-        .map(|item| item.uri())
-        .filter(|uri| uri.starts_with(TRACK_PREFIX))
+    let uris: Vec<String> = track_items(&content)
+        .map(|(item, _)| item.uri())
         .take(wanted * COVER_SLACK)
         .map(str::to_owned)
         .collect();
@@ -461,12 +449,8 @@ pub async fn covers(session: &Session, playlist_id: &str, wanted: usize) -> Resu
 }
 
 async fn tracks_from(session: &Session, content: &SelectedListContent) -> Result<Vec<Track>> {
-    let added: Vec<(String, Option<i64>, Option<String>)> = content
-        .contents
-        .items
-        .iter()
-        .filter(|item| item.uri().starts_with(TRACK_PREFIX))
-        .map(|item| {
+    let added: Vec<_> = track_items(content)
+        .map(|(item, _)| {
             (
                 item.uri().to_owned(),
                 wire::seconds(item.attributes.timestamp()),
@@ -489,6 +473,15 @@ async fn tracks_from(session: &Session, content: &SelectedListContent) -> Result
             Some(track)
         })
         .collect())
+}
+
+/// Lists the track rows in a playlist and strips the URI prefix from their IDs.
+fn track_items(content: &SelectedListContent) -> impl Iterator<Item = (&Item, &str)> {
+    content
+        .contents
+        .items
+        .iter()
+        .filter_map(|item| item.uri().strip_prefix(TRACK_PREFIX).map(|id| (item, id)))
 }
 
 fn contributor(item: &Item) -> Option<String> {

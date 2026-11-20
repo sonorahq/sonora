@@ -30,10 +30,14 @@ toast-file-dialog-failed = Could not open the file dialog
 toast-rating-updated = Updated the rating of { $name }
 toast-rating-cleared = Cleared the rating of { $name }
 toast-rating-save-failed = Could not save your rating. Please try again.
-toast-rating-change = { $previous } → { $current }
-toast-rating-with-like = { $detail } · { $liked ->
-    [yes] liked
-   *[no] unliked
+toast-rating-detail =
+    { $changed ->
+        [yes] { $previous } → { $current }
+       *[no] { $current }
+    }{ $favorite ->
+        [liked] { " · " }liked
+        [unliked] { " · " }unliked
+       *[unchanged] { "" }
     }
 
 toast-queued-track = { $name } added to the queue

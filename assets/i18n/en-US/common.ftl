@@ -15,6 +15,7 @@ common-previous = Previous
 common-next = Next
 common-dismiss = Dismiss
 common-clear = Clear
+common-off = Off
 common-rating = Rating
 common-undo = Undo
 common-redo = Redo
