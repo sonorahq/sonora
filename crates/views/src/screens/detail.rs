@@ -31,7 +31,6 @@ use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::album_grid::CardGrid;
 use crate::shared::blend::Joined;
 use crate::shared::cards;
-use crate::shared::confirm::Confirm;
 use crate::shared::cover_viewer::CoverViewer;
 use crate::shared::hero::{
     ACTION_GAP, HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
@@ -636,21 +635,23 @@ impl DetailView {
                 true => heart.tint(theme.primary),
                 false => heart,
             }
-            .on_click(move |_, _, cx| match &target {
-                Saveable::Album(album) if saved && !Confirm::unstarring(&album.id, cx) => {
-                    Confirm::albums(vec![album.clone()], cx)
-                }
-                Saveable::Album(album) => {
-                    library.update(cx, |library, cx| library.heart_album(album.clone(), cx));
-                }
-                Saveable::Playlist(playlist) if saved => {
-                    Confirm::playlists(vec![playlist.id.clone()], cx)
-                }
-                Saveable::Playlist(playlist) => {
-                    library.update(cx, |library, cx| {
+            .on_click(move |_, _, cx| {
+                library.update(cx, |library, cx| match &target {
+                    // Over a catalog the heart only unstars, so it is the way back and needs no
+                    // toast.
+                    Saveable::Album(album)
+                        if saved && !library.shape(Shelf::of(&album.id)).is_catalog() =>
+                    {
+                        library.toggle_album(album.clone(), cx)
+                    }
+                    Saveable::Album(album) => library.heart_album(album.clone(), cx),
+                    Saveable::Playlist(playlist) if saved => {
+                        library.remove_playlist_from_library(playlist.id.clone(), cx)
+                    }
+                    Saveable::Playlist(playlist) => {
                         library.add_playlist_to_library(playlist.clone(), cx)
-                    });
-                }
+                    }
+                });
             }),
         )
     }

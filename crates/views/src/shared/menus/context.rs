@@ -164,7 +164,9 @@ impl ItemMenu {
             )
             .icon("icons/x.svg")
             .on_click(move |_, _, cx| {
-                Confirm::playlist_songs(ids.clone(), detail.clone(), count, cx)
+                detail.update(cx, |detail, cx| {
+                    detail.remove_tracks_from_playlist(ids.clone(), cx)
+                });
             }),
         };
         self.build(tracks, Some(remove), None, None, columns, cx)
@@ -187,7 +189,13 @@ impl ItemMenu {
             ),
         )
         .icon("icons/trash-2.svg")
-        .on_click(move |_, _, cx| Confirm::history_songs(held.clone(), history.clone(), cx));
+        .on_click(move |_, _, cx| {
+            history.update(cx, |history, cx| {
+                for track in &held {
+                    history.remove(track, cx);
+                }
+            });
+        });
         self.build(tracks, None, Some(forget), None, columns, cx)
     }
 
@@ -605,8 +613,6 @@ struct Tile {
     active: bool,
     /// Draws a download ring instead of the icon.
     ring: Option<Ring>,
-    /// Closes the menu before the click runs, for a click that opens a dialog.
-    closes: bool,
     on_click: Option<TileClick>,
 }
 
@@ -628,7 +634,6 @@ impl Tile {
             tip,
             active: false,
             ring: None,
-            closes: false,
             on_click: None,
         }
     }
@@ -643,11 +648,6 @@ impl Tile {
         self
     }
 
-    fn closes(mut self, closes: bool) -> Self {
-        self.closes = closes;
-        self
-    }
-
     fn on_click(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
@@ -658,7 +658,7 @@ impl FluentBuilder for Tile {}
 
 /// The row of toggles on top of an item menu: the favorite, the library where it is apart from
 /// the favorites, the download and the pin. The tiles share the row evenly, only a tile that is on
-/// has a fill, and they leave the menu open when picked unless they hand off to a dialog.
+/// has a fill, and they leave the menu open when picked.
 #[derive(IntoElement)]
 struct Tiles(Vec<Tile>);
 
@@ -678,7 +678,6 @@ impl RenderOnce for Tiles {
                     tip,
                     active,
                     ring,
-                    closes,
                     on_click,
                 } = tile;
                 Button::new(id)
@@ -706,12 +705,7 @@ impl RenderOnce for Tiles {
                         None => button.icon(icon),
                     })
                     .when_some(on_click, |button, click| {
-                        button.on_click(move |_, window, cx| {
-                            if closes {
-                                ui::close_menu(window, cx);
-                            }
-                            click(window, cx);
-                        })
+                        button.on_click(move |_, window, cx| click(window, cx))
                     })
             }))
     }
@@ -790,32 +784,23 @@ fn track_tiles(
 
     let favorable = actionable(Library::pending);
     let saved = every(Library::saved);
-    // Unfavoriting asks first where the heart is the library itself, and the menu gives way to
-    // that question rather than staying open over it.
-    let asks = saved
-        && !favorable
-            .first()
-            .and_then(|track| track.id.as_deref())
-            .is_some_and(|id| Confirm::unstarring(id, cx));
-    let heart = heart_tile(saved)
-        .closes(asks)
-        .when(!favorable.is_empty(), |tile| {
-            let library = library.clone();
-            tile.on_click(move |_, cx| {
+    let heart = heart_tile(saved).when(!favorable.is_empty(), |tile| {
+        let library = library.clone();
+        tile.on_click(move |_, cx| {
+            library.update(cx, |library, cx| {
                 if saved {
-                    Confirm::library_songs(favorable.clone(), cx);
+                    library.save_tracks(favorable.clone(), false, cx);
                     return;
                 }
-                library.update(cx, |library, cx| {
-                    let tracks = favorable
-                        .iter()
-                        .filter(|track| !track.id.as_deref().is_some_and(|id| library.saved(id)))
-                        .cloned()
-                        .collect();
-                    library.save_tracks(tracks, true, cx);
-                });
-            })
-        });
+                let tracks = favorable
+                    .iter()
+                    .filter(|track| !track.id.as_deref().is_some_and(|id| library.saved(id)))
+                    .cloned()
+                    .collect();
+                library.save_tracks(tracks, true, cx);
+            });
+        })
+    });
 
     let shelved = editable.then(|| {
         let held = actionable(Library::pending_library);
@@ -969,18 +954,13 @@ fn album_tiles(album: &Album, cx: &App) -> Vec<Tile> {
     let library = sonora.library.clone();
     let state = library.read(cx);
     let saved = state.saved_album(&album.id);
-    let heart = heart_tile(saved)
-        .closes(saved && !Confirm::unstarring(&album.id, cx))
-        .when(!state.pending_album(&album.id), |tile| {
-            let album = album.clone();
-            tile.on_click(move |_, cx| match saved {
-                true => Confirm::albums(vec![album.clone()], cx),
-                false => {
-                    let library = Sonora::global(cx).library.clone();
-                    library.update(cx, |library, cx| library.toggle_album(album.clone(), cx));
-                }
-            })
-        });
+    let heart = heart_tile(saved).when(!state.pending_album(&album.id), |tile| {
+        let album = album.clone();
+        tile.on_click(move |_, cx| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| library.toggle_album(album.clone(), cx));
+        })
+    });
 
     let editable = sonora
         .session
@@ -1068,20 +1048,13 @@ fn artist_tiles(artist: &SavedArtist, cx: &App) -> Vec<Tile> {
         .then(|| {
             let state = sonora.library.read(cx);
             let saved = state.saved_artist(&artist.id);
-            heart_tile(saved)
-                .closes(saved && !Confirm::unstarring(&artist.id, cx))
-                .when(!state.pending_artist(&artist.id), |tile| {
-                    let artist = artist.clone();
-                    tile.on_click(move |_, cx| match saved {
-                        true => Confirm::artists(vec![artist.clone()], cx),
-                        false => {
-                            let library = Sonora::global(cx).library.clone();
-                            library.update(cx, |library, cx| {
-                                library.toggle_artist(artist.clone(), cx)
-                            });
-                        }
-                    })
+            heart_tile(saved).when(!state.pending_artist(&artist.id), |tile| {
+                let artist = artist.clone();
+                tile.on_click(move |_, cx| {
+                    let library = Sonora::global(cx).library.clone();
+                    library.update(cx, |library, cx| library.toggle_artist(artist.clone(), cx));
                 })
+            })
         });
     follow
         .into_iter()
@@ -1158,15 +1131,12 @@ fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
             },
         )
         .active(saved)
-        .closes(saved)
-        .on_click(move |_, cx| match saved {
-            true => Confirm::playlists(vec![playlist.id.clone()], cx),
-            false => {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| {
-                    library.add_playlist_to_library(playlist.clone(), cx)
-                });
-            }
+        .on_click(move |_, cx| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| match saved {
+                true => library.remove_playlist_from_library(playlist.id.clone(), cx),
+                false => library.add_playlist_to_library(playlist.clone(), cx),
+            });
         })
     });
     kept.into_iter()

@@ -79,27 +79,6 @@ cover-zoom-out = Thu nhỏ
 cover-zoom-fit = Vừa với cửa sổ
 
 # confirm
-confirm-remove-library-title = Xóa khỏi thư viện
-confirm-remove-playlist-title = Xóa khỏi danh sách phát
-confirm-remove-history-title = Xóa khỏi lịch sử
-confirm-remove-songs = { $count ->
-   *[other] Xóa { $count } bài hát khỏi thư viện của bạn?
-}
-confirm-remove-playlist-songs = { $count ->
-   *[other] Xóa { $count } bài hát khỏi danh sách phát?
-}
-confirm-remove-history-songs = { $count ->
-   *[other] Xóa { $count } bài hát khỏi lịch sử nghe?
-}
-confirm-remove-albums = { $count ->
-   *[other] Xóa { $count } album khỏi thư viện của bạn?
-}
-confirm-remove-artists = { $count ->
-   *[other] Xóa { $count } nghệ sĩ khỏi Yêu thích?
-}
-confirm-remove-playlists = { $count ->
-   *[other] Xóa { $count } danh sách phát khỏi thư viện của bạn?
-}
 confirm-delete-track-files-title = Xóa tệp bài hát?
 confirm-delete-track-files = Các tệp sẽ bị xóa vĩnh viễn khỏi ổ đĩa. Không thể hoàn tác thao tác này.
 confirm-uninstall-widevine-title = Gỡ cài đặt mô-đun Widevine?

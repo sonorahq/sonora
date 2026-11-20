@@ -70,33 +70,6 @@ playlist-again-add = Shto përsëri
 # confirm
 
 # confirm
-confirm-remove-library-title = Hiq nga biblioteka
-confirm-remove-playlist-title = Hiq nga lista e luajtjes
-confirm-remove-history-title = Hiq nga historiku
-confirm-remove-songs = { $count ->
-    [one] Ta heqësh këtë këngë nga biblioteka?
-   *[other] Të heqësh { $count } këngë nga biblioteka?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Ta heqësh këtë këngë nga lista e luajtjes?
-   *[other] Të heqësh { $count } këngë nga lista e luajtjes?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Ta heqësh këtë këngë nga historiku i dëgjimit?
-   *[other] Të heqësh { $count } këngë nga historiku i dëgjimit?
-}
-confirm-remove-albums = { $count ->
-    [one] Ta heqësh këtë album nga biblioteka?
-   *[other] Të heqësh { $count } albume nga biblioteka?
-}
-confirm-remove-artists = { $count ->
-    [one] Ta heqësh këtë artist nga të preferuarat?
-   *[other] Të heqësh { $count } artistë nga të preferuarat?
-}
-confirm-remove-playlists = { $count ->
-    [one] Ta heqësh këtë listë luajtjeje nga biblioteka?
-   *[other] Të heqësh { $count } lista luajtjeje nga biblioteka?
-}
 confirm-delete-track-files-title = Të fshihen skedarët e këngëve?
 confirm-delete-track-files = Skedari(ët) do të fshihen përgjithmonë nga disku. Kjo nuk mund të zhbëhet.
 confirm-uninstall-widevine-title = Të çinstalohet moduli Widevine?

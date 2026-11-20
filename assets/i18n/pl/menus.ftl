@@ -76,39 +76,6 @@ playlist-again-add = Dodaj ponownie
 # confirm
 
 # confirm
-confirm-remove-library-title = Usuń z biblioteki
-confirm-remove-playlist-title = Usuń z playlisty
-confirm-remove-history-title = Usuń z historii
-confirm-remove-songs = { $count ->
-    [one] Usunąć ten utwór z biblioteki?
-    [few] Usunąć { $count } utwory z biblioteki?
-   *[other] Usunąć { $count } utworów z biblioteki?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Usunąć ten utwór z playlisty?
-    [few] Usunąć { $count } utwory z playlisty?
-   *[other] Usunąć { $count } utworów z playlisty?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Usunąć ten utwór z historii odtwarzania?
-    [few] Usunąć { $count } utwory z historii odtwarzania?
-   *[other] Usunąć { $count } utworów z historii odtwarzania?
-}
-confirm-remove-albums = { $count ->
-    [one] Usunąć ten album z biblioteki?
-    [few] Usunąć { $count } albumy z biblioteki?
-   *[other] Usunąć { $count } albumów z biblioteki?
-}
-confirm-remove-artists = { $count ->
-    [one] Usunąć tego wykonawcę z ulubionych?
-    [few] Usunąć { $count } wykonawców z ulubionych?
-   *[other] Usunąć { $count } wykonawców z ulubionych?
-}
-confirm-remove-playlists = { $count ->
-    [one] Usunąć tę playlistę z biblioteki?
-    [few] Usunąć { $count } playlisty z biblioteki?
-   *[other] Usunąć { $count } playlist z biblioteki?
-}
 confirm-delete-track-files-title = Usunąć pliki utworów?
 confirm-delete-track-files = Pliki zostaną trwale usunięte z dysku. Nie można tego cofnąć.
 confirm-uninstall-widevine-title = Odinstalować moduł Widevine?
