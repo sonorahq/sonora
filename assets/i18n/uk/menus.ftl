@@ -76,45 +76,6 @@ playlist-again-add = Додати ще раз
 # confirm
 
 # confirm
-confirm-remove-library-title = Прибрати з медіатеки
-confirm-remove-playlist-title = Вилучити з плейлиста
-confirm-remove-history-title = Вилучити з історії
-confirm-remove-songs = { $count ->
-    [1] Прибрати цей трек з медіатеки?
-    [one] Прибрати { $count } трек з медіатеки?
-    [few] Прибрати { $count } треки з медіатеки?
-   *[other] Прибрати { $count } треків з медіатеки?
-}
-confirm-remove-playlist-songs = { $count ->
-    [1] Вилучити цей трек з плейлиста?
-    [one] Вилучити { $count } трек з плейлиста?
-    [few] Вилучити { $count } треки з плейлиста?
-   *[other] Вилучити { $count } треків з плейлиста?
-}
-confirm-remove-history-songs = { $count ->
-    [1] Вилучити цей трек з історії прослуховувань?
-    [one] Вилучити { $count } трек з історії прослуховувань?
-    [few] Вилучити { $count } треки з історії прослуховувань?
-   *[other] Вилучити { $count } треків з історії прослуховувань?
-}
-confirm-remove-albums = { $count ->
-    [1] Прибрати цей альбом з медіатеки?
-    [one] Прибрати { $count } альбом з медіатеки?
-    [few] Прибрати { $count } альбоми з медіатеки?
-   *[other] Прибрати { $count } альбомів з медіатеки?
-}
-confirm-remove-artists = { $count ->
-    [1] Прибрати цього виконавця з улюбленого?
-    [one] Прибрати { $count } виконавця з улюбленого?
-    [few] Прибрати { $count } виконавців з улюбленого?
-   *[other] Прибрати { $count } виконавців з улюбленого?
-}
-confirm-remove-playlists = { $count ->
-    [1] Прибрати цей плейлист з медіатеки?
-    [one] Прибрати { $count } плейлист з медіатеки?
-    [few] Прибрати { $count } плейлисти з медіатеки?
-   *[other] Прибрати { $count } плейлистів з медіатеки?
-}
 confirm-delete-track-files-title = Видалити файли треків?
 confirm-delete-track-files = Файли буде остаточно видалено з диска. Цю дію неможливо скасувати.
 confirm-uninstall-widevine-title = Видалити модуль Widevine?

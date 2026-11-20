@@ -61,17 +61,6 @@ playlist-again-add = 再度追加
 # confirm
 
 # confirm
-confirm-remove-library-title = ライブラリから削除
-confirm-remove-playlist-title = プレイリストから削除
-confirm-remove-history-title = 履歴から削除
-confirm-remove-songs = { $count }曲をライブラリから削除しますか？
-confirm-remove-playlist-songs = { $count }曲をプレイリストから削除しますか？
-confirm-remove-history-songs = { $count }曲を再生履歴から削除しますか？
-confirm-remove-albums = { $count }枚のアルバムをライブラリから削除しますか？
-confirm-remove-artists = { $count ->
-   *[other] { $count }人のアーティストをお気に入りから削除しますか？
-}
-confirm-remove-playlists = { $count }件のプレイリストをライブラリから削除しますか？
 confirm-delete-track-files-title = 曲ファイルを削除しますか？
 confirm-delete-track-files = ファイルはディスクから完全に削除されます。この操作は取り消せません。
 confirm-uninstall-widevine-title = Widevine モジュールをアンインストールしますか？

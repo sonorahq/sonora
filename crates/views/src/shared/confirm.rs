@@ -1,18 +1,13 @@
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, FocusHandle, Global, Render, SharedString, Window, div};
 use i18n::t;
-use music::{Album, SavedArtist, Track};
-use state::{Detail, History, Io, Outcome, Shelf, Sonora, Toasts, equalizer_profile_label};
+use state::{Io, Outcome, Sonora, Toasts, equalizer_profile_label};
 use ui::{Button, Dismiss, FORM_CONTEXT, Modal, Submit};
 
+/// An action that cannot be taken back, which is why it asks first. A removal that its toast
+/// can undo runs straight away and never comes through here.
 #[derive(Clone)]
 pub(crate) enum Kind {
-    LibrarySongs(usize),
-    PlaylistSongs(usize),
-    History(usize),
-    Albums(usize),
-    Artists(usize),
-    Playlists(usize),
     DeleteTrackFiles(usize),
     Widevine,
     Soloist,
@@ -25,25 +20,16 @@ pub(crate) enum Kind {
 impl Kind {
     fn title(&self) -> gpui::SharedString {
         match self {
-            Self::PlaylistSongs(_) => t!("confirm-remove-playlist-title"),
-            Self::History(_) => t!("confirm-remove-history-title"),
             Self::DeleteTrackFiles(_) => t!("confirm-delete-track-files-title"),
             Self::Widevine => t!("confirm-uninstall-widevine-title"),
             Self::Soloist => t!("confirm-remove-soloist-title"),
             Self::Downloads => t!("confirm-remove-downloads-title"),
             Self::EqualizerProfile(_) => t!("equalizer-delete"),
-            _ => t!("confirm-remove-library-title"),
         }
     }
 
     fn detail(&self) -> gpui::SharedString {
         match *self {
-            Self::LibrarySongs(count) => t!("confirm-remove-songs", count = count),
-            Self::PlaylistSongs(count) => t!("confirm-remove-playlist-songs", count = count),
-            Self::History(count) => t!("confirm-remove-history-songs", count = count),
-            Self::Albums(count) => t!("confirm-remove-albums", count = count),
-            Self::Artists(count) => t!("confirm-remove-artists", count = count),
-            Self::Playlists(count) => t!("confirm-remove-playlists", count = count),
             Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = count),
             Self::Widevine => t!("confirm-uninstall-widevine"),
             Self::Soloist => t!("confirm-remove-soloist"),
@@ -60,7 +46,7 @@ impl Kind {
             Self::Widevine => t!("settings-widevine-uninstall"),
             Self::Soloist => t!("settings-soloist-remove"),
             Self::Downloads => t!("settings-downloads-remove"),
-            _ => t!("common-delete"),
+            Self::DeleteTrackFiles(_) | Self::EqualizerProfile(_) => t!("common-delete"),
         }
     }
 }
@@ -72,6 +58,8 @@ struct Pending {
     apply: Apply,
 }
 
+/// The one confirmation dialog of the app, drawn over every screen while an action waits for an
+/// answer.
 pub(crate) struct Confirm {
     pending: Option<Pending>,
     focus: FocusHandle,
@@ -97,17 +85,6 @@ impl Confirm {
         cx.global::<Installed>().0.clone()
     }
 
-    /// Whether taking the heart off `id` only unstars it, so no question is worth asking. On a
-    /// `Shape::Catalog` shelf the favorites sit over a library that stays put; on a
-    /// `Shape::Saved` one the heart is the library itself, and the question stands.
-    pub(crate) fn unstarring(id: &str, cx: &App) -> bool {
-        Sonora::global(cx)
-            .library
-            .read(cx)
-            .shape(Shelf::of(id))
-            .is_catalog()
-    }
-
     pub fn ask(kind: Kind, apply: impl FnOnce(&mut App) + 'static, cx: &mut App) {
         let confirm = Self::entity(cx);
         confirm.update(cx, |this, cx| {
@@ -118,115 +95,6 @@ impl Confirm {
             this.grab = true;
             cx.notify();
         });
-    }
-
-    pub fn library_songs(tracks: Vec<Track>, cx: &mut App) {
-        if tracks.is_empty() {
-            return;
-        }
-        let tracks_len = tracks.len();
-        let starred = tracks
-            .first()
-            .and_then(|track| track.id.as_deref())
-            .is_some_and(|id| Self::unstarring(id, cx));
-        let apply = move |cx: &mut App| {
-            let library = Sonora::global(cx).library.clone();
-            library.update(cx, |library, cx| library.save_tracks(tracks, false, cx));
-        };
-        match starred {
-            true => apply(cx),
-            false => Self::ask(Kind::LibrarySongs(tracks_len), apply, cx),
-        }
-    }
-
-    pub fn playlist_songs(ids: Vec<String>, detail: Entity<Detail>, count: usize, cx: &mut App) {
-        if ids.is_empty() {
-            return;
-        }
-        Self::ask(
-            Kind::PlaylistSongs(count),
-            move |cx| {
-                detail.update(cx, |detail, cx| detail.remove_tracks_from_playlist(ids, cx));
-            },
-            cx,
-        );
-    }
-
-    pub fn history_songs(tracks: Vec<Track>, history: Entity<History>, cx: &mut App) {
-        if tracks.is_empty() {
-            return;
-        }
-        Self::ask(
-            Kind::History(tracks.len()),
-            move |cx| {
-                history.update(cx, |history, cx| {
-                    for track in &tracks {
-                        history.remove(track, cx);
-                    }
-                });
-            },
-            cx,
-        );
-    }
-
-    pub fn albums(albums: Vec<Album>, cx: &mut App) {
-        if albums.is_empty() {
-            return;
-        }
-        let count = albums.len();
-        let starred = albums
-            .first()
-            .is_some_and(|album| Self::unstarring(&album.id, cx));
-        let apply = move |cx: &mut App| {
-            let library = Sonora::global(cx).library.clone();
-            library.update(cx, |library, cx| {
-                for album in albums {
-                    library.toggle_album(album, cx);
-                }
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Self::ask(Kind::Albums(count), apply, cx),
-        }
-    }
-
-    pub fn artists(artists: Vec<SavedArtist>, cx: &mut App) {
-        if artists.is_empty() {
-            return;
-        }
-        let count = artists.len();
-        let starred = artists
-            .first()
-            .is_some_and(|artist| Self::unstarring(&artist.id, cx));
-        let apply = move |cx: &mut App| {
-            let library = Sonora::global(cx).library.clone();
-            library.update(cx, |library, cx| {
-                for artist in artists {
-                    library.toggle_artist(artist, cx);
-                }
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Self::ask(Kind::Artists(count), apply, cx),
-        }
-    }
-
-    pub fn playlists(ids: Vec<String>, cx: &mut App) {
-        if ids.is_empty() {
-            return;
-        }
-        Self::ask(
-            Kind::Playlists(ids.len()),
-            move |cx| {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| {
-                    library.remove_playlists_from_library(ids, cx)
-                });
-            },
-            cx,
-        );
     }
 
     pub fn delete_track_files(ids: Vec<String>, cx: &mut App) {
