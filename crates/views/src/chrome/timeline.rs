@@ -3,14 +3,13 @@ use ui::ActiveTheme as _;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    App, Context, Entity, Global, MouseUpEvent, Pixels, Point, Render, SharedString, Window,
-    canvas, div,
+    App, Context, Entity, Global, Pixels, Point, Render, SharedString, Window, canvas, div,
 };
 use i18n::t;
 use state::{AppSettings, Playback, Sonora};
-use ui::{Scrubber, ScrubberState, clock, tabular};
+use ui::{clock, tabular};
 
-use crate::shared::transport::{clock_ems, end_clock, fraction, moved};
+use crate::shared::transport::{SeekControl, clock_ems, end_clock};
 
 /// The window y of the middle of the seek line as the player bar last painted it.
 #[derive(Default)]
@@ -24,11 +23,7 @@ impl Global for SeekLine {}
 pub(crate) struct Timeline {
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
-    seek: ScrubberState,
-    /// Where a drag on the seek bar has the thumb, until it lets go and seeks there.
-    pending: Option<f32>,
-    /// Where the pointer rests over the seek bar, for the bubble.
-    over: Option<f32>,
+    seek: SeekControl,
     /// The window's scale factor at the last render, for telling whether a report moves the bar
     /// by a device pixel.
     scale: f32,
@@ -62,9 +57,7 @@ impl Timeline {
         Self {
             playback,
             settings,
-            seek: ScrubberState::new("seek"),
-            pending: None,
-            over: None,
+            seek: SeekControl::new("seek"),
             scale: 1.,
             drawn: None,
         }
@@ -74,9 +67,7 @@ impl Timeline {
     /// seek bar. The bar hands every move on, so leaving the seek bar for the rest of the bar
     /// hides it.
     pub fn hover(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let over = self.seek.hovered(position, cx.theme().metrics.pad);
-        if moved(self.over, over) {
-            self.over = over;
+        if self.seek.hover(position, cx.theme().metrics.pad) {
             cx.notify();
         }
     }
@@ -91,25 +82,17 @@ impl Timeline {
     /// What the timeline would draw now.
     fn shown(&self, cx: &App) -> Drawn {
         let playback = self.playback.read(cx);
-        let (elapsed, total) = playback.shown_time(cx);
+        let (elapsed, total) = playback.elapsed_and_total();
         let travel = f32::from(self.seek.travel(cx.theme().metrics.pad));
-        let at = self.pending.unwrap_or_else(|| fraction(elapsed, total));
+        let at = self.seek.progress(elapsed, total);
         Drawn {
             elapsed: elapsed.as_secs(),
             left: total.saturating_sub(elapsed).as_secs(),
             total: total.as_secs(),
             fill: (at * travel * self.scale).round() as i64,
-            seekable: playback.shown_track(cx).is_some(),
+            seekable: playback.track().is_some(),
             time_left: self.settings.read(cx).player_bar_time_left(),
         }
-    }
-
-    fn commit_seek(&mut self, cx: &mut Context<Self>) {
-        let Some(fraction) = self.pending.take() else {
-            return;
-        };
-        self.playback
-            .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
     }
 }
 
@@ -127,20 +110,12 @@ impl Render for Timeline {
         self.drawn = Some(self.shown(cx));
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
-        let empty = muted.opacity(0.3);
         let clock_text = theme.text(ui::Text::Tiny);
 
         let playback = self.playback.read(cx);
-        let seekable = playback.shown_track(cx).is_some();
-        let (elapsed, total) = playback.shown_time(cx);
-        let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
+        let (elapsed, total) = playback.elapsed_and_total();
         let time_left = self.settings.read(cx).player_bar_time_left();
         let clock_width = clock_text * clock_ems(total, time_left);
-
-        let bubble = self
-            .over
-            .or(self.pending)
-            .map(|at| (at, clock(total.mul_f32(at))));
 
         let clock_label = |id: &'static str, text: SharedString, align_end: bool| {
             ui::spoken(id, text)
@@ -164,25 +139,12 @@ impl Render for Timeline {
             .w_full()
             .child(clock_label("player-elapsed", clock(elapsed), true))
             .child(
-                div().flex_1().min_w_0().child(
-                    Scrubber::new(&self.seek, progress)
-                        .name(t!("song-position"))
-                        .value(clock(elapsed))
-                        .colors(theme.progress_bar, empty, theme.foreground)
-                        .ranges(
-                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
-                            theme.foreground.opacity(0.4),
-                        )
-                        .enabled(seekable)
-                        .when_some(bubble, |this, (at, text)| this.bubble(at, text))
-                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            this.pending = Some(*fraction);
-                            cx.notify();
-                        }))
-                        .on_release(
-                            cx.listener(|this, _: &MouseUpEvent, _, cx| this.commit_seek(cx)),
-                        ),
-                ),
+                div().flex_1().min_w_0().child(self.seek.slider(
+                    &self.playback,
+                    (elapsed, total),
+                    cx,
+                    |view| &mut view.seek,
+                )),
             )
             .child(match time_left {
                 true => {

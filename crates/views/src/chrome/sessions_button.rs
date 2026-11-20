@@ -2,7 +2,7 @@ use gpui::prelude::*;
 use gpui::{App, Context, Entity, SharedString, Window, div};
 use i18n::t;
 use input::ShowMembers;
-use music::connect::{DeviceKind, Elsewhere};
+use music::connect::{Device, DeviceKind};
 use state::{Devices, Listening, Sonora};
 use ui::{ActiveTheme as _, Menu, MenuItem, Picker, Popovers, SubmenuState};
 
@@ -43,7 +43,7 @@ impl SessionsButton {
     }
 
     /// The account's other devices, with the one that plays marked.
-    fn connect_items(&self, elsewhere: Option<&Elsewhere>, cx: &App) -> Vec<MenuItem> {
+    fn connect_items(&self, elsewhere: Option<&Device>, cx: &App) -> Vec<MenuItem> {
         let state = self.devices.read(cx);
         let devices = self.devices.clone();
 
@@ -58,7 +58,7 @@ impl SessionsButton {
         ];
         for device in state.devices() {
             let id = device.id.clone();
-            let playing = elsewhere.is_some_and(|elsewhere| elsewhere.device.id == device.id);
+            let playing = elsewhere.is_some_and(|elsewhere| elsewhere.id == device.id);
             items.push(
                 MenuItem::new(
                     SharedString::from(format!("device-{}", device.id)),
@@ -245,7 +245,7 @@ impl Render for SessionsButton {
         let glyph = elsewhere
             .as_ref()
             .map_or("icons/monitor-speaker.svg", |elsewhere| {
-                icon(elsewhere.device.kind)
+                icon(elsewhere.kind)
             });
         Picker::icon(KEY, &self.popovers, glyph)
             .tooltip_above("player-sessions")

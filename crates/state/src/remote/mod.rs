@@ -174,21 +174,12 @@ impl Remote {
 
     fn publish(&mut self, cx: &mut Context<Self>) {
         let playback = self.playback.read(cx);
-        // Desktop media widgets follow the same device the player bar shows. In particular,
-        // Spotify Connect playback can be active on a phone while the local engine is idle.
-        let steered = playback.steered(cx);
-        let state = match steered.as_ref() {
-            Some(steered) => match steered.state.playing {
-                true => PlaybackState::Playing,
-                false => PlaybackState::Paused,
-            },
-            None => playback.state().clone(),
-        };
-        let (at, _) = playback.shown_time(cx);
-        let track = playback.shown_track(cx);
+        let state = playback.state().clone();
+        let at = playback.live_position();
+        let track = playback.track().cloned();
         let volume = playback.shown_volume(cx);
-        let repeat = playback.shown_repeat(cx);
-        let shuffle = playback.shown_shuffle(cx);
+        let repeat = playback.repeat();
+        let shuffle = playback.shuffle(cx);
 
         if self.volume != Some(volume) {
             self.volume = Some(volume);
@@ -285,7 +276,7 @@ impl Remote {
                 Err(error) => return log::debug!("remote: cannot fetch the cover: {error:#}"),
             };
             this.update(cx, |this, cx| {
-                let current = this.playback.read(cx).shown_track(cx);
+                let current = this.playback.read(cx).track().cloned();
                 if let Some(current) = current.filter(|current| current.id == track.id)
                     && this.shown == track.id
                 {

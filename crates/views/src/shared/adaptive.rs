@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity, Task};
-use state::{AppSettings, Playback, QueuePosition, Reloaded, Sonora};
+use state::{AppSettings, Playback, Reloaded, Sonora};
 use ui::{ActiveTheme as _, CoverPalette, Look, Theme, ThemeKind, ThemeOverrides};
 
 /// Drives the theme's tint from the playing track's cover, and keeps the next
@@ -86,8 +86,8 @@ impl Adaptive {
             .then(|| {
                 self.playback
                     .read(cx)
-                    .shown_track(cx)
-                    .and_then(|track| track.cover)
+                    .track()
+                    .and_then(|track| track.cover.clone())
             })
             .flatten();
 
@@ -199,9 +199,11 @@ impl Adaptive {
             true => self
                 .playback
                 .read(cx)
-                .shown_queue(cx)
-                .track(QueuePosition::Upcoming(0), cx)
-                .and_then(|track| track.cover),
+                .queue()
+                .read(cx)
+                .upcoming()
+                .next()
+                .and_then(|track| track.cover.clone()),
             false => None,
         };
 

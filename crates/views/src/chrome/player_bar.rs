@@ -133,7 +133,7 @@ impl PlayerBar {
     /// Opens the track menu on whatever is playing when the click lands, so a render does not
     /// have to hold a copy of the track for a menu that is rarely asked for.
     fn open_playing_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+        let Some(track) = self.playback.read(cx).track().cloned() else {
             return;
         };
         self.open_context_menu(track, position, cx);
@@ -297,7 +297,7 @@ impl PlayerBar {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let label = match self.playback.read(cx).shown_track(cx) {
+        let label = match self.playback.read(cx).track() {
             Some(track) => SharedString::from(format!("{} — {}", track.name, track.artists)),
             None => t!("player-nothing-playing"),
         };
@@ -326,8 +326,7 @@ impl PlayerBar {
             window,
         );
         let away = cx.try_global::<CoverAway>().is_some_and(|away| away.0);
-        let shown = self.playback.read(cx).shown_track(cx);
-        let track = shown.as_ref();
+        let track = self.playback.read(cx).track();
         let cover = track.and_then(|track| track.cover.clone());
         let album = track.map(|track| match track.album.is_empty() {
             true => t!("song-view-album"),
@@ -370,8 +369,7 @@ impl PlayerBar {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let artists = theme.text(ui::Text::Small);
-        let shown = self.playback.read(cx).shown_track(cx);
-        let track = shown.as_ref();
+        let track = self.playback.read(cx).track();
         let explicit = track.is_some_and(|track| track.explicit);
         let title = match track {
             Some(track) => {

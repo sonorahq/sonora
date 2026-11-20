@@ -304,7 +304,7 @@ impl Discord {
         }
         let devices = self.devices.read(cx);
         if settings.discord_hide_on_connect()
-            && (devices.publishing() || devices.steered().is_some())
+            && (devices.publishing() || devices.elsewhere().is_some())
         {
             return Shown::Off;
         }

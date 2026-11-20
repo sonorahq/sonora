@@ -201,7 +201,7 @@ pub fn start<F: Fetch>(
             shelf,
             offline,
         }),
-        Box::new(Events(event_rx)),
+        Box::new(event_rx),
     )
 }
 
@@ -373,15 +373,6 @@ impl Player for Handle {
         if let Some(shelf) = &self.shelf {
             shelf.discard(track_id);
         }
-    }
-}
-
-struct Events(UnboundedReceiver<PlaybackEvent>);
-
-#[async_trait]
-impl PlaybackEvents for Events {
-    async fn next(&mut self) -> Option<PlaybackEvent> {
-        self.0.recv().await
     }
 }
 

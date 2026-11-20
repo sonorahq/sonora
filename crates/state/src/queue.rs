@@ -8,10 +8,8 @@ use music::Track;
 
 use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
 
-mod view;
 pub use logic::queue::{QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, Stub};
 pub(crate) use logic::queue::{Reach, gap_target};
-pub use view::QueueView;
 
 /// A queue as it is saved for the next launch.
 pub type Resume = logic::queue::Resume<Origin>;
@@ -49,6 +47,7 @@ impl<T> Reported<T> {
 /// Undo toasts. Reading goes straight through to the order.
 pub struct Queue {
     order: Order<Origin>,
+    external: bool,
     /// The toast counting tracks removed one by one while it may still be up.
     removed: Option<Reported<Vec<Taken>>>,
     session: Entity<Session>,
@@ -82,6 +81,7 @@ impl Queue {
 
         Self {
             order: Order::new(shuffle),
+            external: false,
             removed: None,
             session,
             settings,
@@ -100,6 +100,9 @@ impl Queue {
     }
 
     fn remember(&mut self, cx: &mut Context<Self>) {
+        if self.external {
+            return;
+        }
         let resume = self
             .session
             .read(cx)
@@ -113,9 +116,29 @@ impl Queue {
         if self.order.shuffle() == on {
             return;
         }
-        self.settings
-            .update(cx, |settings, cx| settings.set_shuffle(on, cx));
+        if !self.external {
+            self.settings
+                .update(cx, |settings, cx| settings.set_shuffle(on, cx));
+        }
         self.edit(cx, |order| order.set_shuffle(on));
+    }
+
+    /// Applies the remote shuffle flag without editing its reported order.
+    pub(crate) fn report_shuffle(&mut self, on: bool) {
+        self.order.report_shuffle(on);
+    }
+
+    /// Keeps reports from another device out of the saved local session.
+    pub(crate) fn set_external(&mut self, external: bool) {
+        self.external = external;
+    }
+
+    /// Clears the active order before restoring the saved local session.
+    pub(crate) fn clear_external(&mut self, cx: &mut Context<Self>) {
+        self.order = Order::new(self.settings.read(cx).shuffle());
+        self.removed = None;
+        self.external = false;
+        cx.notify();
     }
 
     /// Restores a saved queue. A queue saved by an older version has one origin for all of it,

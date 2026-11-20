@@ -34,7 +34,7 @@ use crate::{Encoding, Offer, Quality, credentials};
 pub use binary::{Build, fetch, installed};
 pub use daemon::stopped;
 pub use pair::{Trouble, pair};
-pub(crate) use player::{Engine, start};
+pub(crate) use player::{Command, Engine, start};
 
 /// Where the listener makes an API key, which only a Premium account can.
 pub const DASHBOARD: &str = "https://developer.spotify.com/dashboard/soloist";

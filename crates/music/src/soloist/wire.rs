@@ -15,25 +15,29 @@ pub(super) enum Event {
     AuthState {
         #[serde(default)]
         logged_in: bool,
+        #[serde(default)]
+        is_active: bool,
     },
     PlaybackState(Playback),
     PlaybackChanged(Playback),
-    TrackChanged {
-        #[serde(default)]
-        item: Option<Entity>,
+    TrackChanged,
+    ContextChanged {
+        context: Option<Entity>,
+    },
+    OptionsChanged {
+        options: Options,
     },
     PositionSync {
         position: Position,
     },
     QueueChanged {
         #[serde(default)]
+        previous: Vec<Queued>,
+        #[serde(default)]
         upcoming: Vec<Queued>,
     },
     VolumeChanged {
         volume: u8,
-    },
-    OptionsChanged {
-        options: Options,
     },
     DeviceChanged {
         #[serde(default)]
@@ -55,16 +59,12 @@ pub(super) enum Event {
 /// The playback picture, whole in a `playback_state` and partial in a `playback_changed`.
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct Playback {
-    #[serde(default)]
     pub status: Option<Status>,
-    #[serde(default)]
+    pub is_active: Option<bool>,
     pub item: Option<Entity>,
-    #[serde(default)]
-    pub position: Option<Position>,
-    #[serde(default)]
-    pub volume: Option<u8>,
-    #[serde(default)]
+    pub context: Option<Entity>,
     pub options: Option<Options>,
+    pub position: Option<Position>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -79,39 +79,38 @@ pub(super) enum Status {
     Unknown,
 }
 
-/// A track or whatever else the program plays. `decorations` holds its name, artwork and
-/// length, of which only the length is read.
+/// Playback options included in the state or changed independently.
 #[derive(Debug, Default, Deserialize)]
-pub(super) struct Entity {
-    #[serde(default)]
-    pub uri: String,
-    #[serde(default)]
-    decorations: Value,
+pub(super) struct Options {
+    pub shuffle: Option<bool>,
+    pub repeat: Option<String>,
 }
 
-impl Entity {
-    pub(super) fn duration(&self) -> Option<Duration> {
-        self.decorations["playback"]["duration_ms"]
-            .as_u64()
-            .filter(|millis| *millis > 0)
-            .map(Duration::from_millis)
-    }
+/// A playable Spotify item.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(super) struct Entity {
+    pub uri: String,
 }
 
 /// One entry of what the daemon plays after the current track.
 #[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 pub(super) struct Queued {
-    #[serde(default)]
-    source: String,
-    #[serde(default)]
+    pub uid: String,
+    pub source: String,
     pub item: Option<Entity>,
 }
 
 impl Queued {
-    /// Whether somebody queued the entry by hand, as opposed to it coming from the album or
-    /// playlist that plays, or from autoplay.
-    pub(super) fn queued(&self) -> bool {
-        self.source == "queue"
+    pub(super) fn track(self) -> Option<crate::connect::QueuedTrack> {
+        Some(crate::connect::QueuedTrack {
+            id: self.item?.uri.strip_prefix("spotify:track:")?.to_owned(),
+            uid: self.uid,
+            queued: self.source == "queue",
+            suggested: self.source == "autoplay",
+            added_by: None,
+        })
     }
 }
 
@@ -125,21 +124,6 @@ pub(super) struct Position {
 impl Position {
     pub(super) fn at(self) -> Duration {
         Duration::from_millis(self.position_ms)
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct Options {
-    #[serde(default)]
-    pub shuffle: bool,
-    #[serde(default)]
-    repeat: String,
-}
-
-impl Options {
-    /// Whether the program would reorder or loop what it is given.
-    pub(super) fn meddles(&self) -> bool {
-        self.shuffle || !(self.repeat.is_empty() || self.repeat == "off")
     }
 }
 

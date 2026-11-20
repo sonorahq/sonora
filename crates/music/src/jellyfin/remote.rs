@@ -19,8 +19,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 
 use crate::connect::{
-    Command, Connect, Device, DeviceKind, Elsewhere, Event, Invite, QueuedTrack, Repeat, Request,
-    Roster, Snapshot, Start,
+    Command, Connect, Device, DeviceKind, Event, Invite, QueuedTrack, Repeat, Request, Roster,
+    Snapshot, Start, Transport,
 };
 use crate::jellyfin::client::JellyfinClient;
 use crate::jellyfin::wire;
@@ -102,6 +102,7 @@ impl Worker {
     async fn handle(&mut self, request: Request) -> Result<()> {
         match request {
             Request::Enable(on) => self.enable(on).await?,
+            Request::Observe | Request::PublishQueue { .. } => {}
             Request::Publish(now) => {
                 *self
                     .shared
@@ -188,7 +189,6 @@ impl Worker {
                 .send(Event::Command(Command::Start(Start {
                     state: Arc::new(state),
                     preserve_queue: true,
-                    restart: true,
                 })))
                 .ok();
             let path = format!("/Sessions/{}/Playing/Stop", session);
@@ -203,7 +203,7 @@ impl Worker {
         let Some(now) = now else {
             return Ok(());
         };
-        play_on(&self.client, device, &now, now.live_position()).await?;
+        play_on(&self.client, device, &now, now.transport.live_position()).await?;
         self.out.send(Event::Command(Command::Released)).ok();
         Ok(())
     }
@@ -273,32 +273,29 @@ impl Session {
             .map(|queued| queued.id.as_str())
             .collect();
         let at = ids.iter().position(|id| *id == item.id);
-        let queued = |ids: &[&str]| -> Vec<QueuedTrack> {
-            ids.iter()
-                .map(|id| QueuedTrack::new((*id).to_owned(), false))
-                .collect()
-        };
-        let (previous, upcoming) = match at {
-            Some(at) => (queued(&ids[..at]), queued(&ids[at + 1..])),
-            None => (Vec::new(), Vec::new()),
-        };
+        let (previous, upcoming) = at.map_or_else(
+            || (Vec::new(), Vec::new()),
+            |at| (queued_tracks(&ids[..at]), queued_tracks(&ids[at + 1..])),
+        );
         Some(Snapshot {
             track: Some(QueuedTrack::new(item.id.clone(), false)),
             previous,
             upcoming,
             context: None,
             index: at,
-            playing: !self.play_state.is_paused,
-            position: wire::ticks(self.play_state.position_ticks.unwrap_or(0)),
-            duration: item.duration(),
             volume: self.play_state.volume_level.unwrap_or(100) as f32 / 100.,
-            shuffle: self
-                .play_state
-                .shuffle_mode
-                .as_deref()
-                .map(|mode| mode == "Shuffle"),
-            repeat: self.play_state.repeat_mode.as_deref().map(repeat),
-            stamp: Some(self.seen.unwrap_or_else(SystemTime::now)),
+            transport: Transport {
+                playing: !self.play_state.is_paused,
+                position: wire::ticks(self.play_state.position_ticks.unwrap_or(0)),
+                duration: item.duration(),
+                shuffle: self
+                    .play_state
+                    .shuffle_mode
+                    .as_deref()
+                    .map(|mode| mode == "Shuffle"),
+                repeat: self.play_state.repeat_mode.as_deref().map(repeat),
+                stamp: Some(self.seen.unwrap_or_else(SystemTime::now)),
+            },
         })
     }
 }
@@ -388,7 +385,7 @@ async fn events(client: &JellyfinClient, shared: &Shared, message: Notice) -> Ve
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .as_ref()
-                .is_some_and(|now| now.playing);
+                .is_some_and(|now| now.transport.playing);
             match text("Command") {
                 "Pause" => vec![Command::Pause],
                 "Unpause" => vec![Command::Play],
@@ -524,28 +521,25 @@ async fn play(client: &JellyfinClient, data: &serde_json::Value) -> Vec<Command>
         .get("StartPositionTicks")
         .and_then(serde_json::Value::as_u64)
         .map_or(Duration::ZERO, wire::ticks);
-    let queued = |ids: &[String]| -> Vec<QueuedTrack> {
-        ids.iter()
-            .map(|id| QueuedTrack::new(id.clone(), false))
-            .collect()
-    };
     let state = Snapshot {
         track: Some(QueuedTrack::new(track, false)),
-        previous: queued(&ids[..start]),
-        upcoming: queued(&ids[start + 1..]),
+        previous: queued_tracks(&ids[..start]),
+        upcoming: queued_tracks(&ids[start + 1..]),
         index: Some(start),
-        playing: true,
-        position,
         volume: 1.,
-        // shuffle rides with the start, since a separate command would change the queue under
-        // the load the start is waiting on and the start would then give up
-        shuffle: (how == "PlayShuffle").then_some(true),
+        transport: Transport {
+            // shuffle rides with the start, since a separate command would change the queue under
+            // the load the start is waiting on and the start would then give up
+            playing: true,
+            position,
+            shuffle: (how == "PlayShuffle").then_some(true),
+            ..Default::default()
+        },
         ..Snapshot::default()
     };
     vec![Command::Start(Start {
         state: Arc::new(state),
         preserve_queue: true,
-        restart: true,
     })]
 }
 
@@ -627,11 +621,8 @@ fn roster(sessions: &[Session]) -> Roster {
         .filter(|session| session.supports_remote_control)
         .map(Session::device)
         .collect();
-    let elsewhere = playing(sessions).map(|(session, state)| Elsewhere {
-        device: session.device(),
-        state: Arc::new(state),
-    });
-    Roster { devices, elsewhere }
+    let active = playing(sessions).map(|(session, state)| (session.device(), Arc::new(state)));
+    Roster { devices, active }
 }
 
 /// The controllable session whose song a transfer takes over, with what it plays. One that
@@ -641,7 +632,7 @@ fn playing(sessions: &[Session]) -> Option<(&Session, Snapshot)> {
         .iter()
         .filter(|session| session.supports_remote_control)
         .filter_map(|session| Some((session, session.snapshot()?)))
-        .max_by_key(|(_, state)| state.playing)
+        .max_by_key(|(_, state)| state.transport.playing)
 }
 
 /// Asks another session to do `command`.
@@ -698,7 +689,13 @@ async fn control(client: &JellyfinClient, session: &str, command: Command) -> Re
             None,
         ),
         Command::Start(start) => {
-            return play_on(client, session, &start.state, start.state.position).await;
+            return play_on(
+                client,
+                session,
+                &start.state,
+                start.state.transport.position,
+            )
+            .await;
         }
         Command::SetQueue { .. } => return Ok(()),
     };
@@ -781,4 +778,11 @@ fn repeat(mode: &str) -> Repeat {
         "RepeatOne" => Repeat::One,
         _ => Repeat::Off,
     }
+}
+
+/// Converts Jellyfin IDs to context entries in their original order.
+fn queued_tracks(ids: &[impl AsRef<str>]) -> Vec<QueuedTrack> {
+    ids.iter()
+        .map(|id| QueuedTrack::new(id.as_ref().to_owned(), false))
+        .collect()
 }

@@ -244,7 +244,8 @@ impl PlaybackFactory for Factory {
     fn start(&self, config: PlaybackConfig) -> (Box<dyn MusicPlayer>, Box<dyn PlaybackEvents>) {
         if self.official() {
             let keeper = Keeper::new(&self.session, &config);
-            let (engine, events) = soloist::start(&config);
+            let (engine, events, daemon) = soloist::start(&config);
+            self.session.spawn(daemon);
             return (Box::new(Official { engine, keeper }), Box::new(events));
         }
         let (engine, events) = Engine::start(self.session.clone(), config);
@@ -312,8 +313,7 @@ impl Keeper {
 }
 
 /// Soloist as the Spotify engine. It streams every track, a downloaded one too, so nothing
-/// plays without a network while it is in use. A track is only fetched ahead as the next in the
-/// queue, which Soloist then joins to the current one by itself.
+/// plays without a network while it is in use. Soloist handles transitions within its queue.
 struct Official {
     engine: soloist::Engine,
     keeper: Keeper,
@@ -348,32 +348,36 @@ impl MusicPlayer for Official {
         Ok(())
     }
 
-    fn preload(&self, track_id: &str, segue: bool) -> Result<()> {
-        track_uri(track_id)?;
-        if segue {
-            self.engine.line_up(track_id);
-        }
-        Ok(())
+    fn preload(&self, track_id: &str, _segue: bool) -> Result<()> {
+        track_uri(track_id).map(|_| ())
     }
 
-    fn unline(&self) {
-        self.engine.line_down();
+    fn connect_device(&self) -> Option<&str> {
+        self.engine.connect_device()
+    }
+
+    fn refresh_device_queue(&self) {
+        self.engine.ask(soloist::Command::RefreshQueue);
+    }
+
+    fn set_repeat_one(&self, enabled: bool) {
+        self.engine.ask(soloist::Command::RepeatOne(enabled));
     }
 
     fn play(&self) {
-        self.engine.play();
+        self.engine.ask(soloist::Command::Play);
     }
 
     fn pause(&self) {
-        self.engine.pause();
+        self.engine.ask(soloist::Command::Pause);
     }
 
     fn seek(&self, position: Duration) {
-        self.engine.seek(position);
+        self.engine.ask(soloist::Command::Seek(position));
     }
 
     fn set_gain(&self, gain: f32) {
-        self.engine.set_gain(gain);
+        self.engine.ask(soloist::Command::Gain(gain));
     }
 }
 
@@ -451,7 +455,7 @@ impl Engine {
             signals,
             gapless: config.gapless,
             normalisation: config.normalisation,
-            encoding: offered(config.quality),
+            encoding: config.quality.offered_encoding(QUALITIES),
             keeper,
         };
         (engine, events)
@@ -694,13 +698,4 @@ fn bitrate(quality: Quality) -> Bitrate {
         Quality::Normal => Bitrate::Bitrate160,
         Quality::Low => Bitrate::Bitrate96,
     }
-}
-
-/// The encoding of the offer librespot is asked for at a level.
-fn offered(quality: Quality) -> Option<Encoding> {
-    let level = quality.within(QUALITIES);
-    QUALITIES
-        .iter()
-        .find(|offer| offer.quality == level)
-        .map(|offer| offer.encoding)
 }

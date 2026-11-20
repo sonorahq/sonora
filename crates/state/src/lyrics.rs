@@ -8,7 +8,7 @@ use music::lyrics::LOCAL;
 use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
 
 use crate::sheets::{Sheets, Unsaved};
-use crate::{AppSettings, Io, Playback, Queue, QueuePosition, Session, join};
+use crate::{AppSettings, Io, Playback, Queue, Session, join};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LyricsState {
@@ -179,7 +179,7 @@ impl Lyrics {
             return None;
         };
         let playback = self.playback.read(cx);
-        let position = playback.shown_time(cx).0;
+        let position = playback.live_position();
         music::lyrics::active(lines, position)
     }
 
@@ -187,7 +187,7 @@ impl Lyrics {
         if !self.enabled {
             return self.forget(cx);
         }
-        let shown = self.playback.read(cx).shown_track(cx);
+        let shown = self.playback.read(cx).track().cloned();
         let Some(track) = shown.as_ref() else {
             return self.forget(cx);
         };
@@ -365,8 +365,8 @@ impl Lyrics {
         if !self.enabled || self.task.is_some() {
             return;
         }
-        let queue = self.playback.read(cx).shown_queue(cx);
-        let Some(track) = queue.track(QueuePosition::Upcoming(0), cx) else {
+        let queue = self.playback.read(cx).queue().read(cx);
+        let Some(track) = queue.upcoming().next().cloned() else {
             return;
         };
         let Some(id) = track.id.as_deref() else {

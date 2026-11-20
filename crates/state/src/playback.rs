@@ -10,8 +10,8 @@ use logic::station::{self, unheard};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
-    Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackFactory,
+    Player, Quality, Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -57,13 +57,13 @@ enum Intent {
     Pause,
 }
 
-use crate::queue::{Queue, QueuePlacement};
+use crate::queue::{Queue, QueuePlacement, QueuePosition};
 use serde::{Deserialize, Serialize};
 
 use crate::devices::collection_of;
 use crate::{
-    AppSettings, Devices, Elsewhere, Equalizer, Io, Network, Outcome, Session, SessionEvent,
-    SessionState, Sonora, Target, Toast, Toasts,
+    AppSettings, Devices, Equalizer, Io, Network, Outcome, Session, SessionEvent, SessionState,
+    Sonora, Target, Toast, Toasts,
 };
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
@@ -659,6 +659,7 @@ pub struct Playback {
     devices: Option<WeakEntity<Devices>>,
     /// Whether the call being carried out is this app's own doing, which never steers.
     local: bool,
+    external: bool,
     /// How many seeks the listener asked for, which a Sonora Session watches to share them. Seeks
     /// made for the session itself, through `locally`, are not counted.
     seeks: u64,
@@ -693,7 +694,7 @@ impl Playback {
                 // an engine left from playing offline hands its track over where it stands
                 match this.engine.is_some() && !this.local_active() {
                     true => this.rebind(playback, cx),
-                    false => this.start_engine(playback, cx),
+                    false => this.start_engine(playback, false, cx),
                 }
                 this.adopt(cx);
             }
@@ -707,7 +708,7 @@ impl Playback {
             // The online engine gives way to the one that plays downloads, picking the current
             // track up where it was. A provider with none stops streaming altogether.
             SessionEvent::WentOffline => match session.read(cx).playback() {
-                Some(playback) if this.local_active() => this.start_engine(playback, cx),
+                Some(playback) if this.local_active() => this.start_engine(playback, false, cx),
                 Some(playback) => this.rebind(playback, cx),
                 None => this.teardown(cx),
             },
@@ -715,7 +716,7 @@ impl Playback {
                 if this.local_engine.is_none()
                     && let Some(playback) = session.read(cx).local_playback()
                 {
-                    this.start_local_engine(playback, cx);
+                    this.start_engine(playback, true, cx);
                 }
             }
         })
@@ -728,13 +729,15 @@ impl Playback {
                 && matches!(session.state(), SessionState::Offline(_))
                 && let Some(playback) = session.playback()
             {
-                this.start_engine(playback, cx);
+                this.start_engine(playback, false, cx);
             }
         })
         .detach();
         cx.observe(&queue, |this, _, cx| {
-            this.continue_station(cx);
-            this.suggest_similar(false, cx);
+            if !this.external {
+                this.continue_station(cx);
+                this.suggest_similar(false, cx);
+            }
         })
         .detach();
 
@@ -818,12 +821,13 @@ impl Playback {
             opening: false,
             devices: None,
             local: false,
+            external: false,
             seeks: 0,
             ends: 0,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
-            playback.start_local_engine(factory, cx);
+            playback.start_engine(factory, true, cx);
         }
         playback
     }
@@ -848,57 +852,33 @@ impl Playback {
 
     /// The device network and the other device that has playback, when one does and a user action
     /// is to reach it instead of the engine here.
-    fn steering(&self, cx: &App) -> Option<(Entity<Devices>, Elsewhere)> {
+    fn steering<'a>(&self, cx: &'a App) -> Option<(Entity<Devices>, &'a connect::Device)> {
         if self.local {
             return None;
         }
         let devices = self.devices.as_ref()?.upgrade()?;
-        let steered = devices.read(cx).steered()?;
+        let steered = devices.read(cx).elsewhere()?;
         Some((devices, steered))
     }
 
-    /// The other device that has playback, which is shown in place of this app's own track.
-    pub fn steered(&self, cx: &App) -> Option<Elsewhere> {
-        self.steering(cx).map(|(_, steered)| steered)
+    /// Whether transport commands go to another device.
+    pub fn steers_device(&self, cx: &App) -> bool {
+        self.steering(cx).is_some()
     }
 
-    /// The active queue for every consumer, selected once from local or remote playback.
-    pub fn shown_queue(&self, cx: &App) -> crate::QueueView {
-        crate::QueueView::new(
-            self.queue.clone(),
-            self.steering(cx),
-            matches!(self.state(), PlaybackState::Playing),
-            cx,
+    /// The active play order, wherever playback happens.
+    pub fn queue(&self) -> &Entity<Queue> {
+        &self.queue
+    }
+
+    /// Position and duration from the active playback state.
+    pub fn elapsed_and_total(&self) -> (Duration, Duration) {
+        (
+            self.live_position(),
+            self.track
+                .as_ref()
+                .map_or(Duration::ZERO, |track| track.duration),
         )
-    }
-
-    /// The track the player shows: the other device's while one is steered, else this app's own.
-    pub fn shown_track(&self, cx: &App) -> Option<Track> {
-        match self.steering(cx) {
-            Some((devices, _)) => devices.read(cx).queue_tracks(crate::QueuePosition::Current),
-            None => self.track.clone(),
-        }
-    }
-
-    /// How far into the shown track playback is, and how long that track is.
-    pub fn shown_time(&self, cx: &App) -> (Duration, Duration) {
-        match self.steered(cx) {
-            Some(remote) => {
-                let duration = match remote.state.duration.is_zero() {
-                    true => self
-                        .shown_track(cx)
-                        .map_or(Duration::ZERO, |track| track.duration),
-                    false => remote.state.duration,
-                };
-                (remote.state.live_position(), duration)
-            }
-            None => (
-                self.position,
-                self.track
-                    .as_ref()
-                    .map_or(Duration::ZERO, |track| track.duration),
-            ),
-        }
     }
 
     /// The volume the controls show and change, on the other device while one is steered.
@@ -906,18 +886,18 @@ impl Playback {
         if let Some(level) = self.sliding {
             return level;
         }
-        self.steered(cx)
-            .map_or(self.level, |steered| steered.device.volume)
+        self.steering(cx)
+            .map_or(self.level, |(_, remote)| remote.volume)
     }
 
     /// Sends the command `make` builds to the other device that has playback, if one does, and
     /// says whether it did. A caller that got `true` leaves its own engine and queue alone, except
     /// that a `Start` the device refuses is played here once it comes back as an event.
-    fn steer(&self, make: impl FnOnce(&Elsewhere) -> Command, cx: &App) -> bool {
+    fn steer(&self, make: impl FnOnce() -> Command, cx: &App) -> bool {
         let Some((devices, steered)) = self.steering(cx) else {
             return false;
         };
-        devices.read(cx).control(&steered.device.id, make(&steered));
+        devices.read(cx).control(&steered.id, make());
         true
     }
 
@@ -933,7 +913,7 @@ impl Playback {
             return false;
         };
         self.steer(
-            |_| {
+            || {
                 Command::Start(connect::Start {
                     state: Arc::new(connect::Snapshot {
                         context: origin.and_then(|origin| match origin.whence {
@@ -941,10 +921,12 @@ impl Playback {
                             _ => collection_of(origin),
                         }),
                         track: Some(connect::QueuedTrack::new(id, false)),
-                        playing: true,
+                        transport: connect::Transport {
+                            playing: true,
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }),
-                    restart: true,
                     ..Default::default()
                 })
             },
@@ -966,6 +948,9 @@ impl Playback {
     }
 
     fn active_engine(&self) -> Option<&dyn Player> {
+        if self.external {
+            return None;
+        }
         let id = self.track.as_ref()?.id.as_deref()?;
         self.engine_for(id)
     }
@@ -978,7 +963,7 @@ impl Playback {
     /// The playing engine's spectrum, set to hear the track before or after the volume as the
     /// visualizer setting asks. Unavailable while another device has playback.
     pub fn spectrum(&self, cx: &App) -> Option<Spectrum> {
-        if self.steered(cx).is_some() {
+        if self.steers_device(cx) {
             return None;
         }
         let spectrum = self.active_engine()?.spectrum()?;
@@ -1091,6 +1076,7 @@ impl Playback {
         if self.engine_for(&id).is_none() {
             return;
         }
+        self.set_external(false, cx);
         self.silence_other(&id);
         if !matches!(start, Start::Segue | Start::Retry) {
             self.failures = 0;
@@ -1099,18 +1085,7 @@ impl Playback {
             self.throttles = 0;
         }
 
-        self.track = Some(track.clone());
-        self.state = PlaybackState::Loading;
-        self.position = at;
-        self.clock.reset(at, false);
-        self.preloaded = None;
-        self.resume_at = None;
-        self.seek_in_flight = None;
-        self.seek_next = None;
-        self.seek_target = None;
-        self.intent = Intent::Play;
-        self.resume_ready = false;
-        cx.notify();
+        self.prepare_track(track.clone(), at, cx);
 
         let wait = self
             .blocked_until
@@ -1136,6 +1111,57 @@ impl Playback {
         }));
     }
 
+    /// Resets transport bookkeeping for a new track, including one that already plays remotely.
+    fn prepare_track(&mut self, track: Track, at: Duration, cx: &mut Context<Self>) {
+        self.track = Some(track);
+        self.state = PlaybackState::Loading;
+        self.set_position(at, false);
+        self.preloaded = None;
+        self.resume_at = None;
+        self.seek_in_flight = None;
+        self.seek_next = None;
+        self.seek_target = None;
+        self.intent = Intent::Play;
+        self.resume_ready = false;
+        cx.notify();
+    }
+
+    pub(crate) fn connect_device(&self) -> Option<&str> {
+        self.engine.as_ref()?.connect_device()
+    }
+
+    pub(crate) fn refresh_device_queue(&self) {
+        if let Some(engine) = &self.engine {
+            engine.refresh_device_queue();
+        }
+    }
+
+    /// Applies reported options without issuing commands that could reorder the device queue.
+    pub(crate) fn report_modes(
+        &mut self,
+        shuffle: Option<bool>,
+        repeat: Option<Repeat>,
+        cx: &mut Context<Self>,
+    ) {
+        self.repeat = repeat.unwrap_or(self.repeat);
+        if let Some(shuffle) = shuffle {
+            self.queue
+                .update(cx, |queue, _| queue.report_shuffle(shuffle));
+        }
+        cx.notify();
+    }
+
+    /// Keeps the engine's native repeat mode aligned with the sleep timer and Sonora's repeat setting.
+    fn sync_repeat(&self) {
+        if !self.external
+            && let Some(engine) = &self.engine
+        {
+            engine.set_repeat_one(
+                self.repeat == Repeat::One && self.sleep != Some(Sleep::EndOfTrack),
+            );
+        }
+    }
+
     /// Replaces the queue with `tracks` and plays the one at `index`.
     pub fn start(
         &mut self,
@@ -1149,13 +1175,14 @@ impl Playback {
     }
 
     /// Replaces the queue with `tracks` and plays the one at `index` here from `at`, as another
-    /// device handed it over. A seek after `start` would be lost while the track loads.
+    /// device handed it over. `adopted` supplies play state if the engine already has the track.
     pub(crate) fn start_at(
         &mut self,
         tracks: Vec<Track>,
         index: usize,
         origin: Option<Origin>,
         at: Duration,
+        adopted: Option<&connect::Transport>,
         cx: &mut Context<Self>,
     ) {
         self.fetch = None;
@@ -1166,7 +1193,179 @@ impl Playback {
             return;
         };
         self.leave_station();
-        self.load_from(&track, at, Start::Pick, cx);
+        let Some(snapshot) = adopted else {
+            return self.load_from(&track, at, Start::Pick, cx);
+        };
+        self.adopt_track(track, at, snapshot, cx);
+    }
+
+    /// Applies playback already underway without sending a new load to the engine.
+    fn adopt_track(
+        &mut self,
+        track: Track,
+        at: Duration,
+        report: &connect::Transport,
+        cx: &mut Context<Self>,
+    ) {
+        let mut playing = report.playing;
+        let id = track.id.clone();
+        if !self.external
+            && self.sleep == Some(Sleep::EndOfTrack)
+            && self.state == PlaybackState::Playing
+            && self.track.as_ref().is_some_and(|current| current.id != id)
+        {
+            self.set_sleep(None, cx);
+            Toasts::show(Outcome::Info, "toast-sleep-ended", cx);
+            if let Some(engine) = &self.engine {
+                engine.pause();
+            }
+            playing = false;
+        }
+        if !self.external
+            && let Some(id) = &id
+        {
+            self.silence_other(id);
+        }
+        self.load = None;
+        self.pressed = None;
+        self.prepare_track(track, at, cx);
+        if self.external {
+            return self.sync_external(report, true, cx);
+        }
+        self.on_backend_event(
+            match playing {
+                true => BackendEvent::Playing { id, at },
+                false => BackendEvent::Paused { id, at },
+            },
+            false,
+            cx,
+        );
+    }
+
+    /// Matches an unsolicited desktop transition to a neighbouring queue occurrence.
+    fn device_queue_position(&self, id: &str, cx: &App) -> Option<QueuePosition> {
+        let queue = self.queue.read(cx);
+        let matches = |(_, track): &(usize, &Track)| track.id.as_deref() == Some(id);
+        // A playable local file stops the queue Sonora shares with the desktop player.
+        let next = queue
+            .upcoming()
+            .enumerate()
+            .find(|(_, track)| track.playable)
+            .filter(matches);
+        let previous = queue
+            .past()
+            .enumerate()
+            .rfind(|(_, track)| track.playable)
+            .filter(matches);
+        match (next, previous) {
+            (Some((index, _)), None) => Some(QueuePosition::Upcoming(index)),
+            (None, Some((index, _))) => Some(QueuePosition::Past(index)),
+            // Use the full queue report when either occurrence could be playing.
+            _ => None,
+        }
+    }
+
+    /// Keeps the queue occurrence and history when the desktop advances on its own.
+    pub(crate) fn follow_device_track(
+        &mut self,
+        report: &connect::Snapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if self.external || self.local_active() || self.is_loading() {
+            return;
+        }
+        let current = self.track().and_then(|track| track.id.as_deref());
+        let Some(position) = report
+            .track_id()
+            .filter(|id| Some(*id) != current)
+            .and_then(|id| self.device_queue_position(id, cx))
+        else {
+            return;
+        };
+        if let Some(track) = self.select_queue_track(position, cx) {
+            self.fetch = None;
+            self.adopt_track(
+                track,
+                report.transport.live_position(),
+                &report.transport,
+                cx,
+            );
+        }
+    }
+
+    /// Changes who owns the active player before its queue is installed.
+    pub(crate) fn set_external(&mut self, external: bool, cx: &mut Context<Self>) {
+        if external == self.external {
+            return;
+        }
+        if external {
+            self.remember(true, cx);
+            self.load = None;
+            self.fetch = None;
+            self.suggest = None;
+            self.preloaded = None;
+            self.seek_target = None;
+            self.leave_station();
+            if let Some(engine) = self.active_engine() {
+                engine.pause();
+            }
+        } else {
+            self.repeat = self.settings.read(cx).repeat();
+        }
+        self.external = external;
+        self.queue
+            .update(cx, |queue, _| queue.set_external(external));
+    }
+
+    pub(crate) fn is_external(&self) -> bool {
+        self.external
+    }
+
+    /// Applies device options immediately and updates the clock once the reported track is loaded.
+    pub(crate) fn sync_external(
+        &mut self,
+        snapshot: &connect::Transport,
+        current: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.repeat = snapshot.repeat.unwrap_or_default();
+        self.queue.update(cx, |queue, _| {
+            queue.report_shuffle(snapshot.shuffle.unwrap_or_default())
+        });
+        if !current {
+            return;
+        }
+        self.intent = if snapshot.playing {
+            Intent::Play
+        } else {
+            Intent::Pause
+        };
+        self.state = if snapshot.playing {
+            PlaybackState::Playing
+        } else {
+            PlaybackState::Paused
+        };
+        if let Some(track) = &mut self.track
+            && !snapshot.duration.is_zero()
+        {
+            track.duration = snapshot.duration;
+        }
+        self.set_position(snapshot.live_position(), snapshot.playing);
+        cx.notify();
+    }
+
+    /// Restores the saved local session when the external device releases playback.
+    pub(crate) fn release_external(&mut self, cx: &mut Context<Self>) {
+        if !self.external {
+            return;
+        }
+        self.set_external(false, cx);
+        self.track = None;
+        self.intent = Intent::Pause;
+        self.idle();
+        self.queue.update(cx, |queue, cx| queue.clear_external(cx));
+        self.adopt(cx);
+        cx.notify();
     }
 
     /// Replaces the queue with `tracks` and plays the first playable one, or a random one when
@@ -1361,7 +1560,7 @@ impl Playback {
                 Some(id) if music::is_local_id(&id) => kept = true,
                 Some(id) => devices
                     .read(cx)
-                    .control(&steered.device.id, Command::Enqueue { id, added_by: None }),
+                    .control(&steered.id, Command::Enqueue { id, added_by: None }),
                 None => {}
             }
         }
@@ -1798,7 +1997,7 @@ impl Playback {
             return self.arrive(origin, tracks, next, shuffled, cx);
         }
         let running = warm.and_then(|warm| warm.fetch.take());
-        if !self.has_active_playback() && self.steering(cx).is_none() {
+        if !self.has_active_playback() && !self.steers_device(cx) {
             self.state = PlaybackState::Loading;
         }
         self.fetch = Some(match running {
@@ -1811,7 +2010,7 @@ impl Playback {
 
     /// Skips to the next playable track.
     pub fn next(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Next, cx) {
+        if self.steer(|| Command::Next, cx) {
             return;
         }
         self.fetch = None;
@@ -2053,7 +2252,7 @@ impl Playback {
 
     /// Switches the repeat mode and remembers it in settings.
     pub fn set_repeat(&mut self, repeat: Repeat, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Repeat(repeat), cx) {
+        if self.steer(|| Command::Repeat(repeat), cx) {
             return;
         }
         if self.repeat == repeat {
@@ -2061,6 +2260,7 @@ impl Playback {
         }
         self.repeat = repeat;
         self.unline();
+        self.sync_repeat();
         self.settings
             .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
         cx.notify();
@@ -2076,7 +2276,7 @@ impl Playback {
     }
 
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
-        let repeat = match self.shown_repeat(cx) {
+        let repeat = match self.repeat() {
             Repeat::Off => Repeat::All,
             Repeat::All => Repeat::One,
             Repeat::One => Repeat::Off,
@@ -2087,24 +2287,16 @@ impl Playback {
     /// A binary on/off flip for surfaces (tray, dock menu) that do not fit the three-way
     /// cycle the player bar's button drives; `One` counts as on and flips straight to `Off`.
     pub fn toggle_repeat(&mut self, cx: &mut Context<Self>) {
-        let repeat = match self.shown_repeat(cx) {
+        let repeat = match self.repeat() {
             Repeat::Off => Repeat::All,
             Repeat::All | Repeat::One => Repeat::Off,
         };
         self.set_repeat(repeat, cx);
     }
 
-    /// The repeat setting of the device that has playback, which is this app's own unless
-    /// another device is being steered.
-    pub fn shown_repeat(&self, cx: &App) -> Repeat {
-        self.steered(cx).map_or(self.repeat, |remote| {
-            remote.state.repeat.unwrap_or_default()
-        })
-    }
-
     /// Turns shuffle on or off, on the other device when one has playback.
     pub fn set_shuffle(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Shuffle(on), cx) {
+        if self.steer(|| Command::Shuffle(on), cx) {
             return;
         }
         self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx));
@@ -2112,16 +2304,12 @@ impl Playback {
 
     /// Flips shuffle from what the player shows, which is the other device's when it has playback.
     pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
-        self.set_shuffle(!self.shown_shuffle(cx), cx);
+        self.set_shuffle(!self.shuffle(cx), cx);
     }
 
-    /// Whether the device that has playback shuffles, which is this app's queue unless another
-    /// device is being steered.
-    pub fn shown_shuffle(&self, cx: &App) -> bool {
-        self.steered(cx).map_or_else(
-            || self.queue.read(cx).shuffle(),
-            |remote| remote.state.shuffle.unwrap_or_default(),
-        )
+    /// Whether the active queue has shuffle enabled.
+    pub fn shuffle(&self, cx: &App) -> bool {
+        self.queue.read(cx).shuffle()
     }
 
     /// Decides what follows a track that ended: the same one on repeat-one, the queue's start
@@ -2238,7 +2426,7 @@ impl Playback {
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Previous, cx) {
+        if self.steer(|| Command::Previous, cx) {
             return;
         }
         if self.restarts(cx) {
@@ -2254,7 +2442,6 @@ impl Playback {
 
     /// Selects a stable local occurrence; selecting current toggles playback.
     pub fn play_queue(&mut self, uid: &str, cx: &mut Context<Self>) {
-        use crate::QueuePosition;
         let Some(position) = self.queue.read(cx).position(uid) else {
             return;
         };
@@ -2262,21 +2449,31 @@ impl Playback {
             return self.toggle_play(cx);
         }
         self.fetch = None;
+        if let Some(track) = self.select_queue_track(position, cx) {
+            self.load_after(&track, Start::Pick, cx);
+        }
+    }
+
+    /// Selects a queue occurrence and leaves the station when its suggestions take over.
+    fn select_queue_track(
+        &mut self,
+        position: QueuePosition,
+        cx: &mut Context<Self>,
+    ) -> Option<Track> {
         let suggested = self.queue.read(cx).kind(position) == Some(crate::QueueKind::Suggested);
         let track = self
             .queue
-            .update(cx, |queue, cx| queue.select(position, cx));
-        let Some(track) = track else { return };
+            .update(cx, |queue, cx| queue.select(position, cx))?;
         if suggested {
             self.leave_station();
         }
-        self.load_after(&track, Start::Pick, cx);
+        Some(track)
     }
 
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Play, cx) {
+        if self.steer(|| Command::Play, cx) {
             return;
         }
         self.intent = Intent::Play;
@@ -2315,6 +2512,9 @@ impl Playback {
     /// Has the engine fetch the restored track and hold it paused at `resume_at`, so the first
     /// play is instant. Until it says so, play loads the track instead.
     fn prepare_resume(&mut self, cx: &mut Context<Self>) {
+        if self.external {
+            return;
+        }
         self.resume_ready = false;
         let Some(at) = self.resume_at else {
             return;
@@ -2332,8 +2532,7 @@ impl Playback {
             Ok(()) => {
                 self.resume_ready = true;
                 self.state = PlaybackState::Paused;
-                self.position = at;
-                self.clock.reset(at, false);
+                self.set_position(at, false);
             }
             Err(error) => log::warn!(
                 "playback: cannot prepare {} for resume: {error:#}",
@@ -2368,8 +2567,7 @@ impl Playback {
         };
         self.track = Some(track);
         self.state = PlaybackState::Paused;
-        self.position = at;
-        self.clock.reset(at, false);
+        self.set_position(at, false);
         self.stored = at;
         self.resume_at = Some(at);
         self.prepare_resume(cx);
@@ -2377,6 +2575,9 @@ impl Playback {
 
     /// Writes the position to settings for resuming, every few seconds or when `force`d.
     fn remember(&mut self, force: bool, cx: &mut Context<Self>) {
+        if self.external {
+            return;
+        }
         let position = self.position;
         if !force && position.abs_diff(self.stored) < RESUME_STEP {
             return;
@@ -2388,7 +2589,7 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Pause, cx) {
+        if self.steer(|| Command::Pause, cx) {
             return;
         }
         self.intent = Intent::Pause;
@@ -2400,13 +2601,6 @@ impl Playback {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
-        let command = |remote: &Elsewhere| match remote.state.playing {
-            true => Command::Pause,
-            false => Command::Play,
-        };
-        if self.steer(command, cx) {
-            return;
-        }
         match self.wants_playing() {
             true => self.pause(cx),
             false => self.resume(cx),
@@ -2424,6 +2618,7 @@ impl Playback {
             self.unline();
         }
         self.sleep = sleep;
+        self.sync_repeat();
         self.sleep_task = match sleep {
             Some(Sleep::After(after)) => Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(after).await;
@@ -2447,6 +2642,7 @@ impl Playback {
     fn doze(&mut self, cx: &mut Context<Self>) {
         Toasts::show(Outcome::Info, "toast-sleep-ended", cx);
         self.sleep = None;
+        self.sync_repeat();
         self.sleep_task = None;
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
@@ -2474,8 +2670,7 @@ impl Playback {
     fn hold(&mut self, at: Duration, cx: &mut Context<Self>) {
         self.intent = Intent::Pause;
         self.state = PlaybackState::Paused;
-        self.position = at;
-        self.clock.reset(at, false);
+        self.set_position(at, false);
         self.resume_at = Some(at);
         self.resume_ready = false;
         cx.notify();
@@ -2538,7 +2733,7 @@ impl Playback {
         if !self.local {
             self.seeks += 1;
         }
-        if self.steer(|_| Command::Seek(position), cx) {
+        if self.steer(|| Command::Seek(position), cx) {
             return;
         }
         if self.resume_at.is_some() {
@@ -2548,8 +2743,7 @@ impl Playback {
             {
                 engine.seek(position);
             }
-            self.position = position;
-            self.clock.reset(position, false);
+            self.set_position(position, false);
             self.remember(true, cx);
             cx.notify();
             return;
@@ -2560,8 +2754,7 @@ impl Playback {
         // The clock parks at the target; the engine's Seeked starts it again once audio from
         // there is playing. A loading or paused engine takes the seek at once and reports the
         // position with its Playing, so only a playing one needs the seek tracked.
-        self.position = position;
-        self.clock.reset(position, false);
+        self.set_position(position, false);
         self.seek_target = Some(position);
         match (self.state == PlaybackState::Playing, self.seek_in_flight) {
             (true, Some(_)) => self.seek_next = Some(position),
@@ -2599,23 +2792,10 @@ impl Playback {
 
     /// Seeks to a share of the track, as the progress bar asks.
     pub fn seek_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
-        let seek = |remote: &Elsewhere| {
-            Command::Seek(remote.state.duration.mul_f32(fraction.clamp(0., 1.)))
-        };
-        if self.steer(seek, cx) {
-            return;
+        let (_, total) = self.elapsed_and_total();
+        if !total.is_zero() {
+            self.seek(total.mul_f32(fraction.clamp(0., 1.)), cx);
         }
-        let Some(total) = self
-            .track
-            .as_ref()
-            .map(|track| track.duration)
-            .filter(|total| !total.is_zero())
-        else {
-            return;
-        };
-
-        let position = Duration::from_secs_f32(total.as_secs_f32() * fraction.clamp(0., 1.));
-        self.seek(position, cx);
     }
 
     /// How many seeks the listener asked for since launch.
@@ -2641,6 +2821,18 @@ impl Playback {
     /// Tells the observers of `ticks` that the position moved.
     fn tick(&self, cx: &mut App) {
         self.ticks.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Clears the running clock when nothing plays.
+    fn idle(&mut self) {
+        self.state = PlaybackState::Idle;
+        self.set_position(Duration::ZERO, false);
+    }
+
+    /// Sets the measured position and resets the estimated playback clock.
+    fn set_position(&mut self, at: Duration, playing: bool) {
+        self.position = at;
+        self.clock.reset(at, playing);
     }
 
     /// The position as last reported or asked for. It only moves on events.
@@ -2693,7 +2885,7 @@ impl Playback {
 
     /// Mutes or restores the shown playback device without saving the temporary level.
     pub fn set_muted(&mut self, muted: bool, cx: &mut Context<Self>) {
-        let target = self.steered(cx).map(|remote| remote.device.id);
+        let target = self.steering(cx).map(|(_, remote)| remote.id.clone());
         let current = self.shown_volume(cx);
         let Some(level) = self.mute.change(muted, current, target) else {
             return;
@@ -2719,9 +2911,12 @@ impl Playback {
     /// Changes the volume on the shown device and optionally remembers it as the preference.
     fn apply_volume(&mut self, level: f32, remember: bool, cx: &mut Context<Self>) {
         self.sliding = None;
-        if let Some((devices, steered)) = self.steering(cx) {
+        if let Some((devices, id)) = self
+            .steering(cx)
+            .map(|(devices, remote)| (devices, remote.id.clone()))
+        {
             devices.update(cx, |devices, cx| {
-                devices.set_volume(&steered.device.id, level.clamp(0., 1.), cx)
+                devices.set_volume(&id, level.clamp(0., 1.), cx)
             });
             cx.notify();
             return;
@@ -2742,7 +2937,7 @@ impl Playback {
         let level = level.clamp(0., 1.);
         self.mute.volume_changed();
         self.sliding = Some(level);
-        if self.steer(|_| Command::Volume(level), cx) {
+        if self.steer(|| Command::Volume(level), cx) {
             return;
         }
         self.level = level;
@@ -2767,14 +2962,11 @@ impl Playback {
     /// Moves `SEEK_STEP` forward or back through the shown track, stopping at its start and end.
     /// Seeks the other device while one is steered, and does nothing without a track.
     pub fn skip(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let (shown, total) = self.shown_time(cx);
+        let (shown, total) = self.elapsed_and_total();
         if total.is_zero() {
             return;
         }
-        let at = match self.steered(cx) {
-            Some(_) => shown,
-            None => self.seek_target.unwrap_or_else(|| self.live_position()),
-        };
+        let at = self.seek_target.unwrap_or(shown);
         self.seek(seek_target(at, total, forward), cx);
     }
 
@@ -3004,7 +3196,7 @@ impl Playback {
         };
 
         match self.local_active() {
-            true => self.start_engine(playback, cx),
+            true => self.start_engine(playback, false, cx),
             false => self.rebind(playback, cx),
         }
     }
@@ -3035,16 +3227,10 @@ impl Playback {
         heard: Option<(String, Duration)>,
         cx: &mut Context<Self>,
     ) {
-        let running = match local {
-            true => self.local_engine.is_some(),
-            false => self.engine.is_some(),
-        };
-        if !running {
-            return;
-        }
         let playback = match local {
-            true => self.session.read(cx).local_playback(),
-            false => self.session.read(cx).playback(),
+            true if self.local_engine.is_some() => self.session.read(cx).local_playback(),
+            false if self.engine.is_some() => self.session.read(cx).playback(),
+            _ => return,
         };
         let Some(playback) = playback else {
             return;
@@ -3052,7 +3238,7 @@ impl Playback {
         let current = self
             .track
             .clone()
-            .filter(|track| track.id.is_some() && local == self.local_active());
+            .filter(|track| !self.external && track.id.is_some() && local == self.local_active());
         // what the output had played beats the clock, which kept running while the device
         // switched and would put the reload past the start of a track that just began
         let at = heard
@@ -3073,18 +3259,14 @@ impl Playback {
         }
 
         log::info!("playback: restarting after the audio output changed");
-        match local {
-            true => {
-                self.local_task = None;
-                retire(self.local_engine.take());
-                self.start_local_engine(playback, cx);
-            }
-            false => {
-                self.task = None;
-                retire(self.engine.take());
-                self.start_engine(playback, cx);
-            }
-        }
+        let (task, engine) = if local {
+            (&mut self.local_task, &mut self.local_engine)
+        } else {
+            (&mut self.task, &mut self.engine)
+        };
+        *task = None;
+        retire(engine.take());
+        self.start_engine(playback, local, cx);
         if let Some(track) = current
             && playing == Some(true)
         {
@@ -3107,6 +3289,10 @@ impl Playback {
     /// Moves playback onto a fresh engine, as after a reconnect, and resumes where it was if it
     /// was playing, loading to play, or waiting to.
     fn rebind(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
+        if self.external {
+            self.start_engine(playback, false, cx);
+            return;
+        }
         let resume = match self.state {
             PlaybackState::Playing => true,
             PlaybackState::Loading => self.intent == Intent::Play,
@@ -3121,14 +3307,19 @@ impl Playback {
         if self.track.is_some() {
             self.resume_at = Some(at);
         }
-        self.start_engine(playback, cx);
+        self.start_engine(playback, false, cx);
         if resume {
             self.resume(cx);
         }
     }
 
-    /// Builds the streaming engine and starts pumping its events.
-    fn start_engine(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
+    /// Builds the selected engine and pumps its events until the engine is dropped.
+    fn start_engine(
+        &mut self,
+        playback: Arc<dyn PlaybackFactory>,
+        local: bool,
+        cx: &mut Context<Self>,
+    ) {
         let config = PlaybackConfig {
             normalisation: self.normalisation,
             gapless: self.gapless,
@@ -3141,42 +3332,7 @@ impl Playback {
             analyzer: self.analyzer.clone(),
             vault: Some(self.vault.clone()),
         };
-        let (engine, events) = playback.start(config);
-
-        self.listen(events, false, cx);
-        self.engine = Some(engine);
-        self.refused = None;
-        if !self.local_active() {
-            self.state = PlaybackState::Idle;
-            self.position = Duration::ZERO;
-            self.clock.reset(Duration::ZERO, false);
-        }
-        self.prepare_resume(cx);
-        cx.notify();
-    }
-
-    fn start_local_engine(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
-        let config = PlaybackConfig {
-            normalisation: self.normalisation,
-            gapless: self.gapless,
-            position_interval: POSITION_INTERVAL,
-            gain: gain(self.level),
-            transcode: self.transcode,
-            quality: self.quality,
-            equalizer: self.equalizer.clone(),
-            meter: self.meter.clone(),
-            analyzer: self.analyzer.clone(),
-            vault: Some(self.vault.clone()),
-        };
-        let (engine, events) = playback.start(config);
-
-        self.listen(events, true, cx);
-        self.local_engine = Some(engine);
-        self.prepare_resume(cx);
-    }
-
-    /// Pumps an engine's events into `on_backend_event` until the engine is dropped.
-    fn listen(&mut self, mut events: Box<dyn PlaybackEvents>, local: bool, cx: &mut Context<Self>) {
+        let (engine, mut events) = playback.start(config);
         let task = Some(cx.spawn(async move |this, cx| {
             while let Some(event) = events.next().await {
                 if this
@@ -3187,28 +3343,57 @@ impl Playback {
                 }
             }
         }));
-        match local {
-            true => self.local_task = task,
-            false => self.task = task,
+        if local {
+            self.local_task = task;
+            self.local_engine = Some(engine);
+            self.prepare_resume(cx);
+            return;
         }
+        self.task = task;
+        self.engine = Some(engine);
+        self.sync_repeat();
+        self.refused = None;
+        if !self.external && !self.local_active() {
+            self.idle();
+        }
+        self.prepare_resume(cx);
+        cx.notify();
     }
 
     /// Applies what an engine reports. Events from the engine not playing the current track,
     /// or about another track, are dropped, so a late event from a previous load cannot move
     /// the clock.
     fn on_backend_event(&mut self, event: BackendEvent, local: bool, cx: &mut Context<Self>) {
-        // an engine whose output has to reopen is rebuilt whether it plays the current track
-        // or sits idle, since a dead engine would take the next track and play nothing
-        if let BackendEvent::OutputChanged { heard } = event {
-            self.restart_output(local, heard, cx);
-            return;
+        // Output changes and track signals also matter for an engine that is idle.
+        match event {
+            BackendEvent::OutputChanged { heard } => return self.restart_output(local, heard, cx),
+            BackendEvent::Signal { id, track } => return self.learn_signal(id, track, cx),
+            BackendEvent::DeviceQueue(report) => {
+                if !local && let Some(devices) = self.devices.clone() {
+                    cx.defer(move |cx| {
+                        devices
+                            .update(cx, |devices, cx| devices.device_queue(report, cx))
+                            .ok();
+                    });
+                }
+                return;
+            }
+            BackendEvent::DeviceModes { shuffle, repeat } => {
+                if !local && !self.external && !self.local_active() {
+                    self.report_modes(shuffle, repeat, cx);
+                }
+                return;
+            }
+            BackendEvent::RemoteGain(gain) => {
+                if !self.external && self.sliding.is_none() {
+                    let level = (1. + 20. * gain.max(0.).log10() / TAPER_DB).clamp(0., 1.);
+                    self.locally(cx, |this, cx| this.set_volume(level, cx));
+                }
+                return;
+            }
+            _ => {}
         }
-        // kept for whichever track it names, since a queued track reports before it plays
-        if let BackendEvent::Signal { id, track } = event {
-            self.learn_signal(id, track, cx);
-            return;
-        }
-        if local != self.local_active() {
+        if self.external || local != self.local_active() {
             return;
         }
         let current_id = self.track.as_ref().and_then(|track| track.id.as_deref());
@@ -3236,7 +3421,11 @@ impl Playback {
         }
         match event {
             // rebuilt or kept before the filters above
-            BackendEvent::OutputChanged { .. } | BackendEvent::Signal { .. } => {}
+            BackendEvent::OutputChanged { .. }
+            | BackendEvent::Signal { .. }
+            | BackendEvent::RemoteGain(_)
+            | BackendEvent::DeviceQueue(_)
+            | BackendEvent::DeviceModes { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
@@ -3255,8 +3444,7 @@ impl Playback {
             }
             BackendEvent::Loading { at, .. } => {
                 self.state = PlaybackState::Loading;
-                self.position = at;
-                self.clock.reset(at, false);
+                self.set_position(at, false);
             }
             BackendEvent::Playing { at, .. } => {
                 let at = self.landed(at);
@@ -3267,8 +3455,7 @@ impl Playback {
                 self.paused_at = None;
                 self.failures = 0;
                 self.throttles = 0;
-                self.position = at;
-                self.clock.reset(at, true);
+                self.set_position(at, true);
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
                 }
@@ -3279,16 +3466,14 @@ impl Playback {
                 self.pressed = None;
                 self.state = PlaybackState::Paused;
                 self.paused_at = Some(SystemTime::now());
-                self.position = at;
-                self.clock.reset(at, false);
+                self.set_position(at, false);
                 self.remember(true, cx);
                 cx.emit(PlaybackEvent::Paused);
                 self.follow_up_seek(cx);
             }
             BackendEvent::Seeked { at, .. } => {
                 let at = self.landed(at);
-                self.position = at;
-                self.clock.reset(at, self.state == PlaybackState::Playing);
+                self.set_position(at, self.state == PlaybackState::Playing);
                 self.remember(true, cx);
                 cx.emit(PlaybackEvent::Seeked);
                 self.follow_up_seek(cx);
@@ -3331,9 +3516,7 @@ impl Playback {
             BackendEvent::Ended { .. } => {
                 let ended = self.track.take();
                 self.ends += 1;
-                self.state = PlaybackState::Idle;
-                self.position = Duration::ZERO;
-                self.clock.reset(Duration::ZERO, false);
+                self.idle();
                 cx.emit(PlaybackEvent::EndedPlayback);
                 match self.sleep == Some(Sleep::EndOfTrack) {
                     true => self.doze(cx),
@@ -3357,9 +3540,7 @@ impl Playback {
                 );
                 self.blocked_until = Some(Instant::now() + KEY_COOLDOWN);
                 self.failures = self.failures.saturating_add(1);
-                self.state = PlaybackState::Idle;
-                self.position = Duration::ZERO;
-                self.clock.reset(Duration::ZERO, false);
+                self.idle();
                 let exhausted = self.failures >= FAILURE_LIMIT;
                 match exhausted {
                     true => {
@@ -3432,9 +3613,7 @@ impl Playback {
             self.paused_at = None;
             self.refused = None;
             self.track = None;
-            self.state = PlaybackState::Idle;
-            self.position = Duration::ZERO;
-            self.clock.reset(Duration::ZERO, false);
+            self.idle();
             self.resume_at = None;
             self.seek_in_flight = None;
             self.seek_next = None;

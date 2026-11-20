@@ -6,9 +6,8 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task,
-    TextShadow,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, Pixels, Point,
+    Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Task, TextShadow,
 };
 use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px};
 use i18n::t;
@@ -19,14 +18,14 @@ use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
     ActiveTheme as _, Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, Sprung, TabBar,
-    Tails as _, Text, Visualizer, Zoom, clock, entering, snapped,
+    Motioned as _, Popup, Room, Scrollbar, Scrubber, Springs, Sprung, TabBar, Tails as _, Text,
+    Visualizer, Zoom, clock, entering, snapped,
 };
 
 use crate::chrome::{Aside, PlayerBar, TitleBarOptions};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{
-    COVER_FLIGHT, CoverFade, ShellSwap, clock_ems, end_clock, fraction, like, moved, transport,
+    COVER_FLIGHT, CoverFade, SeekControl, ShellSwap, clock_ems, end_clock, like, transport,
 };
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::volume::{
@@ -118,9 +117,7 @@ pub struct FullscreenView {
     /// steps from the first frame the content draws, so a slow first layout cannot eat the
     /// entrance. The pill itself never takes part.
     switch: Option<Sprung>,
-    seek: ScrubberState,
-    pending: Option<f32>,
-    over_seek: Option<f32>,
+    seek: SeekControl,
     volume: RisingVolume,
     over_pill: bool,
     over_transport: bool,
@@ -218,9 +215,7 @@ impl FullscreenView {
             aside,
             panel,
             switch: None,
-            seek: ScrubberState::new("fullscreen-seek"),
-            pending: None,
-            over_seek: None,
+            seek: SeekControl::new("fullscreen-seek"),
             volume: RisingVolume::new("fullscreen-volume-slider"),
             over_pill: false,
             over_transport: false,
@@ -344,9 +339,7 @@ impl FullscreenView {
             return;
         }
         let pad = cx.theme().metrics.pad;
-        let seek = self.seek.hovered(event.position, pad);
-        if moved(self.over_seek, seek) {
-            self.over_seek = seek;
+        if self.seek.hover(event.position, pad) {
             cx.notify();
         }
         if self.left {
@@ -382,11 +375,11 @@ impl FullscreenView {
             || self.over_pill
             || self.over_transport
             || self.over_leave
-            || self.over_seek.is_some()
+            || self.seek.over.is_some()
             || self.scrollbar_held(cx);
         (self.inside && parked)
             || self.volume.held
-            || self.pending.is_some()
+            || self.seek.dragging()
             || self.context_menu.is_some()
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
@@ -398,7 +391,7 @@ impl FullscreenView {
         self.over_pill = false;
         self.over_transport = false;
         self.over_leave = false;
-        self.over_seek = None;
+        self.seek.over = None;
     }
 
     /// Follows the pointer in and out of the window, once a frame. A hover flag clears on an
@@ -478,14 +471,6 @@ impl FullscreenView {
         hidden.clamp(0., 1.)
     }
 
-    fn commit_seek(&mut self, cx: &mut Context<Self>) {
-        let Some(fraction) = self.pending.take() else {
-            return;
-        };
-        self.playback
-            .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
-    }
-
     fn artwork(
         &mut self,
         layout_side: Pixels,
@@ -505,7 +490,7 @@ impl FullscreenView {
         };
         let pad = px(COVER_LAYER_PAD);
         let inset = (layout_side - raster_side) / 2. - pad;
-        let (album, small, local_id, named) = match self.playback.read(cx).shown_track(cx) {
+        let (album, small, local_id, named) = match self.playback.read(cx).track().cloned() {
             Some(track) => {
                 let local = track.id.as_deref().is_some_and(music::is_local_id);
                 let named = album_name(&track);
@@ -626,7 +611,7 @@ impl FullscreenView {
     ) -> impl IntoElement {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
-        let shown = self.playback.read(cx).shown_track(cx);
+        let shown = self.playback.read(cx).track().cloned();
         let track = shown.as_ref();
         let title = match track {
             Some(track) => SharedString::from(track.name.clone()),
@@ -724,7 +709,8 @@ impl FullscreenView {
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                    let Some(track) = this.playback.read(cx).shown_track(cx) else {
+                                    let Some(track) = this.playback.read(cx).track().cloned()
+                                    else {
                                         return;
                                     };
                                     window.prevent_default();
@@ -764,7 +750,7 @@ impl FullscreenView {
         let theme = *cx.theme();
         let frosted = ambient::shown(cx);
         let cover = ui::snapped(theme.metrics.row, window);
-        let shown = self.playback.read(cx).shown_track(cx);
+        let shown = self.playback.read(cx).track().cloned();
         let track = shown.as_ref();
         let title = match track {
             Some(track) => SharedString::from(track.name.clone()),
@@ -826,7 +812,7 @@ impl FullscreenView {
                                         cx.listener(
                                             move |this, event: &MouseDownEvent, window, cx| {
                                                 let Some(track) =
-                                                    this.playback.read(cx).shown_track(cx)
+                                                    this.playback.read(cx).track().cloned()
                                                 else {
                                                     return;
                                                 };
@@ -896,20 +882,12 @@ impl FullscreenView {
     fn seek(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
-        let empty = muted.opacity(0.3);
         let text = theme.text(Text::Tiny);
         let playback = self.playback.read(cx);
-        let seekable = playback.shown_track(cx).is_some();
-        let (elapsed, total) = playback.shown_time(cx);
-        let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
+        let (elapsed, total) = playback.elapsed_and_total();
         let time_left = self.settings.read(cx).player_bar_time_left();
         let end = end_clock(elapsed, total, time_left);
         let width = text * clock_ems(total, time_left);
-
-        let bubble = self
-            .over_seek
-            .or(self.pending)
-            .map(|at| (at, clock(total.mul_f32(at))));
 
         let label = move |id: &'static str, value: SharedString, align_end: bool| {
             ui::spoken(id, value)
@@ -931,25 +909,12 @@ impl FullscreenView {
             .w_full()
             .child(label("fullscreen-elapsed", clock(elapsed), true))
             .child(
-                div().flex_1().min_w_0().child(
-                    Scrubber::new(&self.seek, progress)
-                        .name(t!("song-position"))
-                        .value(clock(elapsed))
-                        .colors(theme.progress_bar, empty, theme.foreground)
-                        .ranges(
-                            Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
-                            theme.foreground.opacity(0.4),
-                        )
-                        .enabled(seekable)
-                        .when_some(bubble, |this, (at, text)| this.bubble(at, text))
-                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            this.pending = Some(*fraction);
-                            cx.notify();
-                        }))
-                        .on_release(
-                            cx.listener(|this, _: &MouseUpEvent, _, cx| this.commit_seek(cx)),
-                        ),
-                ),
+                div().flex_1().min_w_0().child(self.seek.slider(
+                    &self.playback,
+                    (elapsed, total),
+                    cx,
+                    |view| &mut view.seek,
+                )),
             )
             .child(
                 label("fullscreen-total", end.text, false)
@@ -1417,7 +1382,7 @@ impl Render for FullscreenView {
             .visualizer_screens()
             .contains(self.panel)
             && style.shown()
-            && self.playback.read(cx).steered(cx).is_none();
+            && !self.playback.read(cx).steers_device(cx);
         match visualizer_on
             .then(|| self.playback.read(cx).spectrum(cx))
             .flatten()

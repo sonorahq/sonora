@@ -6,6 +6,7 @@ mod client;
 mod collection;
 mod collection2;
 mod connect;
+pub(crate) use connect::collection as connect_collection;
 mod links;
 mod lyrics;
 mod offline;

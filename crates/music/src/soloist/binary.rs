@@ -108,43 +108,21 @@ pub(crate) fn path() -> PathBuf {
 /// A command for `program` that opens no console window on Windows and, in the Nix package,
 /// goes through the store's loader.
 pub(crate) fn command(program: &Path) -> Command {
-    windowless(loaded(program))
-}
-
-/// Starts `program` through the loader and library path the Nix package bakes in, since a NixOS
-/// without nix-ld has nothing at the loader path the binary names. Every other build starts it
-/// directly. The program then sees the loader as `/proc/self/exe`, which only costs it the crash
-/// handler it never starts anyway.
-#[cfg(target_os = "linux")]
-fn loaded(program: &Path) -> Command {
-    const LOADER: Option<&str> = option_env!("SONORA_SOLOIST_LOADER");
-    const LIBRARIES: Option<&str> = option_env!("SONORA_SOLOIST_LIBRARIES");
-    let Some(loader) = LOADER else {
-        return Command::new(program);
-    };
-    let mut command = Command::new(loader);
-    if let Some(libraries) = LIBRARIES {
-        command.arg("--library-path").arg(libraries);
+    #[cfg(target_os = "linux")]
+    if let Some(launcher) = option_env!("SONORA_SOLOIST_LAUNCHER") {
+        let mut command = Command::new(launcher);
+        command.arg(program);
+        return command;
     }
-    command.arg("--argv0").arg(program).arg(program);
-    command
-}
-
-#[cfg(not(target_os = "linux"))]
-fn loaded(program: &Path) -> Command {
-    Command::new(program)
-}
-
-#[cfg(windows)]
-fn windowless(mut command: Command) -> Command {
-    use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-#[cfg(not(windows))]
-fn windowless(command: Command) -> Command {
+    let command = Command::new(program);
+    #[cfg(windows)]
+    let command = {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = command;
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    };
     command
 }
 

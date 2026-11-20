@@ -93,7 +93,7 @@ impl Cover {
     /// provider can size it up, and the album's art is loaded only when it cannot. A load
     /// already running for the same album is kept rather than started again.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        let (album, thumbnail) = match self.playback.read(cx).shown_track(cx) {
+        let (album, thumbnail) = match self.playback.read(cx).track().cloned() {
             Some(track) => (track.album_id, track.cover),
             None => (None, None),
         };

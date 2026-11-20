@@ -68,8 +68,8 @@ impl Last {
 /// Writes the title for the track playback shows now, if it differs from the last one written.
 /// A failed write forgets the recorded title so the next playback change tries again.
 fn publish(window: AnyWindowHandle, last: &mut Last, cx: &mut App) {
-    let track = Sonora::global(cx).playback.read(cx).shown_track(cx);
-    let Some(title) = last.change(track.as_ref()) else {
+    let track = Sonora::global(cx).playback.read(cx).track();
+    let Some(title) = last.change(track) else {
         return;
     };
     if let Err(error) = window.update(cx, |_, window, _| window.set_window_title(&title)) {

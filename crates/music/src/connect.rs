@@ -2,13 +2,14 @@
 //! the service's other apps ask of it, and the account's other devices. Nothing here names a
 //! provider, so `state` and `views` use the same channel while each provider owns its worker.
 
+use std::hash::{DefaultHasher, Hasher as _};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 /// The collection a track plays from, as far as the remote end needs to know it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Collection {
     Album(String),
     Playlist(String),
@@ -42,7 +43,7 @@ pub enum Naming {
 }
 
 /// A particular occurrence of a provider track in the queue, stable as it moves through playback.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QueuedTrack {
     pub id: String,
     pub uid: String,
@@ -76,44 +77,53 @@ pub struct Snapshot {
     pub context: Option<Collection>,
     /// Where `track` sits in `context`, counted from 0, when that is known.
     pub index: Option<usize>,
-    pub playing: bool,
-    pub position: Duration,
-    pub duration: Duration,
+    pub transport: Transport,
     /// From 0 to 1.
     pub volume: f32,
-    pub shuffle: Option<bool>,
-    pub repeat: Option<Repeat>,
-    /// The wall-clock time at which `position` was measured, absent for play commands.
-    pub stamp: Option<SystemTime>,
 }
 
 impl Snapshot {
-    pub fn tracks(&self) -> impl Iterator<Item = &QueuedTrack> {
-        self.track
+    pub fn track_id(&self) -> Option<&str> {
+        self.track.as_ref().map(|track| track.id.as_str())
+    }
+
+    /// The reported queue in playback order, including the current track.
+    pub fn tracks(&self) -> impl Iterator<Item = &QueuedTrack> + Clone {
+        self.previous
             .iter()
+            .chain(&self.track)
             .chain(&self.upcoming)
-            .chain(&self.previous)
     }
 
-    /// Ignores a steadily advancing clock and identifies changes that need publishing.
-    pub fn change(&self, before: &Self) -> Option<&'static str> {
-        Some(match () {
-            () if self.track != before.track => "track",
-            () if self.previous != before.previous || self.upcoming != before.upcoming => "queue",
-            () if self.context != before.context || self.index != before.index => "context",
-            () if self.playing != before.playing => "play state",
-            () if self.duration != before.duration => "duration",
-            () if self.shuffle != before.shuffle => "shuffle",
-            () if self.repeat != before.repeat => "repeat",
-            () if self.position.abs_diff(before.live_position()) > Duration::from_secs(2) => {
-                "position"
-            }
-            () if self.volume != before.volume => "volume",
-            _ => return None,
-        })
+    /// Fingerprints the queue, including occurrence identifiers and provenance.
+    pub fn queue_fingerprint(&self) -> u64 {
+        fingerprint((&self.track, &self.previous, &self.upcoming))
     }
 
-    /// Extrapolates the published clock without mutating or periodically republishing the snapshot.
+    pub fn published(&self) -> Published {
+        Published {
+            queue: self.queue_fingerprint(),
+            context: fingerprint((&self.context, self.index)),
+            transport: self.transport,
+            volume: self.volume,
+        }
+    }
+}
+
+/// The timing and options needed to apply a report after its queue loads.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Transport {
+    pub playing: bool,
+    pub position: Duration,
+    pub duration: Duration,
+    /// When position was measured. Play commands may leave it unset.
+    pub stamp: Option<SystemTime>,
+    pub shuffle: Option<bool>,
+    pub repeat: Option<Repeat>,
+}
+
+impl Transport {
+    /// Projects the device's last measured position to the current time.
     pub fn live_position(&self) -> Duration {
         let moved = match self.playing {
             true => self
@@ -129,14 +139,40 @@ impl Snapshot {
     }
 }
 
+/// The last published state for change detection, with fingerprints for collection and queue data.
+pub struct Published {
+    pub queue: u64,
+    context: u64,
+    transport: Transport,
+    volume: f32,
+}
+
+impl Published {
+    /// Compares reports while allowing the clock to advance between them.
+    pub fn changed(&self, before: &Self) -> bool {
+        self.volume != before.volume || self.playback_changed(before)
+    }
+
+    /// Whether the position, queue, or another part of playback besides volume changed.
+    pub fn playback_changed(&self, before: &Self) -> bool {
+        let now = self.transport;
+        let old = before.transport;
+        self.queue != before.queue
+            || self.context != before.context
+            || now.playing != old.playing
+            || now.duration != old.duration
+            || now.shuffle != old.shuffle
+            || now.repeat != old.repeat
+            || now.position.abs_diff(old.live_position()) > Duration::from_secs(2)
+    }
+}
+
 /// A play request or exact transfer, both using the same playback snapshot as device reports.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Start {
     pub state: std::sync::Arc<Snapshot>,
     /// Uses the supplied history and upcoming order instead of reconstructing the collection.
     pub preserve_queue: bool,
-    /// Starts playback here; a queue edit only replaces the play order.
-    pub restart: bool,
 }
 
 /// A request that crosses the wire in either direction: asked of this app by a remote end, or
@@ -192,18 +228,11 @@ pub struct Device {
     pub volume: f32,
 }
 
-/// Playback happening on a device other than this app.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Elsewhere {
-    pub device: Device,
-    pub state: std::sync::Arc<Snapshot>,
-}
-
-/// The account's devices other than this app, and the one of them that has playback, if any.
+/// Devices reported by the connection and the one with active playback, if any.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Roster {
     pub devices: Vec<Device>,
-    pub elsewhere: Option<Elsewhere>,
+    pub active: Option<(Device, std::sync::Arc<Snapshot>)>,
 }
 
 /// One person in a group session.
@@ -268,10 +297,17 @@ pub enum Event {
 /// Requests sent to the provider's worker; replies arrive through `Event`.
 pub enum Request {
     Enable(bool),
+    /// Enables account discovery using a hidden connection while a separate player owns playback.
+    Observe,
     Rename(Naming),
     /// Publishing claims playback, so only listener-initiated playback should be reported.
     Publish(Option<std::sync::Arc<Snapshot>>),
     Transfer(String),
+    /// Updates history and upcoming tracks on the local playback engine's own device.
+    PublishQueue {
+        device: String,
+        state: std::sync::Arc<Snapshot>,
+    },
     /// A refused start returns as a command to play locally.
     Control(String, Command),
     Join(String),
@@ -280,6 +316,10 @@ pub enum Request {
     Leave,
     Kick(String),
 }
+
+/// Spotify's Connect queue windows, shared by both playback engines.
+pub const UPCOMING: usize = 80;
+pub const PREVIOUS: usize = 10;
 
 /// A provider-independent channel to the device worker. Dropping the last handle ends it.
 pub struct Connect {
@@ -329,4 +369,10 @@ impl Connect {
     pub fn jams(&self) -> bool {
         self.jams
     }
+}
+
+fn fingerprint(value: impl std::hash::Hash) -> u64 {
+    let mut hash = DefaultHasher::new();
+    value.hash(&mut hash);
+    hash.finish()
 }

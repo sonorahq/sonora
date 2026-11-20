@@ -464,6 +464,11 @@ impl<O: Clone + PartialEq> Order<O> {
         self.shuffle
     }
 
+    /// Records a provider's mode without reordering the queue it supplied.
+    pub fn report_shuffle(&mut self, on: bool) {
+        self.shuffle = on;
+    }
+
     pub fn set_shuffle(&mut self, on: bool) {
         if self.shuffle == on {
             return;
@@ -600,7 +605,7 @@ impl<O: Clone + PartialEq> Order<O> {
         self.revision
     }
 
-    pub fn past(&self) -> impl ExactSizeIterator<Item = &Track> {
+    pub fn past(&self) -> impl ExactSizeIterator<Item = &Track> + DoubleEndedIterator {
         self.past.iter().map(|entry| entry.track.as_ref())
     }
 
@@ -676,6 +681,11 @@ impl<O: Clone + PartialEq> Order<O> {
             .iter()
             .filter(|entry| entry.kind == QueueKind::Suggested)
             .map(|entry| entry.track.as_ref())
+    }
+
+    /// Looks up a track at its position in the active play order.
+    pub fn track_at(&self, position: QueuePosition) -> Option<&Track> {
+        self.entry(position).map(|entry| entry.track.as_ref())
     }
 
     pub fn kind(&self, position: QueuePosition) -> Option<QueueKind> {

@@ -207,7 +207,7 @@ impl Control {
         reply: oneshot::Sender<Reply>,
         cx: &mut Context<Self>,
     ) {
-        let Some(track) = self.playback.read(cx).shown_track(cx) else {
+        let Some(track) = self.playback.read(cx).track().cloned() else {
             reply.send(Reply::Failed(Failure::NoCurrentTrack)).ok();
             return;
         };
@@ -625,8 +625,7 @@ impl Control {
         }
         // with nothing playing the tracks start by themselves, so only a queue that already
         // plays is skipped forward into them
-        let playing = self.playback.read(cx).steered(cx).is_some()
-            || Sonora::global(cx).queue.read(cx).current().is_some();
+        let playing = Sonora::global(cx).queue.read(cx).current().is_some();
         self.playback.update(cx, |playback, cx| match placement {
             Place::Now => {
                 playback.insert_all(tracks, 0, origin, cx);
@@ -692,7 +691,7 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
         PlaybackCommand::Previous => playback.previous(cx),
         PlaybackCommand::Seek(percent) => playback.seek_fraction(f32::from(percent) / 100., cx),
         PlaybackCommand::SeekTime(time) => {
-            let target = moment(playback, time, cx);
+            let target = moment(playback, time);
             playback.seek(target, cx);
         }
         PlaybackCommand::CurrentTrack => {
@@ -717,7 +716,7 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             Switch::Toggle => playback.toggle_muted(cx),
         },
         PlaybackCommand::Shuffle(None) => {
-            return Reply::Value(Value::Shuffle(playback.shown_shuffle(cx)));
+            return Reply::Value(Value::Shuffle(playback.shuffle(cx)));
         }
         PlaybackCommand::Shuffle(Some(switch)) => match switch {
             Switch::On => playback.set_shuffle(true, cx),
@@ -725,7 +724,7 @@ fn play(playback: &mut Playback, command: PlaybackCommand, cx: &mut Context<Play
             Switch::Toggle => playback.toggle_shuffle(cx),
         },
         PlaybackCommand::Repeat(None) => {
-            return Reply::Value(Value::Repeat(wire_repeat(playback.shown_repeat(cx))));
+            return Reply::Value(Value::Repeat(wire_repeat(playback.repeat())));
         }
         PlaybackCommand::Repeat(Some(repeat)) => {
             let repeat = match repeat {
@@ -797,16 +796,8 @@ fn settled_on(session: &Session, slug: &str) -> bool {
 
 /// Where a seek in time lands: the time asked for, or a step from where the track plays now,
 /// held inside the track on the steered device when there is one.
-fn moment(playback: &Playback, time: Time, cx: &App) -> Duration {
-    let (now, length) = match playback.steered(cx) {
-        Some(steered) => (steered.state.live_position(), steered.state.duration),
-        None => (
-            playback.live_position(),
-            playback
-                .track()
-                .map_or(Duration::ZERO, |track| track.duration),
-        ),
-    };
+fn moment(playback: &Playback, time: Time) -> Duration {
+    let (now, length) = playback.elapsed_and_total();
     let target = match time {
         Time::To(at) => Duration::from_secs(at),
         Time::By(step) => match step < 0 {
@@ -822,25 +813,14 @@ fn moment(playback: &Playback, time: Time, cx: &App) -> Duration {
 
 /// What plays now, on the steered device when there is one, or `None` when nothing is loaded.
 fn current(playback: &Playback, cx: &App) -> Option<Current> {
-    let track = playback.shown_track(cx)?;
-    let (state, position) = match playback.steered(cx) {
-        Some(steered) => {
-            let state = match steered.state.playing {
-                true => State::Playing,
-                false => State::Paused,
-            };
-            (state, steered.state.live_position())
-        }
-        None => {
-            let state = match playback.state() {
-                PlaybackState::Playing => State::Playing,
-                PlaybackState::Paused => State::Paused,
-                PlaybackState::Loading => State::Loading,
-                PlaybackState::Idle | PlaybackState::Failed(_) => State::Idle,
-            };
-            (state, playback.live_position())
-        }
+    let track = playback.track()?;
+    let state = match playback.state() {
+        PlaybackState::Playing => State::Playing,
+        PlaybackState::Paused => State::Paused,
+        PlaybackState::Loading => State::Loading,
+        PlaybackState::Idle | PlaybackState::Failed(_) => State::Idle,
     };
+    let position = playback.live_position();
     let sonora = Sonora::global(cx);
     let id = track.id.as_deref();
     let provider = match id.is_some_and(|id| Shelf::of(id).local()) {
@@ -849,11 +829,11 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
     };
     Some(Current {
         state,
-        track: wire_track(&track),
+        track: wire_track(track),
         position: position.as_secs(),
         volume: percent(playback.shown_volume(cx)),
-        shuffle: playback.shown_shuffle(cx),
-        repeat: wire_repeat(playback.shown_repeat(cx)),
+        shuffle: playback.shuffle(cx),
+        repeat: wire_repeat(playback.repeat()),
         provider,
         liked: id.is_some_and(|id| sonora.library.read(cx).saved(id)),
         origin: playback.origin(cx).map(wire_origin),
@@ -865,21 +845,22 @@ fn current(playback: &Playback, cx: &App) -> Option<Current> {
 /// in, whose sections stop at the first track not read in yet, so nothing is fetched from a
 /// provider to answer. With nothing queued it is empty in every section.
 fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
-    let view = playback.shown_queue(cx);
+    let queue = playback.queue().read(cx);
     let entry = |position: QueuePosition| {
-        view.track(position, cx).map(|track| QueueEntry {
-            track: wire_track(&track),
-            kind: wire_kind(view.kind(position, cx)),
+        queue.track_at(position).map(|track| QueueEntry {
+            track: wire_track(track),
+            kind: wire_kind(queue.kind(position)),
         })
     };
-    let previous = (0..view.sections.past)
+    let previous = (0..queue.sections.past)
         .filter_map(|at| entry(QueuePosition::Past(at)))
         .collect();
-    let current = match view.sections.current {
-        true => entry(QueuePosition::Current),
-        false => None,
-    };
-    let upcoming = (0..view.sections.upcoming)
+    let current = queue
+        .sections
+        .current
+        .then(|| entry(QueuePosition::Current))
+        .flatten();
+    let upcoming = (0..queue.sections.upcoming)
         .filter_map(|at| entry(QueuePosition::Upcoming(at)))
         .collect();
     QueueSnapshot::bounded(previous, current, upcoming)
@@ -891,10 +872,7 @@ fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
 fn lyrics(playback: &Playback, cx: &App) -> wire::LyricsSnapshot {
     let sonora = Sonora::global(cx);
     let held = sonora.lyrics.read(cx);
-    let at = match playback.steered(cx) {
-        Some(steered) => steered.state.live_position(),
-        None => playback.live_position(),
-    };
+    let at = playback.live_position();
     lyrics_snapshot(
         held.state(),
         sonora.settings.read(cx).lyrics_enabled(),

@@ -102,7 +102,7 @@ impl SponsorBlock {
         if duration.is_zero()
             || !self.settings.read(cx).sponsorblock()
             || Network::lost(cx)
-            || playback.steered(cx).is_some()
+            || playback.steers_device(cx)
             || track.id.as_deref() != self.video.as_deref()
             || track
                 .id

@@ -17,8 +17,8 @@ use music::{Contributor, Shape, Track, Voice};
 use router::{Destination, LibraryTab, Link as _};
 use state::{
     AppSettings, Lyrics, LyricsState, Network, Playback, PlaybackState, Queue, QueuePosition,
-    QueueSections as Sections, QueueSlot as Slot, QueueView, RomanizationScripts, Shelf, SideTab,
-    Sonora, Whence,
+    QueueSections as Sections, QueueSlot as Slot, RomanizationScripts, Shelf, SideTab, Sonora,
+    Whence,
 };
 use ui::{
     ActiveTheme as _, Avatar, Button, Card, DraggedPin, Edge, Glowing as _, Initials, Motion,
@@ -1013,7 +1013,7 @@ impl Aside {
     /// its own render. The fullscreen player draws them over the panel itself, so they stay
     /// above the visualizer it lays over the panel's text.
     pub(crate) fn perches(&self, window: &Window, cx: &mut Context<Self>) -> Vec<Div> {
-        let sections = self.playback.read(cx).shown_queue(cx).sections;
+        let sections = self.queue.read(cx).sections.clone();
         self.follow(cx)
             .into_iter()
             .chain(self.recall(&sections, window, cx))
@@ -1043,13 +1043,8 @@ impl Aside {
     fn verses(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let playback = self.playback.read(cx);
-        let (position, singing) = match playback.steered(cx) {
-            Some(remote) => (remote.state.live_position(), remote.state.playing),
-            None => (
-                playback.live_position(),
-                matches!(playback.state(), PlaybackState::Playing),
-            ),
-        };
+        let position = playback.live_position();
+        let singing = matches!(playback.state(), PlaybackState::Playing);
         let lyrics = self.lyrics.read(cx);
         let state = lyrics.state().clone();
         let shown = lyrics.current().is_some();
@@ -1991,19 +1986,15 @@ impl Aside {
         Some((name, place))
     }
 
-    fn rows(
-        &self,
-        listing: QueueView,
-        sections: Sections,
-        cx: &mut Context<Self>,
-    ) -> gpui::UniformList {
-        let remote = !listing.editable();
-        let from = listing
-            .origin(cx)
-            .and_then(|origin| self.playing_from(&origin, cx));
+    fn rows(&self, sections: Sections, remote: bool, cx: &mut Context<Self>) -> gpui::UniformList {
+        let queue = self.queue.clone();
+        let from = queue
+            .read(cx)
+            .origin()
+            .and_then(|origin| self.playing_from(origin, cx));
         let drop_gap = self.drop_gap;
         let upcoming = sections.upcoming;
-        let audible = listing.playing;
+        let audible = matches!(self.playback.read(cx).state(), PlaybackState::Playing);
         // A uniform list only draws rows inside its padding, so the space under a see-through
         // player bar is made of blank rows, which keeps the songs scrolling under it drawn.
         let under = (self.bottom(cx) / cx.theme().metrics.list_row).ceil() as usize;
@@ -2015,7 +2006,7 @@ impl Aside {
                 let reach = (range.len() as f32 * PREFETCH_REACH).ceil() as usize;
                 let near = (range.start.saturating_sub(reach)..range.start)
                     .chain(range.end..(range.end + reach).min(sections.len()));
-                let revision = listing.revision(cx);
+                let revision = queue.read(cx).revision();
                 let row = |index, cx: &mut Context<Self>| match sections.slot(index) {
                     None => div().into_any_element(),
                     Some(Slot::Header(key)) => {
@@ -2040,7 +2031,7 @@ impl Aside {
                         }
                     }
                     Some(Slot::Track(position)) => {
-                        let Some(track) = listing.track(position, cx) else {
+                        let Some(track) = queue.read(cx).track_at(position).cloned() else {
                             return div().into_any_element();
                         };
                         let drop_line = match (position.upcoming(), drop_gap) {
@@ -2076,9 +2067,9 @@ impl Aside {
 impl Render for Aside {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.scrollbar.read(cx).sync();
-        let listing = self.playback.read(cx).shown_queue(cx);
-        let sections = listing.sections.clone();
-        let remote = !listing.editable();
+        let queue = self.queue.read(cx);
+        let sections = queue.sections.clone();
+        let remote = self.playback.read(cx).steers_device(cx);
         let empty = sections.is_empty();
         if !cx.has_active_drag() {
             self.drop_gap = None;
@@ -2088,9 +2079,7 @@ impl Render for Aside {
             self.past_len = sections.past;
             self.anchor = true;
         }
-        let queue_track = listing
-            .track(QueuePosition::Current, cx)
-            .and_then(|track| track.id);
+        let queue_track = queue.current().and_then(|track| track.id.clone());
         if self.queue_track != queue_track {
             self.queue_track = queue_track;
             self.anchor = true;
@@ -2170,7 +2159,7 @@ impl Render for Aside {
                                         this.fade_edges(px(FADE * 0.5), under)
                                     })
                                     .child(
-                                        self.rows(listing, sections.clone(), cx)
+                                        self.rows(sections.clone(), remote, cx)
                                             .px_2()
                                             .pt(px(FADE * 0.5))
                                             .track_scroll(&self.scroll)

@@ -537,6 +537,15 @@ impl Quality {
         Self::ALL.into_iter().find(|quality| quality.id() == id)
     }
 
+    /// The encoding corresponding to the selected quality among the available offers.
+    pub(crate) fn offered_encoding(self, offers: &[Offer]) -> Option<Encoding> {
+        let level = self.within(offers);
+        offers
+            .iter()
+            .find(|offer| offer.quality == level)
+            .map(|offer| offer.encoding)
+    }
+
     /// The level out of `offers` that stands in for this one: the best at or below it, or the
     /// lowest offered when every one is above it. It is this level itself when `offers` is
     /// empty.
@@ -713,6 +722,15 @@ pub enum PlaybackEvent {
     Throttled {
         id: Option<String>,
     },
+    /// The local player's exact queue window and current playback.
+    DeviceQueue(Arc<connect::Snapshot>),
+    /// Options reported without a queue change.
+    DeviceModes {
+        shuffle: Option<bool>,
+        repeat: Option<connect::Repeat>,
+    },
+    /// The engine's linear gain changed on a remote controller.
+    RemoteGain(f32),
     Refused,
     Gated,
     /// The provider refuses the network the app connects from, so no track will load until the
@@ -768,6 +786,17 @@ pub trait Player: Send + Sync {
     /// Takes back what `preload` lined up behind the current track, as when a change of repeat
     /// altered what follows it. An engine that cannot is left as it is.
     fn unline(&self) {}
+
+    /// The Connect device registered by a player that handles its own audio and remote control.
+    fn connect_device(&self) -> Option<&str> {
+        None
+    }
+
+    /// Requests the local device's current queue after playback moves onto it.
+    fn refresh_device_queue(&self) {}
+
+    /// Applies repeat-one to engines that advance through a device queue themselves.
+    fn set_repeat_one(&self, _enabled: bool) {}
     fn play(&self);
     fn pause(&self);
 
@@ -817,6 +846,13 @@ pub trait Player: Send + Sync {
 #[async_trait]
 pub trait PlaybackEvents: Send {
     async fn next(&mut self) -> Option<PlaybackEvent>;
+}
+
+#[async_trait]
+impl PlaybackEvents for tokio::sync::mpsc::UnboundedReceiver<PlaybackEvent> {
+    async fn next(&mut self) -> Option<PlaybackEvent> {
+        self.recv().await
+    }
 }
 
 /// How far a download has got, from 0 to 1, shared between the player that fetches it and the

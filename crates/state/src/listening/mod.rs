@@ -686,7 +686,7 @@ impl Listening {
                         queue.update(cx, |queue, cx| queue.set_shuffle(false, cx));
                     }
                     let tracks: Vec<Track> = std::iter::once(track).chain(next).collect();
-                    playback.start_at(tracks, 0, None, at, cx);
+                    playback.start_at(tracks, 0, None, at, None, cx);
                     if !playing {
                         playback.pause(cx);
                     }

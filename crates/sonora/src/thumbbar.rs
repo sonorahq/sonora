@@ -648,13 +648,10 @@ fn icon(rgba: &[u8], size: u32) -> Option<HICON> {
 /// Reads what the toolbar should be showing right now.
 fn shown(cx: &App) -> Shown {
     let playback = Sonora::global(cx).playback.read(cx);
-    let playing = match playback.steered(cx) {
-        Some(remote) => remote.state.playing,
-        None => matches!(
-            playback.state(),
-            PlaybackState::Playing | PlaybackState::Loading
-        ),
-    };
+    let playing = matches!(
+        playback.state(),
+        PlaybackState::Playing | PlaybackState::Loading
+    );
     Shown {
         previous: t!("player-previous").to_string(),
         toggle: match playing {
@@ -664,7 +661,7 @@ fn shown(cx: &App) -> Shown {
         .to_string(),
         next: t!("player-next").to_string(),
         playing,
-        idle: playback.shown_track(cx).is_none(),
+        idle: playback.track().is_none(),
         look: look(),
     }
 }
@@ -697,26 +694,16 @@ fn played(cx: &App) -> Progress {
         done: 0,
     };
     let playback = Sonora::global(cx).playback.read(cx);
-    if playback.shown_track(cx).is_none() {
+    if playback.track().is_none() {
         return hidden;
     }
-    let (mode, elapsed) = match playback.steered(cx) {
-        Some(remote) => {
-            let mode = match remote.state.playing {
-                true => Mode::Playing,
-                false => Mode::Paused,
-            };
-            (mode, remote.state.live_position())
-        }
-        None => match playback.state() {
-            PlaybackState::Playing | PlaybackState::Loading => {
-                (Mode::Playing, playback.live_position())
-            }
-            PlaybackState::Paused => (Mode::Paused, playback.live_position()),
-            PlaybackState::Idle | PlaybackState::Failed(_) => return hidden,
-        },
+    let mode = match playback.state() {
+        PlaybackState::Playing | PlaybackState::Loading => Mode::Playing,
+        PlaybackState::Paused => Mode::Paused,
+        PlaybackState::Idle | PlaybackState::Failed(_) => return hidden,
     };
-    let total = playback.shown_time(cx).1.as_millis();
+    let (elapsed, total) = playback.elapsed_and_total();
+    let total = total.as_millis();
     if total == 0 {
         return hidden;
     }

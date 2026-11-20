@@ -43,6 +43,30 @@
           fn pkgs
         );
 
+      # Spotify's binary opens its audio libraries at playback time. Use the same loader
+      # and libraries in a packaged build and when compiling in the development shell.
+      soloistRuntime =
+        pkgs:
+        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          SONORA_SOLOIST_LAUNCHER = pkgs.writeShellScript "sonora-soloist" ''
+            program="$1"
+            shift
+            # Soloist checks for client.conf before trying to open PipeWire.
+            if [ -z "''${PIPEWIRE_CONFIG_DIR+x}" ] \
+              && [ ! -r /etc/pipewire/client.conf ] && [ ! -r /usr/share/pipewire/client.conf ]; then
+              export PIPEWIRE_CONFIG_DIR=${pkgs.pipewire}/share/pipewire
+            fi
+            exec ${pkgs.stdenv.cc.bintools.dynamicLinker} \
+              --library-path ${
+                lib.makeLibraryPath [
+                  pkgs.stdenv.cc.cc.lib
+                  pkgs.pipewire
+                  pkgs.libpulseaudio
+                ]
+              } --argv0 "$program" "$program" "$@"
+          '';
+        };
+
       # Copies only what cargo reads out of a source tree. The result depends on file contents
       # alone, so a commit that touches only docs, CI or this file keeps the cached build.
       cargoSource =
@@ -117,17 +141,6 @@
               "${pkgs.alsa-plugins}/lib/alsa-lib"
             ];
           };
-
-          # What Soloist loads besides glibc: libatomic when it starts, and PipeWire or PulseAudio
-          # once it opens a sound device.
-          soloistLibraries = lib.makeLibraryPath (
-            with pkgs;
-            [
-              stdenv.cc.cc.lib
-              pipewire
-              libpulseaudio
-            ]
-          );
 
           # The source build uses the toolchain the devShell and CI pin, not whatever rustc
           # nixpkgs carries that day.
@@ -239,14 +252,8 @@
               inherit cargoArtifacts;
               version = nightly.version or cargoVersion;
 
-              # Soloist is Spotify's prebuilt binary and asks for a loader at /lib64, which NixOS
-              # has only with nix-ld. The app starts it through the store's loader with these
-              # instead.
               env =
-                lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-                  SONORA_SOLOIST_LOADER = pkgs.stdenv.cc.bintools.dynamicLinker;
-                  SONORA_SOLOIST_LIBRARIES = soloistLibraries;
-                }
+                soloistRuntime pkgs
                 // lib.optionalAttrs (nightly ? version) {
                   SONORA_VERSION = nightly.version;
                   SONORA_CHANNEL = "nightly";
@@ -366,6 +373,7 @@
         in
         {
           default = pkgs.mkShell {
+            env = soloistRuntime pkgs;
             nativeBuildInputs =
               (with pkgs; [
                 pkg-config

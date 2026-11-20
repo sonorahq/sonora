@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use gpui::accesskit::Toggled;
 use gpui::prelude::*;
-use gpui::{App, Entity, Global, SharedString, div};
+use gpui::{App, Context, Entity, Global, MouseUpEvent, Pixels, Point, SharedString, div};
 use i18n::t;
-use state::{Elsewhere, Playback, Repeat, Sonora};
-use ui::{ActiveTheme as _, Button, Side, clock};
+use state::{Playback, Repeat, Sonora};
+use ui::{ActiveTheme as _, Button, Scrubber, ScrubberState, Side, clock};
 
 use crate::shared::ambient;
 
@@ -44,11 +44,6 @@ const CLOCK_SHORT: f32 = 3.4;
 const CLOCK_LONG: f32 = 5.4;
 /// The extra room, in ems, the right clock takes while it leads with a minus sign.
 const CLOCK_SIGN: f32 = 0.6;
-
-/// The other device playback is on, which the player shows instead of this app's own.
-pub(crate) fn steered(cx: &App) -> Option<Elsewhere> {
-    Sonora::global(cx).devices.read(cx).steered()
-}
 
 /// How far through `total` `elapsed` is, from 0 to 1.
 pub(crate) fn fraction(elapsed: Duration, total: Duration) -> f32 {
@@ -155,19 +150,16 @@ pub(crate) fn transport(playback: &Entity<Playback>, big: bool, cx: &App) -> imp
         .items_center()
         .gap_2()
         .child(shuffle(playback, frosted, cx))
-        .child(previous(playback, frosted, cx))
+        .child(skip(playback, false, frosted, cx))
         .child(toggle(playback, big, frosted, cx))
-        .child(next(playback, frosted, cx))
+        .child(skip(playback, true, frosted, cx))
         .child(repeat(playback, frosted, cx))
 }
 
 pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: &App) -> Button {
     let held = playback.read(cx);
-    let steered = steered(cx);
-    let playing = steered
-        .as_ref()
-        .map_or_else(|| held.wants_playing(), |remote| remote.state.playing);
-    let idle = held.track().is_none() && steered.is_none();
+    let playing = held.wants_playing();
+    let idle = held.track().is_none();
     let playback = playback.clone();
 
     let (icon, tooltip) = match playing {
@@ -190,7 +182,7 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
 
 fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
-    let on = playback.read(cx).shown_shuffle(cx);
+    let on = playback.read(cx).shuffle(cx);
     let playback = playback.clone();
 
     Button::new("shuffle")
@@ -212,7 +204,7 @@ fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
 
 fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
-    let repeat = playback.read(cx).shown_repeat(cx);
+    let repeat = playback.read(cx).repeat();
     let playback = playback.clone();
 
     Button::new("repeat")
@@ -239,40 +231,117 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         })
 }
 
-fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
-    let queue = playback.read(cx).shown_queue(cx);
-    let enabled = !queue.editable() || queue.sections.current || queue.sections.past > 0;
+fn skip(playback: &Entity<Playback>, forward: bool, frosted: bool, cx: &App) -> Button {
+    let held = playback.read(cx);
+    let sections = &held.queue().read(cx).sections;
+    let (id, icon, side, tooltip, available, step) = match forward {
+        true => (
+            "next",
+            "icons/skip-forward.svg",
+            Side::Right,
+            "player-next",
+            sections.upcoming > 0,
+            Playback::next as fn(&mut Playback, &mut gpui::Context<Playback>),
+        ),
+        false => (
+            "previous",
+            "icons/skip-back.svg",
+            Side::Left,
+            "player-previous",
+            sections.current || sections.past > 0,
+            Playback::previous as fn(&mut Playback, &mut gpui::Context<Playback>),
+        ),
+    };
+    let enabled = held.steers_device(cx) || available;
     let playback = playback.clone();
-
-    Button::new("previous")
+    Button::new(id)
         .ghost()
         .when(frosted, Button::frosted)
         .small()
-        .icon("icons/skip-back.svg")
-        .belt(Side::Left)
-        .tooltip_above("player-previous")
+        .icon(icon)
+        .belt(side)
+        .tooltip_above(tooltip)
         .disabled(!enabled)
-        .on_click(move |_, _, cx| {
-            playback.update(cx, |playback, cx| playback.previous(cx));
-        })
+        .on_click(move |_, _, cx| playback.update(cx, step))
 }
 
-fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
-    let queue = playback.read(cx).shown_queue(cx);
-    let enabled = !queue.editable() || queue.sections.upcoming > 0;
-    let playback = playback.clone();
+/// Shared drag and hover state for the desktop player's two timelines.
+pub(crate) struct SeekControl {
+    slider: ScrubberState,
+    pending: Option<f32>,
+    pub(crate) over: Option<f32>,
+}
 
-    Button::new("next")
-        .ghost()
-        .when(frosted, Button::frosted)
-        .small()
-        .icon("icons/skip-forward.svg")
-        .belt(Side::Right)
-        .tooltip_above("player-next")
-        .disabled(!enabled)
-        .on_click(move |_, _, cx| {
-            playback.update(cx, |playback, cx| playback.next(cx));
-        })
+impl SeekControl {
+    pub(crate) fn new(id: &'static str) -> Self {
+        Self {
+            slider: ScrubberState::new(id),
+            pending: None,
+            over: None,
+        }
+    }
+
+    pub(crate) fn dragging(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub(crate) fn travel(&self, pad: Pixels) -> Pixels {
+        self.slider.travel(pad)
+    }
+
+    pub(crate) fn progress(&self, elapsed: Duration, total: Duration) -> f32 {
+        self.pending.unwrap_or_else(|| fraction(elapsed, total))
+    }
+
+    /// Returns whether the hover bubble moved enough to redraw.
+    pub(crate) fn hover(&mut self, at: Point<Pixels>, pad: Pixels) -> bool {
+        let over = self.slider.hovered(at, pad);
+        if !moved(self.over, over) {
+            return false;
+        }
+        self.over = over;
+        true
+    }
+
+    /// Builds a slider and attaches its shared drag behavior through the view's state.
+    pub(crate) fn slider<T: 'static>(
+        &self,
+        playback: &Entity<Playback>,
+        (elapsed, total): (Duration, Duration),
+        cx: &Context<T>,
+        seek: fn(&mut T) -> &mut Self,
+    ) -> Scrubber {
+        let seekable = playback.read(cx).track().is_some();
+        let playback = playback.clone();
+        let theme = cx.theme();
+        let bubble = self
+            .over
+            .or(self.pending)
+            .map(|at| (at, clock(total.mul_f32(at))));
+        Scrubber::new(&self.slider, self.progress(elapsed, total))
+            .name(t!("song-position"))
+            .value(clock(elapsed))
+            .colors(
+                theme.progress_bar,
+                theme.muted_foreground.opacity(0.3),
+                theme.foreground,
+            )
+            .ranges(
+                Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
+                theme.foreground.opacity(0.4),
+            )
+            .enabled(seekable)
+            .when_some(bubble, |this, (at, text)| this.bubble(at, text))
+            .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
+                seek(this).pending = Some(*fraction);
+                cx.notify();
+            }))
+            .on_release(cx.listener(move |this, _: &MouseUpEvent, _, cx| {
+                if let Some(fraction) = seek(this).pending.take() {
+                    playback.update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
+                }
+            }))
+    }
 }
 
 pub(crate) fn moved(before: Option<f32>, after: Option<f32>) -> bool {

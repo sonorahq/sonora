@@ -67,7 +67,7 @@ pub use links::{Links, Opened};
 pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
-pub use music::connect::{Elsewhere, Repeat};
+pub use music::connect::Repeat;
 pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
@@ -77,8 +77,7 @@ pub use playback::{
 };
 pub use profile::Profile;
 pub use queue::{
-    Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
-    Stub,
+    Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, Resume, Stub,
 };
 pub use remote::{Remote, attach as attach_remote};
 pub use requirements::{Requirement, Requirements};
