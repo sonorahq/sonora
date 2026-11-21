@@ -974,6 +974,23 @@ impl Playback {
         )
     }
 
+    /// The album or playlist the queue plays `id` from in that collection's own order, for an
+    /// engine that can show the rest of it on the account's other devices. `None` while the
+    /// queue shuffles, or when the track is not the current one or was queued on its own.
+    fn collection_for(&self, id: &str, cx: &App) -> Option<connect::Collection> {
+        let queue = self.queue.read(cx);
+        let current = queue.current()?.id.as_deref() == Some(id);
+        if !current || queue.shuffle() || queue.place().is_none() {
+            return None;
+        }
+        collection_of(queue.origin()?).filter(|collection| {
+            matches!(
+                collection,
+                connect::Collection::Album(_) | connect::Collection::Playlist(_)
+            )
+        })
+    }
+
     /// Plays a track the user picked, from its start.
     pub fn play(&mut self, track: &Track, cx: &mut Context<Self>) {
         self.load_after(track, Start::Pick, cx);
@@ -1149,6 +1166,7 @@ impl Playback {
                 let Some(engine) = this.engine_for(&id) else {
                     return;
                 };
+                engine.within(this.collection_for(&id, cx).as_ref());
                 if let Err(error) = engine.load(&id, at, start == Start::Segue) {
                     let reason = crate::blamed(&error, cx);
                     this.failed(reason, cx);
@@ -2379,6 +2397,7 @@ impl Playback {
         let Some(engine) = self.engine_for(id) else {
             return;
         };
+        engine.within(self.collection_for(id, cx).as_ref());
         match engine.load_paused_at(id, at) {
             Ok(()) => {
                 self.resume_ready = true;
