@@ -6,6 +6,7 @@ mod links;
 mod lyrics;
 mod playback;
 mod radio;
+mod search;
 mod segments;
 mod subscriptions;
 mod wire;
