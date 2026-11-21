@@ -68,6 +68,10 @@ use crate::{
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
 const CLOCK_SETTLE: Duration = Duration::from_secs(1);
+/// How far a position report may be from the clock and still be eased in. A report further off
+/// means the clock was wrong rather than drifting, as when an engine started somewhere other
+/// than where it said, so the clock jumps to it.
+const CLOCK_JUMP: Duration = Duration::from_secs(2);
 /// Position reports that can still arrive from before a seek: one already in the channel and
 /// one for a packet decoded before the engine read the command. A successful seek keeps the
 /// engine busy, so more than this while one is in flight means it never left the old position.
@@ -182,16 +186,24 @@ impl LiveClock {
         self.settle = CLOCK_SETTLE.as_secs_f64();
     }
 
-    /// Folds a reported position in without a jump.
+    /// Folds a reported position in without a jump, unless it is more than `CLOCK_JUMP` off.
     fn correct(&mut self, toward: Duration) {
         self.correct_at(toward, Instant::now());
     }
 
     fn correct_at(&mut self, toward: Duration, now: Instant) {
         let shown = self.at(now);
-        self.base = shown;
         self.since = Some(now);
-        self.correction = signed_gap(toward, shown);
+        let gap = signed_gap(toward, shown);
+        // Eased in, a gap of a minute would hold the clock nearly still for that minute.
+        if gap.abs() > CLOCK_JUMP.as_secs_f64() {
+            self.base = toward;
+            self.correction = 0.;
+            self.settle = CLOCK_SETTLE.as_secs_f64();
+            return;
+        }
+        self.base = shown;
+        self.correction = gap;
         // A negative correction is spread over longer than the discrepancy itself, which keeps
         // the clock moving forward while it converges instead of ever snapping back.
         self.settle = CLOCK_SETTLE.as_secs_f64() + self.correction.abs();
