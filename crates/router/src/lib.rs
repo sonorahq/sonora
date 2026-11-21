@@ -38,15 +38,17 @@ pub enum NavEntry {
     Artists,
     Playlists,
     History,
+    ProviderSwitcher,
     Settings,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Home,
         Self::Search,
         Self::History,
+        Self::ProviderSwitcher,
         Self::Settings,
         Self::Songs,
         Self::Albums,
@@ -64,6 +66,7 @@ impl NavEntry {
             Self::Artists => "artists",
             Self::Playlists => "playlists",
             Self::History => "history",
+            Self::ProviderSwitcher => "provider-switcher",
             Self::Settings => "settings",
             Self::Pins => "sidebar-pins",
         }
@@ -78,6 +81,7 @@ impl NavEntry {
             Self::Artists => "nav-artists",
             Self::Playlists => "nav-playlists",
             Self::History => "nav-history",
+            Self::ProviderSwitcher => "nav-provider-switcher",
             Self::Settings => "nav-settings",
             Self::Pins => "nav-pinned",
         }

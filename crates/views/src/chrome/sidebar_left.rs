@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use ui::{
-    ActiveTheme as _, Card, Deck, DraggedPin, Edge, MenuItem, Panel, Picker, Pin, PinKind,
-    Pinnable as _, Popup, SNUG, Scroller, Shield, Side, Spot, Text, Vacancy, drop_gap, drop_into,
-    drop_marker,
+    ActiveTheme as _, Card, Deck, DraggedPin, Edge, Menu, MenuItem, Panel, Picker, Pin, PinKind,
+    Pinnable as _, Popover, Popup, SNUG, Scroller, Shield, Side, Spot, Text, Vacancy, drop_gap,
+    drop_into, drop_marker,
 };
 
 use gpui::accesskit::Role;
@@ -13,12 +13,15 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
-use music::Shape;
+use music::{Shape, SignIn};
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
     open_settings,
 };
-use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, Sonora};
+use state::{
+    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, SessionState, Shelf,
+    Sonora,
+};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 use crate::shared::nav::{entry_shown, nav_icon, nav_row};
@@ -108,6 +111,7 @@ pub(crate) struct SidebarLeft {
     playback: Entity<Playback>,
     pins: Entity<Pins>,
     library: Entity<Library>,
+    session: Entity<Session>,
     track_menu: ItemMenu,
     context_menu: Option<(Pin, Point<Pixels>)>,
     scrollbar: Entity<ui::Scrollbar>,
@@ -120,9 +124,11 @@ impl SidebarLeft {
         let playback = Sonora::global(cx).playback.clone();
         let pins = Sonora::global(cx).pins.clone();
         let library = Sonora::global(cx).library.clone();
+        let session = Sonora::global(cx).session.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&pins, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |_, _, cx| cx.notify()).detach();
         let chrome = super::Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
@@ -165,6 +171,7 @@ impl SidebarLeft {
             playback,
             pins,
             library,
+            session,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
             scrollbar,
@@ -327,32 +334,38 @@ impl SidebarLeft {
                 .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
                 .collect()
         };
-        let top = shown(0..4, cx);
-        let library = shown(4..NAV.len(), cx);
+        let mut top: Vec<AnyElement> = shown(0..3, cx)
+            .into_iter()
+            .map(|index| self.nav(index, cx))
+            .collect();
+        if entry_shown(NavEntry::ProviderSwitcher, self.settings.read(cx)) {
+            top.push(self.provider_switcher(cx));
+        }
+        if entry_shown(NAV[3].0, self.settings.read(cx)) {
+            top.push(self.nav(3, cx));
+        }
+        let library: Vec<AnyElement> = shown(4..NAV.len(), cx)
+            .into_iter()
+            .map(|index| self.nav(index, cx))
+            .collect();
         let mut rows = Vec::new();
         if self.folded() {
-            for (group, indices) in [top, library]
+            for (group, section) in [top, library]
                 .into_iter()
-                .filter(|indices| !indices.is_empty())
+                .filter(|section| !section.is_empty())
                 .enumerate()
             {
                 if group > 0 {
                     rows.push(self.divider(cx));
                 }
-                for index in indices {
-                    rows.push(self.nav(index, cx));
-                }
+                rows.extend(section);
             }
             return rows;
         }
-        for index in top {
-            rows.push(self.nav(index, cx));
-        }
+        rows.extend(top);
         if !library.is_empty() {
             rows.push(self.section("sidebar-library", cx));
-            for index in library {
-                rows.push(self.nav(index, cx));
-            }
+            rows.extend(library);
             rows.push(self.gap(cx));
         }
         rows
@@ -775,6 +788,132 @@ impl SidebarLeft {
                 (id != target && library.is_editable(&id)).then_some(Leaving::Playlist(id))
             }
         }
+    }
+
+    /// The row that switches between signed-in providers and guest mode, or opens the providers
+    /// settings page.
+    fn provider_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let accent = theme.sidebar_accent;
+        let tint = theme.muted_foreground;
+
+        let session = self.session.read(cx);
+        let signed_out = matches!(session.state(), SessionState::SignedOut);
+        let providers: Vec<_> = session.providers().collect();
+        let active_info = providers.iter().find(|info| info.active);
+        let is_guest = !signed_out && active_info.is_some_and(|info| info.guest || session.guest());
+
+        let (label, logo): (SharedString, &'static str) = match (signed_out, is_guest, active_info)
+        {
+            (false, true, _) => (
+                i18n::lookup("login-guest-title", None),
+                "icons/hat-glasses.svg",
+            ),
+            (false, false, Some(info)) => {
+                (info.name.into(), crate::shared::provider_logo(info.slug))
+            }
+            _ => (i18n::lookup("nav-provider-none", None), "icons/music.svg"),
+        };
+
+        let name = i18n::lookup("nav-switch-provider", None);
+        let button = match self.folded() {
+            true => nav_icon(
+                "nav-provider-switcher",
+                "nav-switch-provider",
+                logo,
+                tint,
+                accent,
+            ),
+            false => nav_row(
+                "nav-provider-switcher",
+                "nav-provider-switcher",
+                tint,
+                accent,
+            )
+            .name(name.clone())
+            .label(label)
+            .icon(logo)
+            .trailing("icons/chevrons-up-down.svg")
+            .tooltip("nav-switch-provider")
+            .w_full(),
+        };
+
+        let guest = providers
+            .iter()
+            .find(|info| {
+                (!info.stored || info.guest)
+                    && info
+                        .options
+                        .iter()
+                        .any(|option| matches!(option, SignIn::Anonymous))
+            })
+            .map(|guest| {
+                let slug = guest.slug;
+                let stored = guest.guest;
+                let active = guest.active && is_guest;
+                let session = self.session.clone();
+
+                MenuItem::new(
+                    "switch-provider-guest",
+                    i18n::lookup("login-guest-title", None),
+                )
+                .icon("icons/hat-glasses.svg")
+                .checked(active)
+                .on_click(move |_, _, cx| {
+                    if active {
+                        return;
+                    }
+                    match stored {
+                        true => session.update(cx, |session, cx| session.switch(slug, cx)),
+                        false => session.update(cx, |session, cx| {
+                            session.sign_in(slug, SignIn::Anonymous, cx)
+                        }),
+                    }
+                })
+            });
+
+        let accounts: Vec<_> = providers
+            .iter()
+            .filter(|info| info.stored && !info.guest)
+            .map(|account| {
+                let slug = account.slug;
+                let active = account.active && !signed_out && !is_guest;
+                let session = self.session.clone();
+
+                MenuItem::new(format!("switch-provider-{slug}"), account.name)
+                    .icon(crate::shared::provider_logo(slug))
+                    .checked(active)
+                    .on_click(move |_, _, cx| {
+                        session.update(cx, |session, cx| session.switch(slug, cx));
+                    })
+            })
+            .collect();
+        let has_choices = !accounts.is_empty() || guest.is_some();
+
+        let menu = Menu::new("sidebar-provider-menu")
+            .name(name)
+            .when(self.folded(), |menu| menu.beside(ROW_GAP))
+            .items(accounts)
+            .when_some(guest, Menu::item)
+            .when(has_choices, |menu| {
+                menu.item(MenuItem::separator("provider-switcher-sep"))
+            })
+            .item(
+                MenuItem::new(
+                    "manage-providers",
+                    i18n::lookup("nav-manage-providers", None),
+                )
+                .icon("icons/settings.svg")
+                .on_click(move |_, _, cx| {
+                    navigate(Destination::Settings(SettingsPage::Providers), cx);
+                }),
+            );
+
+        Popover::new("sidebar-provider-switcher", self.popovers.clone())
+            .button(button)
+            .menu(menu)
+            .commands()
+            .into_any_element()
     }
 
     fn persist(&self, cx: &mut Context<Self>) {
