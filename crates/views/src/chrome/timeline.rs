@@ -99,7 +99,7 @@ impl Timeline {
             left: total.saturating_sub(elapsed).as_secs(),
             total: total.as_secs(),
             fill: (at * travel * self.scale).round() as i64,
-            seekable: playback.shown_track(cx).is_some(),
+            seekable: playback.shown_track(cx).is_some() && !total.is_zero(),
             time_left: self.settings.read(cx).player_bar_time_left(),
         }
     }
@@ -131,8 +131,9 @@ impl Render for Timeline {
         let clock_text = theme.text(ui::Text::Tiny);
 
         let playback = self.playback.read(cx);
-        let seekable = playback.shown_track(cx).is_some();
         let (elapsed, total) = playback.shown_time(cx);
+        // A track with no length, such as a radio station, has nowhere to seek to.
+        let seekable = playback.shown_track(cx).is_some() && !total.is_zero();
         let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let time_left = self.settings.read(cx).player_bar_time_left();
         let clock_width = clock_text * clock_ems(total, time_left);

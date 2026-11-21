@@ -60,7 +60,8 @@ pub use models::{
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    SavedArtist, Station, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
+    WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
@@ -75,6 +76,8 @@ pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
 pub const LOCAL_ARTIST_PREFIX: &str = "local-artist:";
 pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
+/// What the track id of an internet radio station starts with, ahead of the station's own id.
+pub const STATION_PREFIX: &str = "station:";
 
 /// The most recommendations a provider hands one list of an album or artist page, so a
 /// rail never asks for or draws more than this many releases or artists.
@@ -88,6 +91,12 @@ pub fn is_local_id(id: &str) -> bool {
         || id.starts_with(LOCAL_ALBUM_PREFIX)
         || id.starts_with(LOCAL_ARTIST_PREFIX)
         || id.starts_with(LOCAL_PLAYLIST_PREFIX)
+}
+
+/// Whether `id` names an internet radio station rather than a song. A station has no length,
+/// no artist and no lyrics to look up.
+pub fn is_station_id(id: &str) -> bool {
+    id.starts_with(STATION_PREFIX)
 }
 
 pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
@@ -469,6 +478,12 @@ pub trait MusicApi: Send + Sync {
     /// the provider allows. Defaults to none, for a provider whose genres come with covers.
     async fn genre_cover(&self, _genre_id: &str) -> Result<Option<String>> {
         Ok(None)
+    }
+
+    /// The internet radio stations the account can tune in to. Only a provider with the
+    /// `stations` capability lists any.
+    async fn stations(&self) -> Result<Vec<Station>> {
+        Ok(Vec::new())
     }
 }
 
@@ -919,6 +934,9 @@ pub struct Capabilities {
     /// `create_smart_playlist` and `update_smart_playlist`. Off, the rule editor stays
     /// hidden rather than saving nowhere.
     pub smart_playlists: bool,
+    /// The provider lists internet radio stations through `stations`, which play as tracks
+    /// whose ids start with [`STATION_PREFIX`].
+    pub stations: bool,
     /// The listener can move tracks within an owned playlist through `reorder_playlist`,
     /// and the provider keeps the new order.
     pub playlist_order: bool,
@@ -950,8 +968,8 @@ pub struct Capabilities {
 impl Capabilities {
     /// What a full streaming service offers. Pins of the provider's own are not among them,
     /// since only Spotify and Apple Music keep any. Converting on request is not either, since
-    /// only Subsonic does it. Playlist covers, order and smart playlists are left for each
-    /// provider to turn on.
+    /// only Subsonic does it. Playlist covers, order, smart playlists and stations are left for
+    /// each provider to turn on.
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
@@ -960,6 +978,7 @@ impl Capabilities {
         transcode: false,
         playlist_covers: false,
         smart_playlists: false,
+        stations: false,
         playlist_order: false,
         keeps: true,
         downloads: true,
@@ -979,6 +998,7 @@ impl Capabilities {
         transcode: false,
         playlist_covers: false,
         smart_playlists: false,
+        stations: false,
         playlist_order: false,
         keeps: false,
         downloads: false,

@@ -74,6 +74,7 @@ impl LocalProvider {
                 transcode: false,
                 playlist_covers: true,
                 smart_playlists: false,
+                stations: false,
                 playlist_order: true,
                 keeps: false,
                 downloads: false,

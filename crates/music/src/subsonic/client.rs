@@ -25,8 +25,8 @@ use crate::subsonic::wire;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
-    Report, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode, UserProfile,
-    distinct_covers, iso_8601_to_epoch,
+    Report, STATION_PREFIX, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Station, Track,
+    Transcode, UserProfile, distinct_covers, is_station_id, iso_8601_to_epoch,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -962,6 +962,9 @@ impl MusicApi for SubsonicClient {
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
+        if let Some(station) = track_id.strip_prefix(STATION_PREFIX) {
+            return Ok(self.station(station).await?.0.track());
+        }
         let song = self
             .client
             .get_song(track_id)
@@ -980,8 +983,12 @@ impl MusicApi for SubsonicClient {
 
     /// Sends the position and state through `reportPlayback`, with scrobbling left to `played`.
     /// A server without the extension only hears that the track is playing, through the
-    /// now-playing form of `scrobble`, since it has nowhere to put a position.
+    /// now-playing form of `scrobble`, since it has nowhere to put a position. A station is no
+    /// song the server could record, so it hears nothing of one.
     async fn report(&self, track_id: &str, report: Report, position: Duration) -> Result<()> {
+        if is_station_id(track_id) {
+            return Ok(());
+        }
         if !self.lists(PLAYBACK_REPORT).await {
             return match report {
                 Report::Playing => self
@@ -1687,6 +1694,23 @@ impl MusicApi for SubsonicClient {
             .into_iter()
             .find_map(|album| self.convert_album(album).cover))
     }
+
+    async fn stations(&self) -> Result<Vec<Station>> {
+        let stations = self
+            .client
+            .get_internet_radio_stations()
+            .await
+            .map_err(bare)
+            .context("cannot load the radio stations")?;
+        Ok(stations
+            .into_iter()
+            .map(|station| Station {
+                id: station.id,
+                name: station.name,
+                homepage: station.home_page_url.filter(|url| !url.trim().is_empty()),
+            })
+            .collect())
+    }
 }
 
 impl SubsonicClient {
@@ -1872,6 +1896,43 @@ impl SubsonicClient {
             .error_for_status()
             .map_err(reqwest::Error::without_url)
             .context("the server refused the stream")
+    }
+
+    /// Opens a station's stream, or the playlist file that points at it, and answers once the
+    /// response headers are in. The address is the broadcaster's own, so it carries no
+    /// credentials for this server.
+    pub async fn open_station(&self, address: &str) -> Result<reqwest::Response> {
+        self.http
+            .get(address)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot reach the radio station")?
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)
+            .context("the radio station refused the stream")
+    }
+
+    /// The station the server lists under `station_id`, with the address its stream plays from.
+    /// Subsonic has no call for one station, so this reads the whole list, which is short.
+    pub async fn station(&self, station_id: &str) -> Result<(Station, String)> {
+        let station = self
+            .client
+            .get_internet_radio_stations()
+            .await
+            .map_err(bare)
+            .context("cannot load the radio stations")?
+            .into_iter()
+            .find(|station| station.id == station_id)
+            .with_context(|| format!("the server lists no radio station {station_id}"))?;
+        Ok((
+            Station {
+                id: station.id,
+                name: station.name,
+                homepage: station.home_page_url,
+            },
+            station.stream_url,
+        ))
     }
 
     /// The lyrics the server holds for a track, by the OpenSubsonic `songLyrics` extension. A

@@ -1217,13 +1217,17 @@ impl Playback {
         }
     }
 
-    /// Plays `seed` now and fills the queue behind it with its radio once that arrives.
+    /// Plays `seed` now and fills the queue behind it with its radio once that arrives. An
+    /// internet radio station seeds no song radio, so it is left alone.
     pub fn play_radio(&mut self, seed: &Track, cx: &mut Context<Self>) {
         let Some(id) = seed.id.clone() else {
             return self.failed(format!("{} has no track id", seed.name), cx);
         };
         if !seed.playable {
             return self.failed(format!("{} is not available to stream", seed.name), cx);
+        }
+        if music::is_station_id(&id) {
+            return;
         }
 
         let origin = Origin::radio(id.clone()).named(seed.name.clone());
@@ -1526,12 +1530,14 @@ impl Playback {
 
     /// Whether the provider that owns `id` can seed a station. Without one there is nothing to
     /// keep a queue going, so the radio paths leave it alone rather than asking and getting
-    /// nothing back.
+    /// nothing back. An internet radio station is no song, so it never seeds one.
     fn stations(&self, id: &str, cx: &Context<Self>) -> bool {
-        self.session
-            .read(cx)
-            .capabilities_of(crate::Shelf::of(id))
-            .radio
+        !music::is_station_id(id)
+            && self
+                .session
+                .read(cx)
+                .capabilities_of(crate::Shelf::of(id))
+                .radio
     }
 
     /// Fetches tracks for the queue on the tokio runtime and places them on arrival, with a
@@ -2240,11 +2246,15 @@ impl Playback {
     }
 
     /// Whether the previous button restarts the track rather than going back: a few seconds
-    /// past its lead-in, or nothing to go back to.
+    /// past its lead-in, or nothing to go back to. A radio station cannot restart, so it always
+    /// goes back when there is somewhere to go.
     fn restarts(&self, cx: &App) -> bool {
-        self.track.is_some()
-            && (self.live_position() > self.restart_at() + RESTART_WINDOW
-                || !self.queue.read(cx).has_previous())
+        let Some(track) = self.track.as_ref() else {
+            return false;
+        };
+        let station = track.id.as_deref().is_some_and(music::is_station_id);
+        !self.queue.read(cx).has_previous()
+            || (!station && self.live_position() > self.restart_at() + RESTART_WINDOW)
     }
 
     /// Where the current track's music starts, past an opening SponsorBlock skips.
@@ -2556,8 +2566,13 @@ impl Playback {
 
     /// Moves to `position`. While playing, the clock parks there until the engine reports
     /// audio from it, and a second seek meanwhile waits for the first to land. A restored track
-    /// not yet held by the engine only moves its resume point.
+    /// not yet held by the engine only moves its resume point. A radio station stays where it
+    /// is, since seeking it would replay what it sent since it was tuned in.
     pub fn seek(&mut self, position: Duration, cx: &mut Context<Self>) {
+        let station = self.track.as_ref().and_then(|track| track.id.as_deref());
+        if station.is_some_and(music::is_station_id) {
+            return;
+        }
         if !self.local {
             self.seeks += 1;
         }

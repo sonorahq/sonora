@@ -374,6 +374,17 @@ impl ItemMenu {
             &queued,
             QueuePlacement::Last,
         );
+        // Internet radio stations are no songs: they can be queued, and nothing else here
+        // applies to them.
+        if tracks
+            .iter()
+            .all(|track| track.id.as_deref().is_some_and(music::is_station_id))
+        {
+            return sections(
+                Menu::new("track-context-menu"),
+                vec![vec![next, queue, last], trailing.into_iter().collect()],
+            );
+        }
         // A provider that lists no station tracks gets no station item at all, rather than one
         // that plays the seed and stops.
         let stations = Sonora::global(cx).session.read(cx).capabilities().radio;
