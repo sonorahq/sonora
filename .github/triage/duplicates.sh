@@ -38,8 +38,9 @@ if [ -z "$dry" ] && jq -e --arg marker "$marker" 'any(.comments[]; .body | conta
 fi
 
 # Titles of the issues filed before this one, open and closed alike, newest first. A newer issue
-# is never the original, which matters when this is run by hand over an old one. Anything older
-# than the scan limit is invisible to this; raise it in config.yml if the repository outgrows it.
+# is never the original, which matters when this is run by hand over an old one. The limit counts
+# the newest issues in the whole repository, so once it holds more than `scan` issues the oldest
+# ones silently drop out. Raise it in config.yml before that happens.
 others="$(gh issue list --repo "$repo" --state all --limit "$scan" \
   --json number,title,state,labels \
   | jq --argjson self "$issue" '[.[] | select(.number < $self)]')"
