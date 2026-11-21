@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Point a new issue at the older ones that already report it. Two passes, because every title in
 # the repository fits in one request and every body does not: the first picks a shortlist off the
-# titles, the second reads those few in full and keeps only the ones it can say why about. The
+# titles, the second reads those few in full and calls each one the same, related or different,
+# and only a clean "same" is posted. The
 # model never talks to GitHub, this script does, and it drops any number that was not on the
 # shortlist, so the worst a bad answer can do is link the wrong existing issue.
 #
@@ -18,27 +19,28 @@ source "$(git rev-parse --show-toplevel)/.github/triage/lib.sh"
 
 marker="<!-- sonora-triage:duplicates -->"
 
-scan="$(yq '.duplicates.scan // 300' "$config")"
+scan="$(yq '.duplicates.scan // 1000' "$config")"
 shortlist="$(yq '.duplicates.shortlist // 6' "$config")"
 report="$(yq '.duplicates.report // 3' "$config")"
 
 issue_json="$(gh issue view "$issue" --repo "$repo" --json number,title,body,labels,comments,state)"
 
-if [ "$(jq -r '.state' <<<"$issue_json")" != "OPEN" ]; then
+if [ -z "$dry" ] && [ "$(jq -r '.state' <<<"$issue_json")" != "OPEN" ]; then
   say "issue $issue is closed, nothing to do"
   exit 0
 fi
 
 # Said once. An edit that arrives before the first pass found anything gets another look, a
-# reopen or a later comment does not.
-if jq -e --arg marker "$marker" 'any(.comments[]; .body | contains($marker))' <<<"$issue_json" >/dev/null; then
+# reopen or a later comment does not. A dry run changes nothing, so it rechecks any issue.
+if [ -z "$dry" ] && jq -e --arg marker "$marker" 'any(.comments[]; .body | contains($marker))' <<<"$issue_json" >/dev/null; then
   say "already pointed at something, nothing to do"
   exit 0
 fi
 
 # Titles of the issues filed before this one, open and closed alike, newest first. A newer issue
-# is never the original, which matters when this is run by hand over an old one. Anything older
-# than the scan limit is invisible to this; raise it in config.yml if the repository outgrows it.
+# is never the original, which matters when this is run by hand over an old one. The limit counts
+# the newest issues in the whole repository, so once it holds more than `scan` issues the oldest
+# ones silently drop out. Raise it in config.yml before that happens.
 others="$(gh issue list --repo "$repo" --state all --limit "$scan" \
   --json number,title,state,labels \
   | jq --argjson self "$issue" '[.[] | select(.number < $self)]')"
@@ -117,14 +119,18 @@ verdict="$(decide "$(compose "$root/.github/triage/duplicates.md" \
 $new
 
 Older issues:
-$older
+$older")")"
 
-Name at most $report.")")"
+say "verdicts: $(jq -c '[(.verdicts // [])[] | {issue, verdict, differs}]' <<<"$verdict")"
 
+# Only a clean "same" is posted. A verdict that names something the new issue has and the older
+# one lacks is a partial match, which the model is told to call "related" but may still call same.
 found="$(jq -c \
   --argjson details "$details" \
   --argjson cap "$report" \
-  '[ (.duplicates // [])[]
+  '[ (.verdicts // [])[]
+     | select(.verdict == "same")
+     | select((.differs // "") | type == "string" and (gsub("\\s"; "") | length == 0))
      | select(.issue | type == "number")
      | select(.why | type == "string" and length > 0)
      | select(.issue as $n | $details | any(.number == $n))
