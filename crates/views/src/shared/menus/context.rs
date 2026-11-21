@@ -146,21 +146,13 @@ impl ItemMenu {
         let remove = match ids.is_empty() {
             true => MenuItem::new(
                 "remove-from-playlist",
-                counted(
-                    "confirm-remove-playlist-title",
-                    "menu-remove-tracks-from-playlist",
-                    count,
-                ),
+                t!("menu-remove-tracks-from-playlist", count = count),
             )
             .icon("icons/x.svg")
             .disabled(),
             false => MenuItem::new(
                 "remove-from-playlist",
-                counted(
-                    "confirm-remove-playlist-title",
-                    "menu-remove-tracks-from-playlist",
-                    count,
-                ),
+                t!("menu-remove-tracks-from-playlist", count = count),
             )
             .icon("icons/x.svg")
             .on_click(move |_, _, cx| {
@@ -182,11 +174,7 @@ impl ItemMenu {
         let held = tracks.to_vec();
         let forget = MenuItem::new(
             "remove-from-history",
-            counted(
-                "confirm-remove-history-title",
-                "menu-remove-tracks-from-history",
-                tracks.len(),
-            ),
+            t!("menu-remove-tracks-from-history", count = tracks.len()),
         )
         .icon("icons/trash-2.svg")
         .on_click(move |_, _, cx| {
@@ -553,15 +541,6 @@ fn queue_item(
             playback.enqueue_tracks(queued.clone(), None, placement, cx);
         });
     })
-}
-
-fn counted(one: &'static str, many: &'static str, count: usize) -> SharedString {
-    if count <= 1 {
-        return i18n::lookup(one, None);
-    }
-    let mut args = i18n::FluentArgs::new();
-    args.set("count", count as i64);
-    i18n::lookup(many, Some(&args))
 }
 
 /// Joins the non-empty groups of a menu with a separator between each.
