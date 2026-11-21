@@ -2,6 +2,7 @@
 //! SCREAMING_SNAKE and the public REST api in snake_case, and neither is a stable contract,
 //! so every read goes through tolerant helpers rather than derived structs.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -275,6 +276,23 @@ pub fn track_list(value: &Value) -> Vec<Track> {
         .and_then(Value::as_array)
         .map(|list| list.iter().filter_map(track).collect())
         .unwrap_or_default()
+}
+
+/// Copies the disc and track numbers of a gateway album listing onto the same tracks by id.
+/// The public album answer leaves both out, so a multi-disc album would otherwise count
+/// straight through. A track the listing does not name keeps what it had.
+pub fn number_tracks(tracks: &mut [Track], listing: &Value) {
+    let positions: HashMap<String, (u32, u32)> = track_list(listing)
+        .into_iter()
+        .filter_map(|listed| Some((listed.id?, (listed.disc_number, listed.track_number))))
+        .collect();
+    for track in tracks {
+        let Some(&(disc, number)) = track.id.as_ref().and_then(|id| positions.get(id)) else {
+            continue;
+        };
+        track.disc_number = disc;
+        track.track_number = number;
+    }
 }
 
 /// One album from either api.
