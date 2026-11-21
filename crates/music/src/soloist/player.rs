@@ -6,6 +6,14 @@
 //! is, and a track it moves on to by itself is stopped and reported as the end of the one that
 //! was asked for. Sonora's queue then says what plays next.
 //!
+//! The daemon's queue is all the account's other devices see of it. So while Sonora plays an
+//! album or playlist in its own order, the track is started inside that collection, and the
+//! other devices list what follows. The daemon takes no starting track with a collection, so
+//! it starts the first one muted and is skipped forward to the wanted one. Tracks the account
+//! queued by hand are skipped through on the way and dropped, since Sonora's queue is the one
+//! that says what plays. When the daemon then goes on to the collection's next track by
+//! itself, and that is the track Sonora names next, the join is kept as with a queued track.
+//!
 //! The one thing borrowed from the daemon's queue is the join between two tracks. With gapless
 //! playback on, the track Sonora says comes next is put on the daemon's queue in the last
 //! seconds of the current one, so the daemon goes from one to the other by itself. When it does,
@@ -79,6 +87,14 @@ const ADOPT_PATIENCE: Duration = Duration::from_secs(2);
 /// How long the daemon gets to acknowledge the command that starts a track before its reports
 /// are trusted without one.
 const ACK_PATIENCE: Duration = Duration::from_secs(3);
+/// The furthest into an album or playlist the daemon is skipped to reach a track. A track
+/// further in is played on its own.
+const MAX_SKIPS: usize = 50;
+/// How many upcoming tracks are asked for once the daemon starts a collection.
+const QUEUE_LIMIT: usize = 100;
+/// How long the daemon gets to reach a track started inside its collection before the track is
+/// played on its own, as when the collection never lists it or the skips went past it.
+const ENTER_PATIENCE: Duration = Duration::from_secs(3);
 /// How many sign-ins in a row Spotify may turn down before the setup is taken to be broken. One
 /// refusal can be a passing fault the next start does not repeat.
 const REFUSALS: u8 = 2;
@@ -123,6 +139,11 @@ impl Engine {
     /// Takes back the track `line_up` named, as when what comes next changed.
     pub(crate) fn line_down(&self) {
         self.ask(Command::Unline);
+    }
+
+    /// Names the album or playlist URI the next `load` starts its track inside.
+    pub(crate) fn within(&self, context: Option<String>) {
+        self.ask(Command::Within(context));
     }
 
     pub(crate) fn set_gain(&self, gain: f32) {
@@ -189,6 +210,7 @@ enum Command {
     Volume(u8),
     Next(String),
     Unline,
+    Within(Option<String>),
 }
 
 /// What a daemon is started with, beyond the key.
@@ -229,6 +251,11 @@ struct Track {
     position: Duration,
     stamp: Instant,
     duration: Option<Duration>,
+    /// The album or playlist it is started inside, when Sonora's queue follows one.
+    context: Option<String>,
+    /// Whether the daemon was told to start that collection and waits for its listing to be
+    /// skipped forward to this track.
+    entering: bool,
 }
 
 impl Track {
@@ -262,6 +289,7 @@ impl Track {
         self.started = false;
         self.playing = false;
         self.seek = None;
+        self.entering = false;
     }
 }
 
@@ -283,6 +311,8 @@ struct Seek {
 #[derive(Default)]
 struct Heard {
     uri: String,
+    /// What it plays from: an album or playlist, or the track itself when it was given one.
+    context: String,
     status: Status,
     position: Duration,
     /// The last track it gave a length for, and that length.
@@ -305,6 +335,22 @@ struct Brain {
     heard: Heard,
     /// The track Sonora says comes next, held until the current one is near its end.
     next: Option<String>,
+    /// The track Sonora says comes next, kept with gapless playback off too, for when the
+    /// daemon goes on to it inside an album or playlist.
+    after: Option<String>,
+    /// The album or playlist the next load starts its track inside.
+    within: Option<String>,
+    /// Everything the daemon plays after the current track, as it last listed it: the account's
+    /// queued tracks first, then the rest of the collection.
+    upcoming: Vec<String>,
+    /// The track the daemon was on when it sent `upcoming`. A track change it reports before
+    /// the next listing leaves `upcoming` describing the track before.
+    listed: String,
+    /// The track the daemon played before the one it was on when it sent `upcoming`, which
+    /// comes first in its list of previous tracks.
+    behind: Option<String>,
+    /// Skips sent that the daemon has not taken yet.
+    skipping: usize,
     /// The track put on the daemon's queue to follow the current one.
     fed: Option<String>,
     /// Whether Sonora took back the track on the daemon's queue. It cannot be taken off, so it is
@@ -337,6 +383,12 @@ impl Brain {
             track: None,
             heard: Heard::default(),
             next: None,
+            after: None,
+            within: None,
+            upcoming: Vec::new(),
+            listed: String::new(),
+            behind: None,
+            skipping: 0,
             fed: None,
             recalled: false,
             queue: Vec::new(),
@@ -380,8 +432,9 @@ impl Brain {
                 }
             }
             Command::Next(id) => {
+                let uri = format!("{TRACK_PREFIX}{id}");
+                self.after = Some(uri.clone());
                 if self.setup.gapless {
-                    let uri = format!("{TRACK_PREFIX}{id}");
                     // the track already on the daemon's queue is the one wanted after all
                     if self.fed.as_ref() == Some(&uri) {
                         self.recalled = false;
@@ -392,8 +445,10 @@ impl Brain {
             }
             Command::Unline => {
                 self.next = None;
+                self.after = None;
                 self.recalled = self.fed.is_some();
             }
+            Command::Within(context) => self.within = context,
         }
     }
 
@@ -413,7 +468,9 @@ impl Brain {
             .as_ref()
             .filter(|(known, _)| *known == uri)
             .map(|(_, duration)| *duration);
+        let context = self.within.take();
         self.next = None;
+        self.after = None;
         self.recalled = false;
         self.unmute();
         self.report(PlaybackEvent::Loading {
@@ -444,6 +501,8 @@ impl Brain {
             position,
             stamp: Instant::now(),
             duration,
+            context,
+            entering: false,
         });
         if joined {
             if duration.is_none() {
@@ -486,6 +545,9 @@ impl Brain {
         // A track Sonora queued and no longer wants next is still on the daemon's queue, where
         // it would play after this one. Moving on to it is the only way to take it off.
         let stale = self.fed.take().filter(|fed| self.queue.contains(fed));
+        if let Some(context) = self.track.as_ref().and_then(|track| track.context.clone()) {
+            return self.enter(context, opening);
+        }
         let wanted = stale.as_ref() == Some(&uri);
         if let Some(track) = self.track.as_mut() {
             track.asked = Instant::now();
@@ -499,11 +561,89 @@ impl Brain {
         }
         self.send("activate", json!({}));
         if stale.is_some() {
-            self.send("skip_next", json!({}));
+            self.skip(1);
         }
         if !wanted {
             self.send("play", json!({ "uri": uri }));
         }
+    }
+
+    /// Starts the wanted track inside its album or playlist. Inside that collection already,
+    /// the daemon is skipped straight to it. Otherwise the collection is started and `arrive`
+    /// skips forward once the daemon lists it. Tracks the account queued by hand come first in
+    /// the daemon's list, so the skips play through them and they are gone afterwards.
+    fn enter(&mut self, context: String, opening: bool) {
+        let Some(track) = self.track.as_mut() else {
+            return;
+        };
+        // the listing only counts for the track the daemon was on when it was taken
+        let current =
+            self.heard.context == context && self.skipping == 0 && self.listed == self.heard.uri;
+        let skips = match current {
+            true => self.upcoming.iter().position(|uri| *uri == track.uri),
+            false => None,
+        }
+        .filter(|at| *at < MAX_SKIPS);
+        track.asked = Instant::now();
+        track.starter = match skips {
+            Some(_) => "skip_next",
+            None => "play",
+        };
+        track.entering = skips.is_none();
+        if opening || skips != Some(0) {
+            self.mute();
+        }
+        self.send("activate", json!({}));
+        match skips {
+            Some(at) => {
+                log::debug!("soloist: skipping {} ahead in the collection", at + 1);
+                self.skip(at + 1);
+            }
+            None => {
+                log::debug!("soloist: starting the track's collection");
+                self.send("play", json!({ "uri": context }));
+            }
+        }
+    }
+
+    /// Skips a collection the daemon just started forward to the wanted track, once it lists
+    /// it among what follows. A listing without it is waited past, since the first track of
+    /// the collection is the one playing and can be named after the listing. `tick` plays the
+    /// track on its own when no listing holds it in time.
+    fn arrive(&mut self) {
+        let Some(track) = self.track.as_mut() else {
+            return;
+        };
+        let listed = track.entering
+            && track.accepted
+            && track.context.as_deref() == Some(self.heard.context.as_str());
+        if !listed {
+            return;
+        }
+        if track.started || self.heard.uri == track.uri {
+            track.entering = false;
+            return;
+        }
+        let Some(at) = self
+            .upcoming
+            .iter()
+            .position(|listed| *listed == track.uri)
+            .filter(|at| *at < MAX_SKIPS)
+        else {
+            return;
+        };
+        track.entering = false;
+        log::debug!("soloist: skipping {} ahead in the collection", at + 1);
+        self.skip(at + 1);
+    }
+
+    /// Sends `times` skips, counted until the daemon takes each, since its listing of what
+    /// follows is only current once none is left.
+    fn skip(&mut self, times: usize) {
+        for _ in 0..times {
+            self.send("skip_next", json!({}));
+        }
+        self.skipping += times;
     }
 
     /// Puts the track that comes next on the daemon's queue once the current one is in its
@@ -524,6 +664,13 @@ impl Brain {
         let Some(next) = self.next.take() else {
             return;
         };
+        let flows = track.context.as_deref() == Some(self.heard.context.as_str())
+            && self.upcoming.first() == Some(&next);
+        if flows {
+            log::debug!("soloist: the collection goes on to the next track by itself");
+            self.fed = Some(next);
+            return;
+        }
         log::debug!("soloist: queueing the next track on the daemon");
         self.send("add_to_queue", json!({ "uri": next }));
         self.send("get_queue", json!({}));
@@ -601,7 +748,26 @@ impl Brain {
         if track.sent && !track.accepted && now.duration_since(track.asked) > ACK_PATIENCE {
             log::debug!("soloist: the daemon acknowledged no start, going by its reports");
             track.accepted = true;
+            let entering = track.entering;
             self.send("get_state", json!({}));
+            if entering {
+                self.send("get_queue", json!({ "limit": QUEUE_LIMIT }));
+            }
+            return;
+        }
+        // a collection that never lists the track, or skips that went past it, leave it unstarted
+        // and muted, so it is played on its own
+        let lost = track.context.is_some()
+            && track.accepted
+            && !track.started
+            && self.heard.uri != track.uri
+            && now.duration_since(track.asked) > ENTER_PATIENCE;
+        if lost {
+            log::debug!("soloist: the collection did not reach the track, playing it alone");
+            track.entering = false;
+            track.context = None;
+            let uri = track.uri.clone();
+            self.send("play", json!({ "uri": uri }));
             return;
         }
         if let Some(seek) = track.seek.as_mut() {
@@ -664,13 +830,28 @@ impl Brain {
                 self.heard.position = position.at();
                 self.follow_position();
             }
-            Event::QueueChanged { upcoming } => {
-                self.queue = upcoming
-                    .into_iter()
-                    .filter(|entry| entry.queued())
-                    .filter_map(|entry| entry.item)
-                    .map(|item| item.uri)
-                    .collect();
+            Event::ContextChanged { context } => {
+                if let Some(context) = context.filter(|context| !context.uri.is_empty()) {
+                    self.heard.context = context.uri;
+                }
+            }
+            Event::QueueChanged { previous, upcoming } => {
+                let uris = |keep: fn(&wire::Queued) -> bool| {
+                    upcoming
+                        .iter()
+                        .filter(|entry| keep(entry))
+                        .filter_map(|entry| entry.item.as_ref())
+                        .map(|item| item.uri.clone())
+                        .collect()
+                };
+                self.queue = uris(wire::Queued::queued);
+                self.upcoming = uris(|_| true);
+                self.listed = self.heard.uri.clone();
+                self.behind = previous
+                    .iter()
+                    .find_map(|entry| entry.item.as_ref())
+                    .map(|item| item.uri.clone());
+                self.arrive();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
             Event::OptionsChanged { options } => {
@@ -680,10 +861,18 @@ impl Brain {
             }
             Event::DeviceChanged { is_active } => {
                 if !is_active {
+                    // what the daemon plays from next is whatever the other device leaves
+                    self.heard.context.clear();
+                    self.upcoming.clear();
                     self.taken();
                 }
             }
-            Event::CommandResult { command } => self.acknowledged(&command),
+            Event::CommandResult { command } => {
+                if command == "skip_next" {
+                    self.skipping = self.skipping.saturating_sub(1);
+                }
+                self.acknowledged(&command);
+            }
             Event::Error { message } => {
                 // a seek is turned down while the track loads, and is simply sent again
                 let seeking = self
@@ -715,10 +904,14 @@ impl Brain {
             return;
         }
         track.accepted = true;
+        let entering = track.entering;
         // the report that named the track may have come ahead of the acknowledgement
         self.heard.status = Status::Unknown;
         self.heard.position = Duration::ZERO;
         self.send("get_state", json!({}));
+        if entering {
+            self.send("get_queue", json!({ "limit": QUEUE_LIMIT }));
+        }
     }
 
     /// Takes in a playback report and acts on what changed.
@@ -726,6 +919,9 @@ impl Brain {
         if let Some(item) = playback.item.filter(|item| !item.uri.is_empty()) {
             self.learn_length(&item);
             self.heard.uri = item.uri;
+        }
+        if let Some(context) = playback.context.filter(|context| !context.uri.is_empty()) {
+            self.heard.context = context.uri;
         }
         if let Some(status) = playback.status {
             self.heard.status = status;
@@ -828,9 +1024,21 @@ impl Brain {
             return;
         }
         if !same {
-            return match self.fed.as_ref() == Some(&self.heard.uri) && !self.recalled {
-                true => self.hand_over(),
-                false => {
+            let queued = self.fed.as_ref() == Some(&self.heard.uri) && !self.recalled;
+            // Inside the collection the daemon went on to its next track, by itself or because
+            // one of Spotify's apps skipped there. Sonora names its next track only near the end,
+            // so the listing taken for the wanted track says it too. The load that answers the
+            // end joins the track when it is Sonora's next as well.
+            let inside = track.context.as_deref() == Some(self.heard.context.as_str());
+            let listed = self.listed == track.uri;
+            let natural = listed && self.upcoming.first() == Some(&self.heard.uri);
+            let followed = inside && (self.after.as_ref() == Some(&self.heard.uri) || natural);
+            // one of Spotify's apps went back a track inside the collection
+            let back = inside && listed && self.behind.as_ref() == Some(&self.heard.uri);
+            return match (queued || followed, back) {
+                (true, _) => self.hand_over(),
+                (false, true) => self.step_back(),
+                (false, false) => {
                     // past the one track it was given the daemon went on by itself
                     log::debug!("soloist: the daemon moved on to another track");
                     self.finish()
@@ -910,15 +1118,30 @@ impl Brain {
         }
     }
 
-    /// Ends the wanted track as the daemon goes on to the one queued behind it. That one keeps
+    /// Ends the wanted track as the daemon goes on to the one Sonora plays next. That one keeps
     /// playing, since the load Sonora answers the end with is for it.
     fn hand_over(&mut self) {
-        let (Some(track), Some(next)) = (self.track.take(), self.fed.take()) else {
+        let Some(track) = self.track.take() else {
             return;
         };
-        log::debug!("soloist: the daemon went on to the queued track");
-        self.adopted = Some((next, Instant::now()));
+        log::debug!("soloist: the daemon went on to the next track");
+        self.fed = None;
+        self.after = None;
+        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
+    }
+
+    /// Leaves the wanted track for the one before it, which the daemon went back to and keeps
+    /// playing, since the queue steps back and asks for that track.
+    fn step_back(&mut self) {
+        let Some(track) = self.track.take() else {
+            return;
+        };
+        log::debug!("soloist: the daemon went back to the track before");
+        self.next = None;
+        self.after = None;
+        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+        self.report(PlaybackEvent::SteppedBack { id: Some(track.id) });
     }
 
     /// Ends the wanted track and stops whatever the daemon went on to.
@@ -979,10 +1202,16 @@ impl Brain {
         self.signed_in = false;
         self.muted = false;
         self.next = None;
+        self.after = None;
         self.fed = None;
         self.recalled = false;
         self.adopted = None;
         self.queue.clear();
+        self.upcoming.clear();
+        self.skipping = 0;
+        self.listed.clear();
+        self.behind = None;
+        self.heard.context.clear();
         match end {
             End::Closed => {}
             End::Expired if !self.refreshed => {

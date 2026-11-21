@@ -720,6 +720,11 @@ pub enum PlaybackEvent {
     Ended {
         id: Option<String>,
     },
+    /// The engine went back from `id` to the track before it, as another app of the service
+    /// asked. That track already plays, and the queue steps back to it.
+    SteppedBack {
+        id: Option<String>,
+    },
     Unavailable {
         id: Option<String>,
     },
@@ -758,6 +763,7 @@ impl PlaybackEvent {
             | Self::Length { id, .. }
             | Self::Downloaded { id }
             | Self::Ended { id, .. }
+            | Self::SteppedBack { id }
             | Self::Unavailable { id, .. }
             | Self::Throttled { id } => id.as_deref(),
             Self::Signal { id, .. } => Some(id),
@@ -783,6 +789,11 @@ pub trait Player: Send + Sync {
     /// Takes back what `preload` lined up behind the current track, as when a change of repeat
     /// altered what follows it. An engine that cannot is left as it is.
     fn unline(&self) {}
+
+    /// Names the collection the next `load` or `load_paused_at` plays inside, given only while
+    /// the queue follows that collection's own order. An engine whose service shows its queue
+    /// to the account's other devices plays the track there so they see what comes next.
+    fn within(&self, _collection: Option<&connect::Collection>) {}
     fn play(&self);
     fn pause(&self);
 

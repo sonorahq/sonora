@@ -25,7 +25,14 @@ pub(super) enum Event {
     PositionSync {
         position: Position,
     },
+    /// What the daemon plays from now on, which `play` with an album or playlist sets.
+    ContextChanged {
+        #[serde(default)]
+        context: Option<Context>,
+    },
     QueueChanged {
+        #[serde(default)]
+        previous: Vec<Queued>,
         #[serde(default)]
         upcoming: Vec<Queued>,
     },
@@ -59,6 +66,8 @@ pub(super) struct Playback {
     pub status: Option<Status>,
     #[serde(default)]
     pub item: Option<Entity>,
+    #[serde(default)]
+    pub context: Option<Context>,
     #[serde(default)]
     pub position: Option<Position>,
     #[serde(default)]
@@ -96,6 +105,13 @@ impl Entity {
             .filter(|millis| *millis > 0)
             .map(Duration::from_millis)
     }
+}
+
+/// The album, playlist or lone track the program plays from, of which only the URI is read.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct Context {
+    #[serde(default)]
+    pub uri: String,
 }
 
 /// One entry of what the daemon plays after the current track.
