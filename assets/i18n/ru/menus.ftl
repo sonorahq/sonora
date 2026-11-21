@@ -83,39 +83,6 @@ playlist-again-add = Добавить ещё раз
 # confirm
 
 # confirm
-confirm-remove-library-title = Убрать из медиатеки
-confirm-remove-playlist-title = Удалить из плейлиста
-confirm-remove-history-title = Удалить из истории
-confirm-remove-songs = { $count ->
-    [one] Убрать этот трек из медиатеки?
-    [few] Убрать { $count } трека из медиатеки?
-   *[other] Убрать { $count } треков из медиатеки?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Удалить этот трек из плейлиста?
-    [few] Удалить { $count } трека из плейлиста?
-   *[other] Удалить { $count } треков из плейлиста?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Удалить этот трек из истории прослушиваний?
-    [few] Удалить { $count } трека из истории прослушиваний?
-   *[other] Удалить { $count } треков из истории прослушиваний?
-}
-confirm-remove-albums = { $count ->
-    [one] Убрать этот альбом из медиатеки?
-    [few] Убрать { $count } альбома из медиатеки?
-   *[other] Убрать { $count } альбомов из медиатеки?
-}
-confirm-remove-artists = { $count ->
-    [one] Убрать этого исполнителя из избранного?
-    [few] Убрать { $count } исполнителей из избранного?
-   *[other] Убрать { $count } исполнителей из избранного?
-}
-confirm-remove-playlists = { $count ->
-    [one] Убрать этот плейлист из медиатеки?
-    [few] Убрать { $count } плейлиста из медиатеки?
-   *[other] Убрать { $count } плейлистов из медиатеки?
-}
 confirm-delete-track-files-title = Удалить файлы треков?
 confirm-delete-track-files = Файлы будут безвозвратно удалены с диска. Это действие нельзя отменить.
 confirm-uninstall-widevine-title = Удалить модуль Widevine?

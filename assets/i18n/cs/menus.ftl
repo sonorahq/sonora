@@ -77,39 +77,6 @@ playlist-again-add = Přidat znovu
 # confirm
 
 # confirm
-confirm-remove-library-title = Odebrat z knihovny
-confirm-remove-playlist-title = Odebrat z playlistu
-confirm-remove-history-title = Odebrat z historie
-confirm-remove-songs = { $count ->
-    [one] Odebrat tuto skladbu z tvé knihovny?
-    [few] Odebrat { $count } skladby z tvé knihovny?
-   *[other] Odebrat { $count } skladeb z tvé knihovny?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Odebrat tuto skladbu z playlistu?
-    [few] Odebrat { $count } skladby z playlistu?
-   *[other] Odebrat { $count } skladeb z playlistu?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Odebrat tuto skladbu z historie poslouchání?
-    [few] Odebrat { $count } skladby z historie poslouchání?
-   *[other] Odebrat { $count } skladeb z historie poslouchání?
-}
-confirm-remove-albums = { $count ->
-    [one] Odebrat toto album z tvé knihovny?
-    [few] Odebrat { $count } alba z tvé knihovny?
-   *[other] Odebrat { $count } alb z tvé knihovny?
-}
-confirm-remove-artists = { $count ->
-    [one] Odebrat tohoto interpreta z oblíbených?
-    [few] Odebrat { $count } interprety z oblíbených?
-   *[other] Odebrat { $count } interpretů z oblíbených?
-}
-confirm-remove-playlists = { $count ->
-    [one] Odebrat tento playlist z tvé knihovny?
-    [few] Odebrat { $count } playlisty z tvé knihovny?
-   *[other] Odebrat { $count } playlistů z tvé knihovny?
-}
 confirm-delete-track-files-title = Smazat soubory skladeb?
 confirm-delete-track-files = Soubory budou trvale smazány z disku. Tuto akci nelze vzít zpět.
 confirm-uninstall-widevine-title = Odinstalovat modul Widevine?

@@ -14,7 +14,7 @@ use crate::shared::blend::Joined;
 use crate::shared::cells;
 use i18n::t;
 use music::{SavedArtist, Track};
-use state::{AppSettings, ArtistDetail, Origin, Playback, Sonora};
+use state::{AppSettings, ArtistDetail, Origin, Playback, Shelf, Sonora};
 use ui::ActiveTheme as _;
 use ui::Listing as _;
 use ui::{
@@ -28,7 +28,6 @@ use crate::chrome::{Toolbar, Tooled};
 use crate::shared::about::{AboutArtist, about_modal};
 use crate::shared::album_grid::CardGrid;
 use crate::shared::cards::{self, ReleaseFilter};
-use crate::shared::confirm::Confirm;
 use crate::shared::cover_viewer::CoverViewer;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::menus::{ItemMenu, artist_menu};
@@ -582,12 +581,13 @@ impl ArtistView {
                 false => heart,
             }
             .on_click(move |_, _, cx| {
-                match saved && !Confirm::unstarring(&target.id, cx) {
-                    true => Confirm::artists(vec![target.clone()], cx),
-                    false => {
-                        library.update(cx, |library, cx| library.heart_artist(target.clone(), cx));
+                // Over a catalog the heart only unstars, so it is the way back and needs no toast.
+                library.update(cx, |library, cx| {
+                    match saved && !library.shape(Shelf::of(&target.id)).is_catalog() {
+                        true => library.toggle_artist(target.clone(), cx),
+                        false => library.heart_artist(target.clone(), cx),
                     }
-                }
+                });
             }),
         )
     }

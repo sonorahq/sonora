@@ -117,39 +117,6 @@ cover-zoom-out = Uzaklaştır
 cover-zoom-fit = Pencereye sığdır
 
 # confirm
-confirm-remove-library-title = Kitaplıktan çıkar
-confirm-remove-playlist-title = Çalma listesinden çıkar
-confirm-remove-history-title = Geçmişten kaldır
-confirm-remove-songs =
-    { $count ->
-        [one] Bu şarkı kitaplığından çıkarılsın mı?
-       *[other] { $count } şarkı kitaplığından çıkarılsın mı?
-    }
-confirm-remove-playlist-songs =
-    { $count ->
-        [one] Bu şarkı çalma listesinden çıkarılsın mı?
-       *[other] { $count } şarkı çalma listesinden çıkarılsın mı?
-    }
-confirm-remove-history-songs =
-    { $count ->
-        [one] Bu şarkı dinleme geçmişinden kaldırılsın mı?
-       *[other] { $count } şarkı dinleme geçmişinden kaldırılsın mı?
-    }
-confirm-remove-albums =
-    { $count ->
-        [one] Bu albüm kitaplığından çıkarılsın mı?
-       *[other] { $count } albüm kitaplığından çıkarılsın mı?
-    }
-confirm-remove-artists =
-    { $count ->
-        [one] Bu sanatçı favorilerden çıkarılsın mı?
-       *[other] { $count } sanatçı favorilerden çıkarılsın mı?
-    }
-confirm-remove-playlists =
-    { $count ->
-        [one] Bu çalma listesi kitaplığından çıkarılsın mı?
-       *[other] { $count } çalma listesi kitaplığından çıkarılsın mı?
-    }
 confirm-delete-track-files-title = Parça dosyaları silinsin mi?
 confirm-delete-track-files = Dosyalar diskten kalıcı olarak silinir. Bu işlem geri alınamaz.
 confirm-uninstall-widevine-title = Widevine modülü kaldırılsın mı?

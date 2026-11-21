@@ -663,11 +663,12 @@ impl<O: Clone + PartialEq> Order<O> {
         self.upcoming.iter().map(|entry| entry.track.as_ref())
     }
 
-    /// How many songs are left to play before the recommendations.
+    /// How many playable songs are left before the recommendations. Songs that cannot play are
+    /// skipped on the way, so a queue whose rest is all unavailable has nothing ahead.
     pub fn ahead(&self) -> usize {
         self.upcoming
             .iter()
-            .filter(|entry| entry.kind != QueueKind::Suggested)
+            .filter(|entry| entry.kind != QueueKind::Suggested && entry.track.playable)
             .count()
     }
 

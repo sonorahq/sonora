@@ -71,33 +71,6 @@ playlist-again-add = Ajouter quand même
 # confirm
 
 # confirm
-confirm-remove-library-title = Retirer de la bibliothèque
-confirm-remove-playlist-title = Retirer de la playlist
-confirm-remove-history-title = Retirer de l'historique
-confirm-remove-songs = { $count ->
-    [one] Retirer ce titre de votre bibliothèque ?
-   *[other] Retirer { $count } titres de votre bibliothèque ?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Retirer ce titre de la playlist ?
-   *[other] Retirer { $count } titres de la playlist ?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Retirer ce titre de l'historique d'écoute ?
-   *[other] Retirer { $count } titres de l'historique d'écoute ?
-}
-confirm-remove-albums = { $count ->
-    [one] Retirer cet album de votre bibliothèque ?
-   *[other] Retirer { $count } albums de votre bibliothèque ?
-}
-confirm-remove-artists = { $count ->
-    [one] Retirer cet artiste des favoris ?
-   *[other] Retirer { $count } artistes des favoris ?
-}
-confirm-remove-playlists = { $count ->
-    [one] Retirer cette playlist de votre bibliothèque ?
-   *[other] Retirer { $count } playlists de votre bibliothèque ?
-}
 confirm-delete-track-files-title = Supprimer les fichiers des titres ?
 confirm-delete-track-files = Le ou les fichiers seront définitivement supprimés du disque. Cette action est irréversible.
 confirm-uninstall-widevine-title = Désinstaller le module Widevine ?

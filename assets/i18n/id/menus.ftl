@@ -122,33 +122,6 @@ cover-zoom-out = Perkecil
 cover-zoom-fit = Sesuaikan dengan jendela
 
 # confirm
-confirm-remove-library-title = Hapus dari koleksi
-confirm-remove-playlist-title = Hapus dari playlist
-confirm-remove-history-title = Hapus dari riwayat
-confirm-remove-songs = { $count ->
-    [one] Hapus lagu ini dari koleksi Anda?
-   *[other] Hapus { $count } lagu dari koleksi Anda?
-}
-confirm-remove-playlist-songs = { $count ->
-    [one] Hapus lagu ini dari playlist?
-   *[other] Hapus { $count } lagu dari playlist?
-}
-confirm-remove-history-songs = { $count ->
-    [one] Hapus lagu ini dari riwayat pemutaran?
-   *[other] Hapus { $count } lagu dari riwayat pemutaran?
-}
-confirm-remove-albums = { $count ->
-    [one] Hapus album ini dari koleksi Anda?
-   *[other] Hapus { $count } album dari koleksi Anda?
-}
-confirm-remove-artists = { $count ->
-    [one] Hapus artis ini dari Favorit?
-   *[other] Hapus { $count } artis dari Favorit?
-}
-confirm-remove-playlists = { $count ->
-    [one] Hapus playlist ini dari koleksi Anda?
-   *[other] Hapus { $count } playlist dari koleksi Anda?
-}
 confirm-delete-track-files-title = Hapus file lagu?
 confirm-delete-track-files = File akan dihapus permanen dari disk. Tindakan ini tidak dapat dibatalkan.
 confirm-uninstall-widevine-title = Copot modul Widevine?
