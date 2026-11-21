@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Point a new issue at the older ones that already report it. Two passes, because every title in
 # the repository fits in one request and every body does not: the first picks a shortlist off the
-# titles, the second reads those few in full and keeps only the ones it can say why about. The
+# titles, the second reads those few in full and calls each one the same, related or different,
+# and only a clean "same" is posted. The
 # model never talks to GitHub, this script does, and it drops any number that was not on the
 # shortlist, so the worst a bad answer can do is link the wrong existing issue.
 #
@@ -117,14 +118,18 @@ verdict="$(decide "$(compose "$root/.github/triage/duplicates.md" \
 $new
 
 Older issues:
-$older
+$older")")"
 
-Name at most $report.")")"
+say "verdicts: $(jq -c '[(.verdicts // [])[] | {issue, verdict, differs}]' <<<"$verdict")"
 
+# Only a clean "same" is posted. A verdict that names something the new issue has and the older
+# one lacks is a partial match, which the model is told to call "related" but may still call same.
 found="$(jq -c \
   --argjson details "$details" \
   --argjson cap "$report" \
-  '[ (.duplicates // [])[]
+  '[ (.verdicts // [])[]
+     | select(.verdict == "same")
+     | select((.differs // "") | type == "string" and (gsub("\\s"; "") | length == 0))
      | select(.issue | type == "number")
      | select(.why | type == "string" and length > 0)
      | select(.issue as $n | $details | any(.number == $n))
