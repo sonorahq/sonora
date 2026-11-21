@@ -465,6 +465,7 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         music::lyrics::LOCAL => "common-local-files",
         "Subsonic" => "settings-lyrics-provider-subsonic",
         "Jellyfin" => "settings-lyrics-provider-jellyfin",
+        "Plex" => "settings-lyrics-provider-plex",
         "Spotify" => "settings-lyrics-provider-spotify",
         "YouTube Music" => "settings-lyrics-provider-youtube",
         "Apple Music" => "settings-lyrics-provider-apple-music",

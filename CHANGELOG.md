@@ -60,6 +60,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Plex is a new provider. Sign in with your Plex account, pick a server and music library if you
+  have more than one, and play, search, rate, make playlists and read lyrics from your own Plex
+  Media Server.
 - Create Navidrome smart playlists and edit their rules from the playlists menu.
 - The quick search marks its first result as the one Enter acts on. Press Up off it, or Enter before results arrive, to open the search page for what you typed.
 - On Windows, the taskbar hover preview and Alt+Tab show the song and artist that are playing.
@@ -270,7 +273,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.48.0] - 2026-11-07
 
 ### Added
-
 - Drag the playing song from the player bar onto a playlist, Pinned or the queue.
 - Play directly to hardware on macOS. Every output device is listed a second time under Direct
   to hardware, and picking one there keeps every other app off it.

@@ -26,6 +26,7 @@ pub mod musixmatch;
 pub mod netease;
 pub mod order;
 pub mod output;
+pub mod plex;
 pub mod potoken;
 pub mod progress;
 mod redact;
@@ -945,6 +946,9 @@ pub struct Capabilities {
     /// The same, for the songs of a playlist the listener owns. Anyone else's playlist keeps
     /// the order its curator gave it.
     pub playlist_arrival: Option<Arrival>,
+    /// A playlist can be made public or private. A service whose playlists have no such setting
+    /// leaves this off, and the menu item that changes it is never shown.
+    pub playlist_visibility: bool,
 }
 
 impl Capabilities {
@@ -968,6 +972,7 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: true,
     };
 
     /// Nothing beyond listing and playing.
@@ -987,6 +992,7 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: false,
     };
 }
 
@@ -1080,6 +1086,10 @@ pub enum AccountKind {
     Session,
     /// Profiles inside one account, such as the members of a family plan.
     Profile,
+    /// Servers one account can use.
+    Server,
+    /// Libraries one server has.
+    Library,
 }
 
 /// The accounts a sign-in asks the user to pick from.
@@ -1092,8 +1102,14 @@ pub struct AccountChoices {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
     Accounts(AccountChoices),
-    Code { code: String, url: String },
+    Code {
+        code: String,
+        url: String,
+    },
     Url(String),
+    /// A page the provider's sign-in finishes on, which the app shows in a browser window. The
+    /// provider notices the end of the sign-in itself, so nothing is handed back.
+    Window(String),
     Secret,
 }
 

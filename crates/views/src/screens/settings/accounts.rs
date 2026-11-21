@@ -592,7 +592,9 @@ impl SettingsView {
         let signed_out = matches!(session.state(), SessionState::SignedOut);
         let guest = !session.authenticated();
         let waiting = match session.state() {
-            SessionState::Authorizing(prompt) => !matches!(prompt, Some(SignInPrompt::Accounts(_))),
+            SessionState::Authorizing(prompt) => {
+                !matches!(prompt, Some(SignInPrompt::Accounts(..)))
+            }
             _ => false,
         };
         let loading = session.is_pending();
