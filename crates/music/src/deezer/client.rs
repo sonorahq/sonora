@@ -144,6 +144,9 @@ const PACE: Duration = Duration::from_millis(110);
 const RETRIES: u32 = 3;
 const BACKOFF: Duration = Duration::from_secs(1);
 
+/// How long an album waits for the gateway's disc numbers before it opens without them.
+const NUMBERING_WAIT: Duration = Duration::from_secs(5);
+
 /// The public api's error codes for a call that goes through once asked again later.
 const QUOTA_ERROR: u64 = 4;
 const SERVICE_BUSY: u64 = 700;
@@ -1410,14 +1413,31 @@ impl MusicApi for DeezerClient {
     }
 
     async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
-        let detail = self
-            .public(&format!("/album/{}", escape::component(album_id)))
-            .await
-            .with_context(|| format!("cannot load the album {album_id}"))?;
-        let tracks = detail
+        let path = format!("/album/{}", escape::component(album_id));
+        let (detail, listing) = tokio::join!(
+            self.public(&path),
+            tokio::time::timeout(
+                NUMBERING_WAIT,
+                self.gw(
+                    "song.getListByAlbum",
+                    json!({ "ALB_ID": album_id, "NB": RELEASE_SONGS }),
+                ),
+            ),
+        );
+        let detail = detail.with_context(|| format!("cannot load the album {album_id}"))?;
+        let mut tracks = detail
             .get("tracks")
             .map(wire::track_list)
             .unwrap_or_default();
+        match listing {
+            Ok(Ok(listing)) => wire::number_tracks(&mut tracks, &listing),
+            Ok(Err(error)) => {
+                log::warn!("deezer: cannot read the disc numbers of album {album_id}: {error:#}")
+            }
+            Err(_) => {
+                log::warn!("deezer: the disc numbers of album {album_id} took too long")
+            }
+        }
         let album =
             wire::album(&detail).with_context(|| format!("cannot read the album {album_id}"))?;
         Ok(AlbumDetail { album, tracks })
