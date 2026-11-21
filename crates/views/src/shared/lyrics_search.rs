@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Global, Render, SharedString, Window, div,
 };
 use i18n::t;
-use music::LyricsHit;
+use music::{LyricsHit, Track};
 use state::{Lyrics, SearchState, Sonora};
 use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, Modal, Submit, Text};
 
@@ -27,6 +27,9 @@ pub(crate) struct LyricsSearch {
     row_focus: Vec<FocusHandle>,
     focus: FocusHandle,
     restore: Option<FocusHandle>,
+    track: Option<Track>,
+    last_title: String,
+    last_artist: String,
 }
 
 struct Installed(Entity<LyricsSearch>);
@@ -38,16 +41,58 @@ impl LyricsSearch {
         if cx.try_global::<Installed>().is_none() {
             let dialog = cx.new(|cx| {
                 let lyrics = Sonora::global(cx).lyrics.clone();
+                let playback = Sonora::global(cx).playback.clone();
+                let title = cx.new(|cx| Input::new("lyrics-search-hint-title", cx));
+                let artist = cx.new(|cx| Input::new("lyrics-search-hint-artist", cx));
+
                 cx.observe(&lyrics, |_, _, cx| cx.notify()).detach();
+
+                cx.observe(&playback, |this: &mut LyricsSearch, playback, cx| {
+                    let shown = playback.read(cx).shown_track(cx);
+                    if should_reset_on_track_change(this.open, shown.as_ref(), this.track.as_ref())
+                    {
+                        this.reset_for_track(shown, cx);
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                cx.observe(&title, |this: &mut LyricsSearch, input, cx| {
+                    let text = input.read(cx).text();
+                    if should_invalidate_on_edit(this.open, text, &this.last_title) {
+                        this.last_title = text.to_owned();
+                        this.previewed = None;
+                        this.lyrics
+                            .update(cx, |lyrics, cx| lyrics.cancel_search(cx));
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                cx.observe(&artist, |this: &mut LyricsSearch, input, cx| {
+                    let text = input.read(cx).text();
+                    if should_invalidate_on_edit(this.open, text, &this.last_artist) {
+                        this.last_artist = text.to_owned();
+                        this.previewed = None;
+                        this.lyrics
+                            .update(cx, |lyrics, cx| lyrics.cancel_search(cx));
+                        cx.notify();
+                    }
+                })
+                .detach();
+
                 Self {
                     open: false,
                     lyrics,
-                    title: cx.new(|cx| Input::new("lyrics-search-hint-title", cx)),
-                    artist: cx.new(|cx| Input::new("lyrics-search-hint-artist", cx)),
+                    title,
+                    artist,
                     previewed: None,
                     row_focus: Vec::new(),
                     focus: cx.focus_handle(),
                     restore: None,
+                    track: None,
+                    last_title: String::new(),
+                    last_artist: String::new(),
                 }
             });
             cx.set_global(Installed(dialog));
@@ -62,19 +107,36 @@ impl LyricsSearch {
                 return;
             };
             this.restore = window.focused(cx);
-            this.previewed = None;
-            this.title
-                .update(cx, |input, cx| input.set_text(track.name, cx));
-            this.artist
-                .update(cx, |input, cx| input.set_text(track.artists, cx));
             this.open = true;
+            this.reset_for_track(Some(track), cx);
             this.title.update(cx, |input, cx| input.focus(window, cx));
             cx.notify();
         });
     }
 
+    fn reset_for_track(&mut self, track: Option<Track>, cx: &mut Context<Self>) {
+        self.track = track.clone();
+        self.previewed = None;
+        self.lyrics
+            .update(cx, |lyrics, cx| lyrics.cancel_search(cx));
+        if let Some(track) = track {
+            self.last_title = track.name.clone();
+            self.last_artist = track.artists.clone();
+            self.title
+                .update(cx, |input, cx| input.set_text(track.name, cx));
+            self.artist
+                .update(cx, |input, cx| input.set_text(track.artists, cx));
+        } else {
+            self.last_title.clear();
+            self.last_artist.clear();
+            self.title.update(cx, |input, cx| input.set_text("", cx));
+            self.artist.update(cx, |input, cx| input.set_text("", cx));
+        }
+    }
+
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
+        self.track = None;
         self.previewed = None;
         self.lyrics
             .update(cx, |lyrics, cx| lyrics.cancel_search(cx));
@@ -325,7 +387,7 @@ impl Render for LyricsSearch {
             );
         }
         modal = match self.previewed.clone() {
-            Some(hit) if matches!(state, SearchState::Ready) => modal.action(
+            Some(hit) if can_bind(Some(&hit), &state) => modal.action(
                 Button::new("use-lyrics-match")
                     .primary()
                     .label(t!("lyrics-search-use"))
@@ -354,12 +416,9 @@ impl Render for LyricsSearch {
             }))
             .on_action(cx.listener(|this, _: &Submit, window, cx| {
                 cx.stop_propagation();
+                let state = this.lyrics.read(cx).search_state().clone();
                 match this.previewed.clone() {
-                    Some(hit)
-                        if matches!(this.lyrics.read(cx).search_state(), SearchState::Ready) =>
-                    {
-                        this.bind(hit, window, cx)
-                    }
+                    Some(hit) if can_bind(Some(&hit), &state) => this.bind(hit, window, cx),
                     _ => this.search(cx),
                 }
             }))
@@ -371,6 +430,28 @@ impl Render for LyricsSearch {
 /// A one-line status for the dialog's empty states, named for screen readers.
 fn status(key: &'static str, cx: &mut Context<LyricsSearch>) -> AnyElement {
     status_text(i18n::lookup(key, None), cx)
+}
+
+/// Whether a search hit can be bound to the track. A hit can only be bound when one is
+/// currently on preview and the search results are ready.
+fn can_bind(previewed: Option<&LyricsHit>, state: &SearchState) -> bool {
+    previewed.is_some() && matches!(state, SearchState::Ready)
+}
+
+/// Whether a playback update requires the dialog to reset its fields and clear results.
+/// The dialog resets only while open and when the shown track has changed from what the dialog holds.
+fn should_reset_on_track_change(
+    open: bool,
+    shown: Option<&Track>,
+    current: Option<&Track>,
+) -> bool {
+    open && shown != current
+}
+
+/// Whether an input notification represents an actual text change that invalidates current
+/// search results. Caret moves or selections where the text is unchanged do not invalidate.
+fn should_invalidate_on_edit(open: bool, current: &str, last: &str) -> bool {
+    open && current != last
 }
 
 /// Whether two search answers are the same match. The preview is kept beside a list that can
@@ -396,4 +477,116 @@ fn status_text(text: SharedString, cx: &mut Context<LyricsSearch>) -> AnyElement
         .text_color(quiet(&theme))
         .child(text)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn test_track(name: &str, artists: &str) -> Track {
+        Track {
+            id: Some(format!("test:{name}")),
+            name: name.to_owned(),
+            playable: true,
+            artists: artists.to_owned(),
+            album: "Test Album".to_owned(),
+            duration: Duration::from_secs(180),
+            ..Default::default()
+        }
+    }
+
+    fn test_hit(title: &str, artist: &str) -> LyricsHit {
+        LyricsHit {
+            source: "Test",
+            title: title.to_owned(),
+            artist: artist.to_owned(),
+            duration: Some(Duration::from_secs(180)),
+            lyrics: music::Lyrics::Plain {
+                text: "test lyrics".to_owned(),
+                romanized: None,
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn track_change_helper_decides_reset_for_open_dialog_and_ignores_closed_or_identical() {
+        let track_a = test_track("Song A", "Artist A");
+        let track_b = test_track("Song B", "Artist B");
+
+        // When dialog is closed (open = false), a track change must never trigger a reset:
+        assert!(!should_reset_on_track_change(
+            false,
+            Some(&track_b),
+            Some(&track_a)
+        ));
+        assert!(!should_reset_on_track_change(false, Some(&track_a), None));
+        assert!(!should_reset_on_track_change(false, None, Some(&track_a)));
+        assert!(!should_reset_on_track_change(
+            false,
+            Some(&track_a),
+            Some(&track_a)
+        ));
+        assert!(!should_reset_on_track_change(false, None, None));
+
+        // When dialog is open (open = true):
+        // 1. Changing to a different track must trigger a reset:
+        assert!(should_reset_on_track_change(
+            true,
+            Some(&track_b),
+            Some(&track_a)
+        ));
+
+        // 2. A track appearing when the dialog held none must trigger a reset:
+        assert!(should_reset_on_track_change(true, Some(&track_a), None));
+
+        // 3. Playback stopping (track becoming None) while dialog holds a track must trigger a reset:
+        assert!(should_reset_on_track_change(true, None, Some(&track_a)));
+
+        // 4. Same track (position ticks, volume changes, pauses) must NOT trigger a reset:
+        assert!(!should_reset_on_track_change(
+            true,
+            Some(&track_a),
+            Some(&track_a)
+        ));
+
+        // 5. Both None (playback idle, update occurs) must NOT trigger a reset:
+        assert!(!should_reset_on_track_change(true, None, None));
+    }
+
+    #[test]
+    fn edit_helper_decides_invalidation_only_on_text_changes_while_open() {
+        // When dialog is closed (open = false), edits must never trigger invalidation:
+        assert!(!should_invalidate_on_edit(false, "New Title", "Old Title"));
+        assert!(!should_invalidate_on_edit(
+            false,
+            "Same Title",
+            "Same Title"
+        ));
+        assert!(!should_invalidate_on_edit(false, "", "Old Title"));
+
+        // When dialog is open (open = true):
+        // 1. Text edits (title or artist) must trigger invalidation:
+        assert!(should_invalidate_on_edit(true, "New Title", "Old Title"));
+        assert!(should_invalidate_on_edit(true, "New Artist", "Old Artist"));
+        assert!(should_invalidate_on_edit(true, "", "Old Title"));
+        assert!(should_invalidate_on_edit(true, "A", ""));
+
+        // 2. Non-edit notifications (caret movement, selection, focus) where text is unchanged must NOT invalidate:
+        assert!(!should_invalidate_on_edit(true, "Old Title", "Old Title"));
+        assert!(!should_invalidate_on_edit(true, "Old Artist", "Old Artist"));
+        assert!(!should_invalidate_on_edit(true, "", ""));
+    }
+
+    #[test]
+    fn same_hit_matches_identical_results_across_reranking() {
+        let hit1 = test_hit("Song", "Artist");
+        let hit2 = test_hit("Song", "Artist");
+        let mut hit3 = test_hit("Song", "Other Artist");
+        hit3.source = "OtherSource";
+
+        assert!(same_hit(&hit1, &hit2));
+        assert!(!same_hit(&hit1, &hit3));
+    }
 }
