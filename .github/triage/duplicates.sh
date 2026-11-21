@@ -19,7 +19,7 @@ source "$(git rev-parse --show-toplevel)/.github/triage/lib.sh"
 
 marker="<!-- sonora-triage:duplicates -->"
 
-scan="$(yq '.duplicates.scan // 300' "$config")"
+scan="$(yq '.duplicates.scan // 1000' "$config")"
 shortlist="$(yq '.duplicates.shortlist // 6' "$config")"
 report="$(yq '.duplicates.report // 3' "$config")"
 
