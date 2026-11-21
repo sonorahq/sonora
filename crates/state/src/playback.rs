@@ -671,6 +671,9 @@ pub struct Playback {
     /// How many tracks played out to their end, which a Sonora Session tells apart from the
     /// listener moving on.
     ends: u64,
+    /// Where the music of the track with this id starts after a section SponsorBlock skips from
+    /// its opening. The previous button counts its restart window from there.
+    lead_in: Option<(String, Duration)>,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -826,6 +829,7 @@ impl Playback {
             local: false,
             seeks: 0,
             ends: 0,
+            lead_in: None,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -2236,10 +2240,30 @@ impl Playback {
     }
 
     /// Whether the previous button restarts the track rather than going back: a few seconds
-    /// in, or nothing to go back to.
+    /// past its lead-in, or nothing to go back to.
     fn restarts(&self, cx: &App) -> bool {
         self.track.is_some()
-            && (self.live_position() > RESTART_WINDOW || !self.queue.read(cx).has_previous())
+            && (self.live_position() > self.restart_at() + RESTART_WINDOW
+                || !self.queue.read(cx).has_previous())
+    }
+
+    /// Where the current track's music starts, past an opening SponsorBlock skips.
+    fn restart_at(&self) -> Duration {
+        let current = self.track.as_ref().and_then(|track| track.id.as_deref());
+        self.lead_in
+            .as_ref()
+            .filter(|(id, _)| current == Some(id.as_str()))
+            .map_or(Duration::ZERO, |(_, at)| *at)
+    }
+
+    pub fn lead_in(&self) -> Option<&(String, Duration)> {
+        self.lead_in.as_ref()
+    }
+
+    /// Records where the music of the track with this id starts, so a restart lands there and
+    /// going back still works right after the opening was skipped. It notifies nothing.
+    pub fn set_lead_in(&mut self, lead_in: Option<(String, Duration)>) {
+        self.lead_in = lead_in;
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) {
@@ -2247,7 +2271,7 @@ impl Playback {
             return;
         }
         if self.restarts(cx) {
-            return self.seek(Duration::ZERO, cx);
+            return self.seek(self.restart_at(), cx);
         }
         self.fetch = None;
         let start = self.burst();
