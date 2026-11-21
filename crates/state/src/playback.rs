@@ -2569,14 +2569,14 @@ impl Playback {
     /// not yet held by the engine only moves its resume point. A radio station stays where it
     /// is, since seeking it would replay what it sent since it was tuned in.
     pub fn seek(&mut self, position: Duration, cx: &mut Context<Self>) {
-        let station = self.track.as_ref().and_then(|track| track.id.as_deref());
-        if station.is_some_and(music::is_station_id) {
-            return;
-        }
         if !self.local {
             self.seeks += 1;
         }
         if self.steer(|_| Command::Seek(position), cx) {
+            return;
+        }
+        let station = self.track.as_ref().and_then(|track| track.id.as_deref());
+        if station.is_some_and(music::is_station_id) {
             return;
         }
         if self.resume_at.is_some() {
