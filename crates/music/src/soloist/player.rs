@@ -812,7 +812,13 @@ impl Brain {
             }
             self.unmute();
             if !held {
-                let at = self.heard.position;
+                // A position report names no track, and the daemon sends one for the track it
+                // leaves after taking the command. A track started from its beginning is not
+                // that far in yet.
+                let at = match self.heard.position > SEEK_NEAR {
+                    true => start,
+                    false => self.heard.position,
+                };
                 if let Some(track) = self.track.as_mut() {
                     track.playing = true;
                     track.place(at);
