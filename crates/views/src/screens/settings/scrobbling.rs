@@ -171,7 +171,7 @@ impl SettingsView {
         link: Link,
         cx: &mut Context<Self>,
     ) {
-        let account = self.settings.read(cx).account(service);
+        let account = self.scrobbling.read(cx).account(service);
         let (first, second) = match link {
             Link::Browser => {
                 return self.scrobbling.update(cx, |scrobbling, cx| {

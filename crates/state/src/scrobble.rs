@@ -35,8 +35,10 @@ pub enum ScrobbleState {
 /// A service, its link and the sender that link produced.
 pub struct ScrobbleRow {
     service: Arc<dyn Service>,
-    /// The stored account as settings last had it, blank when the service was never linked.
+    /// The account stored in the accounts folder, blank when the service was never linked.
     account: Account,
+    /// Whether settings leave this service switched on.
+    enabled: bool,
     state: ScrobbleState,
     /// Whether the current play has already gone to this service. Per row, so one service being
     /// down never costs another its listen.
@@ -70,12 +72,17 @@ impl ScrobbleRow {
 
     /// Whether listens are being submitted. A linked service the user switched off stays linked.
     pub fn enabled(&self) -> bool {
-        self.account.enabled
+        self.enabled
+    }
+
+    /// The stored account, which the link dialog fills its fields from.
+    pub fn account(&self) -> &Account {
+        &self.account
     }
 
     /// Whether listens go to this service right now.
     fn live(&self) -> bool {
-        self.account.linked() && self.account.enabled
+        self.account.linked() && self.enabled
     }
 }
 
@@ -123,6 +130,7 @@ impl Scrobbling {
             .map(|service| ScrobbleRow {
                 service,
                 account: Account::default(),
+                enabled: true,
                 state: ScrobbleState::Off,
                 sent: false,
             })
@@ -143,12 +151,22 @@ impl Scrobbling {
             link: None,
             waiting: None,
         };
+        scrobbling.load(cx);
         scrobbling.rebuild(cx);
         scrobbling
     }
 
     pub fn rows(&self) -> &[ScrobbleRow] {
         &self.rows
+    }
+
+    /// One service's stored account, blank when it was never linked.
+    pub fn account(&self, service: &str) -> Account {
+        self.rows
+            .iter()
+            .find(|row| row.id() == service)
+            .map(|row| row.account.clone())
+            .unwrap_or_default()
     }
 
     /// Turns submissions to one service on or off. The link survives either way.
@@ -171,7 +189,11 @@ impl Scrobbling {
         self.rows[index].state = ScrobbleState::Linking;
         cx.notify();
 
-        let connecting = self.io.spawn(async move { service.connect(secret).await });
+        let connecting = self.io.spawn(async move {
+            let account = service.connect(secret).await?;
+            scrobble::store(service.id(), &account)?;
+            anyhow::Ok(account)
+        });
         self.waiting = Some(connecting.abort_handle());
 
         self.link = Some(cx.spawn(async move |this, cx| {
@@ -183,9 +205,10 @@ impl Scrobbling {
                 match linked {
                     Ok(account) => {
                         let id = this.rows[index].id();
+                        this.rows[index].account = account;
                         this.rows[index].state = ScrobbleState::Off;
                         this.settings
-                            .update(cx, |settings, cx| settings.set_account(id, account, cx));
+                            .update(cx, |settings, cx| settings.set_scrobbling(id, true, cx));
                         this.rebuild(cx);
                     }
                     Err(error) => {
@@ -202,8 +225,12 @@ impl Scrobbling {
     /// Forgets one service's account. A link still running is dropped first.
     pub fn disconnect(&mut self, service: &str, cx: &mut Context<Self>) {
         self.stop();
+        scrobble::forget(service);
+        if let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
+            row.account = Account::default();
+        }
         self.settings.update(cx, |settings, cx| {
-            settings.set_account(service, Account::default(), cx)
+            settings.set_scrobbling(service, true, cx)
         });
         self.rebuild(cx);
     }
@@ -229,13 +256,41 @@ impl Scrobbling {
         }
     }
 
-    /// Rereads every stored account and rebuilds the senders. A row in the middle of a link keeps
-    /// its state, so turning another service off cannot wipe the one the user is waiting on.
-    fn rebuild(&mut self, cx: &mut Context<Self>) {
-        let accounts = self.settings.read(cx).scrobbling().clone();
+    /// Reads every service's account from the accounts folder, first moving the ones an older
+    /// Sonora left in `settings.json` there. An account that cannot move stays in settings for
+    /// the next launch to try again, and its service reads as unlinked until then.
+    // TODO(0.52.0): drop the move out of settings.json and only read the accounts.
+    fn load(&mut self, cx: &mut Context<Self>) {
+        let legacy = self.settings.read(cx).legacy_scrobbling().clone();
+        let mut moved = Vec::new();
+        for (service, old) in legacy {
+            match scrobble::store(&service, &old.account) {
+                Ok(()) => {
+                    log::info!("scrobble: moved the {service} account out of settings.json");
+                    moved.push((service, old.enabled));
+                }
+                Err(error) => log::warn!(
+                    "scrobble: cannot move the {service} account out of settings.json: {error:#}"
+                ),
+            }
+        }
+        self.settings.update(cx, |settings, cx| {
+            settings.forget_legacy_scrobbling(&moved, cx)
+        });
 
         for row in &mut self.rows {
-            row.account = accounts.get(row.id()).cloned().unwrap_or_default();
+            row.account = scrobble::load(row.id());
+        }
+    }
+
+    /// Rereads which services are switched on and rebuilds each row's state. A row in the middle
+    /// of a link keeps its state, so turning another service off cannot wipe the one the user is
+    /// waiting on.
+    fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.read(cx);
+
+        for row in &mut self.rows {
+            row.enabled = settings.scrobbling_on(row.id());
             if row.linking() {
                 continue;
             }
