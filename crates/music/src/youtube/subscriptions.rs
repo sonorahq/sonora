@@ -39,13 +39,15 @@ pub async fn saved(api: &YtMusic) -> Result<Vec<SavedArtist>> {
     Ok(artists)
 }
 
-/// The artists YouTube Music finds for `query`, from its search filtered to artists.
+/// The artists YouTube Music finds for `query`, from its search filtered to artists. It goes out
+/// signed out, so it stays out of the account's search history.
 pub async fn search(api: &YtMusic, query: &str) -> Result<Vec<SavedArtist>> {
     let response = api
-        .execute(
+        .execute_with(
             "search",
             Client::Music,
             json!({ "query": query, "params": ytmusic::search::ARTISTS }),
+            false,
         )
         .await
         .context("cannot search youtube music for artists")?;
