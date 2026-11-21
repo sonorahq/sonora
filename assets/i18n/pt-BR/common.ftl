@@ -64,6 +64,7 @@ nav-songs = Músicas
 nav-albums = Álbuns
 nav-playlists = Playlists
 nav-artists = Artistas
+nav-radio = Rádio
 nav-local = Música Local
 nav-back = Voltar
 nav-forward = Avançar
@@ -147,6 +148,8 @@ history-not-loaded = O histórico de reprodução não pôde ser carregado.
 history-clear = Limpar histórico
 history-clear-title = Limpar histórico de reprodução
 history-clear-confirm = Todas as reproduções serão removidas deste dispositivo. Isto não pode ser desfeito.
+stations-empty = As estações de rádio adicionadas ao seu servidor aparecerão aqui.
+stations-not-loaded = As estações de rádio não puderam ser carregadas.
 filter-library = Filtrar sua biblioteca
 filter-album = Filtrar faixas do álbum
 filter-reset = Redefinir filtros
@@ -202,6 +205,11 @@ count-songs =
     { $count ->
         [one] { $count } música
        *[other] { $count } músicas
+    }
+count-stations =
+    { $count ->
+        [one] { $count } estação
+       *[other] { $count } estações
     }
 count-tracks =
     { $count ->
