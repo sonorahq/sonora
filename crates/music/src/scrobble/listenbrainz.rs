@@ -66,7 +66,6 @@ impl Service for ListenBrainz {
             session: token,
             server,
             name,
-            enabled: true,
             ..Account::default()
         })
     }

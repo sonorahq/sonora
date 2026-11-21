@@ -1,9 +1,12 @@
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+use crate::credentials;
 
 mod audioscrobbler;
 mod listenbrainz;
@@ -84,9 +87,9 @@ pub enum Secret {
     Server { url: String, key: String },
 }
 
-/// A linked scrobbling account, both as `Service::connect` returns it and as `settings.json`
-/// stores it. `session` is whatever authenticates a later submission, so an empty one means the
-/// account is not linked.
+/// A linked scrobbling account, both as `Service::connect` returns it and as [`store`] keeps it.
+/// `session` is whatever authenticates a later submission, so an empty one means the account is
+/// not linked. Whether listens go to it is a preference that `settings.json` keeps.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Account {
@@ -106,7 +109,6 @@ pub struct Account {
     /// What the settings row calls the account.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
-    pub enabled: bool,
 }
 
 impl Account {
@@ -146,6 +148,42 @@ pub trait Service: Send + Sync {
     /// The account is one `connect` returned, since a row only submits while its account is
     /// linked and switched on.
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()>;
+}
+
+/// The account linked to a service, blank when it was never linked or its file cannot be read.
+pub fn load(service: &str) -> Account {
+    let path = file(service);
+    let body = match std::fs::read(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Account::default(),
+        Err(error) => {
+            log::warn!("scrobble: cannot read {}: {error}", path.display());
+            return Account::default();
+        }
+    };
+    serde_json::from_slice(&body).unwrap_or_else(|error| {
+        log::warn!("scrobble: cannot parse {}: {error}", path.display());
+        Account::default()
+    })
+}
+
+/// Keeps a linked account in a file only its owner can read, beside the providers' sign-ins.
+pub fn store(service: &str, account: &Account) -> Result<()> {
+    let body = serde_json::to_vec(account).context("cannot encode the scrobbling account")?;
+    credentials::write(&file(service), &body)
+        .with_context(|| format!("cannot store the {service} scrobbling account"))
+}
+
+/// Deletes a service's stored account.
+pub fn forget(service: &str) {
+    credentials::remove(&file(service));
+}
+
+/// Where a service's account lives, `accounts/scrobbling/<service>/credentials.json`.
+fn file(service: &str) -> PathBuf {
+    credentials::dir("scrobbling")
+        .join(service)
+        .join(credentials::FILE)
 }
 
 /// The one http client every service shares, so they pool connections and reuse TLS sessions

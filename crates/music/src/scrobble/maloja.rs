@@ -47,7 +47,6 @@ impl Service for Maloja {
             name: name(&url).await.unwrap_or_else(|| host(&url)),
             server: url,
             session: key,
-            enabled: true,
             ..Account::default()
         })
     }
