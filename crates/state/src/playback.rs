@@ -1876,10 +1876,12 @@ impl Playback {
             // nothing plays after the track a sleep request ends on
             _ if self.sleep == Some(Sleep::EndOfTrack) => None,
             Repeat::One => None,
-            // the end of the queue wraps to its first song, which `advance` rewinds to
-            Repeat::All if queue.ahead() == 0 => {
-                queue.past().next().or_else(|| queue.current()).cloned()
-            }
+            // the end of the queue wraps to its first playable song, which `advance` rewinds to
+            Repeat::All if queue.ahead() == 0 => queue
+                .past()
+                .chain(queue.current())
+                .find(|track| track.playable)
+                .cloned(),
             _ => queue.upcoming().next().cloned(),
         };
         let Some(next) = next else {
