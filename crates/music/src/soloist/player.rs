@@ -92,8 +92,8 @@ const ACK_PATIENCE: Duration = Duration::from_secs(3);
 const MAX_SKIPS: usize = 50;
 /// How many upcoming tracks are asked for once the daemon starts a collection.
 const QUEUE_LIMIT: usize = 100;
-/// How long a collection the daemon started gets to list the wanted track before that track
-/// is played on its own.
+/// How long the daemon gets to reach a track started inside its collection before the track is
+/// played on its own, as when the collection never lists it or the skips went past it.
 const ENTER_PATIENCE: Duration = Duration::from_secs(3);
 /// How many sign-ins in a row Spotify may turn down before the setup is taken to be broken. One
 /// refusal can be a passing fault the next start does not repeat.
@@ -343,6 +343,9 @@ struct Brain {
     /// Everything the daemon plays after the current track, as it last listed it: the account's
     /// queued tracks first, then the rest of the collection.
     upcoming: Vec<String>,
+    /// The track the daemon was on when it sent `upcoming`. A track change it reports before
+    /// the next listing leaves `upcoming` describing the track before.
+    listed: String,
     /// Skips sent that the daemon has not taken yet.
     skipping: usize,
     /// The track put on the daemon's queue to follow the current one.
@@ -380,6 +383,7 @@ impl Brain {
             after: None,
             within: None,
             upcoming: Vec::new(),
+            listed: String::new(),
             skipping: 0,
             fed: None,
             recalled: false,
@@ -568,7 +572,10 @@ impl Brain {
         let Some(track) = self.track.as_mut() else {
             return;
         };
-        let skips = match self.heard.context == context && self.skipping == 0 {
+        // the listing only counts for the track the daemon was on when it was taken
+        let current =
+            self.heard.context == context && self.skipping == 0 && self.listed == self.heard.uri;
+        let skips = match current {
             true => self.upcoming.iter().position(|uri| *uri == track.uri),
             false => None,
         }
@@ -744,13 +751,17 @@ impl Brain {
             }
             return;
         }
-        let lost = track.entering
+        // a collection that never lists the track, or skips that went past it, leave it unstarted
+        // and muted, so it is played on its own
+        let lost = track.context.is_some()
             && track.accepted
             && !track.started
+            && self.heard.uri != track.uri
             && now.duration_since(track.asked) > ENTER_PATIENCE;
         if lost {
-            log::debug!("soloist: the collection does not reach the track, playing it alone");
+            log::debug!("soloist: the collection did not reach the track, playing it alone");
             track.entering = false;
+            track.context = None;
             let uri = track.uri.clone();
             self.send("play", json!({ "uri": uri }));
             return;
@@ -831,6 +842,7 @@ impl Brain {
                 };
                 self.queue = uris(wire::Queued::queued);
                 self.upcoming = uris(|_| true);
+                self.listed = self.heard.uri.clone();
                 self.arrive();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
@@ -1169,6 +1181,7 @@ impl Brain {
         self.queue.clear();
         self.upcoming.clear();
         self.skipping = 0;
+        self.listed.clear();
         self.heard.context.clear();
         match end {
             End::Closed => {}
