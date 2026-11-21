@@ -10,7 +10,7 @@ use router::{Destination, NavigationEvent, back, forward, navigate};
 use state::{
     ArtistDetail, Detail, GenreDetails, Genres, HistoryState, Home, Io, Library, LibraryState,
     Network, Playback, Profile, Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session,
-    SessionState, Shelf, SideTab, SongDetail, Sonora,
+    SessionState, Shelf, SideTab, SongDetail, Sonora, Stations,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ui::WindowFrame;
@@ -23,6 +23,7 @@ use crate::chrome::{
     Busy, JamCode, JamInvite, JamJoin, PlayerBar, SessionCode, SessionJoin, ThemeInvite, TitleBar,
     TitleBarEvent, TitleBarOptions, ToastStack, Toolbar, Tooled,
 };
+use crate::screens::radio::RadioView;
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
@@ -54,6 +55,7 @@ const TOAST_LAYER: usize = 1;
 struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
+    radio: Entity<RadioView>,
     library: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
     artist_detail: Option<Entity<ArtistDetail>>,
@@ -273,6 +275,8 @@ impl Root {
         let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
+        let stations = cx.new(|cx| Stations::new(session.clone(), io.clone(), cx));
+        let radio = cx.new(|cx| RadioView::new(stations, playback.clone(), cx));
 
         let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         let suggestions =
@@ -414,6 +418,7 @@ impl Root {
             screens: Screens {
                 home,
                 history,
+                radio,
                 library: library_view,
                 artist: None,
                 artist_detail: None,
@@ -753,6 +758,10 @@ impl Root {
                 let profile = self.screens.user_profile.clone();
                 Box::new(move |cx| profile.read(cx).is_loading())
             }
+            Destination::Radio => {
+                let radio = self.screens.radio.clone();
+                Box::new(move |cx| radio.read(cx).is_loading(cx))
+            }
             Destination::Search
             | Destination::Settings(_)
             | Destination::Equalizer
@@ -803,6 +812,7 @@ impl Root {
                 .screens
                 .user_profile
                 .update(cx, |profile, cx| profile.refresh(cx)),
+            Destination::Radio => self.screens.radio.update(cx, |radio, cx| radio.reload(cx)),
             Destination::Search
             | Destination::Settings(_)
             | Destination::Equalizer
@@ -1070,6 +1080,11 @@ impl Root {
                 detail.update(cx, |detail, cx| detail.open(&id, cx));
                 toolbar = Some(genre.read(cx).toolbar());
                 genre.into()
+            }
+            Destination::Radio => {
+                let radio = self.screens.radio.clone();
+                radio.update(cx, |radio, cx| radio.open(cx));
+                radio.into()
             }
             Destination::Search => {
                 self.screens.genres.update(cx, |genres, cx| genres.load(cx));

@@ -136,11 +136,17 @@ impl SettingsView {
         )
     }
 
+    /// The sidebar rows the listener can show or hide. Radio is offered only for a provider
+    /// that lists stations, since the sidebar shows it for no other.
     pub(super) fn entries_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let stations = self.session.read(cx).capabilities().stations;
+        let entries = NavEntry::ALL
+            .into_iter()
+            .filter(|entry| stations || *entry != NavEntry::Radio);
         let picker = Picker::new(ENTRIES, &self.popovers, t!("settings-entries-pick"))
             .width(Picker::REGULAR)
             .sticky()
-            .items(NavEntry::ALL.map(|entry| {
+            .items(entries.map(|entry| {
                 let shown = entry_shown(entry, self.settings.read(cx));
 
                 MenuItem::new(entry.id(), i18n::lookup(entry.key(), None))

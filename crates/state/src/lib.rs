@@ -38,6 +38,7 @@ mod snapshot;
 mod soloist;
 mod song;
 mod sponsorblock;
+mod stations;
 mod tags;
 mod toast;
 mod updates;
@@ -96,6 +97,7 @@ pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
 pub use soloist::{Soloist, SoloistProblem, SoloistState, SoloistStep, SoloistSwitched};
 pub use song::SongDetail;
 pub use sponsorblock::SponsorBlock;
+pub use stations::Stations;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
 pub use updates::{

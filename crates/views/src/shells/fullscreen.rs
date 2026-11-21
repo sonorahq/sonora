@@ -656,11 +656,10 @@ impl FullscreenView {
                     this.child(explicit_badge("fullscreen-explicit", track.is_some()))
                 })
                 .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .opacity(1. - hide)
-                        .child(like(track, &self.playback, cx).when(frosted, Button::frosted)),
+                    div().flex().flex_none().opacity(1. - hide).children(
+                        like(track, &self.playback, cx)
+                            .map(|heart| heart.when(frosted, Button::frosted)),
+                    ),
                 )
         };
 
@@ -841,9 +840,12 @@ impl FullscreenView {
                             .when(explicit, |this| {
                                 this.child(explicit_badge("strip-explicit", true))
                             })
-                            .child(div().flex().flex_none().opacity(1. - hide).child(
-                                like(track, &self.playback, cx).when(frosted, Button::frosted),
-                            )),
+                            .child(
+                                div().flex().flex_none().opacity(1. - hide).children(
+                                    like(track, &self.playback, cx)
+                                        .map(|heart| heart.when(frosted, Button::frosted)),
+                                ),
+                            ),
                     )
                     .when_some(track, |this, track| {
                         this.child(
@@ -899,8 +901,9 @@ impl FullscreenView {
         let empty = muted.opacity(0.3);
         let text = theme.text(Text::Tiny);
         let playback = self.playback.read(cx);
-        let seekable = playback.shown_track(cx).is_some();
         let (elapsed, total) = playback.shown_time(cx);
+        // A track with no length, such as a radio station, has nowhere to seek to.
+        let seekable = playback.shown_track(cx).is_some() && !total.is_zero();
         let progress = self.pending.unwrap_or_else(|| fraction(elapsed, total));
         let time_left = self.settings.read(cx).player_bar_time_left();
         let end = end_clock(elapsed, total, time_left);

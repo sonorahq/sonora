@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Subsonic and Navidrome servers get a Radio page in the sidebar that lists the server's internet radio stations and plays them.
+
 ### Changed
 
 - The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.

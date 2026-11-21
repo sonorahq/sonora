@@ -18,7 +18,9 @@ use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
     open_settings,
 };
-use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, Sonora};
+use state::{
+    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora,
+};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 use crate::shared::nav::{entry_shown, nav_icon, nav_row};
@@ -30,10 +32,10 @@ const PINS: &str = "sidebar-pins";
 
 /// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
 /// Recents and then Settings sit right under Search, and the four library rows after them each
-/// open one page of the merged streaming and local library. Settings lives in the account menu of
-/// the title bar and shows here only when added. It opens on the settings page last visited
-/// rather than on the one named here.
-pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
+/// open one page of the merged streaming and local library, with Radio after them for a provider
+/// that lists stations. Settings lives in the account menu of the title bar and shows here only
+/// when added. It opens on the settings page last visited rather than on the one named here.
+pub(crate) const NAV: [(NavEntry, &str, Destination); 9] = [
     (NavEntry::Home, "icons/house.svg", Destination::Home),
     (NavEntry::Search, "icons/search.svg", Destination::Search),
     (
@@ -66,6 +68,7 @@ pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
         LibraryTab::Playlists.icon(),
         Destination::Library(LibraryTab::Playlists),
     ),
+    (NavEntry::Radio, "icons/radio.svg", Destination::Radio),
 ];
 
 const MIN_WIDTH: Pixels = px(160.);
@@ -108,6 +111,7 @@ pub(crate) struct SidebarLeft {
     playback: Entity<Playback>,
     pins: Entity<Pins>,
     library: Entity<Library>,
+    session: Entity<Session>,
     track_menu: ItemMenu,
     context_menu: Option<(Pin, Point<Pixels>)>,
     scrollbar: Entity<ui::Scrollbar>,
@@ -120,6 +124,8 @@ impl SidebarLeft {
         let playback = Sonora::global(cx).playback.clone();
         let pins = Sonora::global(cx).pins.clone();
         let library = Sonora::global(cx).library.clone();
+        let session = Sonora::global(cx).session.clone();
+        cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&pins, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
@@ -165,6 +171,7 @@ impl SidebarLeft {
             playback,
             pins,
             library,
+            session,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
             scrollbar,
@@ -322,9 +329,11 @@ impl SidebarLeft {
 
     /// The navigation entries the listener has not hidden, on the rail and in the full sidebar alike.
     fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let stations = self.session.read(cx).capabilities().stations;
         let shown = |range: std::ops::Range<usize>, cx: &App| -> Vec<usize> {
             range
                 .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
+                .filter(|index| stations || NAV[*index].0 != NavEntry::Radio)
                 .collect()
         };
         let top = shown(0..4, cx);

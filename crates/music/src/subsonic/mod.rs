@@ -69,6 +69,7 @@ impl SubsonicProvider {
                 smart_playlists: smart,
                 playlist_order: true,
                 plain_downloads: true,
+                stations: true,
                 ..Capabilities::ALL
             },
         })
@@ -100,6 +101,7 @@ impl SubsonicProvider {
                     smart_playlists: client.takes_smart_playlists().await,
                     playlist_order: true,
                     plain_downloads: true,
+                    stations: true,
                     ..Capabilities::ALL
                 },
                 profile,
