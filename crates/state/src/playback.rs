@@ -422,6 +422,12 @@ impl Origin {
         self
     }
 
+    /// Whether `load` can fetch this collection from its provider. Local files are listed only
+    /// by the library, which starts them from its own table.
+    fn fetched(&self) -> bool {
+        !matches!(self.whence, Whence::Local)
+    }
+
     /// Loads the collection once for playback or queue placement, retaining radio continuation.
     /// When `stations` is false the provider cannot seed a radio, so a song collection is just
     /// the track itself.
@@ -1613,10 +1619,7 @@ impl Playback {
     /// press starts it at once. One collection is kept at a time. Asking again for the one held
     /// or the one playing does nothing.
     pub fn warm_origin(&mut self, origin: &Origin, cx: &mut Context<Self>) {
-        if !matches!(
-            origin.whence,
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
-        ) {
+        if !origin.fetched() {
             return;
         }
         if self.origin(cx) == Some(origin) || self.awaits(origin) {
@@ -2504,22 +2507,16 @@ impl Playback {
         self.has_active_playback().then(|| self.wants_playing())
     }
 
+    /// Starts `origin` once its tracks are loaded. Local files are left to the library table.
     pub fn play_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
-        match origin.whence {
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio => {
-                self.gather(origin, false, cx)
-            }
-            // the table plays these
-            Whence::Saved | Whence::Local => {}
+        if origin.fetched() {
+            self.gather(origin, false, cx);
         }
     }
 
     /// Turns shuffle on and plays `origin` from a random track once its tracks are loaded.
     pub fn shuffle_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
-        if matches!(
-            origin.whence,
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
-        ) {
+        if origin.fetched() {
             self.gather(origin, true, cx);
         }
     }
