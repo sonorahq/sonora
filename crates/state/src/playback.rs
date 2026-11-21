@@ -3409,6 +3409,16 @@ impl Playback {
                     false => self.advance(ended, cx),
                 }
             }
+            BackendEvent::SteppedBack { .. } => {
+                self.track = None;
+                self.state = PlaybackState::Idle;
+                self.position = Duration::ZERO;
+                self.clock.reset(Duration::ZERO, false);
+                cx.emit(PlaybackEvent::EndedPlayback);
+                if let Some(track) = self.queue.update(cx, |queue, cx| queue.previous(cx)) {
+                    self.load_after(&track, Start::Segue, cx);
+                }
+            }
             BackendEvent::Throttled { .. } => self.throttled(cx),
             BackendEvent::Unavailable { .. } if self.ask_for_reconnect(cx) => {
                 self.state = PlaybackState::Loading;

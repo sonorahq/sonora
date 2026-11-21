@@ -720,6 +720,11 @@ pub enum PlaybackEvent {
     Ended {
         id: Option<String>,
     },
+    /// The engine went back from `id` to the track before it, as another app of the service
+    /// asked. That track already plays, and the queue steps back to it.
+    SteppedBack {
+        id: Option<String>,
+    },
     Unavailable {
         id: Option<String>,
     },
@@ -758,6 +763,7 @@ impl PlaybackEvent {
             | Self::Length { id, .. }
             | Self::Downloaded { id }
             | Self::Ended { id, .. }
+            | Self::SteppedBack { id }
             | Self::Unavailable { id, .. }
             | Self::Throttled { id } => id.as_deref(),
             Self::Signal { id, .. } => Some(id),

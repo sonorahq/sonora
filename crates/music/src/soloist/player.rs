@@ -346,6 +346,9 @@ struct Brain {
     /// The track the daemon was on when it sent `upcoming`. A track change it reports before
     /// the next listing leaves `upcoming` describing the track before.
     listed: String,
+    /// The track the daemon played before the one it was on when it sent `upcoming`, which
+    /// comes first in its list of previous tracks.
+    behind: Option<String>,
     /// Skips sent that the daemon has not taken yet.
     skipping: usize,
     /// The track put on the daemon's queue to follow the current one.
@@ -384,6 +387,7 @@ impl Brain {
             within: None,
             upcoming: Vec::new(),
             listed: String::new(),
+            behind: None,
             skipping: 0,
             fed: None,
             recalled: false,
@@ -831,7 +835,7 @@ impl Brain {
                     self.heard.context = context.uri;
                 }
             }
-            Event::QueueChanged { upcoming } => {
+            Event::QueueChanged { previous, upcoming } => {
                 let uris = |keep: fn(&wire::Queued) -> bool| {
                     upcoming
                         .iter()
@@ -843,6 +847,10 @@ impl Brain {
                 self.queue = uris(wire::Queued::queued);
                 self.upcoming = uris(|_| true);
                 self.listed = self.heard.uri.clone();
+                self.behind = previous
+                    .iter()
+                    .find_map(|entry| entry.item.as_ref())
+                    .map(|item| item.uri.clone());
                 self.arrive();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
@@ -1017,13 +1025,20 @@ impl Brain {
         }
         if !same {
             let queued = self.fed.as_ref() == Some(&self.heard.uri) && !self.recalled;
-            // inside the collection the daemon went on to the track Sonora plays next anyway,
-            // by itself or because one of Spotify's apps skipped to it
-            let followed = track.context.as_deref() == Some(self.heard.context.as_str())
-                && self.after.as_ref() == Some(&self.heard.uri);
-            return match queued || followed {
-                true => self.hand_over(),
-                false => {
+            // Inside the collection the daemon went on to its next track, by itself or because
+            // one of Spotify's apps skipped there. Sonora names its next track only near the end,
+            // so the listing taken for the wanted track says it too. The load that answers the
+            // end joins the track when it is Sonora's next as well.
+            let inside = track.context.as_deref() == Some(self.heard.context.as_str());
+            let listed = self.listed == track.uri;
+            let natural = listed && self.upcoming.first() == Some(&self.heard.uri);
+            let followed = inside && (self.after.as_ref() == Some(&self.heard.uri) || natural);
+            // one of Spotify's apps went back a track inside the collection
+            let back = inside && listed && self.behind.as_ref() == Some(&self.heard.uri);
+            return match (queued || followed, back) {
+                (true, _) => self.hand_over(),
+                (false, true) => self.step_back(),
+                (false, false) => {
                     // past the one track it was given the daemon went on by itself
                     log::debug!("soloist: the daemon moved on to another track");
                     self.finish()
@@ -1116,6 +1131,19 @@ impl Brain {
         self.report(PlaybackEvent::Ended { id: Some(track.id) });
     }
 
+    /// Leaves the wanted track for the one before it, which the daemon went back to and keeps
+    /// playing, since the queue steps back and asks for that track.
+    fn step_back(&mut self) {
+        let Some(track) = self.track.take() else {
+            return;
+        };
+        log::debug!("soloist: the daemon went back to the track before");
+        self.next = None;
+        self.after = None;
+        self.adopted = Some((self.heard.uri.clone(), Instant::now()));
+        self.report(PlaybackEvent::SteppedBack { id: Some(track.id) });
+    }
+
     /// Ends the wanted track and stops whatever the daemon went on to.
     fn finish(&mut self) {
         let Some(track) = self.track.take() else {
@@ -1182,6 +1210,7 @@ impl Brain {
         self.upcoming.clear();
         self.skipping = 0;
         self.listed.clear();
+        self.behind = None;
         self.heard.context.clear();
         match end {
             End::Closed => {}
