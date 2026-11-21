@@ -25,14 +25,14 @@ report="$(yq '.duplicates.report // 3' "$config")"
 
 issue_json="$(gh issue view "$issue" --repo "$repo" --json number,title,body,labels,comments,state)"
 
-if [ "$(jq -r '.state' <<<"$issue_json")" != "OPEN" ]; then
+if [ -z "$dry" ] && [ "$(jq -r '.state' <<<"$issue_json")" != "OPEN" ]; then
   say "issue $issue is closed, nothing to do"
   exit 0
 fi
 
 # Said once. An edit that arrives before the first pass found anything gets another look, a
-# reopen or a later comment does not.
-if jq -e --arg marker "$marker" 'any(.comments[]; .body | contains($marker))' <<<"$issue_json" >/dev/null; then
+# reopen or a later comment does not. A dry run changes nothing, so it rechecks any issue.
+if [ -z "$dry" ] && jq -e --arg marker "$marker" 'any(.comments[]; .body | contains($marker))' <<<"$issue_json" >/dev/null; then
   say "already pointed at something, nothing to do"
   exit 0
 fi
