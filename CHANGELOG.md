@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Removing a single track from history or a playlist shows a translated menu label again.
 - With a light theme, the rest of the app no longer turns dark while the fullscreen player opens or closes.
 
 ## [0.50.3] - 2026-11-20
