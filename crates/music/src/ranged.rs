@@ -11,6 +11,13 @@
 //! how long the track is and where its header ends describes the file as a [`Span`] and calls
 //! [`Reach::enter`], which guesses a byte from the time and lets the decoder read forward to the
 //! target, or [`Reach::enter_near`] for a format whose frames carry no time of their own.
+//!
+//! [`File`] puts those together for a plain audio file. It tells FLAC, Ogg and MP3 apart by
+//! their first bytes and enters each the way its frames allow. [`ogg`] and [`mp3`] hold what is
+//! particular to those two formats.
+
+pub mod mp3;
+pub mod ogg;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -19,9 +26,9 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::StatusCode;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, RANGE};
+use reqwest::header::{ACCEPT_RANGES, HeaderMap, HeaderName, HeaderValue, RANGE};
 
-use crate::stream::{self, Body, Reader, Spool, Stream};
+use crate::stream::{self, Body, Plain, Reader, Spool, Stream};
 
 /// How long one thing keeps being asked for, with the wait between asks doubling from
 /// `FIRST_WAIT` up to `LONGEST_WAIT`. A track can be a hundred or so requests, so one that fails
@@ -47,10 +54,19 @@ const LEADS: [Duration; 2] = [Duration::from_secs(15), Duration::from_secs(60)];
 /// connection that streams it brings in about as fast as a new request would.
 const NEARBY: u64 = 2 * 1024 * 1024;
 
+/// How far past a graft's byte a [`Resync`] looks for the first frame before it gives up and
+/// splices at the byte itself. It holds several frames of any MPEG audio file.
+const RESYNC_WINDOW: usize = 16 * 1024;
+
 /// Finds where a file's header ends in what has arrived of it, which is what a decoder entered
 /// part way needs in front of the frames. It answers `None` while too little has arrived to say
 /// and `Some(None)` when the file is not in its format.
 pub type Finder = fn(&Spool) -> Option<Option<usize>>;
+
+/// Finds where the first whole frame starts in bytes read from part way into a file, so a
+/// decoder entered there does not have to make sense of the tail of a frame first. It answers
+/// `None` when it sees no frame it can vouch for in what it was given.
+pub type Resync = fn(&[u8]) -> Option<usize>;
 
 /// Builds the request and the body for a download that starts at a byte of the file. The byte
 /// has already been rounded down to the reach's alignment.
@@ -116,6 +132,9 @@ pub struct Reach<B> {
     /// What a new download's first byte is rounded down to a multiple of, for a body that can
     /// only start on a block boundary.
     align: u64,
+    /// Moves a graft forward onto the first frame, for a format a decoder cannot be relied on to
+    /// find its way into.
+    resync: Option<Resync>,
     /// The download the last seek past the main one started. It is only replaced once a decoder
     /// over the next one has opened, so the decoder still playing never loses it.
     ahead: Mutex<Option<Ahead<B>>>,
@@ -135,6 +154,35 @@ pub struct Ahead<B> {
 pub struct Grafted<B> {
     pub reader: Reader<B>,
     pub started: Option<Ahead<B>>,
+}
+
+/// A file format a seek can enter part way, told apart by the file's first bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Flac,
+    Ogg,
+    Mp3,
+}
+
+/// A plain audio file a seek can enter part way: its format, and the reach that fetches it from
+/// a byte. Shared between the load task and the audio thread that opens decoders.
+pub struct File<B = Plain> {
+    kind: Kind,
+    reach: Reach<B>,
+}
+
+/// Places a time in a file by its bytes and a byte by its time, which is what entering a file
+/// part way goes on.
+pub trait Place {
+    /// Where the file's header ends, which a decoder entered part way is given in front of the
+    /// frames.
+    fn head(&self) -> usize;
+
+    /// The byte `at` is taken to fall on.
+    fn byte(&self, at: Duration) -> u64;
+
+    /// The time byte `from` is taken to fall on, the other way round from [`byte`](Self::byte).
+    fn time(&self, from: u64) -> Duration;
 }
 
 /// What placing a time in a file by its bytes goes on: how long the track runs, how long the
@@ -369,6 +417,7 @@ impl<B: Body> Reach<B> {
             runtime: tokio::runtime::Handle::current(),
             start: Box::new(start),
             align: 1,
+            resync: None,
             ahead: Mutex::new(None),
         }
     }
@@ -380,16 +429,38 @@ impl<B: Body> Reach<B> {
         self
     }
 
+    /// Moves every graft forward onto the first frame `resync` finds at or after its byte, for
+    /// a format whose decoder could take stray bytes there for something else. A graft that
+    /// finds no frame within [`RESYNC_WINDOW`] stays where it was asked to be.
+    pub fn resynced(mut self, resync: Resync) -> Self {
+        self.resync = Some(resync);
+        self
+    }
+
     /// A reader that serves the file's first `head` bytes and then the file from byte `from`.
     /// It reads `main` when that has the byte or is close to it, the last download a seek
     /// started when that one is, and otherwise a new download from there, which comes back in
-    /// [`Grafted::started`] to be kept once a decoder over it opens.
+    /// [`Grafted::started`] to be kept once a decoder over it opens. A resynced reach moves the
+    /// splice onto the next frame, which waits for that frame to arrive.
     pub fn graft(&self, main: &Stream<B>, head: usize, from: u64) -> Option<Grafted<B>> {
+        let (stream, at, started) = self.locate(main, head, from)?;
+        let at = self.resync(&stream, at);
+        Some(Grafted {
+            reader: stream.spliced(head, at),
+            started,
+        })
+    }
+
+    /// The download that holds byte `from` or soon will, where that byte sits in its spool, and
+    /// that download again when one had to be started for it.
+    fn locate(
+        &self,
+        main: &Stream<B>,
+        head: usize,
+        from: u64,
+    ) -> Option<(Stream<B>, usize, Option<Ahead<B>>)> {
         if from < main.arrived() as u64 + NEARBY {
-            return Some(Grafted {
-                reader: main.spliced(head, usize::try_from(from).ok()?),
-                started: None,
-            });
+            return Some((main.clone(), usize::try_from(from).ok()?, None));
         }
         let held = lock(&self.ahead).clone();
         if let Some(Ahead {
@@ -401,10 +472,7 @@ impl<B: Body> Reach<B> {
             && let Ok(into) = usize::try_from(from - start)
             && ((head + into) as u64) < stream.arrived() as u64 + NEARBY
         {
-            return Some(Grafted {
-                reader: stream.spliced(head, head + into),
-                started: None,
-            });
+            return Some((stream, head + into, None));
         }
         let bytes = main.with(|_, spool| spool.bytes(0..head))?.ok()?;
         let start = from - from % self.align;
@@ -419,14 +487,40 @@ impl<B: Body> Reach<B> {
             self.name,
             self.id
         );
-        Some(Grafted {
-            reader: stream.spliced(head, head + into),
-            started: Some(Ahead {
-                stream,
-                head,
-                from: start,
-            }),
-        })
+        let ahead = Ahead {
+            stream: stream.clone(),
+            head,
+            from: start,
+        };
+        Some((stream, head + into, Some(ahead)))
+    }
+
+    /// Where the first frame at or after spool byte `at` of `stream` starts, once enough has
+    /// arrived to say. It is `at` itself when the reach does not resync, when no frame turns up
+    /// in [`RESYNC_WINDOW`], or when the bytes stop arriving.
+    fn resync(&self, stream: &Stream<B>, at: usize) -> usize {
+        let Some(resync) = self.resync else {
+            return at;
+        };
+        let wanted = at.saturating_add(RESYNC_WINDOW);
+        let found = stream.awaiting(|body, spool, complete| {
+            let end = body.limit(spool, complete).min(wanted);
+            let full = end == wanted || complete;
+            if end <= at {
+                return full.then_some(at);
+            }
+            if body.ready(spool, at..end).is_err() {
+                return Some(at);
+            }
+            let Ok(window) = spool.view(at..end) else {
+                return Some(at);
+            };
+            match resync(&window) {
+                Some(found) => Some(at + found),
+                None => full.then_some(at),
+            }
+        });
+        found.unwrap_or(at)
     }
 
     /// Keeps `started` as the download the last seek started, letting go of the one before.
@@ -494,20 +588,28 @@ impl<B: Body> Reach<B> {
         None
     }
 
-    /// Opens a decoder with `open` at the byte `at` falls on by time share, for a format whose
-    /// frames carry no time of their own, so a decoder entered part way counts from zero. It
-    /// answers the decoder and where in the track it is taken to start, which is an estimate
-    /// for [`crate::engine::Fetch::open_near`] to report.
+    /// Opens a decoder with `open` at the byte `place` puts `at` on, for a format whose frames
+    /// carry no time of their own, so a decoder entered part way counts from zero. It answers
+    /// the decoder and where in the track it is taken to start, which is an estimate for
+    /// [`crate::engine::Fetch::open_near`] to report.
     pub fn enter_near<D>(
         &self,
         main: &Stream<B>,
-        span: Span,
+        place: impl Place,
         at: Duration,
         open: impl FnOnce(Reader<B>) -> Option<D>,
     ) -> Option<(D, Duration)> {
-        let from = span.byte(at);
-        let decoder = self.exact(main, span.head, from, open)?;
-        Some((decoder, span.time(from)))
+        let from = place.byte(at);
+        let decoder = self.exact(main, place.head(), from, open)?;
+        let start = place.time(from);
+        log::debug!(
+            "playback: entered the {} track {} at byte {from}, taken as {:.1}s for {:.1}s",
+            self.name,
+            self.id,
+            start.as_secs_f64(),
+            at.as_secs_f64()
+        );
+        Some((decoder, start))
     }
 }
 
@@ -518,6 +620,70 @@ impl<B> Clone for Ahead<B> {
             head: self.head,
             from: self.from,
         }
+    }
+}
+
+impl Kind {
+    /// The format a file is in, from its first four bytes in `spool`. `None` for a file in none
+    /// of these formats, or one with fewer than four bytes in.
+    pub fn detect(spool: &Spool) -> Option<Self> {
+        let mut magic = [0u8; 4];
+        spool.read_at(0, &mut magic).ok()?;
+        match &magic {
+            b"fLaC" => Some(Self::Flac),
+            b"OggS" => Some(Self::Ogg),
+            _ if magic.starts_with(b"ID3") || mp3::Header::parse(&magic).is_some() => {
+                Some(Self::Mp3)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl<B: Body> File<B> {
+    /// The file `main` is downloading, when its first bytes are in a format a seek can enter
+    /// part way, with `reach` fitted to that format.
+    pub fn detect(main: &Stream<B>, reach: Reach<B>) -> Option<Self> {
+        let kind = main.with(|_, spool| Kind::detect(spool)).flatten()?;
+        let reach = match kind {
+            Kind::Mp3 => reach.resynced(mp3::sync),
+            Kind::Flac | Kind::Ogg => reach,
+        };
+        Some(Self { kind, reach })
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    /// Opens a decoder with `open` at `at` in a track of `length` that `main` is still
+    /// downloading, and says where it starts. FLAC and Ogg frames carry their time, so the
+    /// decoder lands on `at` exactly. An MP3 frame does not, so its start is an estimate from
+    /// the Xing table or the bitrate, and an MP3 position the download has nearly reached is
+    /// left to the caller, which lands on it exactly by counting frames from the top.
+    ///
+    /// `None` leaves the caller to open the file the way it would without a reach.
+    pub fn enter<D: rodio::Source>(
+        &self,
+        main: &Stream<B>,
+        length: Duration,
+        at: Duration,
+        open: impl FnMut(Reader<B>) -> Option<D>,
+    ) -> Option<(D, Duration)> {
+        let finder = match self.kind {
+            Kind::Flac => flac_head,
+            Kind::Ogg => ogg::head,
+            Kind::Mp3 => {
+                let layout = mp3::Layout::measure(main, length)?;
+                if layout.byte(at) < main.arrived() as u64 + NEARBY {
+                    return None;
+                }
+                return self.reach.enter_near(main, layout, at, open);
+            }
+        };
+        let span = Span::measure(main, length, finder)?;
+        let decoder = self.reach.enter(main, span, at, open)?;
+        Some((decoder, at))
     }
 }
 
@@ -549,6 +715,20 @@ impl Span {
         }
         let share = from.saturating_sub(self.head as u64) as f64 / frames as f64;
         self.length.mul_f64(share.clamp(0.0, 1.0))
+    }
+}
+
+impl Place for Span {
+    fn head(&self) -> usize {
+        self.head
+    }
+
+    fn byte(&self, at: Duration) -> u64 {
+        Span::byte(self, at)
+    }
+
+    fn time(&self, from: u64) -> Duration {
+        Span::time(self, from)
     }
 }
 
@@ -616,6 +796,19 @@ pub fn media_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .connect_timeout(MEDIA_CONNECT)
         .read_timeout(MEDIA_STALL)
+}
+
+/// Whether `response` says how long the file is and that its server answers byte ranges, which
+/// a download started part way into the file needs.
+pub fn ranges(response: &reqwest::Response) -> bool {
+    response.content_length().is_some()
+        && response
+            .headers()
+            .get_all(ACCEPT_RANGES)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|unit| unit.trim().eq_ignore_ascii_case("bytes"))
 }
 
 /// Where a FLAC file's metadata ends, once enough of it has arrived to say. `Some(None)` when
@@ -716,6 +909,19 @@ mod tests {
         assert_eq!(flac_head(&spool(&file)), Some(Some(50)));
         assert_eq!(flac_head(&spool(&file[..20])), None, "still arriving");
         assert_eq!(flac_head(&spool(b"OggS\0\0\0\0")), Some(None));
+    }
+
+    #[test]
+    fn a_kind_is_told_by_the_first_bytes() {
+        assert_eq!(Kind::detect(&spool(&flac())), Some(Kind::Flac));
+        assert_eq!(Kind::detect(&spool(b"OggS\0\x02")), Some(Kind::Ogg));
+        assert_eq!(Kind::detect(&spool(b"ID3\x04\0\0")), Some(Kind::Mp3));
+        assert_eq!(
+            Kind::detect(&spool(&[0xff, 0xfb, 0x90, 0x00])),
+            Some(Kind::Mp3)
+        );
+        assert_eq!(Kind::detect(&spool(b"\0\0\0\x20ftypM4A ")), None);
+        assert_eq!(Kind::detect(&spool(b"fLa")), None, "too short to tell");
     }
 
     #[test]
