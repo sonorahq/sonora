@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Spotify and Deezer albums that span more than one disc number their songs by disc, as in 1.12 and 2.1, instead of counting straight through.
 - The play button on a pinned Liked Songs starts your liked songs instead of doing nothing.
 - Previous goes back to the last song again when SponsorBlock skips the opening of a YouTube Music track, instead of starting the same track over.
+- Seeking many times in a row, with the arrow keys or while a song is still starting, lands once on the last position instead of the song jumping on by itself afterwards.
 - Synced lyrics catch up right away when the playing song turns out to be somewhere other than where Sonora showed it, as could happen with Spotify through Soloist after launch or a song change, instead of standing still until you click a line.
 - Spotify's other apps show what plays next while Soloist plays an album or playlist, instead of an empty queue.
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.

@@ -2665,11 +2665,23 @@ impl Playback {
         }
         // The clock parks at the target; the engine's Seeked starts it again once audio from
         // there is playing. A loading or paused engine takes the seek at once and reports the
-        // position with its Playing, so only a playing one needs the seek tracked.
+        // position with its Playing, so only a playing one needs the seek tracked. A loading
+        // engine keeps only the latest target itself, and the audio thread merges seeks that
+        // queue up behind a slow reopen.
         self.position = position;
         self.clock.reset(position, false);
         self.seek_target = Some(position);
-        match (self.state == PlaybackState::Playing, self.seek_in_flight) {
+        let playing = self.state == PlaybackState::Playing;
+        let parked = playing && self.seek_in_flight.is_some();
+        log::debug!(
+            "playback: seek to {position:?} while {:?}{}",
+            self.state,
+            match parked {
+                true => ", parked behind the one in flight",
+                false => "",
+            }
+        );
+        match (playing, self.seek_in_flight) {
             (true, Some(_)) => self.seek_next = Some(position),
             (true, None) => {
                 self.seek_in_flight = Some(position);

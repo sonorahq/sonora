@@ -1130,24 +1130,31 @@ fn audio_loop<F: Fetch>(
     let mut queued: Option<(String, F::Loaded)> = None;
     let mut playing = false;
     let mut reported_at = Instant::now();
+    // The job found behind a run of seeks, which goes next.
+    let mut stashed: Option<Job<F>> = None;
 
     loop {
         // anything but decoding means waiting for work rather than spinning: no
         // track, a paused one, or a full queue. A restored track sits paused
         // with an empty queue, which the old condition mistook for decoding.
         let idle = current.is_none() || !playing || paced.full();
-        let job = match idle {
-            false => match jobs.try_recv() {
+        let job = match (stashed.take(), idle) {
+            (Some(job), _) => Some(job),
+            (None, false) => match jobs.try_recv() {
                 Ok(job) => Some(job),
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => return,
             },
-            true => match jobs.recv_timeout(Paced::poll()) {
+            (None, true) => match jobs.recv_timeout(Paced::poll()) {
                 Ok(job) => Some(job),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => return,
             },
         };
+        let job = job.map(|job| match job {
+            Job::Seek(position) => Job::Seek(latest_seek(&jobs, position, &mut stashed)),
+            other => other,
+        });
 
         if let Some(join) = &joining
             && cue.played() >= join.at
@@ -1397,6 +1404,34 @@ fn audio_loop<F: Fetch>(
             Err(_) => return,
         }
     }
+}
+
+/// The position of the last seek queued straight behind one to `position`, so a run of seeks
+/// opens one decoder rather than one each. A reopen can take most of a second, and seeks asked
+/// for meanwhile would otherwise play out one by one after the listener stopped. The first job
+/// that is not a seek goes into `stashed`, to run next.
+fn latest_seek<F: Fetch>(
+    jobs: &Receiver<Job<F>>,
+    mut position: Duration,
+    stashed: &mut Option<Job<F>>,
+) -> Duration {
+    let mut merged = 0usize;
+    while let Ok(job) = jobs.try_recv() {
+        match job {
+            Job::Seek(later) => {
+                position = later;
+                merged += 1;
+            }
+            other => {
+                *stashed = Some(other);
+                break;
+            }
+        }
+    }
+    if merged > 0 {
+        log::debug!("playback: merged {merged} queued seek(s) into one to {position:?}");
+    }
+    position
 }
 
 /// The gain a track plays at: unity with normalisation off or no loudness known, and otherwise
