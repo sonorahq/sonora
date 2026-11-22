@@ -36,6 +36,8 @@ use crate::shared::{self, ambient};
 use crate::shells::Shell;
 use ui::{VeilEdge, veil};
 
+/// How many body text heights across the face of whoever queued the playing song stands.
+const ADDER_FACE: f32 = 1.5;
 const COVER_TALL: f32 = 0.46;
 const COVER_WIDE: f32 = 0.34;
 const COVER_TALL_TIGHT: f32 = 0.6;
@@ -764,7 +766,7 @@ impl FullscreenView {
                         .ghost()
                         .small()
                         .mt_1()
-                        .leading(jam::adder_face(&added, theme.text(Text::Body)))
+                        .leading(jam::adder_face(&added, theme.text(Text::Body) * ADDER_FACE))
                         .label(t!("queue-added-by", name = added.name.as_str()))
                         .tint(shared::quiet(&theme))
                         .when(frosted, Button::frosted)

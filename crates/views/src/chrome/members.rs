@@ -18,8 +18,8 @@ use crate::chrome::{jam, session};
 /// How many faces the summary shows before it counts the rest.
 const FACES: usize = 6;
 /// The ring round the face of whoever queued the song playing now, and the gap between it and
-/// the face, which it draws outside of so the rows keep their sizes.
-const PICK_RING: Pixels = px(2.);
+/// the face. Every face keeps the room for one, so the names line up whoever is ringed.
+const PICK_RING: Pixels = px(1.5);
 const PICK_GAP: Pixels = px(1.5);
 
 /// What the panel lists: a Sonora Session first, since the two never play together, or else a
@@ -214,19 +214,15 @@ impl Render for Members {
                 .rounded(theme.radius)
                 .child(
                     div()
-                        .relative()
                         .flex_none()
-                        .child(jam::face(member, theme.metrics.control_small))
-                        .when(picked, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .inset(-(ring + ring_gap))
-                                    .rounded_full()
-                                    .border(ring)
-                                    .border_color(theme.primary),
-                            )
-                        }),
+                        .p(ring_gap)
+                        .rounded_full()
+                        .border(ring)
+                        .border_color(match picked {
+                            true => theme.primary,
+                            false => gpui::transparent_black(),
+                        })
+                        .child(jam::face(member, theme.metrics.control_small)),
                 )
                 .child(div().flex_1().min_w_0().truncate().child(shown))
                 .when(picked, |this| {
