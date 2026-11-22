@@ -1605,14 +1605,33 @@ impl MusicApi for SubsonicClient {
             })
             .unwrap_or_default();
 
-        let newest = self.album_list(AlbumListType::Newest, HOME_ALBUMS).await;
-        let frequent = self.album_list(AlbumListType::Frequent, HOME_ALBUMS).await;
+        let added = self
+            .album_list(AlbumListType::Newest, AlbumListOptions::new())
+            .await;
+        // `byYear` counts down when `fromYear` is the later year, so the newest releases come
+        // first. 1900 is the floor Subsonic clients use for "every year".
+        let this_year = i32::from(jiff::Zoned::now().year());
+        let releases = self
+            .album_list(
+                AlbumListType::ByYear,
+                AlbumListOptions::new().from_year(this_year).to_year(1900),
+            )
+            .await;
+        let frequent = self
+            .album_list(AlbumListType::Frequent, AlbumListOptions::new())
+            .await;
 
         let mut sections = Vec::new();
-        if !newest.is_empty() {
+        if !added.is_empty() {
             sections.push(GenreSection {
-                title: "Newest albums".to_owned(),
-                items: newest.into_iter().map(GenreItem::Album).collect(),
+                title: "home-recently-added".to_owned(),
+                items: added.into_iter().map(GenreItem::Album).collect(),
+            });
+        }
+        if !releases.is_empty() {
+            sections.push(GenreSection {
+                title: "home-newest-releases".to_owned(),
+                items: releases.into_iter().map(GenreItem::Album).collect(),
             });
         }
         if !frequent.is_empty() {
@@ -1736,13 +1755,15 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// One Home shelf of albums, `HOME_ALBUMS` long, from `getAlbumList2` with the caller's
+    /// extra options. A failed request is an empty shelf, which Home leaves out.
     async fn album_list(
         &self,
         kind: opensubsonic::api::lists::AlbumListType,
-        size: i32,
+        options: AlbumListOptions,
     ) -> Vec<Album> {
         self.client
-            .get_album_list2(kind, &self.scoped(AlbumListOptions::new().size(size)))
+            .get_album_list2(kind, &self.scoped(options.size(HOME_ALBUMS)))
             .await
             .map_err(bare)
             .map(|albums| {
@@ -2398,12 +2419,12 @@ mod tests {
 
         let asked = stub.asked();
         let endpoints = endpoints(&asked);
-        // home asks for random songs and two album lists; the radio fallback asks for more
+        // home asks for random songs and three album lists; the radio fallback asks for more
         // random songs after the similar-songs call fails its parse.
         let expected = [
             ("getStarred2", 3),
             ("search3", 4),
-            ("getAlbumList2", 5),
+            ("getAlbumList2", 6),
             ("getSongsByGenre", 1),
             ("getArtists", 1),
             ("getRandomSongs", 2),
