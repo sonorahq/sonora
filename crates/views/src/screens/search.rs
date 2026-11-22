@@ -98,15 +98,9 @@ pub(crate) struct SearchView {
     suggestions: Entity<Search>,
     /// The text the field last held, so a change of caret or selection is not taken for typing.
     typed: String,
-    /// Whether the panel under the field was put away, by Escape, a press outside or a submit.
-    /// Typing or focusing the field again brings it back.
+    /// Whether the panel under the field is put away. Opening the page, Escape, a submit and the
+    /// field losing the keyboard put it away. A click in the field or typing brings it back.
     dismissed: bool,
-    /// Keeps the next focus of the field from reopening the panel, for a focus the page moves
-    /// there itself.
-    hush: bool,
-    /// Whether `search_for` filled the field, so the focus that comes with opening the page
-    /// leaves the panel put away.
-    handed: bool,
     /// The panel row the arrow keys are on.
     pick: Option<usize>,
     /// The `key` of the row `pick` is on, so the pick stays with it as the suggestions reorder.
@@ -173,12 +167,15 @@ impl SearchView {
         .detach();
         let field = input.read(cx).focus_handle(cx);
         cx.on_focus(&field, window, |this, _, cx| {
-            this.dismissed = std::mem::take(&mut this.hush);
             this.pick = None;
             cx.notify();
         })
         .detach();
-        cx.on_blur(&field, window, |_, _, cx| cx.notify()).detach();
+        cx.on_blur(&field, window, |this, _, cx| {
+            this.dismissed = true;
+            cx.notify();
+        })
+        .detach();
 
         cx.observe(&search, |this, _, cx| {
             this.track_menu.reset(cx);
@@ -215,8 +212,6 @@ impl SearchView {
             suggestions,
             typed: String::new(),
             dismissed: false,
-            hush: false,
-            handed: false,
             pick: None,
             picked: None,
             cascade: Cascade::default(),
@@ -239,13 +234,10 @@ impl SearchView {
         }
     }
 
-    /// Puts the keyboard in the field when the page opens, with the panel open, so the search
-    /// history shows at once. After a search handed over by `search_for` the panel stays away,
-    /// so the results it asked for show.
+    /// Puts the keyboard in the field when the page opens and leaves the panel put away. A click
+    /// in the field or typing brings it up.
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let handed = std::mem::take(&mut self.handed);
-        self.hush = handed;
-        self.dismissed = handed;
+        self.dismissed = true;
         self.pick = None;
         self.input.update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
@@ -255,7 +247,6 @@ impl SearchView {
     /// and submitted here. The quick search hands its query over this way.
     pub(crate) fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
         self.typed = query.to_owned();
-        self.handed = true;
         self.input
             .update(cx, |input, cx| input.set_text(query.to_owned(), cx));
         self.suggestions
@@ -266,7 +257,6 @@ impl SearchView {
     /// Moves the keyboard back to the field without opening the panel, for the arrow keys and
     /// Escape coming back up out of the results.
     fn return_to_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.hush = true;
         self.input.update(cx, |input, cx| input.focus(window, cx));
     }
 
@@ -542,18 +532,17 @@ impl SearchView {
         let input = div()
             .flex_1()
             .min_w_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                // A click in the field asks for the panel, even when the focus it brings was
-                // going to arrive quietly.
-                cx.listener(|this, _, _, cx| {
-                    this.hush = false;
-                    if this.dismissed {
-                        this.dismissed = false;
-                        cx.notify();
-                    }
-                }),
-            )
+            // A click in the field asks for the panel. It listens in the capture phase because the
+            // field stops the press.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if event.button != MouseButton::Left {
+                    return;
+                }
+                if this.dismissed {
+                    this.dismissed = false;
+                    cx.notify();
+                }
+            }))
             .child(self.input.clone());
         let button = Button::new("search-submit")
             .icon("icons/search.svg")
