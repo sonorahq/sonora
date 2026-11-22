@@ -4,54 +4,76 @@
 //! each one as it lands and what the buffer holds is always in the clear. From there rodio
 //! decodes an ordinary file, and the threads, the queue, the preload and the gapless join are
 //! the engine's.
+//!
+//! A seek past what has arrived of a FLAC track does not wait for the download to get there. A
+//! [`ranged::Reach`] starts a second download a little before the target, on a stripe boundary
+//! so its body decrypts the stripes as the main one does.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
 
-use crate::deezer::client::DeezerClient;
+use crate::deezer::client::{DeezerClient, Opened};
+use crate::deezer::decrypt::BLOCK;
 use crate::deezer::{Stream, Striped};
 use crate::engine::{self, Fetch, Loudness};
+use crate::ranged::{self, Address, Finder, Span};
 use crate::stream::Reader;
 use crate::vault::{Recording, Shelf};
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
+
+/// How many times one download asks Deezer for a fresh url when the signed one it holds is
+/// refused.
+const RENEWALS: u32 = 3;
+
+/// A decoder over a Deezer track.
+type Decoder = rodio::Decoder<Reader<Striped>>;
 
 /// A track downloading and decrypting, and how long and how loud Deezer says it is.
 #[derive(Clone)]
 pub struct Loaded {
     stream: Stream,
+    /// What a seek past the download enters the file with. `None` for a track from the vault,
+    /// which is whole, and for a format a seek cannot enter part way.
+    leap: Option<Arc<Leap>>,
     duration: Option<Duration>,
     loudness: Option<Loudness>,
 }
 
+/// What entering a file part way needs: downloads of it from a byte, and where its header ends.
+struct Leap {
+    reach: ranged::Reach<Striped>,
+    head: Finder,
+}
+
+/// What a download needs to ask Deezer for a fresh url for the stream it is fetching.
+#[derive(Clone)]
+struct Renewal {
+    client: DeezerClient,
+    id: String,
+    /// The stream the download fetches, which a fresh url has to be for too.
+    effective_id: String,
+    /// The format the download fetches, which a fresh url is asked for in.
+    format: &'static str,
+    /// How many more times the url may be renewed.
+    left: u32,
+}
+
 pub struct Factory {
     client: DeezerClient,
-}
-
-impl Factory {
-    pub fn new(client: DeezerClient) -> Self {
-        Self { client }
-    }
-}
-
-impl PlaybackFactory for Factory {
-    fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>) {
-        engine::start(
-            Deezer {
-                client: self.client.clone(),
-                quality: config.quality,
-                shelf: config.vault.as_ref().map(|vault| vault.shelf("deezer")),
-            },
-            config,
-        )
-    }
+    /// The client media downloads that start part way go through, which gives up on a stalled
+    /// request sooner than the gateway client.
+    media: reqwest::Client,
 }
 
 struct Deezer {
     client: DeezerClient,
+    /// The client downloads a seek starts go through.
+    media: reqwest::Client,
     /// The level every track is asked for at.
     quality: Quality,
     /// Where played tracks are kept, still striped the way the CDN sent them.
@@ -65,6 +87,33 @@ struct Facts {
     effective_id: String,
     duration_s: Option<u64>,
     lufs: Option<f32>,
+}
+
+impl Factory {
+    pub fn new(client: DeezerClient) -> Self {
+        let media = ranged::media_builder()
+            .build()
+            .context("cannot build the deezer media client")
+            .unwrap_or_else(|error| {
+                log::warn!("deezer: {error:#}, streaming through the gateway client");
+                client.http().clone()
+            });
+        Self { client, media }
+    }
+}
+
+impl PlaybackFactory for Factory {
+    fn start(&self, config: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>) {
+        engine::start(
+            Deezer {
+                client: self.client.clone(),
+                media: self.media.clone(),
+                quality: config.quality,
+                shelf: config.vault.as_ref().map(|vault| vault.shelf("deezer")),
+            },
+            config,
+        )
+    }
 }
 
 impl Deezer {
@@ -88,16 +137,51 @@ impl Deezer {
         log::debug!("playback: {id} started from the vault");
         Some(Loaded {
             stream,
+            leap: None,
             duration: facts.duration_s.map(Duration::from_secs),
             loudness: facts.lufs.map(|lufs| Loudness { lufs, peak: None }),
         })
+    }
+
+    /// What lets a seek enter `opened` part way, when its format allows it. Each download a
+    /// seek starts asks for the same signed url and renews it on its own budget.
+    fn leap(&self, id: &str, opened: &Opened) -> Option<Arc<Leap>> {
+        let head = finder(opened.format)?;
+        let (media, url, key) = (self.media.clone(), opened.url.clone(), opened.key);
+        let renewal = Renewal {
+            client: self.client.clone(),
+            id: id.to_owned(),
+            effective_id: opened.effective_id.clone(),
+            format: opened.format,
+            left: RENEWALS,
+        };
+        let reach = ranged::Reach::new("deezer", id, move |start| {
+            let address = Address::new("deezer", media.clone(), url.clone());
+            (address.renewed(renewal.clone()), Striped::at(&key, start))
+        })
+        .aligned(BLOCK as u64);
+        Some(Arc::new(Leap { reach, head }))
+    }
+}
+
+#[async_trait]
+impl ranged::Renew for Renewal {
+    async fn url(&mut self) -> Result<String> {
+        if self.left == 0 {
+            bail!("deezer keeps refusing the url of {}", self.id);
+        }
+        self.left -= 1;
+        log::info!("deezer: asking for a fresh url for {}", self.id);
+        self.client
+            .media_url(&self.id, &self.effective_id, self.format)
+            .await
     }
 }
 
 #[async_trait]
 impl Fetch for Deezer {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<Reader<Striped>>;
+    type Source = Decoder;
 
     fn name(&self) -> &'static str {
         "deezer"
@@ -117,6 +201,7 @@ impl Fetch for Deezer {
         }
         let opened = self.client.open_stream(id, self.quality).await?;
         let total = opened.response.content_length();
+        let leap = self.leap(id, &opened);
         let body = match &self.shelf {
             Some(shelf) => {
                 let facts = Facts {
@@ -138,6 +223,7 @@ impl Fetch for Deezer {
             .await?;
         Ok(Loaded {
             stream,
+            leap,
             duration: opened.duration,
             loudness: opened.loudness,
         })
@@ -160,36 +246,94 @@ impl Fetch for Deezer {
         Some(loaded.stream.arrived() as f32 / total as f32)
     }
 
-    /// Builds a decoder over a stream and places it at `at`. The bytes past the preroll are
-    /// still arriving, so this only reads the header.
+    /// Every seek opens a second decoder, so a seek past the download can open it over a
+    /// download started at the target.
+    fn reopen_to_seek(&self) -> bool {
+        true
+    }
+
     fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+        self.open_near(id, loaded, at).map(|(source, _)| source)
+    }
+
+    /// Builds a decoder placed at `at`. A file still arriving whose format allows it is entered
+    /// part way, so a position past the download waits for one short stretch, never for the way
+    /// there. Otherwise, or when entering fails, the decoder opens seekable over the whole
+    /// stream and is moved, which waits for the bytes at `at`. One that cannot be moved plays
+    /// from the start.
+    fn open_near(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Decoder, Duration)> {
+        let stream = &loaded.stream;
+        let whole = stream.done() && stream.failed().is_none();
+        if !at.is_zero()
+            && !whole
+            && let Some(leap) = &loaded.leap
+            && let Some(length) = loaded.duration
+            && let Some(span) = Span::measure(stream, length, leap.head)
+            && let Some(decoder) = leap
+                .reach
+                .enter(stream, span, at, |reader| forward_decoder(id, reader))
+        {
+            announce(id, &decoder);
+            return Some((decoder, at));
+        }
         let mut builder = rodio::Decoder::builder()
-            .with_data(loaded.stream.reader())
+            .with_data(stream.reader())
             .with_seekable(true);
-        if let Some(total) = loaded.stream.total() {
+        if let Some(total) = stream.total() {
             builder = builder.with_byte_len(total);
         }
-        let mut decoder = match builder.build() {
-            Ok(decoder) => decoder,
-            Err(error) => {
-                log::warn!("playback: cannot decode the deezer track {id}: {error}");
-                return None;
-            }
-        };
-        log::debug!(
-            "playback: {id} decodes at {} Hz, {} channels, {:?} long",
-            decoder.sample_rate(),
-            decoder.channels(),
-            decoder.total_duration()
-        );
-        if !at.is_zero()
-            && let Err(error) = decoder.try_seek(at)
-        {
-            log::warn!(
-                "playback: cannot start the deezer track {id} at {}s: {error}",
-                at.as_secs()
-            );
+        let mut decoder = build(id, builder)?;
+        announce(id, &decoder);
+        if at.is_zero() {
+            return Some((decoder, at));
         }
-        Some(decoder)
+        match decoder.try_seek(at) {
+            Ok(()) => Some((decoder, at)),
+            Err(error) => {
+                log::warn!(
+                    "playback: cannot start the deezer track {id} at {}s: {error}",
+                    at.as_secs()
+                );
+                Some((decoder, Duration::ZERO))
+            }
+        }
     }
+}
+
+/// Where the header ends in a file served as `format`, for a format a seek can enter part way.
+// TODO: enter MP3 part way too once `ranged` has an MP3 head finder. Answer it here for the
+// `MP3_*` formats and open those with `Reach::enter_near` in `open_near`, returning its time.
+fn finder(format: &str) -> Option<Finder> {
+    format
+        .starts_with("FLAC")
+        .then_some(ranged::flac_head as Finder)
+}
+
+/// A decoder that only reads forward and is not told the length, so opening it reads no further
+/// than the first frame.
+fn forward_decoder(id: &str, reader: Reader<Striped>) -> Option<Decoder> {
+    build(
+        id,
+        rodio::Decoder::builder()
+            .with_data(reader)
+            .with_seekable(false),
+    )
+}
+
+/// Builds a decoder, or reports a track that will not decode.
+fn build(id: &str, builder: rodio::decoder::DecoderBuilder<Reader<Striped>>) -> Option<Decoder> {
+    builder
+        .build()
+        .inspect_err(|error| log::warn!("playback: cannot decode the deezer track {id}: {error}"))
+        .ok()
+}
+
+/// Logs what a decoder opened on.
+fn announce(id: &str, decoder: &Decoder) {
+    log::debug!(
+        "playback: {id} decodes at {} Hz, {} channels, {:?} long",
+        decoder.sample_rate(),
+        decoder.channels(),
+        decoder.total_duration()
+    );
 }

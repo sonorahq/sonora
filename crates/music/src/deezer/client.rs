@@ -226,6 +226,11 @@ struct Inner {
 /// said about its length and loudness.
 pub struct Opened {
     pub response: reqwest::Response,
+    /// The signed url the response came from, which a ranged download of the same file reuses
+    /// until it expires.
+    pub url: String,
+    /// The `get_url` format the stream was served in, such as `FLAC` or `MP3_320`.
+    pub format: &'static str,
     pub key: decrypt::Secret,
     /// The id the stream belongs to, which differs from the one asked for when Deezer
     /// substitutes another release of the same recording. The key is derived from it.
@@ -943,11 +948,7 @@ impl DeezerClient {
     /// token, then a stream url from `get_url`, then the GET itself.
     pub async fn open_stream(&self, track_id: &str, quality: Quality) -> Result<Opened> {
         let data = self.track_data(track_id).await?;
-        let effective_id = wire::id(&data["SNG_ID"])
-            .with_context(|| format!("the deezer track {track_id} names no id"))?;
-        let token = wire::text(&data, &["TRACK_TOKEN"])
-            .filter(|token| !token.is_empty())
-            .with_context(|| format!("the deezer track {track_id} is not playable"))?;
+        let (effective_id, token) = playable(track_id, &data)?;
         let duration = wire::number(&data, &["DURATION"]).map(Duration::from_secs);
         let loudness = wire::decimal(&data, &["GAIN"])
             .filter(|lufs| (-70.0..0.0).contains(lufs))
@@ -957,12 +958,12 @@ impl DeezerClient {
             });
 
         let license = self.inner.session.read().await.license_token.clone();
-        let formats: &[&str] = match effective_id.starts_with('-') {
+        let formats: &[&'static str] = match effective_id.starts_with('-') {
             true => &[UPLOAD_FORMAT],
             false => formats_from(quality),
         };
         let mut last = anyhow::anyhow!("no format was offered");
-        for format in formats {
+        for &format in formats {
             match self.stream_url(&license, token, format).await {
                 Ok(Some(url)) => {
                     log::debug!("deezer: {effective_id} streams as {format}");
@@ -978,6 +979,8 @@ impl DeezerClient {
                     let key = self.track_key(&effective_id);
                     return Ok(Opened {
                         response,
+                        url,
+                        format,
                         key,
                         effective_id,
                         duration,
@@ -989,6 +992,31 @@ impl DeezerClient {
             }
         }
         Err(last.context("the deezer track has no playable stream"))
+    }
+
+    /// A fresh signed url for the stream of `track_id` in `format`, for a download whose url
+    /// was refused. It fails when Deezer now serves another stream for the track, whose bytes
+    /// and key differ from the one being downloaded.
+    pub async fn media_url(
+        &self,
+        track_id: &str,
+        effective_id: &str,
+        format: &str,
+    ) -> Result<String> {
+        let data = self.track_data(track_id).await?;
+        let (now, token) = playable(track_id, &data)?;
+        if now != effective_id {
+            bail!("deezer now streams {now} for the track {track_id} rather than {effective_id}");
+        }
+        let license = self.inner.session.read().await.license_token.clone();
+        self.stream_url(&license, token, format)
+            .await?
+            .with_context(|| format!("format {format} is no longer licensed for {track_id}"))
+    }
+
+    /// The client the gateway is called through, for a caller that has no better one.
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.inner.http
     }
 
     /// The Blowfish key of the stream with id `effective_id`, which needs nothing from the network.
@@ -1717,6 +1745,16 @@ fn plan(options: &Value) -> usize {
         (false, true) => 2,
         (false, false) => 3,
     }
+}
+
+/// The id of the stream a gateway track record plays and the token `get_url` takes for it.
+fn playable<'a>(track_id: &str, data: &'a Value) -> Result<(String, &'a str)> {
+    let effective_id = wire::id(&data["SNG_ID"])
+        .with_context(|| format!("the deezer track {track_id} names no id"))?;
+    let token = wire::text(data, &["TRACK_TOKEN"])
+        .filter(|token| !token.is_empty())
+        .with_context(|| format!("the deezer track {track_id} is not playable"))?;
+    Ok((effective_id, token))
 }
 
 /// The formats to try for a level, from its own down to the lowest.
