@@ -1,5 +1,6 @@
 members-title = Members
 members-empty = Start or join a Session to see who is listening with you
+members-picked = Queued the song playing now
 
 # login
 login-restoring = Checking your saved session…

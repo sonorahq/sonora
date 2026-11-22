@@ -21,6 +21,7 @@ use ui::{
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::timeline::Timeline;
 use crate::chrome::{Chrome, SidebarRight};
+use crate::chrome::{jam, members};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::transport::{
@@ -298,7 +299,15 @@ impl PlayerBar {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let label = match self.playback.read(cx).shown_track(cx) {
-            Some(track) => SharedString::from(format!("{} — {}", track.name, track.artists)),
+            Some(track) => match members::picked_by(cx) {
+                Some(added) => SharedString::from(format!(
+                    "{} — {}, {}",
+                    track.name,
+                    track.artists,
+                    t!("queue-added-by", name = added.name.as_str())
+                )),
+                None => SharedString::from(format!("{} — {}", track.name, track.artists)),
+            },
             None => t!("player-nothing-playing"),
         };
         div()
@@ -333,8 +342,16 @@ impl PlayerBar {
             true => t!("song-view-album"),
             false => SharedString::from(track.album.clone()),
         });
+        let stamp = members::picked_by(cx).filter(|_| !away).map(|added| {
+            let ring = match self.settings.read(cx).player_bar_translucent() {
+                true => theme.popover,
+                false => theme.secondary,
+            };
+            jam::stamp("now-playing-adder", &added, artwork, ring, window)
+        });
         div()
             .id("now-playing-artwork")
+            .relative()
             .when_some(track.and_then(|track| track.pin()), Pinnable::pin)
             .when_some(
                 track.and_then(|track| track.album_id.clone()),
@@ -361,6 +378,7 @@ impl PlayerBar {
                 )
                 .seen_as(COVER_FLIGHT),
             )
+            .children(stamp)
             .flex_none()
     }
 

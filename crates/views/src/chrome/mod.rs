@@ -1,7 +1,7 @@
 mod aside;
 mod downloads;
-mod jam;
-mod members;
+pub(crate) mod jam;
+pub(crate) mod members;
 mod notice;
 mod output_picker;
 mod player_bar;
