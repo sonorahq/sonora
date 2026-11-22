@@ -26,6 +26,8 @@ player-previous = Pista anterior
 player-next = Pista siguiente
 player-fullscreen = Pantalla completa
 player-fullscreen-leave = Salir de pantalla completa
+player-time-left = -{ $time }
+player-time-left-spoken = Quedan { $time }
 devices-this-computer = Este equipo
 devices-jam-join = Unirse a una Jam…
 devices-jam-join-title = Unirse a una Jam
@@ -42,6 +44,11 @@ devices-jam-end = Terminar la Jam
 devices-jam-host = Anfitrión
 devices-jam-you = Tú
 devices-jam-remove = Quitar
+devices-jam-people = { $count ->
+    [one] { $count } persona en esta Jam
+   *[other] { $count } personas en esta Jam
+    }
+devices-jam-remove-member = Quitar a { $name }
 devices-jam-invite-title = ¿Unirte a la Jam de { $host }?
 devices-jam-invite-title-anonymous = ¿Unirte a esta Jam?
 devices-jam-invite-detail = { $count ->
@@ -49,7 +56,28 @@ devices-jam-invite-detail = { $count ->
    *[other] { $count } personas ya están en esta Jam.
 }
 devices-jam-invite-join = Unirse
+player-sessions = Sesiones
+devices-spotify-jams = Jams de Spotify
+devices-session-start = Iniciar una Sesión
+devices-session-join = Unirse a una Sesión…
+devices-session-join-title = Unirse a una Sesión
+devices-session-join-detail = Escribe el código que te compartió un amigo
+devices-session-join-confirm = Unirse
+devices-session-code = Código de la Sesión
+devices-session-code-menu = Mostrar el código de la Sesión
+devices-session-code-title = Tu código de Sesión
+devices-session-code-detail = Cualquiera con sesión iniciada en { $provider } puede unirse con este código
+devices-session-code-close = Listo
+devices-session-copy = Copiar código
+devices-session-leave = Salir de la Sesión
+devices-session-end = Terminar la Sesión
+devices-session-reconnecting = Reconectando…
+devices-session-people = { $count ->
+    [one] { $count } persona en esta Sesión
+   *[other] { $count } personas en esta Sesión
+    }
 fullscreen-artwork = Portada
+fullscreen-panels = Vistas de Sonando ahora
 
 # play button
 play-pause = Pausar
@@ -69,3 +97,4 @@ lyrics-follow = Volver a seguir la canción
 lyrics-source = Letra de { $source }
 lyrics-source-local = Letra del archivo
 lyrics-writers = Escrita por { $writers }
+lyrics-instrumental-break = Pausa instrumental

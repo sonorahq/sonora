@@ -29,6 +29,13 @@ common-not-now = Ahora no
 common-not-connected = No conectado
 common-sonora = Sonora
 common-more-count = +{ $count }
+option-variants = Variantes de { $name }
+table-sorted-ascending = Orden ascendente
+table-sorted-descending = Orden descendente
+range-from = Desde
+range-to = Hasta
+rail-back = Desplazar atrás
+rail-forward = Desplazar adelante
 number-group = { "\u00A0" }
 
 # units
@@ -50,7 +57,9 @@ nav-history = Historial
 nav-home = Inicio
 nav-search = Buscar
 nav-library = Tu biblioteca
+sidebar-library = Biblioteca
 nav-settings = Ajustes
+account-manage = Administrar cuentas
 nav-songs = Canciones
 nav-albums = Álbumes
 nav-playlists = Listas de reproducción
@@ -58,6 +67,7 @@ nav-artists = Artistas
 nav-local = Música local
 nav-back = Atrás
 nav-forward = Adelante
+nav-trail = Historial de navegación
 nav-sidebar = Mostrar u ocultar la barra lateral
 nav-sidebar-right = Mostrar u ocultar la letra y la cola
 nav-pinned = Fijados
@@ -84,6 +94,16 @@ library-local-unconfigured = Configura tu biblioteca local
 
 # app menu
 app-refresh = Actualizar
+app-dev-badge = dev
+app-dev-build = Versión de desarrollo
+downloads-active = Descargando
+downloads-left = { $count ->
+    [one] Falta { $count } canción
+   *[other] Faltan { $count } canciones
+}
+downloads-eta = Faltan unos { $minutes } min
+downloads-cancel = Cancelar descarga
+downloads-cancel-all = Cancelar todas las descargas
 app-sign-out = Cerrar sesión
 app-quit = Salir
 app-settings = Ajustes…
@@ -96,6 +116,8 @@ app-window = Ventana
 app-close-window = Cerrar ventana
 app-minimize = Minimizar
 app-zoom = Zoom
+window-maximize = Maximizar
+window-restore = Restaurar
 
 # tray menu
 tray-show = Mostrar Sonora
@@ -110,6 +132,7 @@ column-artist = Artista
 column-album = Álbum
 column-genre = Género
 column-date-added = Fecha de adición
+column-date-liked = Fecha de favorito
 column-added-by = Añadido por
 column-modified = Modificado
 column-length = Duración
@@ -131,10 +154,13 @@ filter-album = Filtrar las pistas del álbum
 filter-reset = Restablecer los filtros
 filter-duration = Duración
 filter-year = Año
+filter-tracks = Pistas
 filter-hide-explicit = Ocultar explícitas
 filter-favorites = Solo favoritos
 filter-downloaded = Descargadas
 filter-owned = Tuyas
+filter-local-only = Solo locales
+filter-streaming-only = Solo streaming
 
 # view
 view-list = Lista
@@ -143,6 +169,7 @@ view-cards = Cuadrícula
 # toolbar
 tool-sort = Ordenar
 tool-filters = Filtros
+tool-account = Cuenta
 
 # release kinds
 release-album = Álbum

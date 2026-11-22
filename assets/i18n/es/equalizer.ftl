@@ -23,6 +23,8 @@ equalizer-filters = Filtros
 equalizer-no-filters = Todavía no hay filtros. Añade uno, elige un preajuste arriba o importa un perfil.
 equalizer-add-filter = Añadir filtro
 equalizer-remove-filter = Quitar filtro
+equalizer-filter = Filtro { $number }
+equalizer-filter-kind = Tipo del filtro { $number }
 equalizer-kind-peak = Pico
 equalizer-kind-low-shelf = Shelf de graves
 equalizer-kind-high-shelf = Shelf de agudos
@@ -72,6 +74,19 @@ equalizer-rule-other = Cualquier otro dispositivo
 equalizer-rule-playing = Sonando ahora
 equalizer-rule-replaces = Sustituye su regla
 equalizer-rule-choose-device = Elige un dispositivo
+equalizer-mode = Modo
+equalizer-preamp-level = Nivel del preamp
+equalizer-no-gain-spoken = Sin ganancia
+equalizer-filter-frequency = Frecuencia del filtro { $number }
+equalizer-filter-gain = Ganancia del filtro { $number }
+equalizer-filter-width = Ancho del filtro { $number }
+equalizer-graph = Respuesta en frecuencia
+equalizer-graph-detail = { $count ->
+    [0] Sin filtros
+    [one] 1 filtro
+   *[other] { $count } filtros
+    }, preamp a { $db } dB
+equalizer-rule-device = Dispositivo
 equalizer-rule-choose-sound = Elige un sonido
 equalizer-rule-add = Añadir regla
 equalizer-rule-remove = Quitar regla
@@ -94,6 +109,7 @@ equalizer-status-separator = {", "}
 equalizer-status-equalized = EQ
 equalizer-status-volume = Volumen
 equalizer-status-normalized = Normalizado
+equalizer-status-direct = Reproducido por Soloist, fuera de Sonora
 equalizer-status-rate = { $from } → { $to } kHz
 equalizer-status-bits = { $from } → { $to } bits
 equalizer-status-float = Flotante → { $to } bits
