@@ -117,7 +117,7 @@ impl Scrobbling {
         cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::StartedPlayback => this.begin(cx),
             PlaybackEvent::EndedPlayback => this.end(cx),
-            PlaybackEvent::Paused | PlaybackEvent::Seeked => this.moved(cx),
+            PlaybackEvent::Paused | PlaybackEvent::Seeked(..) => this.moved(cx),
         })
         .detach();
         cx.observe(&playback, |this, _, cx| this.tick(cx)).detach();
