@@ -27,7 +27,7 @@ on:
 
 # Only the newest main matters, so a newer push cancels the build of an older one.
 concurrency:
-  group: buildbox-cache
+  group: buildbox-cache-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
