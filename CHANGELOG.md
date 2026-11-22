@@ -27,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Previous goes back to the last song again when SponsorBlock skips the opening of a YouTube Music track, instead of starting the same track over.
 - Synced lyrics catch up right away when the playing song turns out to be somewhere other than where Sonora showed it, as could happen with Spotify through Soloist after launch or a song change, instead of standing still until you click a line.
 - Spotify's other apps show what plays next while Soloist plays an album or playlist, instead of an empty queue.
+- In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
 
 ## [0.50.3] - 2026-11-20
 

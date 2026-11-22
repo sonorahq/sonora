@@ -775,7 +775,8 @@ impl Brain {
                 log::warn!("soloist: the daemon never confirmed a seek");
                 return self.landed();
             }
-            if now.duration_since(seek.asked) >= SEEK_RETRY {
+            // a seek names no track, so once the daemon moved on it would land on the next one
+            if now.duration_since(seek.asked) >= SEEK_RETRY && self.heard.uri == track.uri {
                 seek.asked = now;
                 let to = seek.to;
                 self.send("seek", json!({ "position_ms": millis(to) }));
