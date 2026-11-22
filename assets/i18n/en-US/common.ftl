@@ -155,6 +155,7 @@ filter-album = Filter album tracks
 filter-reset = Reset filters
 filter-duration = Duration
 filter-year = Year
+filter-tracks = Tracks
 filter-hide-explicit = Hide explicit
 filter-favorites = Favorites only
 filter-downloaded = Downloaded
