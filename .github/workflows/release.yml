@@ -252,6 +252,16 @@ jobs:
           chmod +x Sonora.app/Contents/MacOS/sonora
           lipo -info Sonora.app/Contents/MacOS/sonora
 
+          # The Homebrew casks link these into the shell completion folders.
+          completions=Sonora.app/Contents/Resources/completions
+          mkdir -p "$completions"
+          Sonora.app/Contents/MacOS/sonora completions bash > "$completions/sonora.bash"
+          Sonora.app/Contents/MacOS/sonora completions zsh > "$completions/_sonora"
+          Sonora.app/Contents/MacOS/sonora completions fish > "$completions/sonora.fish"
+          test -s "$completions/sonora.bash"
+          test -s "$completions/_sonora"
+          test -s "$completions/sonora.fish"
+
           cp \
             assets/macos/sonora.icns \
             assets/macos/Assets.car \
@@ -914,11 +924,13 @@ jobs:
           if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
 
           # A package build downloads every source and checks it against its sum, so a PKGBUILD
-          # that would fail for users never reaches the AUR. makepkg refuses to run as root, and
-          # -d skips installing the runtime dependencies the build itself does not need.
+          # that would fail for users never reaches the AUR. The package runs the executable for
+          # its shell completions, so the runtime dependencies come first. makepkg refuses to run
+          # as root, so it neither installs them itself nor builds as root.
+          pacman -S --noconfirm --needed $(source package/PKGBUILD && echo "${depends[@]}")
           useradd -m builder
           chown -R builder package
-          su builder -c 'cd package && makepkg -f -d --noconfirm && makepkg --printsrcinfo > .SRCINFO'
+          su builder -c 'cd package && makepkg -f --noconfirm && makepkg --printsrcinfo > .SRCINFO'
           cat package/.SRCINFO
 
       - name: push to the AUR

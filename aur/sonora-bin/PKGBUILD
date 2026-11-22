@@ -33,6 +33,19 @@ package() {
   cd "${_pkgname}-${pkgver}"
 
   install -Dm755 "${srcdir}/${_pkgname}-${pkgver}-${CARCH}" "${pkgdir}/usr/bin/${_pkgname}"
+
+  # The executable prints its own completion scripts, so they always match its commands.
+  local shell
+  for shell in bash zsh fish; do
+    "${pkgdir}/usr/bin/${_pkgname}" completions "${shell}" > "${srcdir}/completion.${shell}"
+  done
+  install -Dm644 "${srcdir}/completion.bash" \
+    "${pkgdir}/usr/share/bash-completion/completions/${_pkgname}"
+  install -Dm644 "${srcdir}/completion.zsh" \
+    "${pkgdir}/usr/share/zsh/site-functions/_${_pkgname}"
+  install -Dm644 "${srcdir}/completion.fish" \
+    "${pkgdir}/usr/share/fish/vendor_completions.d/${_pkgname}.fish"
+
   install -Dm644 assets/linux/sonora.desktop \
     "${pkgdir}/usr/share/applications/sonora.desktop"
   install -Dm644 assets/linux/sonora.svg \

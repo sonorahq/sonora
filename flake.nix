@@ -238,6 +238,7 @@
             // {
               inherit cargoArtifacts;
               version = nightly.version or cargoVersion;
+              nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ pkgs.installShellFiles ];
 
               # Soloist is Spotify's prebuilt binary and asks for a loader at /lib64, which NixOS
               # has only with nix-ld. The app starts it through the store's loader with these
@@ -302,6 +303,12 @@
                 install -Dm444 "$src/assets/icons/LICENSE" \
                   "$LICENSE_DIR/icons/LICENSE"
 
+                ${lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+                  installShellCompletion --cmd sonora \
+                    --bash <("$out/bin/sonora" completions bash) \
+                    --zsh <("$out/bin/sonora" completions zsh) \
+                    --fish <("$out/bin/sonora" completions fish)
+                ''}
                 runHook postInstall
               '';
 
