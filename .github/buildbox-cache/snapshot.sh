@@ -125,10 +125,13 @@ if [[ -f /work/prev/deps.sum && -f /work/prev/deps.tar.zst ]] && cmp -s /work/pr
 else
   layers="deps ws"
 fi
+# The third-party layer is compressed hard since it is rarely compressed again. The workspace layer
+# changes on every push, so it trades a little size for being ready minutes sooner.
 for layer in $layers; do
+  if [[ $layer == deps ]]; then level=-19; else level=-12; fi
   tar -C "$snap" -c --format=posix --no-recursion --null -T "/tmp/$layer.list" \
     --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
     --owner=0 --group=0 --numeric-owner \
-    | zstd -q -T4 -19 --long=27 -o "/work/out/$layer.tar.zst"
+    | zstd -q -T4 "$level" --long=27 -o "/work/out/$layer.tar.zst"
 done
 ls -la /work/out
