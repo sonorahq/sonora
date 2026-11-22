@@ -20,7 +20,7 @@ use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::jellyfin::client::{Details, JellyfinClient};
 use crate::mp4::{Input, Prepared, Remote};
-use crate::ranged::{self, Reach};
+use crate::ranged;
 use crate::stream::{Plain, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
@@ -201,13 +201,9 @@ impl Fetch for Jellyfin {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                let media = self.media.clone();
-                let file = remote.filter(|_| seekable).and_then(|remote| {
-                    let reach = Reach::new("jellyfin", id, move |_| {
-                        (remote.address("jellyfin", media.clone()), Plain)
-                    });
-                    ranged::File::detect(&stream, reach)
-                });
+                let file = remote
+                    .filter(|_| seekable)
+                    .and_then(|remote| remote.file("jellyfin", id, self.media.clone(), &stream));
                 anyhow::Ok((stream, prepared, file))
             },
             async {

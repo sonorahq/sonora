@@ -91,11 +91,11 @@ struct Parts {
 }
 
 /// What a seek past the download needs to start another download at its target, and the last
-/// one it started. A track from the vault has none, since all of it is there.
+/// one it started. A file or a track from the vault has none.
 struct Reach {
     /// The runtime the downloads run on, which the audio thread enters to start one.
     runtime: tokio::runtime::Handle,
-    /// The file's url, or the init segment's url and then the media segments'.
+    /// The init segment's url, then the media segments'.
     urls: Vec<String>,
     codec: String,
     /// The download the last seek past the main one started. It is only replaced once a
@@ -113,7 +113,6 @@ struct Ahead {
 }
 
 /// What a download needs to ask Tidal for fresh urls once the signed ones it holds are refused.
-#[derive(Clone)]
 struct Renewal {
     client: TidalClient,
     id: String,
@@ -134,7 +133,7 @@ pub struct Loaded {
     stream: Stream<Long>,
     /// Where a segmented track's segments start. `None` for a track that is one file.
     timeline: Option<Arc<Mutex<Timeline>>>,
-    /// What a seek past the download needs. `None` for a track from the vault.
+    /// What a seek past a segmented download needs. `None` for a file or a track from the vault.
     reach: Option<Arc<Reach>>,
     /// What a seek past a FLAC file's download needs. `None` for any other track or one from
     /// the vault.
@@ -277,6 +276,11 @@ impl Renewal {
         }
         self.left -= 1;
         log::info!("tidal: asking for fresh urls for {}", self.id);
+        self.lookup().await
+    }
+
+    /// A fresh manifest for the same track, refused when it names another codec.
+    async fn lookup(&self) -> Result<Manifest> {
         let manifest = self.client.playback(&self.id, self.quality).await?.manifest;
         if manifest.codec() != self.codec {
             bail!(
@@ -292,9 +296,9 @@ impl Renewal {
 
 #[async_trait]
 impl ranged::Renew for Renewal {
-    /// The url of a fresh manifest, whose own budget the download's renewals stand in for.
+    /// The url of a fresh manifest. The download counts and logs its own renewals.
     async fn url(&self) -> Result<(String, HeaderMap)> {
-        let Manifest::File { url, .. } = self.clone().manifest().await? else {
+        let Manifest::File { url, .. } = self.lookup().await? else {
             bail!("tidal no longer streams the track as one file");
         };
         Ok((url, HeaderMap::new()))
@@ -406,21 +410,21 @@ impl Tidal {
     async fn arrive(&self, id: &str, manifest: Manifest, facts: Facts) -> Result<Loaded> {
         let codec = manifest.codec().to_owned();
         let renewal = self.renewal(id, &codec);
-        let (stream, timeline, urls, file) = match manifest {
+        let (stream, timeline, reach, file) = match manifest {
             Manifest::File { url, .. } => {
                 let renewal = Arc::new(renewal);
                 let address = Address::new("tidal", self.media.clone(), url.clone());
                 let file = Resuming::open(address.renewed(renewal.clone())).await?;
                 let total = file.total();
                 let file = self.record(id, file, move || Some(facts));
-                let (media, urls) = (self.media.clone(), vec![url.clone()]);
+                let media = self.media.clone();
                 let reach = codec.eq_ignore_ascii_case("flac").then(|| {
                     Arc::new(ranged::Reach::new("tidal", id, move |_| {
                         let address = Address::new("tidal", media.clone(), url.clone());
                         (address.renewed(renewal.clone()), Long)
                     }))
                 });
-                (Stream::pulling(file, total, Long), None, urls, reach)
+                (Stream::pulling(file, total, Long), None, None, reach)
             }
             Manifest::Segments {
                 init,
@@ -458,23 +462,20 @@ impl Tidal {
                         ..facts
                     })
                 });
-                (
-                    Stream::pulling(parts, None, Long),
-                    Some(timeline),
+                let reach = Arc::new(Reach {
+                    runtime: tokio::runtime::Handle::current(),
                     urls,
-                    None,
-                )
+                    codec,
+                    ahead: Mutex::new(None),
+                });
+                let stream = Stream::pulling(parts, None, Long);
+                (stream, Some(timeline), Some(reach), None)
             }
         };
         Ok(Loaded {
             stream: stream.primed().await?,
             timeline,
-            reach: Some(Arc::new(Reach {
-                runtime: tokio::runtime::Handle::current(),
-                urls,
-                codec,
-                ahead: Mutex::new(None),
-            })),
+            reach,
             file,
             duration: None,
             loudness: None,
@@ -492,7 +493,7 @@ impl Tidal {
         at: Duration,
     ) -> Option<(Opened, Duration)> {
         if at.is_zero() {
-            let decoder = forward_decoder(id, loaded.stream.reader())?;
+            let decoder = ranged::forward("tidal", id, loaded.stream.reader())?;
             return Some((Trimmed::new(decoder, Duration::ZERO, None), Duration::ZERO));
         }
         let (reader, into, started) = match landing(&loaded.stream, timeline, at) {
@@ -503,9 +504,9 @@ impl Tidal {
             ),
             None => self.leap(id, loaded, timeline, at)?,
         };
-        let decoder = forward_decoder(id, reader)?;
+        let decoder = ranged::forward("tidal", id, reader)?;
         if let (Some(reach), Some(ahead)) = (&loaded.reach, started) {
-            reach.keep(ahead);
+            *lock(&reach.ahead) = Some(ahead);
         }
         Some((Trimmed::new(decoder, into, None), at))
     }
@@ -587,7 +588,8 @@ impl Tidal {
             && let Some(length) = loaded.duration
             && let Some(span) = Span::measure(stream, length, ranged::flac_head)
         {
-            let decoder = reach.enter(stream, span, at, |reader| forward_decoder(id, reader))?;
+            let decoder =
+                reach.enter(stream, span, at, |data| ranged::forward("tidal", id, data))?;
             return Some((Trimmed::new(decoder, Duration::ZERO, None), at));
         }
         let mut decoder = file_decoder(id, stream)?;
@@ -602,13 +604,6 @@ impl Tidal {
             return None;
         }
         Some((Trimmed::new(decoder, Duration::ZERO, None), at))
-    }
-}
-
-impl Reach {
-    /// Keeps `ahead` as the download the last seek started, letting go of the one before.
-    fn keep(&self, ahead: Ahead) {
-        *lock(&self.ahead) = Some(ahead);
     }
 }
 
@@ -743,18 +738,6 @@ fn landing(stream: &Stream<Long>, timeline: &Mutex<Timeline>, at: Duration) -> O
     }
 }
 
-/// A decoder that only reads forward and is not told the length, so opening it reads no
-/// further than the first frame or fragment.
-fn forward_decoder(id: &str, reader: Reader<Long>) -> Option<rodio::Decoder<Reader<Long>>> {
-    decoder(
-        id,
-        rodio::Decoder::builder()
-            .with_symphonia_decoder::<Aac>()
-            .with_data(reader)
-            .with_seekable(false),
-    )
-}
-
 /// A seekable decoder over the whole of a track that is one file.
 fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<Reader<Long>>> {
     let builder = rodio::Decoder::builder()
@@ -765,7 +748,10 @@ fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<Reader
         Some(total) => builder.with_byte_len(total),
         None => builder,
     };
-    decoder(id, builder)
+    builder
+        .build()
+        .inspect_err(|error| log::warn!("playback: cannot decode the tidal track {id}: {error}"))
+        .ok()
 }
 
 /// One request for a part, read whole. A part longer than `SEGMENT_CEILING` is refused before
@@ -782,18 +768,4 @@ async fn whole(http: &reqwest::Client, url: &str) -> Result<Bytes, Failure> {
         part.extend_from_slice(&chunk);
     }
     Ok(Bytes::from(part))
-}
-
-/// Builds a decoder, or reports a track that will not decode.
-fn decoder(
-    id: &str,
-    builder: rodio::decoder::DecoderBuilder<Reader<Long>>,
-) -> Option<rodio::Decoder<Reader<Long>>> {
-    match builder.build() {
-        Ok(decoder) => Some(decoder),
-        Err(error) => {
-            log::warn!("playback: cannot decode the tidal track {id}: {error}");
-            None
-        }
-    }
 }

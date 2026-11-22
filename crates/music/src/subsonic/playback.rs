@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
-use crate::ranged::{self, Reach};
+use crate::ranged;
 use crate::stream::{Plain, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
@@ -175,13 +175,9 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                let media = self.media.clone();
-                let file = remote.filter(|_| seekable).and_then(|remote| {
-                    let reach = Reach::new("subsonic", id, move |_| {
-                        (remote.address("subsonic", media.clone()), Plain)
-                    });
-                    ranged::File::detect(&stream, reach)
-                });
+                let file = remote
+                    .filter(|_| seekable)
+                    .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
                 anyhow::Ok((stream, prepared, file))
             },
             async {

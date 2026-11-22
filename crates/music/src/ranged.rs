@@ -341,8 +341,10 @@ impl Resuming {
                 "the {name} file server does not say how long the file is"
             )));
         }
-        let lines_up = answered
-            .is_some_and(|(start, size)| start == at && (self.size.is_none() || size == self.size));
+        let lines_up = answered.is_some_and(|(start, size)| {
+            let unsaid = self.received == 0 && size.is_none();
+            start == at && (unsaid || self.size.is_none() || size == self.size)
+        });
         match lines_up {
             true => Ok((response, true, until)),
             false => Err(Failure::Final(anyhow!(
@@ -477,7 +479,7 @@ impl<B: Body> Reach<B> {
         let into = usize::try_from(from - start).ok()?;
         let (address, body) = (self.start)(start);
         let mut file = Resuming::new(address, start);
-        file.size = main.total();
+        file.size = main.total().filter(|_| !main.done());
         let stream = {
             let _entered = self.runtime.enter();
             Stream::seeded(&bytes, file, None, body)
@@ -631,7 +633,7 @@ impl<B: Body> File<B> {
             Kind::Mp3 => {
                 let layout = mp3::Layout::measure(main, length)?;
                 let from = layout.byte(at);
-                if from < main.arrived() as u64 + self.reach.nearby {
+                if self.reach.covers(main, from) {
                     return None;
                 }
                 let decoder = self.reach.exact(main, layout.head, from, open)?;

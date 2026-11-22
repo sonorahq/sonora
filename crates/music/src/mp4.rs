@@ -8,8 +8,8 @@ use jiff::fmt::rfc2822::DateTimeParser;
 use reqwest::header::{AUTHORIZATION, CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
 use symphonia::core::io::MediaSourceStreamOptions;
 
-use crate::ranged::Address;
-use crate::stream::{Reader, Stream};
+use crate::ranged::{Address, File, Reach};
+use crate::stream::{Plain, Reader, Stream};
 
 /// The largest metadata suffix retained separately from the sequential download.
 const METADATA_LIMIT: u64 = 16 * 1024 * 1024;
@@ -62,14 +62,24 @@ impl Remote {
         self
     }
 
-    /// Where a download a seek starts fetches the file, with the same credentials as the range
-    /// requests.
-    pub(crate) fn address(&self, name: &'static str, http: reqwest::Client) -> Address {
-        let authorization = self
-            .authorization
-            .iter()
-            .map(|value| (AUTHORIZATION, value.clone()));
-        Address::new(name, http, self.url.to_string()).headers(authorization.collect())
+    /// What a seek past `main`, the download of track `id`, fetches the file through, with the
+    /// credentials of the range requests. `None` for a file no seek can enter part way.
+    pub(crate) fn file(
+        self,
+        name: &'static str,
+        id: &str,
+        http: reqwest::Client,
+        main: &Stream,
+    ) -> Option<Arc<File>> {
+        let reach = Reach::new(name, id, move |_| {
+            let authorization = self
+                .authorization
+                .iter()
+                .map(|value| (AUTHORIZATION, value.clone()));
+            let address = Address::new(name, http.clone(), self.url.to_string());
+            (address.headers(authorization.collect()), Plain)
+        });
+        File::detect(main, reach)
     }
 
     /// Accepts only an exact partial response and bounds both its size and its lifetime.
