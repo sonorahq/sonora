@@ -111,22 +111,14 @@ pub(crate) fn command(program: &Path) -> Command {
     windowless(loaded(program))
 }
 
-/// Starts `program` through the loader and library path the Nix package bakes in, since a NixOS
-/// without nix-ld has nothing at the loader path the binary names. Every other build starts it
-/// directly. The program then sees the loader as `/proc/self/exe`, which only costs it the crash
-/// handler it never starts anyway.
+/// Gives Soloist the Nix audio libraries and configuration through the packaged launcher.
 #[cfg(target_os = "linux")]
 fn loaded(program: &Path) -> Command {
-    const LOADER: Option<&str> = option_env!("SONORA_SOLOIST_LOADER");
-    const LIBRARIES: Option<&str> = option_env!("SONORA_SOLOIST_LIBRARIES");
-    let Some(loader) = LOADER else {
+    let Some(launcher) = option_env!("SONORA_SOLOIST_LAUNCHER") else {
         return Command::new(program);
     };
-    let mut command = Command::new(loader);
-    if let Some(libraries) = LIBRARIES {
-        command.arg("--library-path").arg(libraries);
-    }
-    command.arg("--argv0").arg(program).arg(program);
+    let mut command = Command::new(launcher);
+    command.arg(program);
     command
 }
 

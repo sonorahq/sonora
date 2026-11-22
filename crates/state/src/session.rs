@@ -365,10 +365,9 @@ impl Session {
         Some(provider.slug())
     }
 
-    /// The host to try when checking whether the network is back. It is the active provider's
-    /// own, so the check never touches a service the app is not already using.
-    pub fn reach(&self) -> Option<String> {
-        self.providers.get(self.active?)?.reach()
+    /// Builds the active provider's reachability check for execution on tokio.
+    pub fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
+        self.providers.get(self.active?)?.network_probe()
     }
 
     /// What `link` points at, with the slug of the provider whose link it is. Every provider is

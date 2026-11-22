@@ -50,28 +50,32 @@ pub(crate) fn copyright_notices(album: &Album) -> Vec<SharedString> {
 }
 
 pub(crate) fn release_date_label(value: &str) -> SharedString {
-    let parts: Vec<_> = value.split('-').collect();
-    if parts.len() != 3 {
-        return SharedString::from(value.to_owned());
-    }
-    let month = match parts[1] {
-        "01" => t!("month-1"),
-        "02" => t!("month-2"),
-        "03" => t!("month-3"),
-        "04" => t!("month-4"),
-        "05" => t!("month-5"),
-        "06" => t!("month-6"),
-        "07" => t!("month-7"),
-        "08" => t!("month-8"),
-        "09" => t!("month-9"),
-        "10" => t!("month-10"),
-        "11" => t!("month-11"),
-        "12" => t!("month-12"),
+    let mut parts = value.split('-');
+    let year = parts.next().unwrap_or_default();
+    let month = match parts.next() {
+        Some("01") => t!("month-1"),
+        Some("02") => t!("month-2"),
+        Some("03") => t!("month-3"),
+        Some("04") => t!("month-4"),
+        Some("05") => t!("month-5"),
+        Some("06") => t!("month-6"),
+        Some("07") => t!("month-7"),
+        Some("08") => t!("month-8"),
+        Some("09") => t!("month-9"),
+        Some("10") => t!("month-10"),
+        Some("11") => t!("month-11"),
+        Some("12") => t!("month-12"),
         _ => return SharedString::from(value.to_owned()),
     };
-    let day = parts[2].trim_start_matches('0');
-
-    t!("date-full", month = &month, day = day, year = parts[0])
+    match parts.next() {
+        Some(day) => t!(
+            "date-full",
+            month = &month,
+            day = day.trim_start_matches('0'),
+            year = year
+        ),
+        None => t!("date-month-year", month = &month, year = year),
+    }
 }
 
 /// The line of facts under a hero title, joined by bullets. Its text items reach screen readers
@@ -356,6 +360,7 @@ pub(crate) struct PageHero {
     id: ElementId,
     title: SharedString,
     cover: Option<String>,
+    cover_preview: Option<String>,
     fallback: Option<SharedString>,
     accent: bool,
     eyebrow: Option<SharedString>,
@@ -376,6 +381,7 @@ impl PageHero {
             id: id.into(),
             title: title.into(),
             cover: None,
+            cover_preview: None,
             fallback: None,
             accent: false,
             eyebrow: None,
@@ -425,6 +431,12 @@ impl PageHero {
 
     /// Leaves the clickable cover undrawn while the cover viewer shows it, so the viewer's copy
     /// reads as this one lifted off the page and set back down.
+    /// Keeps the available cover visible until the replacement has decoded.
+    pub(crate) fn cover_preview(mut self, preview: Option<String>) -> Self {
+        self.cover_preview = preview.filter(|url| Some(url) != self.cover.as_ref());
+        self
+    }
+
     pub(crate) fn cover_away(mut self, away: bool) -> Self {
         self.cover_away = away;
         self
@@ -541,12 +553,29 @@ impl RenderOnce for PageHero {
             .gap(COVER_GAP)
             .pb_6()
             .child({
-                let artwork = Artwork::new(self.cover)
-                    .size(art)
-                    .corner_radius(Self::cover_radius(&theme))
-                    .when(self.circle, Artwork::circle)
-                    .when_some(self.fallback, Artwork::fallback)
-                    .when(self.accent, Artwork::accent);
+                let preview = self.cover_preview;
+                let artwork = |url| {
+                    Artwork::new(url)
+                        .size(art)
+                        .corner_radius(Self::cover_radius(&theme))
+                        .when(self.circle, Artwork::circle)
+                        .when_some(self.fallback.clone(), Artwork::fallback)
+                        .when(self.accent, Artwork::accent)
+                };
+                let artwork = match preview {
+                    Some(preview) => div()
+                        .relative()
+                        .child(artwork(Some(preview)))
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .child(artwork(self.cover).overlay()),
+                        )
+                        .into_any_element(),
+                    None => artwork(self.cover).into_any_element(),
+                };
                 let cover =
                     div()
                         .flex_none()

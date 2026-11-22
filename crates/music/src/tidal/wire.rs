@@ -160,6 +160,7 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),
         added_at: added(wrapper),
         added_by: None,
+        release_date: text(album, "releaseDate").and_then(crate::calendar::parse_release_date),
         playcount: None,
         popularity: count(value, "popularity").unwrap_or(0),
         explicit: value
@@ -168,9 +169,11 @@ pub fn track(wrapper: &Value) -> Option<Track> {
             .unwrap_or(false),
         track_number: count(value, "trackNumber").unwrap_or(0),
         disc_number: count(value, "volumeNumber").unwrap_or(1),
+        isrc: None,
         tags: Vec::new(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     })
 }
 

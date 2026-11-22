@@ -572,6 +572,7 @@ impl DetailView {
             .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
+            .cover_preview(header.and_then(|header| header.cover_preview.clone()))
             .cover_away(self.cover_viewer.read(cx).is_open())
             .when_some(view_cover, |hero, on_cover| hero.on_cover_click(on_cover))
             .eyebrow(eyebrow)

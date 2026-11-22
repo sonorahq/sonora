@@ -127,6 +127,11 @@ pub trait Fetch: Send + Sync + 'static {
         false
     }
 
+    /// Whether the account is signed in but Spotify refused the playback key.
+    fn refused(&self, _error: &anyhow::Error) -> bool {
+        false
+    }
+
     /// Whether a failed load means the provider refuses the network the app connects from. The
     /// engine reports that as blocked, since every other track would fail the same way.
     fn blocked(&self, _error: &anyhow::Error) -> bool {
@@ -728,10 +733,12 @@ async fn engine_loop<F: Fetch>(
                             awaited = None;
                             inflight = None;
                             announcing = None;
-                            let refusal = match (fetch.gated(&error), fetch.blocked(&error)) {
-                                (true, _) => PlaybackEvent::Gated,
-                                (false, true) => PlaybackEvent::Blocked,
-                                (false, false) => PlaybackEvent::Unavailable {
+                            let refusal = match () {
+                                _ if fetch.refused(&error) => PlaybackEvent::Refused,
+                                _ if error.is::<crate::Throttled>() => PlaybackEvent::Throttled { id: Some(id) },
+                                _ if fetch.gated(&error) => PlaybackEvent::Gated,
+                                _ if fetch.blocked(&error) => PlaybackEvent::Blocked,
+                                _ => PlaybackEvent::Unavailable {
                                     id: Some(id),
                                     timed_out: crate::trouble::timed_out(&format!("{error:#}")),
                                 },

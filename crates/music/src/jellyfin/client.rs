@@ -895,10 +895,6 @@ impl MusicApi for JellyfinClient {
         Ok(self.covers.track(item))
     }
 
-    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>> {
-        Ok(self.track(track_id).await?.playcount)
-    }
-
     /// Tells the server what plays, through the session reports every Jellyfin client sends.
     /// The dashboard shows it as this device's now playing, and the server counts a song as
     /// played when it stops.

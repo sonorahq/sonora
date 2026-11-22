@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::http_client::{AsyncBody, HttpClient};
+use gpui::{Context, Task};
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use tokio::sync::Semaphore;
@@ -19,6 +22,110 @@ const COLUMNS: u32 = 2;
 /// all of them at once, and each decode briefly holds a full-size cover. Fetches wait outside
 /// it, so one stalled download does not hold up every other playlist.
 static BUILDS: Semaphore = Semaphore::const_new(1);
+
+/// In-flight mosaic work keyed by the playlist it serves.
+pub(crate) type Tasks = HashMap<String, Rc<Task<()>>>;
+
+type Store<E> = fn(&mut E) -> &mut Tasks;
+type Paint<E> = fn(&mut E, String, u32, Vec<String>, &mut Context<E>);
+
+/// Fetches covers once for a group. A superseded row is skipped even if other rows in its
+/// batch are still waiting for the result.
+pub(crate) fn fetch_covers<E: 'static>(
+    io: &crate::Io,
+    client: Arc<dyn music::MusicApi>,
+    wanted: Vec<(String, u32)>,
+    throttle: Option<&'static Semaphore>,
+    store: Store<E>,
+    apply: Paint<E>,
+    cx: &mut Context<E>,
+) -> Tasks {
+    if wanted.is_empty() {
+        return HashMap::new();
+    }
+    let ids: Vec<_> = wanted.iter().map(|(id, _)| id.clone()).collect();
+    let keys = ids.clone();
+    let task = Rc::new_cyclic(|batch| {
+        let batch = batch.clone();
+        io.load(
+            async move {
+                let _turn = match throttle {
+                    Some(limit) => Some(limit.acquire().await?),
+                    None => None,
+                };
+                Ok(client.playlist_cover_batch(&ids, TILES).await)
+            },
+            move |this, result, cx| {
+                let Some(batch) = batch.upgrade() else { return };
+                let mut covers = result
+                    .unwrap_or_else(|error| {
+                        log::warn!("mosaic: cannot read playlist covers: {error:#}");
+                        Vec::new()
+                    })
+                    .into_iter();
+                for (id, stamp) in wanted {
+                    let result = covers.next();
+                    let pending = store(this);
+                    if !pending
+                        .get(&id)
+                        .is_some_and(|task| Rc::ptr_eq(task, &batch))
+                    {
+                        continue;
+                    }
+                    pending.remove(&id);
+                    match result {
+                        Some(Ok(covers)) => apply(this, id, stamp, covers, cx),
+                        Some(Err(error)) => {
+                            log::warn!("mosaic: cannot read playlist covers: {error:#}")
+                        }
+                        None => {}
+                    }
+                }
+            },
+            cx,
+        )
+    });
+    keys.into_iter().map(|id| (id, task.clone())).collect()
+}
+
+/// Builds artwork for a playlist after its cover URLs arrive.
+pub(crate) fn paint<E: 'static>(
+    io: &crate::Io,
+    id: String,
+    stamp: u32,
+    covers: Vec<String>,
+    store: Store<E>,
+    apply: fn(&mut E, &str, String),
+    cx: &mut Context<E>,
+) -> Rc<Task<()>> {
+    let http = cx.http_client();
+    let built_for = id.clone();
+    Rc::new_cyclic(|task| {
+        let task = task.clone();
+        io.load(
+            async move { build(http, &built_for, stamp, covers).await },
+            move |this, result, cx| {
+                let Some(task) = task.upgrade() else { return };
+                let pending = store(this);
+                if !pending
+                    .get(&id)
+                    .is_some_and(|active| Rc::ptr_eq(active, &task))
+                {
+                    return;
+                }
+                pending.remove(&id);
+                match result {
+                    Ok(cover) => {
+                        apply(this, &id, cover);
+                        cx.notify();
+                    }
+                    Err(error) => log::warn!("mosaic: cannot build playlist artwork: {error:#}"),
+                }
+            },
+            cx,
+        )
+    })
+}
 
 fn path(id: &str, stamp: u32) -> PathBuf {
     dirs::cache_dir()

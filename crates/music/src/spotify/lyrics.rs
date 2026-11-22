@@ -1,14 +1,14 @@
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::time::Duration;
 
+use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use bytes::Bytes;
-use http::{Method, Request, header};
-use librespot_core::{Session, spclient::CLIENT_TOKEN};
-use serde::Deserialize;
-use tokio::sync::Mutex;
+use futures::future::try_join_all;
+use http::{HeaderValue, StatusCode, header};
 
-use super::{auth, pace, search};
+use super::proto::lyrics::{Answer, Line, Sheet, SyncData, SyncType};
+use super::{auth, search, transport};
 use crate::lyrics::{catalog, lrc};
 use crate::{
     Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice, escape,
@@ -18,55 +18,20 @@ const SOURCE: &str = "Spotify";
 
 /// A lyrics-only connection, independent of the selected playback provider.
 pub struct SpotifyLyrics {
-    config: auth::AuthConfig,
-    connection: Mutex<Option<Connection>>,
-}
-
-struct Connection {
-    modified: SystemTime,
-    session: Session,
+    account: Arc<auth::Account>,
 }
 
 impl SpotifyLyrics {
     pub fn new(config: auth::AuthConfig) -> Self {
-        Self {
-            config,
-            connection: Mutex::new(None),
-        }
+        Self::with_account(Arc::new(auth::Account::new(config)))
     }
 
     pub fn from_env() -> Self {
         Self::new(auth::AuthConfig::from_env())
     }
 
-    async fn session(&self) -> Result<Option<Session>> {
-        let mut held = self.connection.lock().await;
-        let file = self.config.file();
-        let modified = match std::fs::metadata(&file).and_then(|metadata| metadata.modified()) {
-            Ok(modified) => modified,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                *held = None;
-                return Ok(None);
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if let Some(connection) = held.as_ref()
-            && connection.modified == modified
-            && !connection.session.is_invalid()
-        {
-            return Ok(Some(connection.session.clone()));
-        }
-        *held = None;
-        let Some(session) = auth::restore(&self.config).await? else {
-            return Ok(None);
-        };
-        // Restore can refresh the credential file itself.
-        let modified = std::fs::metadata(file)?.modified()?;
-        *held = Some(Connection {
-            modified,
-            session: session.clone(),
-        });
-        Ok(Some(session))
+    pub(super) fn with_account(account: Arc<auth::Account>) -> Self {
+        Self { account }
     }
 }
 
@@ -77,7 +42,7 @@ impl LyricsProvider for SpotifyLyrics {
     }
 
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let Some(session) = self.session().await? else {
+        let Some(session) = self.account.session().await? else {
             return Ok(Vec::new());
         };
         if let Some(id) = query.id_for("spotify") {
@@ -88,99 +53,52 @@ impl LyricsProvider for SpotifyLyrics {
                 .into_iter()
                 .collect());
         }
-        let tracks = search::search(&session, &format!("{} {}", query.title, query.artist)).await?;
-        let mut hits = Vec::new();
-        for (id, mut hit) in catalog::candidates(SOURCE, query, tracks) {
-            if let Some(sheet) = lyrics(&session, &id)
-                .await?
-                .filter(|sheet| !sheet.is_empty())
-            {
-                hit.lyrics = sheet;
-                hits.push(hit);
-            }
-        }
-        Ok(hits)
+        let tracks =
+            search::lyric_tracks(&session, &format!("{} {}", query.title, query.artist)).await?;
+        let candidates = catalog::candidates(SOURCE, query, tracks);
+        let session = &session;
+        let hits = try_join_all(candidates.into_iter().map(|(id, mut hit)| async move {
+            Ok::<_, anyhow::Error>(
+                lyrics(session, &id)
+                    .await?
+                    .filter(|sheet| !sheet.is_empty())
+                    .map(|sheet| {
+                        hit.lyrics = sheet;
+                        hit
+                    }),
+            )
+        }))
+        .await?;
+        Ok(hits.into_iter().flatten().collect())
     }
 }
 
-const ENDPOINT: &str = "https://spclient.wg.spotify.com/color-lyrics/v2/track";
-const APP_PLATFORM: &str = "WebPlayer";
-
-#[derive(Deserialize)]
-struct Answer {
-    lyrics: Option<Sheet>,
-}
-
-#[derive(Deserialize)]
-struct Sheet {
-    #[serde(default, rename = "syncType")]
-    sync: String,
-    #[serde(default)]
-    lines: Vec<Verse>,
-}
-
-#[derive(Deserialize)]
-struct Verse {
-    #[serde(default, rename = "startTimeMs")]
-    start: String,
-    #[serde(default, rename = "endTimeMs")]
-    end: String,
-    #[serde(default)]
-    words: String,
-    #[serde(default)]
-    syllables: Vec<Syllable>,
-}
-
-#[derive(Deserialize)]
-struct Syllable {
-    #[serde(default, rename = "startTimeMs")]
-    start: String,
-    #[serde(default, rename = "endTimeMs")]
-    end: String,
-    #[serde(default)]
-    text: String,
-}
+const ENDPOINT: &str = "/color-lyrics/v3/track";
 
 pub async fn lyrics(session: &Session, track_id: &str) -> Result<Option<Lyrics>> {
-    let token = session
-        .login5()
-        .auth_token()
-        .await
-        .context("cannot obtain Spotify access token")?;
-    let client_token = session
-        .spclient()
-        .client_token()
-        .await
-        .context("cannot obtain Spotify client token")?;
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri(format!(
-            "{ENDPOINT}/{}?format=json&vocalRemoval=false&market=from_token",
-            escape::component(track_id)
-        ))
-        .header(header::ACCEPT, "application/json")
-        .header("app-platform", APP_PLATFORM)
-        .header(
-            header::AUTHORIZATION,
-            format!("{} {}", token.token_type, token.access_token),
-        )
-        .header(CLIENT_TOKEN, client_token)
-        .body(Bytes::new())
-        .context("cannot build the Spotify lyrics request")?;
-    let body = match pace::send(session, request).await {
-        Ok(body) => body,
-        Err(error) => {
-            log::debug!("lyrics: spotify has none for {track_id}: {error}");
+    let path = format!("{ENDPOINT}/{}", escape::component(track_id));
+    let mut headers = transport::proto_headers(transport::PROTOBUF, Some("Linux"));
+    headers.insert(
+        header::USER_AGENT,
+        HeaderValue::from_static(concat!("Sonora/", env!("CARGO_PKG_VERSION"))),
+    );
+    let answer: Answer = match transport::get(session, &path, headers).await {
+        Ok(answer) => answer,
+        Err(error)
+            if matches!(
+                transport::status(&error),
+                Some(StatusCode::NOT_FOUND | StatusCode::GONE)
+            ) =>
+        {
             return Ok(None);
         }
+        Err(error) => return Err(error).context("cannot fetch Spotify lyrics"),
     };
-    let answer: Answer =
-        serde_json::from_slice(&body).context("cannot decode the Spotify lyrics response")?;
     Ok(answer.lyrics.and_then(sheet))
 }
 
 fn sheet(sheet: Sheet) -> Option<Lyrics> {
-    if sheet.sync == "UNSYNCED" {
+    if sheet.sync_type() == SyncType::Unsynced {
         let text = sheet
             .lines
             .iter()
@@ -191,45 +109,59 @@ fn sheet(sheet: Sheet) -> Option<Lyrics> {
         return (!text.trim().is_empty()).then(|| Lyrics::plain(text));
     }
 
-    let mut lines: Vec<LyricsLine> = sheet.lines.iter().filter_map(verse).collect();
+    let mut lines: Vec<LyricsLine> = sheet.lines.iter().filter_map(line).collect();
     lrc::normalize(&mut lines);
     (!lines.is_empty()).then(|| Lyrics::Synced {
         lines: lines.into(),
     })
 }
 
-fn verse(verse: &Verse) -> Option<LyricsLine> {
-    let text = verse.words.trim();
+fn line(line: &Line) -> Option<LyricsLine> {
+    let text = line.words.trim();
     if text.is_empty() || text == "♪" {
         return None;
     }
-    let start = stamp(&verse.start)?;
-    let words: Vec<LyricsWord> = verse
-        .syllables
-        .iter()
-        .filter_map(|syllable| {
-            Some(LyricsWord {
-                start: stamp(&syllable.start)?,
-                end: stamp(&syllable.end)?,
-                text: syllable.text.clone(),
-            })
-        })
-        .collect();
+    let start = stamp(line.start_time_ms)?;
+    let words = segments(&line.words, &line.sync_data);
     Some(LyricsLine {
         start,
-        end: stamp(&verse.end).filter(|end| *end > start),
+        end: stamp(line.end_time_ms).filter(|end| *end > start),
         text: text.to_owned(),
         romanized: None,
-        words: (!words.is_empty()).then_some(words),
+        words,
         secondary: Vec::new(),
         voice: Voice::Lead,
     })
 }
 
-fn stamp(millis: &str) -> Option<std::time::Duration> {
-    millis
-        .trim()
-        .parse()
-        .ok()
-        .map(std::time::Duration::from_millis)
+/// Turns character counts into text spans, preserving line timing if spans are incomplete.
+fn segments(text: &str, data: &[SyncData]) -> Option<Vec<LyricsWord>> {
+    if data.is_empty() {
+        return None;
+    }
+    let mut chars = text.char_indices().peekable();
+    let mut words = Vec::with_capacity(data.len());
+    for segment in data {
+        let mut remaining = usize::try_from(segment.num_chars).ok()?;
+        if remaining == 0 {
+            continue;
+        }
+        let first = chars.peek()?.0;
+        while remaining > 0 {
+            remaining = remaining.checked_sub(chars.next()?.1.len_utf16())?;
+        }
+        let last = chars.peek().map_or(text.len(), |&(offset, _)| offset);
+        let start = stamp(segment.start_time_ms)?;
+        let end = stamp(segment.end_time_ms).filter(|end| *end > start)?;
+        words.push(LyricsWord {
+            start,
+            end,
+            text: text.get(first..last)?.to_owned(),
+        });
+    }
+    (!words.is_empty() && chars.all(|(_, ch)| ch.is_whitespace())).then_some(words)
+}
+
+fn stamp(millis: i64) -> Option<Duration> {
+    Some(Duration::from_millis(millis.try_into().ok()?))
 }

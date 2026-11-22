@@ -69,68 +69,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_every_uri_kind() {
-        assert_eq!(
-            read("spotify:track:6rqhFgbbKwnb9MLmUQDhG6"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-        assert_eq!(
-            read("spotify:album:1DFixLWuPkv3KT3TnV35m3"),
-            Some(Linked::Album("1DFixLWuPkv3KT3TnV35m3".into()))
-        );
-        assert_eq!(
-            read("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"),
-            Some(Linked::Playlist("37i9dQZF1DXcBWIGoYBM5M".into()))
-        );
-        assert_eq!(
-            read("spotify:artist:0TnOYISbd1XYRBk9myaseg"),
-            Some(Linked::Artist("0TnOYISbd1XYRBk9myaseg".into()))
-        );
+    fn recognises_spotify_link_forms() {
+        for (link, expected) in [
+            ("spotify:track:t", Linked::Track("t".into())),
+            ("spotify://album/a", Linked::Album("a".into())),
+            ("spotify:user:u:playlist:p", Linked::Playlist("p".into())),
+            (
+                "https://open.spotify.com/intl-de/artist/a?si=abc",
+                Linked::Artist("a".into()),
+            ),
+            (
+                "http://www.open.spotify.com/user/u/",
+                Linked::User("u".into()),
+            ),
+            ("https://spotify.link/abc", Linked::Short),
+        ] {
+            assert_eq!(read(link), Some(expected), "{link}");
+        }
     }
 
     #[test]
-    fn reads_web_links() {
-        assert_eq!(
-            read("https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-        assert_eq!(
-            read("http://www.open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3/"),
-            Some(Linked::Album("1DFixLWuPkv3KT3TnV35m3".into()))
-        );
-    }
-
-    #[test]
-    fn drops_the_share_query() {
-        assert_eq!(
-            read("https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6?si=abc123"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-    }
-
-    #[test]
-    fn skips_the_locale_segment() {
-        assert_eq!(
-            read("https://open.spotify.com/intl-de/artist/0TnOYISbd1XYRBk9myaseg"),
-            Some(Linked::Artist("0TnOYISbd1XYRBk9myaseg".into()))
-        );
-    }
-
-    #[test]
-    fn reads_the_legacy_user_playlist_uri() {
-        assert_eq!(
-            read("spotify:user:spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"),
-            Some(Linked::Playlist("37i9dQZF1DXcBWIGoYBM5M".into()))
-        );
-    }
-
-    #[test]
-    fn refuses_what_it_cannot_route() {
-        assert_eq!(read("spotify:show:4rOoJ6Egrf8K2IrywzwOMk"), None);
-        assert_eq!(read("spotify:track:"), None);
-        assert_eq!(read("spotify:track"), None);
-        assert_eq!(read("https://example.com/track/abc"), None);
-        assert_eq!(read("nonsense"), None);
-        assert_eq!(read(""), None);
+    fn refuses_foreign_hosts_and_unroutable_uris() {
+        for link in [
+            "https://example.com/track/t",
+            "spotify:show:s",
+            "spotify:track:",
+            "spotify:track",
+        ] {
+            assert_eq!(read(link), None, "{link}");
+        }
     }
 }

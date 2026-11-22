@@ -378,6 +378,7 @@ fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
                     .map(|(path, parent, mtime, size, track)| {
                         let tagged = serde_json::from_str::<Tagged>(track)
                             .ok()
+                            .filter(|tagged| tagged.metadata_version == Tagged::METADATA_VERSION)
                             .map(Tagged::restored);
                         (path.clone(), parent.clone(), *mtime, *size, tagged)
                     })

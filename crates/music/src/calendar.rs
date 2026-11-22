@@ -3,6 +3,31 @@
 //! Every provider stamps when something was added or changed, and each spells it a little
 //! differently, so one tolerant reader serves them all rather than one per provider.
 
+/// Formats the known components of a release date without inventing a month or day.
+pub(crate) fn release_date(year: i32, month: i32, day: i32) -> Option<String> {
+    if !(1..=9999).contains(&year) {
+        return None;
+    }
+    Some(match (month, day) {
+        (1..=12, 1..=31) => format!("{year:04}-{month:02}-{day:02}"),
+        (1..=12, _) => format!("{year:04}-{month:02}"),
+        _ => format!("{year:04}"),
+    })
+}
+
+/// Normalizes a year, partial ISO date or full ISO date, dropping any time suffix.
+pub(crate) fn parse_release_date(value: &str) -> Option<String> {
+    let value = value.trim().split(['T', ' ']).next()?;
+    let mut parts = value.split('-');
+    let year = parts.next()?;
+    if year.len() != 4 {
+        return None;
+    }
+    let month = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    let day = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    release_date(year.parse().ok()?, month, day)
+}
+
 /// An ISO-8601 stamp as seconds since the epoch. It takes a bare date (`2026-09-15`), a date and
 /// time joined by `T` or a space, fractional seconds, and a `Z`, `+02:00` or `+0000` offset,
 /// which covers what Apple Music, Deezer and Tidal write. A missing month or day reads as the

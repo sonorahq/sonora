@@ -983,8 +983,7 @@ impl Playback {
     }
 
     /// Sends the command `make` builds to the other device that has playback, if one does, and
-    /// says whether it did. A caller that got `true` leaves its own engine and queue alone, except
-    /// that a `Start` the device refuses is played here once it comes back as an event.
+    /// says whether it did. A caller that got `true` leaves its own engine and queue alone.
     fn steer(&self, make: impl FnOnce(&Elsewhere) -> Command, cx: &App) -> bool {
         let Some((devices, steered)) = self.steering(cx) else {
             return false;
@@ -2367,6 +2366,16 @@ impl Playback {
         self.load_after(&track, start, cx);
     }
 
+    /// Jumps within the queue of the device that still owns the displayed playback.
+    pub fn jump_remote_queue(&self, pick: &crate::RemoteQueuePick, cx: &App) {
+        if let Some((devices, remote)) = self.steering(cx)
+            && remote.device.id == pick.device
+            && remote.state.context == pick.context
+        {
+            devices.read(cx).jump_queue(pick);
+        }
+    }
+
     /// Selects a stable local occurrence; selecting current toggles playback.
     pub fn play_queue(&mut self, uid: &str, cx: &mut Context<Self>) {
         use crate::QueuePosition;
@@ -3016,7 +3025,6 @@ impl Playback {
             .update(cx, |settings, cx| settings.set_cache_gb(gb, cx));
         let vault = self.vault.clone();
         let bytes = crate::vault::bytes(gb);
-        Vault::set_keeping(self.keep_tracks, bytes);
         self.resize = Some(cx.background_spawn(async move { vault.set_limit(bytes) }));
         cx.notify();
     }
@@ -3065,13 +3073,12 @@ impl Playback {
     }
 
     /// Turns caching played tracks on or off. Turning it off also removes every cached track,
-    /// and downloads stay. Spotify keeps its own files and follows at its next sign-in.
+    /// and downloads stay.
     pub fn set_keep_tracks(&mut self, on: bool, cx: &mut Context<Self>) {
         if self.keep_tracks == on {
             return;
         }
         self.keep_tracks = on;
-        Vault::set_keeping(on, crate::vault::bytes(self.cache_gb));
         self.vault.set_caching(on);
         self.settings
             .update(cx, |settings, cx| settings.set_keep_tracks(on, cx));

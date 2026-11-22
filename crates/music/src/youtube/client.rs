@@ -245,10 +245,6 @@ impl MusicApi for YouTubeClient {
         Ok(track)
     }
 
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
-    }
-
     async fn playlists(&self) -> Result<Vec<Playlist>> {
         Ok(self
             .api

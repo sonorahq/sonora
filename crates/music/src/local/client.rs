@@ -370,10 +370,6 @@ impl MusicApi for LocalClient {
             .ok_or_else(|| anyhow!("cannot find local track {track_id}"))
     }
 
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
-    }
-
     async fn playlists(&self) -> Result<Vec<Playlist>> {
         Ok(self
             .store
@@ -839,9 +835,11 @@ mod tests {
             explicit: false,
             track_number: 1,
             disc_number: 1,
+            isrc: None,
             tags: Vec::new(),
             languages: Vec::new(),
             credits: Vec::new(),
+            ..Track::default()
         }
     }
 

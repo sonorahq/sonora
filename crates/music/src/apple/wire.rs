@@ -1312,12 +1312,17 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         duration: Duration::from_millis(attributes.duration_in_millis.as_u64().unwrap_or(0)),
         added_at: moment(attributes.date_added.as_str()),
         added_by: None,
+        release_date: attributes
+            .release_date
+            .as_str()
+            .and_then(crate::calendar::parse_release_date),
         playcount: None,
         popularity: 0,
         explicit: attributes.content_rating.as_str() == Some("explicit"),
         track_number: number(&attributes.track_number),
         disc_number: number(&attributes.disc_number),
-        tags: attributes
+        isrc: None,
+        genres: attributes
             .genre_names
             .iter()
             .filter_map(Leaf::as_str)
@@ -1326,6 +1331,7 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
             .collect(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     })
 }
 
@@ -1429,7 +1435,7 @@ mod tests {
         assert_eq!(track.duration, Duration::from_millis(447_000));
         assert!(track.explicit);
         assert!(track.playable);
-        assert_eq!(track.tags, vec!["Alternative"]);
+        assert_eq!(track.genres, vec!["Alternative"]);
         assert_eq!(
             track.cover.as_deref(),
             Some("https://is1.mzstatic.com/a/600x600bb.jpg")

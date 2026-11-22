@@ -326,14 +326,21 @@ impl Covers {
             duration: item.duration(),
             added_at: iso_8601_to_epoch(item.date_created.as_deref()),
             added_by: None,
+            release_date: item
+                .premiere_date
+                .as_deref()
+                .and_then(crate::calendar::parse_release_date)
+                .or_else(|| crate::calendar::release_date(item.production_year?, 0, 0)),
             playcount: item.user_data.as_ref().and_then(|data| data.play_count),
             popularity: 0,
             explicit: false,
             track_number: item.index_number.unwrap_or(0),
             disc_number: item.parent_index_number.unwrap_or(1).max(1),
-            tags: item.genres,
+            isrc: None,
+            genres: item.genres,
             languages: Vec::new(),
             credits,
+            ..Track::default()
         }
     }
 

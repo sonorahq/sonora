@@ -1256,10 +1256,6 @@ impl MusicApi for TidalClient {
         wire::track(&answer).with_context(|| format!("cannot read the tidal track {track_id}"))
     }
 
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
-    }
-
     /// The listener's own playlists and the ones they follow, in one listing.
     async fn playlists(&self) -> Result<Vec<Playlist>> {
         let user_id = self.user_id().await;
@@ -1472,10 +1468,9 @@ impl MusicApi for TidalClient {
         let detail = detail.with_context(|| format!("cannot load the album {album_id}"))?;
         let album =
             wire::album(&detail).with_context(|| format!("cannot read the album {album_id}"))?;
-        Ok(AlbumDetail {
-            album,
-            tracks: tracks.with_context(|| format!("cannot load the tracks of {album_id}"))?,
-        })
+        let mut tracks = tracks.with_context(|| format!("cannot load the tracks of {album_id}"))?;
+        album.date_tracks(&mut tracks);
+        Ok(AlbumDetail { album, tracks })
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {

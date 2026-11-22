@@ -1,10 +1,7 @@
 //! The Soloist engine: the program run as a daemon and steered over its WebSocket.
 //!
-//! The daemon is a whole Spotify player with a queue, autoplay and a volume of its own, and
-//! Sonora wants none of that. It is handed one track at a time and everything it does beyond
-//! that track is undone: shuffle and repeat are switched off, its volume is held where Sonora's
-//! is, and a track it moves on to by itself is stopped and reported as the end of the one that
-//! was asked for. Sonora's queue then says what plays next.
+//! Soloist keeps the account's shuffle and repeat settings. When Sonora starts playback,
+//! its own queue still decides what follows, and Soloist's volume follows Sonora's.
 //!
 //! The daemon's queue is all the account's other devices see of it. So while Sonora plays an
 //! album or playlist in its own order, the track is started inside that collection, and the
@@ -32,6 +29,10 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, ensure};
@@ -167,20 +168,20 @@ impl PlaybackEvents for Events {
 
 /// Starts a daemon and the thread that steers it. The daemon comes up at once, so the first
 /// track does not wait for it to sign in.
-pub(crate) fn start(config: &PlaybackConfig) -> (Engine, Events) {
+pub(crate) fn start(config: &PlaybackConfig, owned: Arc<AtomicBool>) -> (Engine, Events) {
     let setup = Setup {
         normalise: config.normalisation,
         gapless: config.gapless,
         quality: config.quality,
         interval: config.position_interval,
     };
-    begin(setup, percent(config.gain))
+    begin(setup, percent(config.gain), owned)
 }
 
-fn begin(setup: Setup, volume: u8) -> (Engine, Events) {
+fn begin(setup: Setup, volume: u8, owned: Arc<AtomicBool>) -> (Engine, Events) {
     let (commands, asked) = unbounded_channel();
     let (events, reported) = unbounded_channel();
-    let brain = Brain::new(setup, volume, events);
+    let brain = Brain::new(setup, volume, events, owned);
     let spawned = std::thread::Builder::new()
         .name("soloist".into())
         .spawn(move || {
@@ -332,6 +333,8 @@ struct Brain {
     /// the track is not heard before the place it was asked to start from.
     muted: bool,
     track: Option<Track>,
+    /// Whether the current playback was requested by this engine.
+    owned: Arc<AtomicBool>,
     heard: Heard,
     /// The track Sonora says comes next, held until the current one is near its end.
     next: Option<String>,
@@ -372,7 +375,12 @@ struct Brain {
 }
 
 impl Brain {
-    fn new(setup: Setup, volume: u8, events: UnboundedSender<PlaybackEvent>) -> Self {
+    fn new(
+        setup: Setup,
+        volume: u8,
+        events: UnboundedSender<PlaybackEvent>,
+        owned: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             setup,
             events,
@@ -381,6 +389,7 @@ impl Brain {
             volume,
             muted: false,
             track: None,
+            owned,
             heard: Heard::default(),
             next: None,
             after: None,
@@ -414,6 +423,7 @@ impl Brain {
                 _ = ticker.tick() => self.tick(),
             }
         }
+        self.owned.store(false, Ordering::Relaxed);
         if let Some(link) = self.link.take() {
             link.close().await;
         }
@@ -537,6 +547,7 @@ impl Brain {
             return;
         }
         track.sent = true;
+        self.owned.store(true, Ordering::Relaxed);
         let uri = track.uri.clone();
         let opening = track.start > OPENING;
         // what the daemon said of the track before this one says nothing of the new one
@@ -855,11 +866,10 @@ impl Brain {
                 self.arrive();
             }
             Event::VolumeChanged { volume } => self.hold_volume(volume),
-            Event::OptionsChanged { options } => {
-                if options.meddles() {
-                    self.settle_options();
-                }
+            Event::OptionsChanged if self.owned.load(Ordering::Relaxed) => {
+                self.send("get_queue", json!({ "limit": QUEUE_LIMIT }));
             }
+            Event::OptionsChanged => {}
             Event::DeviceChanged { is_active } => {
                 if !is_active {
                     // what the daemon plays from next is whatever the other device leaves
@@ -930,9 +940,6 @@ impl Brain {
         if let Some(volume) = playback.volume {
             self.hold_volume(volume);
         }
-        if playback.options.is_some_and(|options| options.meddles()) {
-            self.settle_options();
-        }
         let placed = playback.position.is_some();
         if let Some(position) = playback.position {
             self.heard.position = position.at();
@@ -963,12 +970,6 @@ impl Brain {
     /// just named the track it moved to, which counts as playing it even before a status says so.
     fn observe(&mut self, announced: bool) {
         let Some(track) = self.track.as_mut() else {
-            // Something was started on the daemon from one of Spotify's apps. Sonora shows
-            // none of it, so it does not get to play. A track the daemon went on to from its
-            // queue is Sonora's own, and waits for the load that asks for it.
-            if self.adopted.is_none() && self.heard.status == Status::Playing {
-                self.send("pause", json!({}));
-            }
             return;
         };
         if !track.sent || !track.accepted {
@@ -1162,6 +1163,8 @@ impl Brain {
     /// Another device took playback, which stops the daemon. The track is kept where it was,
     /// paused, so `play` takes playback back and goes on from there.
     fn taken(&mut self) {
+        self.owned.store(false, Ordering::Relaxed);
+        self.adopted = None;
         let Some(track) = self.track.as_mut() else {
             return;
         };
@@ -1199,6 +1202,7 @@ impl Brain {
     }
 
     fn gone(&mut self, end: End) {
+        self.owned.store(false, Ordering::Relaxed);
         self.link = None;
         self.signed_in = false;
         self.muted = false;
@@ -1258,6 +1262,7 @@ impl Brain {
 
     /// Stops the daemon without waiting for it.
     fn hang_up(&mut self) {
+        self.owned.store(false, Ordering::Relaxed);
         self.signed_in = false;
         self.muted = false;
         if let Some(link) = self.link.take() {
@@ -1267,18 +1272,9 @@ impl Brain {
 
     /// Puts a daemon that just signed in the way Sonora needs it.
     fn settle(&mut self) {
-        self.settle_options();
         let volume = self.volume;
         self.send("set_volume", json!({ "volume": volume }));
         self.send("get_queue", json!({}));
-    }
-
-    /// The daemon restores the account's shuffle and repeat, either of which would have it play
-    /// something other than the one track it is given.
-    fn settle_options(&mut self) {
-        self.send("set_shuffle", json!({ "enabled": false }));
-        self.send("set_repeat_track", json!({ "enabled": false }));
-        self.send("set_repeat_context", json!({ "enabled": false }));
     }
 
     /// Puts the daemon's volume back when one of Spotify's apps moved it. Sonora's own volume

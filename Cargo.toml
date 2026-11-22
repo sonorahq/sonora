@@ -10,6 +10,11 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
+num-bigint = "0.5"
+shannon = "0.2"
+tokio-util = { version = "0.7", features = ["codec"] }
+aes = "0.9"
+ctr = "0.10"
 embed = { path = "crates/embed" }
 cli = { path = "crates/cli" }
 i18n = { path = "crates/i18n" }
@@ -110,8 +115,7 @@ log = "0.4"
 md-5 = "0.11"
 moka = { version = "0.12", features = ["future", "sync"] }
 mpris-server = "0.11"
-notify = "8.2"
-oauth2 = "5.0"
+notify = "9.0"
 open = "5.4"
 block2 = "0.6"
 objc2 = "0.6"
@@ -162,10 +166,11 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "query",
     "rustls-no-provider",
+    "http2",
 ] }
 qrcodegen = "1"
 raw-window-handle = "0.6"
-resvg = { version = "0.49", default-features = false }
+resvg = { version = "0.50", default-features = false }
 ring = "0.17"
 roxmltree = "0.21"
 rodio = { version = "0.22", default-features = false, features = [
@@ -183,7 +188,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
-serde-saphyr = { version = "2.1", default-features = false, features = [
+serde-saphyr = { version = "2.2", default-features = false, features = [
     "deserialize",
 ] }
 sha1 = "0.11"
@@ -204,18 +209,8 @@ unicode-bidi = "0.3"
 unicode-segmentation = "1.13"
 ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "62b36b8" }
 
-librespot-core = { version = "0.8.0", default-features = false, features = [
-    "rustls-tls-native-roots",
-] }
-librespot-oauth = { version = "0.8.0", default-features = false, features = [
-    "rustls-tls-native-roots",
-] }
-librespot-playback = { version = "0.8.0", default-features = false, features = [
-    "rustls-tls-native-roots",
-] }
-librespot-protocol = "0.8.0"
 percent-encoding = "2.3"
-protobuf = "3"
+prost = "0.14"
 pulseaudio = "0.3.2"
 opensubsonic = "0.7"
 tokio = { version = "1.54", features = [
@@ -233,12 +228,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 ] }
 
 [patch.crates-io]
-librespot-audio = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
-librespot-core = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
-librespot-metadata = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
-librespot-oauth = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
-librespot-playback = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
-librespot-protocol = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "880aaba54b00aead53651ed1ccbdb672d1375a95" }
 
 [workspace.lints.clippy]

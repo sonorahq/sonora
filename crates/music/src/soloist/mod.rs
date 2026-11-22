@@ -10,7 +10,7 @@
 //! It is off until the listener sets it up, in three steps `state` asks for in order: [`fetch`]
 //! the program, take an API key, and [`pair`] the program with the account from one of Spotify's
 //! own apps. [`set_up`] says whether all three are done. The listener can still switch Soloist
-//! off, and the Spotify provider starts a Soloist engine instead of librespot's while [`ready`]
+//! off, and the Spotify provider starts Soloist instead of Sonora's audio engine while [`ready`]
 //! says it is both set up and on.
 //!
 //! Like `drm`, this sits in the crate root so `state` and `views` reach it without naming a
@@ -242,6 +242,13 @@ fn home() -> PathBuf {
 /// The folder the program keeps its device identity and paired sign-in in.
 fn data() -> PathBuf {
     home().join("data")
+}
+
+/// Reads the local device identity saved by the paired Soloist daemon.
+pub(crate) fn device_id() -> Option<String> {
+    let id = std::fs::read_to_string(data().join(".device_id")).ok()?;
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
 }
 
 /// The folder a pairing is made in. It only takes the place of [`data`] once the pairing has

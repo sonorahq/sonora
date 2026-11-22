@@ -54,7 +54,6 @@ impl Contributor {
 #[serde(default)]
 pub struct ArtistRef {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// True when the credit is a plain video channel and not an artist page, as for fan uploads
     /// on YouTube. Search does not offer such a channel as an artist.
@@ -72,7 +71,7 @@ pub struct Credit {
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
 /// caller that builds one from `..Default::default()` sets `playable` itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Track {
     pub id: Option<String>,
@@ -89,14 +88,37 @@ pub struct Track {
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
+    /// ISO release date with the precision the provider supplied.
+    pub release_date: Option<String>,
     pub playcount: Option<u64>,
     pub popularity: u32,
     pub explicit: bool,
     pub track_number: u32,
     pub disc_number: u32,
+    pub isrc: Option<String>,
+    pub genres: Vec<String>,
     pub tags: Vec<String>,
+    pub moods: Vec<String>,
+    pub bpm: Option<f32>,
     pub languages: Vec<String>,
     pub credits: Vec<Credit>,
+}
+
+impl Track {
+    /// Returns the track release date, filling in compatible detail from the album.
+    pub fn release_date_with<'a>(&'a self, album_date: Option<&'a str>) -> Option<&'a str> {
+        let date = self.release_date.as_deref();
+        album_date
+            .filter(|album| !album.is_empty())
+            .filter(|album| {
+                date.is_none_or(|date| {
+                    album
+                        .strip_prefix(date)
+                        .is_some_and(|rest| rest.starts_with('-'))
+                })
+            })
+            .or(date)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +215,18 @@ pub struct Album {
 }
 
 impl Album {
+    /// Fills in release dates for tracks loaded alongside this album.
+    pub(crate) fn date_tracks(&self, tracks: &mut [Track]) {
+        let date = crate::calendar::parse_release_date(&self.release_date)
+            .or_else(|| crate::calendar::release_date(self.year, 0, 0));
+        for track in tracks {
+            let current = track.release_date_with(date.as_deref());
+            if current != track.release_date.as_deref() {
+                track.release_date = current.map(str::to_owned);
+            }
+        }
+    }
+
     /// Credits the album to `artist` when it names no one. A provider calls this on releases
     /// read from an artist's own listing, which often leaves the artist out of each entry.
     pub fn credit(mut self, artist: &ArtistRef) -> Self {
@@ -232,7 +266,7 @@ fn is_no_label(label: &str) -> bool {
     label.eq_ignore_ascii_case(NO_LABEL)
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -262,9 +296,18 @@ pub struct Genre {
     pub cover: Option<String>,
 }
 
+/// A row of categories on the Search landing page and its optional directory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BrowseShelf {
+    pub id: String,
+    pub title: String,
+    pub genres: Vec<Genre>,
+    pub see_all: Option<String>,
+}
+
 /// One card of a browse shelf. A provider's home and genre pages mix whatever the shelf holds,
 /// so a track or an artist sits beside albums and playlists in the same row.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GenreItem {
     Playlist(Playlist),
     Album(Album),
@@ -273,7 +316,7 @@ pub enum GenreItem {
     Artist(SavedArtist),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreSection {
     pub title: String,
     pub items: Vec<GenreItem>,
@@ -310,7 +353,7 @@ impl Found {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct HomeFeed {
     /// What the user has been playing lately, in every shape the provider lists it: songs and
     /// videos, but also the albums, playlists and artists they came from.
@@ -319,7 +362,7 @@ pub struct HomeFeed {
     pub sections: Vec<GenreSection>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreDetail {
     pub name: String,
     pub sections: Vec<GenreSection>,
@@ -375,7 +418,7 @@ pub struct TrackTags {
     pub lyrics: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
@@ -417,7 +460,7 @@ pub struct SavedArtist {
     pub added_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
@@ -435,7 +478,7 @@ pub struct Artist {
 
 /// What an artist page fills in once its overview is already on screen. Every list
 /// replaces what `MusicApi::artist` answered with, and an empty one leaves that part alone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArtistCatalogue {
     pub albums: Vec<Album>,
     pub top_tracks: Vec<Track>,
@@ -691,6 +734,8 @@ pub enum PinTargetKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinOutcome {
     Updated,
+    /// The provider accepted the write but its list may omit the pin.
+    Accepted,
     LimitReached,
     Outside,
 }

@@ -1,7 +1,7 @@
-//! Read-only check of Spotify's mixed library using the cached session.
+//! Read-only check of Spotify's sidebar pins using the cached session.
 use anyhow::{Context as _, Result};
 use music::MusicApi;
-use music::spotify::{AuthConfig, LibrespotClient, auth};
+use music::spotify::{AuthConfig, SpotifyClient, auth};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,13 +11,13 @@ async fn main() -> Result<()> {
     let session = auth::restore(&AuthConfig::from_env())
         .await?
         .context("no cached Spotify session")?;
-    let client = LibrespotClient::new(session);
+    let client = SpotifyClient::new(session);
     let items = client
         .pin_targets()
         .await?
         .context("provider keeps no pins")?;
     println!(
-        "library items={}, pinned={}",
+        "pin targets={}, pinned={}",
         items.len(),
         items.iter().filter(|item| item.pinned).count()
     );

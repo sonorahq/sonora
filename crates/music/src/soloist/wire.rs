@@ -39,9 +39,7 @@ pub(super) enum Event {
     VolumeChanged {
         volume: u8,
     },
-    OptionsChanged {
-        options: Options,
-    },
+    OptionsChanged,
     DeviceChanged {
         #[serde(default)]
         is_active: bool,
@@ -72,8 +70,6 @@ pub(super) struct Playback {
     pub position: Option<Position>,
     #[serde(default)]
     pub volume: Option<u8>,
-    #[serde(default)]
-    pub options: Option<Options>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -141,21 +137,6 @@ pub(super) struct Position {
 impl Position {
     pub(super) fn at(self) -> Duration {
         Duration::from_millis(self.position_ms)
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct Options {
-    #[serde(default)]
-    pub shuffle: bool,
-    #[serde(default)]
-    repeat: String,
-}
-
-impl Options {
-    /// Whether the program would reorder or loop what it is given.
-    pub(super) fn meddles(&self) -> bool {
-        self.shuffle || !(self.repeat.is_empty() || self.repeat == "off")
     }
 }
 

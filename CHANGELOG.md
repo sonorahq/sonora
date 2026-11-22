@@ -17,6 +17,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
+- Song details show track genres, tags, moods and tempo where available, and can show a release date from the song’s own metadata.
+- Spotify shows track ISRCs and artist follower counts, adds Appears On to artist discographies, and shows related albums and artists on album pages where available.
 
 ### Changed
 
@@ -37,6 +39,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
+- Spotify Browse in Search groups categories into shelves with See all links.
+- Spotify renews sign-ins in the background. Sign in again once if you’re upgrading from the previous Spotify player.
+- Spotify playback without Soloist follows Sonora’s playback cache settings immediately.
 
 ### Fixed
 
@@ -64,9 +69,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 
-### Fixed
-
 - The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
+- Spotify Connect reconnects after a dropped connection, shows Soloist in the device picker, and follows seeks, track changes, shuffle and repeat from other devices.
+- You can jump to another song in the queue from Sonora while Spotify plays on another device, including when the same song appears more than once.
+- Spotify Jams stay visible when ending or leaving fails, sidebar pins include items outside the main library view, and deleting a playlist no longer reports a false failure.
+- Album pages keep the current cover visible while a higher-resolution image loads.
+- Spotify’s Liked Songs card on Home shows the signed-in account’s display name.
 
 ### Fixed
 

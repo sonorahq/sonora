@@ -1439,10 +1439,6 @@ impl MusicApi for AppleClient {
             .with_context(|| format!("cannot read the apple song {track_id}"))
     }
 
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
-    }
-
     /// Reports a play to Apple's play-activity service, so the track reaches the account's
     /// recently played on every device. It mirrors the web player's `JSPLAY` PLAY_START event;
     /// only a catalog id counts, and a failure is logged and dropped, never breaking playback.
@@ -1767,7 +1763,7 @@ impl MusicApi for AppleClient {
             .first()
             .context("apple music has no such album")?;
         // A library album's own rows are library songs; a catalog album's are catalog songs.
-        let tracks = found
+        let mut tracks: Vec<_> = found
             .relationships
             .tracks
             .rows()
@@ -1781,10 +1777,9 @@ impl MusicApi for AppleClient {
             true => wire::library_album(found).or_else(|| wire::album(found)),
             false => wire::album(found),
         };
-        Ok(AlbumDetail {
-            album: album.context("cannot read the apple album")?,
-            tracks,
-        })
+        let album = album.context("cannot read the apple album")?;
+        album.date_tracks(&mut tracks);
+        Ok(AlbumDetail { album, tracks })
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {

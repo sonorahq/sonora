@@ -77,8 +77,8 @@ pub use playback::{
 };
 pub use profile::Profile;
 pub use queue::{
-    Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView, Resume,
-    Stub,
+    Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView,
+    RemoteQueuePick, Resume, Stub,
 };
 pub use remote::{Remote, attach as attach_remote};
 pub use requirements::{Requirement, Requirements};
@@ -281,12 +281,6 @@ pub fn init(
         settings.report_broken(cx);
         settings
     });
-    // Spotify sets up its own file cache when its session opens, which can be before Playback
-    // exists, so it hears the setting first.
-    music::vault::Vault::set_keeping(
-        settings.read(cx).keep_tracks(),
-        vault::bytes(settings.read(cx).cache_gb()),
-    );
     let session =
         cx.new(|cx| Session::new(providers, local_provider, settings.clone(), io.clone(), cx));
     let network = cx.new(|cx| Network::new(session.clone(), settings.clone(), io.clone(), cx));
@@ -413,8 +407,7 @@ pub fn init(
             cx,
         )
     });
-    // Soloist lists itself on the account's devices, so this app comes off that list before the
-    // engine changes hands and goes back on once librespot plays again.
+    // Soloist lists itself as the local device. Sonora keeps following the other devices.
     cx.subscribe(&soloist, {
         let playback = playback.clone();
         let devices = devices.clone();

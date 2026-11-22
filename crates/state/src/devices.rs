@@ -6,7 +6,7 @@ use anyhow::Result;
 use futures::{StreamExt as _, stream};
 use gpui::{App, Context, Entity, Task};
 use music::connect::{
-    Collection, Command, Connect, Device, Elsewhere, Event, Invite, Jam, Naming, QueuedTrack,
+    Collection, Command, Connect, Device, Elsewhere, Event, Invite, Jam, Mode, Naming, QueuedTrack,
     Request, Roster, Snapshot, Start,
 };
 use music::{Capabilities, Contributor, MusicApi, Track};
@@ -50,8 +50,7 @@ pub struct Devices {
     session: Entity<Session>,
     io: Io,
     link: Option<Arc<Connect>>,
-    /// Whether this app is on the device list, as far as the link was told.
-    shown: bool,
+    mode: Mode,
     /// The name last handed to the link.
     named: Option<Naming>,
     roster: Roster,
@@ -67,8 +66,7 @@ pub struct Devices {
     code: bool,
     /// Whether the dialog that takes a Jam link to join is open.
     joining: bool,
-    /// Whether a leave is on its way. The Jam is off screen already, so updates to it that come
-    /// in before the leave is through are dropped.
+    /// Whether a request to leave or end the current Jam is awaiting confirmation.
     leaving: bool,
     /// The tracks on that device's queue that are read in, by id.
     listed: HashMap<String, Track>,
@@ -135,7 +133,7 @@ impl Devices {
             session,
             io,
             link: None,
-            shown: false,
+            mode: Mode::Off,
             named: None,
             roster: Roster::default(),
             jam: None,
@@ -169,17 +167,17 @@ impl Devices {
 
     /// Whether the signed-in provider has a device network and the listener wants it.
     pub fn available(&self) -> bool {
-        self.link.is_some() && self.shown
+        self.link.is_some() && self.mode != Mode::Off
     }
 
     /// Whether the device network has group sessions to start and join.
     pub fn jams(&self) -> bool {
-        self.link.as_ref().is_some_and(|link| link.jams())
+        self.mode == Mode::Publish && self.link.as_ref().is_some_and(|link| link.jams())
     }
 
     /// Whether this app's playback is what the account's other devices are being told about.
     pub fn publishing(&self) -> bool {
-        self.available() && self.sent.is_some()
+        self.mode == Mode::Publish && self.sent.is_some()
     }
 
     /// The account's other devices.
@@ -211,7 +209,7 @@ impl Devices {
             self.asked = Some(link.to_owned());
             return;
         };
-        if !self.shown {
+        if self.mode != Mode::Publish {
             return Toasts::show(Outcome::Info, "toast-jam-needs-connect", cx);
         }
         link_to.send(Request::Peek(link.to_owned()));
@@ -272,22 +270,17 @@ impl Devices {
     }
 
     /// Leaves the group session, or ends it when the listener started it.
-    /// Takes the Jam off screen at once, says it is over, and asks the provider to follow. A
-    /// refusal brings it back with a toast.
+    /// Keeps the Jam visible until the provider confirms the change.
     pub fn leave(&mut self, cx: &mut Context<Self>) {
-        let Some(link) = &self.link else {
+        let Some(link) = self
+            .link
+            .as_ref()
+            .filter(|_| !self.leaving && self.jam.is_some())
+        else {
             return;
         };
         link.send(Request::Leave);
-        let owned = self.jam.as_ref().is_some_and(|jam| jam.owner);
-        let said = match owned {
-            true => "toast-jam-ended",
-            false => "toast-jam-left",
-        };
-        Toasts::show(Outcome::Done, said, cx);
         self.leaving = true;
-        self.jam = None;
-        self.code = false;
         cx.notify();
     }
 
@@ -306,21 +299,56 @@ impl Devices {
         self.listed.contains_key(id)
     }
 
-    /// Addresses the provider's queue through its metadata cache without copying the play order.
-    pub(crate) fn queue_tracks(&self, position: QueuePosition) -> Option<Track> {
+    /// Resolves a displayed row to its provider occurrence, before hydrating metadata.
+    fn queue_entry(&self, position: QueuePosition) -> Option<&music::connect::QueuedTrack> {
         let remote = &self.elsewhere()?.state;
-        let listed = match position {
+        match position {
             QueuePosition::Past(at) => remote
                 .previous
                 .iter()
                 .filter(|row| self.readable(&row.id))
-                .nth(at)?,
-            QueuePosition::Current => remote.track.as_ref()?,
-            QueuePosition::Upcoming(at) => remote.upcoming.get(at)?,
-        };
+                .nth(at),
+            QueuePosition::Current => remote.track.as_ref(),
+            QueuePosition::Upcoming(at) => remote.upcoming.get(at),
+        }
+    }
+
+    pub(crate) fn queue_tracks(&self, position: QueuePosition) -> Option<Track> {
+        let listed = self.queue_entry(position)?;
         let mut track = self.listed.get(&listed.id)?.clone();
         track.added_by = listed.added_by.as_deref().and_then(|id| self.known(id));
         Some(track)
+    }
+
+    pub(crate) fn queue_jump(&self, position: QueuePosition) -> Option<crate::RemoteQueuePick> {
+        let forward = match position {
+            QueuePosition::Past(_) => false,
+            QueuePosition::Upcoming(_) => true,
+            QueuePosition::Current => return None,
+        };
+        self.link.as_ref().filter(|link| link.queue_jump())?;
+        let remote = self.steered()?;
+        Some(crate::RemoteQueuePick {
+            device: remote.device.id,
+            context: remote.state.context.clone(),
+            track: self.queue_entry(position)?.clone(),
+            forward,
+        })
+    }
+
+    pub(crate) fn jump_queue(&self, pick: &crate::RemoteQueuePick) {
+        if let Some(link) = self.link.as_ref().filter(|link| link.queue_jump()) {
+            link.send(Request::Jump {
+                device: pick.device.clone(),
+                track: pick.track.clone(),
+                forward: pick.forward,
+            });
+        }
+    }
+
+    pub(crate) fn queue_uid(&self, position: QueuePosition) -> Option<String> {
+        let uid = &self.queue_entry(position)?.uid;
+        (!uid.is_empty()).then(|| uid.clone())
     }
 
     /// Counts readable rows, stopping upcoming at the first gap so Next never names a later song.
@@ -380,9 +408,21 @@ impl Devices {
         }
     }
 
+    /// The independently registered player on this computer, when one is available.
+    pub fn local_device(&self) -> Option<&Device> {
+        self.roster.local.as_ref()
+    }
+
+    /// Whether Sonora itself is registered as a transfer target.
+    pub fn can_transfer_here(&self) -> bool {
+        self.mode == Mode::Publish
+    }
+
     /// Moves playback onto this app from whichever device has it.
     pub fn transfer_here(&self) {
-        if let Some(link) = &self.link {
+        if self.can_transfer_here()
+            && let Some(link) = &self.link
+        {
             link.send(Request::Transfer(link.device().to_owned()));
         }
     }
@@ -517,7 +557,7 @@ impl Devices {
     /// Drops everything owned by the previous provider connection.
     fn reset(&mut self, link: Option<Arc<Connect>>) {
         self.link = link;
-        self.shown = false;
+        self.mode = Mode::Off;
         self.named = None;
         self.roster = Roster::default();
         self.jam = None;
@@ -539,15 +579,19 @@ impl Devices {
         self.ticking = None;
     }
 
-    /// Lists the app on the device network, or takes it off, as the setting says. It stays off
-    /// while Soloist plays: Soloist is a device of its own on that network, and the two would
-    /// keep taking playback from each other.
+    /// Follows the device network, with Soloist handling local device registration when active.
     pub(crate) fn apply(&mut self, cx: &mut Context<Self>) {
         let Some(link) = self.link.clone() else {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect() && !music::soloist::ready();
+        let wanted = if !settings.spotify_connect() {
+            Mode::Off
+        } else if link.jams() && music::soloist::ready() {
+            Mode::Observe
+        } else {
+            Mode::Publish
+        };
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -560,19 +604,18 @@ impl Devices {
             link.send(Request::Rename(naming.clone()));
             self.named = Some(naming);
         }
-        if wanted == self.shown {
+        if wanted == self.mode {
             return;
         }
-        self.shown = wanted;
-        link.send(Request::Enable(wanted));
-        if wanted {
+        let named = self.named.take();
+        let events = self.events.take();
+        self.reset(Some(link.clone()));
+        self.named = named;
+        self.events = events;
+        self.mode = wanted;
+        link.send(Request::Mode(wanted));
+        if wanted == Mode::Publish {
             self.publish(cx);
-        } else {
-            let named = self.named.take();
-            let events = self.events.take();
-            self.reset(Some(link));
-            self.named = named;
-            self.events = events;
         }
         cx.notify();
     }
@@ -613,11 +656,13 @@ impl Devices {
                     playlists.insert(id);
                 }
                 Event::Jam(mut jam) => {
-                    if self.leaving {
-                        if jam.is_some() {
-                            continue;
-                        }
+                    if self.leaving && jam.is_none() {
                         self.leaving = false;
+                        let message = match self.jam.as_ref().is_some_and(|jam| jam.owner) {
+                            true => "toast-jam-ended",
+                            false => "toast-jam-left",
+                        };
+                        Toasts::show(Outcome::Done, message, cx);
                     }
                     // an update to a Jam the listener owns can come without its link or its owner,
                     // which would take the code off screen and bring it back with its entrance played
@@ -650,6 +695,7 @@ impl Devices {
                 Event::LeaveFailed => {
                     self.leaving = false;
                     Toasts::show(Outcome::Failed, "toast-jam-leave-failed", cx);
+                    cx.notify();
                 }
                 Event::JamFailed => {
                     self.awaiting_code = false;
@@ -1076,7 +1122,7 @@ impl Devices {
         let Some(link) = self.link.clone() else {
             return;
         };
-        if !self.shown {
+        if self.mode != Mode::Publish {
             return;
         }
 
@@ -1109,10 +1155,7 @@ impl Devices {
         let playback = self.playback.read(cx);
         let queue = self.queue.read(cx);
         let track = queue.current()?;
-        let context = playback
-            .origin(cx)
-            .or_else(|| queue.context_origin())
-            .and_then(collection_of);
+        let context = queue.context_origin().and_then(collection_of);
         let mut previous: Vec<_> = queue.connect_previous().rev().take(PREVIOUS).collect();
         previous.reverse();
         Some(Snapshot {
@@ -1279,7 +1322,14 @@ async fn load(
     let index = start
         .index
         .filter(|at| tracks.get(*at).is_some_and(accepts))
-        .or_else(|| tracks.iter().position(accepts));
+        .or_else(|| {
+            let mut matches = tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, track)| accepts(track));
+            let (index, _) = matches.next()?;
+            (start.track.is_none() || matches.next().is_none()).then_some(index)
+        });
     let resolved = if preserve_queue || index.is_none() {
         let ids = start
             .previous

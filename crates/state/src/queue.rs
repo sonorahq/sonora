@@ -11,7 +11,7 @@ use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
 mod view;
 pub use logic::queue::{QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, Stub};
 pub(crate) use logic::queue::{Reach, gap_target};
-pub use view::QueueView;
+pub use view::{QueueView, RemoteQueuePick};
 
 /// A queue as it is saved for the next launch.
 pub type Resume = logic::queue::Resume<Origin>;

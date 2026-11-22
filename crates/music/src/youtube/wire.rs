@@ -47,9 +47,11 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
         explicit: source.explicit,
         track_number: index + 1,
         disc_number: 1,
+        isrc: None,
         tags: Vec::new(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     }
 }
 
@@ -86,16 +88,18 @@ pub fn album(source: ytmusic::Album) -> Album {
 }
 
 pub fn album_detail(source: ytmusic::AlbumDetail) -> AlbumDetail {
+    let album = album(source.album);
+    let release_date = crate::calendar::release_date(album.year, 0, 0);
     let tracks = source
         .tracks
         .into_iter()
         .enumerate()
-        .map(|(index, item)| track(item, index as u32))
+        .map(|(index, item)| Track {
+            release_date: release_date.clone(),
+            ..track(item, index as u32)
+        })
         .collect();
-    AlbumDetail {
-        album: album(source.album),
-        tracks,
-    }
+    AlbumDetail { album, tracks }
 }
 
 pub fn playlist(source: ytmusic::Playlist, owned: bool, public: bool) -> Playlist {

@@ -1,13 +1,18 @@
 use std::fmt::Write as _;
 
-use librespot_protocol::metadata::Image;
-use librespot_protocol::metadata::image::Size as ImageSize;
-use librespot_protocol::playlist4_external::{ListAttributes, SelectedListContent as RootList};
+use crate::spotify::proto::metadata::Image;
+use crate::spotify::proto::metadata::ImageSize;
+use crate::spotify::proto::playlist::{ListAttributes, SelectedListContent as RootList};
 
 use crate::models;
 
 pub const UNKNOWN: &str = "Unknown";
-const IMAGE_CDN: &str = "https://i.scdn.co/image/";
+const IMAGE_CDN: &str = "https://image-cdn-fa.spotifycdn.com/image/";
+const IMAGE_PREFIXES: [&str; 3] = [
+    IMAGE_CDN,
+    "https://i.scdn.co/image/",
+    "https://image-cdn-ak.spotifycdn.com/image/",
+];
 const ALBUM_COVER: &str = "ab67616d0000";
 /// The size codes that follow `ALBUM_COVER` in an album cover id.
 const LARGE: &str = "b273";
@@ -20,18 +25,68 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
         return None;
     }
 
-    let hex = file_id.iter().fold(String::new(), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    Some(format!("{IMAGE_CDN}{hex}"))
+    let mut url = String::with_capacity(IMAGE_CDN.len() + file_id.len() * 2);
+    url.push_str(IMAGE_CDN);
+    append_hex(&mut url, file_id);
+    Some(url)
+}
+
+/// Appends a lower-case hexadecimal representation without allocating per byte.
+pub(super) fn append_hex(output: &mut String, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+}
+
+/// Joins credit names directly into the result string.
+pub(super) fn join_names<'a>(mut names: impl Iterator<Item = &'a str> + Clone) -> String {
+    let Some(first) = names.next() else {
+        return String::new();
+    };
+    let remaining: usize = names.clone().map(|name| name.len() + 2).sum();
+    let mut joined = String::with_capacity(first.len() + remaining);
+    joined.push_str(first);
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+    joined
+}
+
+/// Reads a playlist picture URL or Spotify image URI from a projected list.
+pub(super) fn playlist_image(address: &str) -> Option<String> {
+    if let Some(ids) = address.strip_prefix("spotify:mosaic:") {
+        let mut ids = ids.split(':');
+        let images = [ids.next()?, ids.next()?, ids.next()?, ids.next()?];
+        if ids.next().is_some()
+            || !images
+                .iter()
+                .all(|id| id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return None;
+        }
+        let prefix = "https://mosaic.scdn.co/640/";
+        let mut url = String::with_capacity(prefix.len() + 4 * 40);
+        url.push_str(prefix);
+        for image in images {
+            url.push_str(image);
+        }
+        return Some(url);
+    }
+    if let Some(id) = address.strip_prefix("spotify:image:") {
+        return (id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| format!("{IMAGE_CDN}{id}"));
+    }
+    fetchable(address).then(|| address.to_owned())
 }
 
 /// An album cover from `image_url` at another size. Album cover ids are `ab67616d0000`, a
 /// two-byte size code and a hash shared by every size, and `82c1` asks the CDN for the original
 /// upload, up to 2000 pixels where the listed sizes stop at 640.
 pub fn cover_at(url: &str, size: models::CoverSize) -> Option<String> {
-    let id = url.strip_prefix(IMAGE_CDN)?;
+    let id = IMAGE_PREFIXES
+        .iter()
+        .find_map(|prefix| url.strip_prefix(*prefix))?;
     let (album, rest) = id.split_at_checked(ALBUM_COVER.len())?;
     if album != ALBUM_COVER || rest.len() != 28 {
         return None;
@@ -54,22 +109,19 @@ pub fn image_width(image: &Image) -> i32 {
     }
 
     match image.size() {
-        ImageSize::SMALL => 64,
-        ImageSize::DEFAULT => 300,
-        ImageSize::LARGE => 640,
-        ImageSize::XLARGE => 1_000,
+        ImageSize::Small => 64,
+        ImageSize::Default => 300,
+        ImageSize::Large => 640,
+        ImageSize::Xlarge => 1_000,
     }
 }
 
 pub fn blend(attributes: &ListAttributes) -> bool {
-    if attributes.format().to_ascii_lowercase().contains(BLEND) {
-        return true;
-    }
-
-    attributes
-        .format_attributes
-        .iter()
-        .any(|attribute| attribute.key().to_ascii_lowercase().starts_with(BLEND))
+    attributes.format().to_ascii_lowercase().contains(BLEND)
+        || attributes
+            .format_attributes
+            .iter()
+            .any(|attribute| attribute.key().to_ascii_lowercase().starts_with(BLEND))
 }
 
 pub fn fetchable(url: &str) -> bool {
@@ -98,81 +150,74 @@ fn playlist_cover(attributes: &ListAttributes) -> Option<String> {
 }
 
 pub fn playlist_from(id: &str, content: &RootList, username: &str) -> models::Playlist {
-    let owner = match content.owner_username() {
-        "" => UNKNOWN,
-        owner => owner,
-    };
-    let name = match content.attributes.name() {
-        "" => UNKNOWN,
-        name => name,
-    };
-
-    models::Playlist {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        owner: owner.to_owned(),
-        owner_id: content.owner_username().to_owned(),
-        owned: owner == username,
-        collaborative: content.attributes.collaborative()
-            || content
-                .capabilities
-                .as_ref()
-                .is_some_and(|permissions| permissions.can_edit_items()),
-        blend: blend(&content.attributes),
-        public: false,
-        cover: playlist_cover(&content.attributes),
-        track_count: content.length().max(0) as u32,
-        modified_at: seconds(content.timestamp()),
-        read_only: false,
-    }
+    let mut playlist = playlist_row(
+        id,
+        content.attributes.as_ref(),
+        content.owner_username(),
+        content.length(),
+        content.timestamp(),
+        content.capabilities.as_ref(),
+    );
+    playlist.owned = playlist.owner == username;
+    playlist
 }
 
 pub fn playlists_from(rootlist: &RootList) -> Vec<models::Playlist> {
-    let contents = &rootlist.contents;
-    let meta = &contents.meta_items;
-
+    let Some(contents) = &rootlist.contents else {
+        return Vec::new();
+    };
     contents
         .items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            let id = item.uri().strip_prefix("spotify:playlist:")?;
-            let meta = meta.get(index);
-
-            let name = meta
-                .map(|meta| meta.attributes.name())
-                .filter(|name| !name.is_empty())
-                .unwrap_or(UNKNOWN);
-            let owner = meta
-                .map(|meta| meta.owner_username())
-                .filter(|owner| !owner.is_empty())
-                .unwrap_or(UNKNOWN);
-
-            Some(models::Playlist {
-                id: id.to_owned(),
-                name: name.to_owned(),
-                owner: owner.to_owned(),
-                owner_id: meta
-                    .map(|meta| meta.owner_username())
-                    .unwrap_or_default()
-                    .to_owned(),
-                owned: false,
-                collaborative: meta.is_some_and(|meta| {
-                    meta.attributes.collaborative()
-                        || meta
-                            .capabilities
-                            .as_ref()
-                            .is_some_and(|permissions| permissions.can_edit_items())
-                }),
-                blend: meta.is_some_and(|meta| blend(&meta.attributes)),
-                public: item.attributes.public(),
-                cover: meta.and_then(|meta| playlist_cover(&meta.attributes)),
-                track_count: meta.map(|meta| meta.length()).unwrap_or_default().max(0) as u32,
-                modified_at: None,
-                read_only: false,
-            })
+            let id = item.uri.strip_prefix("spotify:playlist:")?;
+            let mut playlist = match contents.meta_items.get(index) {
+                Some(meta) => playlist_row(
+                    id,
+                    meta.attributes.as_ref(),
+                    meta.owner_username(),
+                    meta.length(),
+                    meta.timestamp(),
+                    meta.capabilities.as_ref(),
+                ),
+                None => playlist_row(id, None, "", 0, 0, None),
+            };
+            playlist.public = item.attributes.as_ref().is_some_and(|attrs| attrs.public());
+            Some(playlist)
         })
         .collect()
+}
+
+/// Maps the common playlist metadata carried by detail and root-list responses.
+fn playlist_row(
+    id: &str,
+    attributes: Option<&ListAttributes>,
+    owner: &str,
+    length: i32,
+    stamp: i64,
+    permissions: Option<&crate::spotify::proto::playlist::Capabilities>,
+) -> models::Playlist {
+    let label = |name: &str| {
+        if name.is_empty() {
+            UNKNOWN.to_owned()
+        } else {
+            name.to_owned()
+        }
+    };
+    models::Playlist {
+        id: id.to_owned(),
+        name: label(attributes.map(ListAttributes::name).unwrap_or_default()),
+        owner: label(owner),
+        owner_id: owner.to_owned(),
+        collaborative: attributes.is_some_and(ListAttributes::collaborative)
+            || permissions.is_some_and(|permissions| permissions.can_edit_items()),
+        blend: attributes.is_some_and(blend),
+        cover: attributes.and_then(playlist_cover),
+        track_count: length.max(0) as u32,
+        modified_at: seconds(stamp),
+        ..Default::default()
+    }
 }
 
 /// A copyright line as a release page prints it, led by ℗ for the sound recording or © for

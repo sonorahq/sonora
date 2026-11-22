@@ -13,7 +13,7 @@ pub(crate) const FILE: &str = "credentials.json";
 const MOVED: &[(&str, &[&str])] = &[
     ("apple", &[FILE, "bearer.json"]),
     ("deezer", &[FILE]),
-    ("spotify", &[FILE, "device-id"]),
+    ("spotify", &["device-id"]),
     ("subsonic", &[FILE]),
     ("tidal", &[FILE]),
     ("youtube", &[FILE, "cookies.json"]),
@@ -76,21 +76,6 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
     }
     sync_folder(parent);
     Ok(())
-}
-
-/// Restricts an existing credential file to its owner. A missing file is left alone.
-pub(crate) fn secure(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            log::warn!("credentials: cannot restrict {}: {error}", path.display());
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = path;
 }
 
 /// Deletes a credential file, treating one that is already gone as success.

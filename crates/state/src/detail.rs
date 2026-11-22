@@ -75,6 +75,8 @@ pub struct Header {
     /// Zero when the provider does not report a count.
     pub track_count: u32,
     pub cover: Option<String>,
+    /// Artwork already available while this page loads a better image.
+    pub cover_preview: Option<String>,
 }
 
 /// Signals that a local album no longer has a page after the library changes
@@ -670,7 +672,16 @@ impl Detail {
     fn adopt(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
         match loaded {
             Loaded::Album(detail) => {
-                self.header = Some(album_header(&detail.album));
+                let mut header = album_header(&detail.album);
+                if let Some(previous) = self.header.as_ref().and_then(|header| header.cover.clone())
+                {
+                    if header.cover.is_none() {
+                        header.cover = Some(previous);
+                    } else if header.cover.as_ref() != Some(&previous) {
+                        header.cover_preview = Some(previous);
+                    }
+                }
+                self.header = Some(header);
                 self.album = Some(detail.album.clone());
                 self.tracks = detail
                     .tracks
@@ -807,7 +818,13 @@ fn album_header(album: &Album) -> Header {
         },
         owner_name: None,
         track_count: album.track_count,
-        cover: album.cover_large.clone(),
+        cover: album.cover_large.clone().or_else(|| album.cover.clone()),
+        cover_preview: album.cover.clone().filter(|cover| {
+            album
+                .cover_large
+                .as_ref()
+                .is_some_and(|large| large != cover)
+        }),
     }
 }
 
@@ -836,6 +853,7 @@ fn playlist_header(playlist: &Playlist) -> Header {
         owner_name,
         track_count: playlist.track_count,
         cover: playlist.cover.clone(),
+        cover_preview: None,
     }
 }
 

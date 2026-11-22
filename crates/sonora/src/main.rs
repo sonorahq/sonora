@@ -128,8 +128,9 @@ fn main() -> ExitCode {
         }
 
         let database = storage::Database::standard();
+        let spotify = Arc::new(music::spotify::SpotifyProvider::from_env());
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
-            Arc::new(music::spotify::SpotifyProvider::from_env()),
+            spotify.clone(),
             Arc::new(music::apple::AppleProvider::new()),
             Arc::new(music::youtube::YouTubeProvider::new()),
             Arc::new(music::subsonic::SubsonicProvider::new()),
@@ -151,7 +152,7 @@ fn main() -> ExitCode {
             Arc::new(music::subsonic::SubsonicLyrics::new()),
             Arc::new(music::jellyfin::JellyfinLyrics::new()),
             Arc::new(music::plex::PlexLyrics::new()),
-            Arc::new(music::spotify::SpotifyLyrics::from_env()),
+            Arc::new(spotify.lyrics()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),
             Arc::new(music::musixmatch::Musixmatch::new()),

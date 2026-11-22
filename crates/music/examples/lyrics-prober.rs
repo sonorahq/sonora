@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use music::spotify::{AuthConfig, LibrespotClient, auth};
+use music::spotify::{AuthConfig, SpotifyClient, auth};
 use music::youtube::YouTubeClient;
 use music::{
     Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, binimum, kugou,
@@ -136,7 +136,7 @@ async fn resolve(link: &str) -> Result<(Track, &'static str)> {
         .await
         .context("cannot restore the cached session")?
         .context("no cached credentials; sign in with sonora first")?;
-    let client = Arc::new(LibrespotClient::new(session));
+    let client = Arc::new(SpotifyClient::new(session));
 
     let track = match spotify_id(link) {
         Some(id) => client

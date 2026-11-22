@@ -59,10 +59,11 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
-    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    BrowseShelf, Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem,
+    GenreSection, HomeFeed, ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine,
+    LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail,
+    ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile,
+    Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
@@ -92,9 +93,24 @@ pub fn is_local_id(id: &str) -> bool {
         || id.starts_with(LOCAL_PLAYLIST_PREFIX)
 }
 
-pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
-    let mut covers: Vec<String> = Vec::with_capacity(wanted);
-    for cover in tracks.iter().filter_map(|track| track.cover.as_deref()) {
+pub fn distinct_covers<'a>(
+    tracks: impl IntoIterator<Item = &'a Track>,
+    wanted: usize,
+) -> Vec<String> {
+    distinct_cover_urls(
+        tracks
+            .into_iter()
+            .filter_map(|track| track.cover.as_deref()),
+        wanted,
+    )
+}
+
+pub(crate) fn distinct_cover_urls<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+    wanted: usize,
+) -> Vec<String> {
+    let mut covers = Vec::with_capacity(wanted);
+    for cover in urls {
         if covers.len() == wanted {
             break;
         }
@@ -104,6 +120,12 @@ pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
     }
 
     covers
+}
+
+/// Track membership and artwork candidates for a playlist already listed in the library.
+pub struct PlaylistMembership {
+    pub tracks: HashSet<String>,
+    pub covers: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +235,6 @@ pub trait MusicApi: Send + Sync {
     async fn delete_track_file(&self, _track_id: &str) -> Result<()> {
         anyhow::bail!("this provider does not support file deletion")
     }
-    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>>;
 
     /// Tells the provider's own server whether a track is playing and where it is. It is sent on
     /// every start, pause, seek and stop, and never counts as a listen. A provider that keeps no
@@ -242,6 +263,12 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>>;
+
+    /// Refreshes named playlists independently, leaving failed snapshots out of the result.
+    async fn playlist_snapshots(&self, _ids: Vec<String>) -> Option<Vec<Playlist>> {
+        None
+    }
+
     /// Changes the provider's own pin for `uri`, one of the uris `pin_targets` lists or
     /// `pin_uri` builds.
     async fn set_pinned(&self, _uri: &str, _pinned: bool) -> Result<PinOutcome> {
@@ -374,6 +401,10 @@ pub trait MusicApi: Send + Sync {
 
     async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()>;
     async fn album(&self, album_id: &str) -> Result<AlbumDetail>;
+    /// Reads album metadata for a song page when the provider can fetch it without the tracks.
+    async fn song_album(&self, _album_id: &str) -> Result<Option<Album>> {
+        Ok(None)
+    }
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>>;
 
     /// The rest of an album page, fetched once `album` has put the tracks up: the releases
@@ -399,6 +430,40 @@ pub trait MusicApi: Send + Sync {
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>>;
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>>;
+
+    /// Reads artwork candidates in request order, with an independent result for each playlist.
+    async fn playlist_cover_batch(
+        &self,
+        ids: &[String],
+        wanted: usize,
+    ) -> Vec<Result<Vec<String>>> {
+        use futures::StreamExt as _;
+        futures::stream::iter(ids.iter().cloned())
+            .map(|id| async move { self.playlist_covers(&id, wanted).await })
+            .buffered(4)
+            .collect()
+            .await
+    }
+    /// Reads membership in request order. Each request also specifies how many covers it needs.
+    async fn playlist_memberships(
+        &self,
+        requests: &[(String, usize)],
+    ) -> Vec<Result<PlaylistMembership>> {
+        use futures::StreamExt as _;
+        futures::stream::iter(requests.iter().cloned())
+            .map(|(id, wanted)| async move {
+                let tracks = self.playlist_tracks(&id).await?;
+                let covers = distinct_covers(&tracks, wanted);
+                Ok(PlaylistMembership {
+                    tracks: tracks.into_iter().filter_map(|track| track.id).collect(),
+                    covers,
+                })
+            })
+            .buffered(4)
+            .collect()
+            .await
+    }
+
     /// The station seeded by `track_id`, from its start or from `from`, a continuation an
     /// earlier call answered with. The continuation that comes back fetches the next stretch,
     /// and `None` means the provider has no more. A provider that serves a station in one go
@@ -469,6 +534,18 @@ pub trait MusicApi: Send + Sync {
 
     async fn name_home_playlists(&self, sections: Vec<GenreSection>) -> Vec<GenreSection> {
         sections
+    }
+
+    /// Categories grouped as the provider presents them on the Search landing page.
+    async fn browse(&self) -> Result<Vec<BrowseShelf>> {
+        let genres = self.genres().await?;
+        if genres.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(vec![BrowseShelf {
+            genres,
+            ..Default::default()
+        }])
     }
 
     async fn genres(&self) -> Result<Vec<Genre>> {
@@ -1278,6 +1355,15 @@ pub trait MusicProvider: Send + Sync {
     /// looking for one.
     fn reach(&self) -> Option<String> {
         None
+    }
+    /// Makes an unauthenticated reachability check using the provider's transport.
+    fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
+        let host = self.reach()?;
+        Some(Box::pin(async move {
+            tokio::net::TcpStream::connect((host.as_str(), 443))
+                .await
+                .is_ok()
+        }))
     }
     /// What a status calls this provider after "listening to". A service answers with its own
     /// name; one that is only the user's own files says what the files are instead.
