@@ -237,6 +237,9 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    /// The most rows the table shows, counted after sorting so a shorter list is the head of
+    /// the longer one in the same order.
+    limit: Option<usize>,
     revision: u64,
     locked: Option<&'static [&'static str]>,
 }
@@ -266,6 +269,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            limit: None,
             revision: 0,
             locked: None,
         };
@@ -489,6 +493,15 @@ impl<S: TableSource> TableDelegate<S> {
         self.reorder(cx);
     }
 
+    /// Caps the rows at `limit` after sorting and filtering, or shows them all for `None`.
+    pub fn set_limit(&mut self, limit: Option<usize>, cx: &App) {
+        if self.limit == limit {
+            return;
+        }
+        self.limit = limit;
+        self.reorder(cx);
+    }
+
     /// The columns the listener can show or hide. A column the source has nothing for is left
     /// out, since showing it would draw nothing.
     pub fn toggles(&self, cx: &App) -> Vec<Toggle> {
@@ -586,6 +599,9 @@ impl<S: TableSource> TableDelegate<S> {
                 Sort::Ascending => order.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
                 Sort::Descending => order.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
             }
+        }
+        if let Some(limit) = self.limit {
+            order.truncate(limit);
         }
 
         self.order = order;
