@@ -50,7 +50,7 @@ pub fn embedded(items: &[Item], key: impl Fn(&Item) -> String) -> String {
         .iter()
         .map(|item| {
             let key = key(item);
-            let file = include_path(&item.file);
+            let file = staged(&item.file);
             format!("    ({key:?}, include_bytes!({file}).as_slice()),\n")
         })
         .collect();
@@ -69,19 +69,23 @@ pub fn rerun_if_changed(path: impl AsRef<Path>) {
     }
 }
 
-/// The argument for `include_bytes!` or `include_str!` in generated code that embeds `file`. A file
-/// reached through the crate's manifest directory is named through `CARGO_MANIFEST_DIR`, so the
-/// generated code carries no absolute path of the machine that ran the build script and still
-/// compiles after the target directory moved to another checkout.
-pub fn include_path(file: impl AsRef<Path>) -> String {
+/// Copies `file` into the build script's `OUT_DIR` and returns the argument for `include_bytes!` or
+/// `include_str!` that embeds the copy. Cargo records the files a crate embeds relative to the
+/// target directory when they lie inside it, but by absolute path when they lie outside the crate,
+/// so embedding the copy keeps a target directory copied to another checkout fresh. The generated
+/// code also carries no path of the machine that ran the build script.
+pub fn staged(file: impl AsRef<Path>) -> String {
     let file = file.as_ref();
-    match relative_to_manifest(file) {
-        Some(relative) => {
-            let relative = format!("/{relative}");
-            format!("concat!(env!(\"CARGO_MANIFEST_DIR\"), {relative:?})")
-        }
-        None => format!("{:?}", file.to_str().expect("a utf-8 path")),
-    }
+    let Some(relative) = relative_to_manifest(file) else {
+        return format!("{:?}", file.to_str().expect("a utf-8 path"));
+    };
+    let relative = format!("/embedded/{}", relative.trim_start_matches("../"));
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets the output"));
+    let copy = out.join(relative.trim_start_matches('/'));
+    fs::create_dir_all(copy.parent().expect("a file lives in a folder"))
+        .unwrap_or_else(|error| panic!("cannot create {}: {error}", copy.display()));
+    fs::copy(file, &copy).unwrap_or_else(|error| panic!("cannot copy {}: {error}", file.display()));
+    format!("concat!(env!(\"OUT_DIR\"), {relative:?})")
 }
 
 /// `path` relative to the manifest directory with `/` separators, when it starts with it.

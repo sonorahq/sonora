@@ -21,7 +21,7 @@ fn main() {
         for item in gathered {
             let name = &item.name;
             let path = format!("icons/{id}/{name}.{KIND}");
-            let file = embed::include_path(&item.file);
+            let file = embed::staged(&item.file);
             writeln!(
                 icons,
                 "    Icon {{ name: {name:?}, path: {path:?}, bytes: include_bytes!({file}) }},"

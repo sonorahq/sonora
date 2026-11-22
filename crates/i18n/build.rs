@@ -14,7 +14,7 @@ fn main() {
         let mut rows = String::new();
         for item in items {
             embed::rerun_if_changed(&item.file);
-            let file = embed::include_path(&item.file);
+            let file = embed::staged(&item.file);
             writeln!(rows, "            ({:?}, include_str!({file})),", item.name).unwrap();
         }
         writeln!(arms, "        {locale:?} => &[\n{rows}        ],").unwrap();
