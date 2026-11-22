@@ -117,6 +117,12 @@ chmod +x sonora-*.AppImage
 ./sonora-*.AppImage
 ```
 
+#### Other distributions
+
+Some distributions package Sonora themselves. [Repology](https://repology.org/project/sonora/versions) lists them.
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/sonora.svg)](https://repology.org/project/sonora/versions)
+
 ### Nix
 
 Pick a channel with the input's ref and install `inputs.sonora.packages.${system}.default`:
@@ -157,6 +163,12 @@ Configuration with NixOS or Home Manager is provided by the module under `progra
 ```
 
 ### Windows
+
+#### winget
+
+```powershell
+winget install SonoraHQ.Sonora
+```
 
 #### Installer
 
