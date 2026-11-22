@@ -13,7 +13,8 @@ name: buildbox-cache
 
 on:
   push:
-    branches: [main]
+    # TEMPORARY: chore/buildbox-cache runs it until the slimmer snapshot is verified.
+    branches: [main, chore/buildbox-cache]
     paths:
       - .cargo/**
       - Cargo.toml
