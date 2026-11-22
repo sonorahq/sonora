@@ -79,6 +79,13 @@ pub trait Renew: Send + Sync {
     /// A fresh url for the same file. An error ends the download, so an implementation that
     /// keeps being refused should give up after a few tries.
     async fn url(&mut self) -> Result<String>;
+
+    /// Headers that replace the download's own of the same name once [`url`](Self::url) has
+    /// answered, for a server that expects a url to be asked for the way the client that got it
+    /// asks. None by default.
+    fn headers(&self) -> HeaderMap {
+        HeaderMap::new()
+    }
 }
 
 /// Where one file is fetched from, and how every request for it is made.
@@ -135,6 +142,8 @@ pub struct Reach<B> {
     /// Moves a graft forward onto the first frame, for a format a decoder cannot be relied on to
     /// find its way into.
     resync: Option<Resync>,
+    /// How far past what a download has received a seek may enter and still wait for it.
+    nearby: u64,
     /// The download the last seek past the main one started. It is only replaced once a decoder
     /// over the next one has opened, so the decoder still playing never loses it.
     ahead: Mutex<Option<Ahead<B>>>,
@@ -311,6 +320,7 @@ impl Resuming {
                     };
                     log::debug!("{}: the file was refused: {error:#}", self.address.name);
                     self.address.url = renew.url().await?;
+                    self.address.headers.extend(renew.headers());
                 }
                 Err(Failure::Passing(error)) => backoff.wait(error).await?,
                 Err(Failure::Final(error)) => return Err(error),
@@ -418,8 +428,17 @@ impl<B: Body> Reach<B> {
             start: Box::new(start),
             align: 1,
             resync: None,
+            nearby: NEARBY,
             ahead: Mutex::new(None),
         }
+    }
+
+    /// Waits for a download that is less than `bytes` short of a seek's target rather than
+    /// starting another, in place of the `NEARBY` default, for a stream whose bytes hold more
+    /// time than lossless audio does.
+    pub fn nearby(mut self, bytes: u64) -> Self {
+        self.nearby = bytes;
+        self
     }
 
     /// Starts every new download on a multiple of `align` bytes, for a body that decrypts the
@@ -459,7 +478,7 @@ impl<B: Body> Reach<B> {
         head: usize,
         from: u64,
     ) -> Option<(Stream<B>, usize, Option<Ahead<B>>)> {
-        if from < main.arrived() as u64 + NEARBY {
+        if from < main.arrived() as u64 + self.nearby {
             return Some((main.clone(), usize::try_from(from).ok()?, None));
         }
         let held = lock(&self.ahead).clone();
@@ -470,7 +489,7 @@ impl<B: Body> Reach<B> {
         }) = held
             && start <= from
             && let Ok(into) = usize::try_from(from - start)
-            && ((head + into) as u64) < stream.arrived() as u64 + NEARBY
+            && ((head + into) as u64) < stream.arrived() as u64 + self.nearby
         {
             return Some((stream, head + into, None));
         }
@@ -675,7 +694,7 @@ impl<B: Body> File<B> {
             Kind::Ogg => ogg::head,
             Kind::Mp3 => {
                 let layout = mp3::Layout::measure(main, length)?;
-                if layout.byte(at) < main.arrived() as u64 + NEARBY {
+                if layout.byte(at) < main.arrived() as u64 + self.reach.nearby {
                     return None;
                 }
                 return self.reach.enter_near(main, layout, at, open);
