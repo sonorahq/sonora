@@ -1,0 +1,110 @@
+name: buildbox-cache
+
+# Builds main the way the shared buildbox builds it (Arch Linux, rbuild's plain mode) and pushes the
+# cargo target to ghcr.io/sonorahq/sonora-buildcache:plain. A new buildbox checkout then starts as a
+# copy of main's build and only compiles what its branch changed, and the buildbox never builds main
+# itself. The target is split into a layer of third-party crates, which only changes with
+# Cargo.lock, the toolchain or the weekly Arch refresh, and a small layer of the workspace crates.
+#
+# It stays out of the Actions cache, which ci.yml already fills: each run seeds itself from the
+# previous snapshot in the registry instead.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .cargo/**
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - assets/**
+      - rust-toolchain.toml
+      - .github/buildbox-cache/**
+      - .github/workflows/buildbox-cache.yml
+  workflow_dispatch:
+
+# Only the newest main matters, so a newer push cancels the build of an older one.
+concurrency:
+  group: buildbox-cache
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/sonora-buildcache
+  ORAS_VERSION: 1.3.6
+  ORAS_SHA256: 66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
+
+jobs:
+  plain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: checkout
+          persist-credentials: false
+
+      # The target grows past 20 GB with its incremental caches, more than the runner has free.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p /mnt/buildbox
+          sudo chown "$(id -u):$(id -g)" /mnt/buildbox
+          df -h / /mnt
+
+      - name: Install oras
+        run: |
+          curl -fsSLo /tmp/oras.tar.gz \
+            "https://github.com/oras-project/oras/releases/download/v$ORAS_VERSION/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          echo "$ORAS_SHA256  /tmp/oras.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/oras.tar.gz -C /usr/local/bin oras
+          echo "$GITHUB_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A snapshot seeds this build only while everything that rebuilds the third-party crates is
+      # the same. The ISO week in the key rebuilds cold once a week, after the Arch packages moved.
+      - name: Restore the previous snapshot
+        id: restore
+        run: |
+          key=$(cd checkout && { cat Cargo.lock rust-toolchain.toml .cargo/config.toml \
+            .github/buildbox-cache/packages .github/buildbox-cache/snapshot.sh; date -u +%G-W%V; } \
+            | sha256sum | cut -c1-32)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          if manifest=$(oras manifest fetch "$IMAGE:plain" 2>/dev/null) \
+            && [ "$(jq -r '.annotations["dev.sonora.buildbox.key"] // ""' <<<"$manifest")" = "$key" ]; then
+            oras pull "$IMAGE:plain" -o /mnt/buildbox/prev
+          else
+            echo "No snapshot with key $key, building cold"
+          fi
+
+      - name: Build
+        run: |
+          docker run --rm -v "$PWD/checkout:/checkout:ro" -v /mnt/buildbox:/work \
+            archlinux:latest bash /checkout/.github/buildbox-cache/snapshot.sh
+          df -h /mnt
+
+      - name: Push
+        working-directory: /mnt/buildbox/out
+        run: |
+          oras push "$IMAGE:plain" \
+            --artifact-type application/vnd.sonora.buildbox-cache.v1 \
+            --annotation "dev.sonora.buildbox.key=${{ steps.restore.outputs.key }}" \
+            --annotation "dev.sonora.buildbox.commit=$GITHUB_SHA" \
+            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            deps.tar.zst:application/vnd.sonora.buildbox-cache.layer.v1.tar+zstd \
+            ws.tar.zst:application/vnd.sonora.buildbox-cache.layer.v1.tar+zstd
+
+      # Every push leaves the previous manifest untagged. Keep a few, delete the rest.
+      - name: Delete old snapshots
+        continue-on-error: true
+        run: |
+          gh api --paginate "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/sonora-buildcache/versions" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id' \
+            | tail -n +4 \
+            | xargs -r -I{} gh api -X DELETE "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/sonora-buildcache/versions/{}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
