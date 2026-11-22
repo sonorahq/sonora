@@ -204,6 +204,19 @@ pub(crate) struct Input {
     at: u64,
 }
 
+impl Input {
+    /// Reads `reader` as it is, with no fetched tail and no known end, for a reader spliced
+    /// part way into a file that a decoder only reads forward.
+    pub(crate) fn spliced(reader: Reader) -> Self {
+        Self {
+            reader,
+            tail: None,
+            total: None,
+            at: 0,
+        }
+    }
+}
+
 impl Read for Input {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.total.is_some_and(|total| self.at >= total) {

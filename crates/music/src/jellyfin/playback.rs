@@ -4,19 +4,25 @@
 //! stream takes the bytes as they come and rodio decodes them. The threads, the queue, the
 //! preload and the gapless join are the engine's. Played and downloaded tracks are kept in the
 //! vault as plain files, so they play again with no network.
+//!
+//! A seek past what has arrived of an original FLAC, Ogg or MP3 file does not wait for the
+//! download to get there. It starts a second download at the target through a
+//! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::jellyfin::client::{Details, JellyfinClient};
 use crate::mp4::{Input, Prepared, Remote};
-use crate::stream::{Plain, Stream};
+use crate::ranged::{self, Address, Reach};
+use crate::stream::{Plain, Reader, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 
@@ -29,6 +35,16 @@ pub struct Loaded {
     stream: Stream,
     details: Details,
     prepared: Prepared,
+    /// What a seek past the download fetches the file through. Only an original file the server
+    /// sends with a length and answers ranges for has one, and a kept track is whole without it.
+    file: Option<Arc<ranged::File>>,
+}
+
+/// Where a seek's download fetches a file, and the `Authorization` it carries when the file is
+/// served from the signed-in server.
+struct Location {
+    url: String,
+    authorization: Option<HeaderValue>,
 }
 
 pub struct Factory {
@@ -46,6 +62,9 @@ impl PlaybackFactory for Factory {
         engine::start(
             Jellyfin {
                 client: self.client.clone(),
+                media: ranged::media_builder()
+                    .build()
+                    .unwrap_or_else(|_| self.client.http.clone()),
                 transcode: config.transcode,
                 shelf: config.vault.as_ref().map(|vault| {
                     vault
@@ -61,6 +80,9 @@ impl PlaybackFactory for Factory {
 
 struct Jellyfin {
     client: JellyfinClient,
+    /// What a seek's download is fetched with, which gives up on a stalled request sooner than
+    /// the api client.
+    media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
     shelf: Option<Shelf>,
@@ -126,6 +148,7 @@ impl Jellyfin {
             stream,
             details,
             prepared,
+            file: None,
         })
     }
 
@@ -140,6 +163,41 @@ impl Jellyfin {
     /// Whether the server sends the file as it is, rather than converting it.
     fn original(&self) -> bool {
         self.transcode == Transcode::default()
+    }
+
+    /// Where a seek past the download of `response` fetches the file. Only an original file the
+    /// server sends with a length and answers ranges for has one. A file a redirect moved
+    /// to another origin gets no credentials, as the redirect itself sent none.
+    fn location(&self, response: &reqwest::Response) -> Option<Location> {
+        if !self.original() || !ranged::ranges(response) {
+            return None;
+        }
+        let url = response.url();
+        let home = reqwest::Url::parse(self.client.server())
+            .is_ok_and(|server| server.origin() == url.origin());
+        Some(Location {
+            url: url.to_string(),
+            authorization: home
+                .then(|| HeaderValue::from_str(&self.client.header).ok())
+                .flatten(),
+        })
+    }
+
+    /// What a seek past the download of `stream` fetches track `id` through, when the file is in
+    /// a format a seek can enter part way. It has to be made on the runtime.
+    fn file(&self, id: &str, stream: &Stream, location: Location) -> Option<Arc<ranged::File>> {
+        let media = self.media.clone();
+        let reach = Reach::new("jellyfin", id, move |_| {
+            let address = Address::new("jellyfin", media.clone(), location.url.clone());
+            let address = match &location.authorization {
+                Some(authorization) => address.header(AUTHORIZATION, authorization.clone()),
+                None => address,
+            };
+            (address, Plain)
+        });
+        let file = ranged::File::detect(stream, reach)?;
+        log::debug!("jellyfin: {id} can seek ahead as {:?}", file.kind());
+        Some(Arc::new(file))
     }
 }
 
@@ -170,6 +228,7 @@ impl Fetch for Jellyfin {
                 let total = response.content_length();
                 let remote = Remote::new(&response)
                     .map(|remote| remote.authorized(self.client.server(), &self.client.header));
+                let location = self.location(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -187,7 +246,8 @@ impl Fetch for Jellyfin {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                anyhow::Ok((stream, prepared))
+                let file = location.and_then(|location| self.file(id, &stream, location));
+                anyhow::Ok((stream, prepared, file))
             },
             async {
                 let details = self.details(id).await;
@@ -195,11 +255,12 @@ impl Fetch for Jellyfin {
                 details
             },
         );
-        let (stream, prepared) = stream?;
+        let (stream, prepared, file) = stream?;
         Ok(Loaded {
             stream,
             details,
             prepared,
+            file,
         })
     }
 
@@ -265,9 +326,50 @@ impl Fetch for Jellyfin {
         Some(decoder)
     }
 
+    /// Opens the track at `at`, from a download started near `at` when the main one is far from
+    /// it and the file allows that. Otherwise the decoder waits for the main download to get
+    /// there, as [`open`](Fetch::open) does.
+    fn open_near(
+        &self,
+        id: &str,
+        loaded: &Loaded,
+        at: Duration,
+    ) -> Option<(Self::Source, Duration)> {
+        if let Some(entered) = ahead(id, loaded, at) {
+            return Some(entered);
+        }
+        self.open(id, loaded, at).map(|source| (source, at))
+    }
+
     /// A decoder opened before its track finished arriving may only read forward, so every seek
     /// starts a fresh one that can seek freely once the download has ended.
     fn reopen_to_seek(&self) -> bool {
         true
     }
+}
+
+/// Opens a decoder part way into a track still arriving and says where it starts. `None` when
+/// the track is whole, starts at the top, has no known length or cannot be entered part way,
+/// which leaves it to [`Fetch::open`].
+fn ahead(id: &str, loaded: &Loaded, at: Duration) -> Option<(rodio::Decoder<Input>, Duration)> {
+    let stream = &loaded.stream;
+    if at.is_zero() || (stream.done() && stream.failed().is_none()) {
+        return None;
+    }
+    let file = loaded.file.as_ref()?;
+    let length = loaded.details.duration?;
+    file.enter(stream, length, at, |reader| forward_decoder(id, reader))
+}
+
+/// A decoder that only reads forward and is not told the length, so opening it part way into
+/// a file reads no further than the first frame.
+fn forward_decoder(id: &str, reader: Reader) -> Option<rodio::Decoder<Input>> {
+    let built = rodio::Decoder::builder()
+        .with_symphonia_decoder::<Aac>()
+        .with_data(Input::spliced(reader))
+        .with_seekable(false)
+        .build();
+    built
+        .inspect_err(|error| log::warn!("playback: cannot decode the jellyfin track {id}: {error}"))
+        .ok()
 }

@@ -3,6 +3,10 @@
 //! Almost nothing, as it turns out. The server hands over an ordinary audio file, so the stream
 //! takes the bytes as they come and rodio decodes them. The threads, the queue, the preload and
 //! the gapless join are the engine's.
+//!
+//! A seek past what has arrived of an original FLAC, Ogg or MP3 file does not wait for the
+//! download to get there. It starts a second download at the target through a
+//! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -14,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
-use crate::stream::{Plain, Stream};
+use crate::ranged::{self, Address, Reach};
+use crate::stream::{Plain, Reader, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
@@ -25,6 +30,9 @@ pub struct Loaded {
     stream: Stream,
     details: Details,
     prepared: Prepared,
+    /// What a seek past the download fetches the file through. Only an original file the server
+    /// sends with a length and answers ranges for has one, and a kept track is whole without it.
+    file: Option<Arc<ranged::File>>,
 }
 
 pub struct Factory {
@@ -42,6 +50,9 @@ impl PlaybackFactory for Factory {
         engine::start(
             Subsonic {
                 client: self.client.clone(),
+                media: ranged::media_builder()
+                    .build()
+                    .unwrap_or_else(|_| self.client.http.clone()),
                 transcode: config.transcode,
                 shelf: config.vault.as_ref().map(|vault| {
                     vault
@@ -57,6 +68,9 @@ impl PlaybackFactory for Factory {
 
 struct Subsonic {
     client: SubsonicClient,
+    /// What a seek's download is fetched with, which gives up on a stalled request sooner than
+    /// the api client.
+    media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
     shelf: Option<Shelf>,
@@ -114,7 +128,25 @@ impl Subsonic {
             stream,
             details,
             prepared,
+            file: None,
         })
+    }
+
+    /// Whether the server is asked for the file as it is, rather than converted.
+    fn original(&self) -> bool {
+        self.transcode == Transcode::default()
+    }
+
+    /// What a seek past the download of `stream` fetches track `id` through, from `url`, when
+    /// the file is in a format a seek can enter part way. It has to be made on the runtime.
+    fn file(&self, id: &str, stream: &Stream, url: String) -> Option<Arc<ranged::File>> {
+        let media = self.media.clone();
+        let reach = Reach::new("subsonic", id, move |_| {
+            (Address::new("subsonic", media.clone(), url.clone()), Plain)
+        });
+        let file = ranged::File::detect(stream, reach)?;
+        log::debug!("subsonic: {id} can seek ahead as {:?}", file.kind());
+        Some(Arc::new(file))
     }
 }
 
@@ -144,6 +176,8 @@ impl Fetch for Subsonic {
                 let response = self.client.open_stream(id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response);
+                let seekable = (self.original() && ranged::ranges(&response))
+                    .then(|| response.url().to_string());
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -161,7 +195,8 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                anyhow::Ok((stream, prepared))
+                let file = seekable.and_then(|url| self.file(id, &stream, url));
+                anyhow::Ok((stream, prepared, file))
             },
             async {
                 let details = self.client.details(id).await;
@@ -169,11 +204,12 @@ impl Fetch for Subsonic {
                 details
             },
         );
-        let (stream, prepared) = stream?;
+        let (stream, prepared, file) = stream?;
         Ok(Loaded {
             stream,
             details,
             prepared,
+            file,
         })
     }
 
@@ -228,9 +264,50 @@ impl Fetch for Subsonic {
         Some(decoder)
     }
 
+    /// Opens the track at `at`, from a download started near `at` when the main one is far from
+    /// it and the file allows that. Otherwise the decoder waits for the main download to get
+    /// there, as [`open`](Fetch::open) does.
+    fn open_near(
+        &self,
+        id: &str,
+        loaded: &Loaded,
+        at: Duration,
+    ) -> Option<(Self::Source, Duration)> {
+        if let Some(entered) = ahead(id, loaded, at) {
+            return Some(entered);
+        }
+        self.open(id, loaded, at).map(|source| (source, at))
+    }
+
     /// A decoder opened before a converted track finished arriving can only read forward, so
     /// every seek starts a fresh one that knows the length if the download has ended by then.
     fn reopen_to_seek(&self) -> bool {
         true
     }
+}
+
+/// Opens a decoder part way into a track still arriving and says where it starts. `None` when
+/// the track is whole, starts at the top, has no known length or cannot be entered part way,
+/// which leaves it to [`Fetch::open`].
+fn ahead(id: &str, loaded: &Loaded, at: Duration) -> Option<(rodio::Decoder<Input>, Duration)> {
+    let stream = &loaded.stream;
+    if at.is_zero() || (stream.done() && stream.failed().is_none()) {
+        return None;
+    }
+    let file = loaded.file.as_ref()?;
+    let length = loaded.details.duration?;
+    file.enter(stream, length, at, |reader| forward_decoder(id, reader))
+}
+
+/// A decoder that only reads forward and is not told the length, so opening it part way into
+/// a file reads no further than the first frame.
+fn forward_decoder(id: &str, reader: Reader) -> Option<rodio::Decoder<Input>> {
+    let built = rodio::Decoder::builder()
+        .with_symphonia_decoder::<Aac>()
+        .with_data(Input::spliced(reader))
+        .with_seekable(false)
+        .build();
+    built
+        .inspect_err(|error| log::warn!("playback: cannot decode the subsonic track {id}: {error}"))
+        .ok()
 }
