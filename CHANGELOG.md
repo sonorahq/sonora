@@ -11,6 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Subsonic and Navidrome servers get a Radio page in the sidebar that lists the server's internet radio stations and plays them.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
+- The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 
 ### Changed
 

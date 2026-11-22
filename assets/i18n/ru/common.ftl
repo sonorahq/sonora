@@ -133,6 +133,7 @@ filter-album = Фильтр треков альбома
 filter-reset = Сбросить фильтры
 filter-duration = Длительность
 filter-year = Год
+filter-tracks = Треки
 filter-hide-explicit = Скрыть с ненормативной лексикой
 filter-favorites = Только избранное
 filter-downloaded = Скачанное
