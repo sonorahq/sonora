@@ -342,7 +342,7 @@ impl FullscreenView {
     }
 
     fn hover(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !window.is_window_hovered() || !window.is_window_active() {
+        if !hovered(window) {
             return;
         }
         let pad = cx.theme().metrics.pad;
@@ -407,7 +407,7 @@ impl FullscreenView {
     /// event the pointer has to be present for, so the ones still set when it left the window are
     /// dropped here instead. Crossing the window edge repaints on its own, so this is never late.
     fn watch(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let inside = window.is_window_hovered() && window.is_window_active() && !self.left;
+        let inside = hovered(window) && !self.left;
         if inside == self.inside {
             return;
         }
@@ -1129,7 +1129,7 @@ impl FullscreenView {
         let gap = px(PILL_GAP);
         let linger = cx.listener(|this: &mut Self, hovering: &bool, window, cx| {
             this.over_pill = *hovering;
-            if *hovering && window.is_window_hovered() && window.is_window_active() && !this.left {
+            if *hovering && hovered(window) && !this.left {
                 this.poke(cx);
             }
             cx.notify();
@@ -1789,6 +1789,13 @@ fn glide<E: Styled>(element: E, offset: Pixels, bleed: Pixels, window: &Window) 
 
 fn presentation_scale(presented: Pixels, layout: Pixels) -> f32 {
     presented.as_f32() / layout.as_f32()
+}
+
+/// Whether the pointer is over the window, focused or not, so hovering an unfocused player still
+/// wakes its controls. macOS answers `is_window_hovered` with focus, so there the view's exit
+/// event alone tells.
+fn hovered(window: &Window) -> bool {
+    cfg!(target_os = "macos") || window.is_window_hovered()
 }
 
 #[cfg(test)]
