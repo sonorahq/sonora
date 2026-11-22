@@ -170,6 +170,7 @@ enum Slot {
     Pace,
     Saver,
     AdaptiveMenu,
+    MinAlbumTracks,
     Version,
     Updates,
     AutoUpdate,
@@ -886,6 +887,10 @@ impl SettingsView {
                 t!("settings-adaptive-menu"),
                 t!("settings-adaptive-menu-detail"),
             ),
+            Slot::MinAlbumTracks => (
+                t!("settings-min-album-tracks"),
+                t!("settings-min-album-tracks-detail"),
+            ),
             Slot::Normalisation => (
                 t!("settings-normalisation"),
                 t!("settings-normalisation-detail"),
@@ -1107,6 +1112,7 @@ impl SettingsView {
             ))]
             Slot::WindowRounding => self.window_rounding_row(window, cx),
             Slot::AdaptiveMenu => self.adaptive_menu_row(cx),
+            Slot::MinAlbumTracks => self.min_album_tracks_row(cx),
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),
             Slot::SponsorBlock => self.sponsorblock_row(cx),

@@ -78,6 +78,7 @@ settings-group-output = Output
 settings-group-status = Status
 settings-group-startup = Startup
 settings-group-context-menus = Context menus
+settings-group-library = Library
 key-ctrl = Ctrl
 key-super = Super
 key-alt = Alt
@@ -439,6 +440,13 @@ settings-sessions-official = Use the official Sonora Sessions server
 settings-sessions-server-hint = wss://sessions.example.com
 settings-adaptive-menu = Adaptive context menu
 settings-adaptive-menu-detail = Leaves out entries the row already shows, such as the album or the artist
+settings-min-album-tracks = Hide small albums
+settings-min-album-tracks-detail = Leaves albums with fewer tracks out of the Albums tab. Their tracks stay in search, playlists and Songs
+settings-min-album-tracks-off = Show all albums
+settings-min-album-tracks-value = { $count ->
+    [one] Fewer than { $count } track
+   *[other] Fewer than { $count } tracks
+    }
 settings-accounts = Streaming services
 settings-accounts-detail = The services this device can play from
 settings-provider-current = In use

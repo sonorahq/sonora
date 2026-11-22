@@ -235,7 +235,11 @@ impl TableSource for AlbumSource {
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.albums(cx).get(row).is_some_and(|album| {
-            if self.starred && !self.library.read(cx).saved_album(&album.id) {
+            let library = self.library.read(cx);
+            if !library.lists_album(album, cx) {
+                return false;
+            }
+            if self.starred && !library.saved_album(&album.id) {
                 return false;
             }
             if !self.reach.keeps(&album.id) {
@@ -322,8 +326,12 @@ impl TableSource for AlbumSource {
         }
     }
 
-    fn filtered(&self, _cx: &App) -> bool {
-        self.year_span.is_some() || self.starred || self.downloaded || self.reach.active()
+    fn filtered(&self, cx: &App) -> bool {
+        self.year_span.is_some()
+            || self.starred
+            || self.downloaded
+            || self.reach.active()
+            || Sonora::global(cx).settings.read(cx).min_album_tracks() > 0
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {

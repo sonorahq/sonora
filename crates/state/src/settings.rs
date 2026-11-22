@@ -494,6 +494,9 @@ struct Values {
     fullscreen_lyrics_scale: f32,
     romanization_scripts: RomanizationScripts,
     adaptive_menu: bool,
+    /// The Albums tab leaves out albums with fewer tracks than this, so a library of loose
+    /// singles does not bury the real albums. 0 shows every album.
+    min_album_tracks: u32,
     check_updates: bool,
     /// Whether a release found is downloaded in the background and installed the next time
     /// Sonora starts, rather than only offered.
@@ -784,6 +787,7 @@ impl Default for Values {
             fullscreen_lyrics_scale: DEFAULT_LYRICS_SCALE,
             romanization_scripts: RomanizationScripts::default(),
             adaptive_menu: false,
+            min_album_tracks: 0,
             check_updates: cfg!(target_os = "windows") || updates_itself(),
             auto_update: true,
             update_channel: String::new(),
@@ -1341,6 +1345,11 @@ impl AppSettings {
 
     pub fn adaptive_menu(&self) -> bool {
         self.values.adaptive_menu
+    }
+
+    /// The fewest tracks an album needs to be listed in the Albums tab, 0 when none are hidden.
+    pub fn min_album_tracks(&self) -> u32 {
+        self.values.min_album_tracks
     }
 
     pub fn update_channel(&self) -> Channel {
@@ -1996,6 +2005,11 @@ impl AppSettings {
 
     pub fn set_adaptive_menu(&mut self, adaptive_menu: bool, cx: &mut Context<Self>) {
         self.values.adaptive_menu = adaptive_menu;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_min_album_tracks(&mut self, min_album_tracks: u32, cx: &mut Context<Self>) {
+        self.values.min_album_tracks = min_album_tracks;
         self.schedule_save(cx);
     }
 

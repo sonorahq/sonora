@@ -2030,6 +2030,17 @@ impl Library {
         self.pending_library.insert(id, task);
     }
 
+    /// Whether the Albums tab lists `album`, which it does not when the album holds fewer tracks
+    /// than the listener's minimum. An album whose provider reports no track count is always
+    /// listed, since its size is unknown. Search, playlists and the songs keep its tracks.
+    pub fn lists_album(&self, album: &Album, cx: &App) -> bool {
+        let least = crate::Sonora::global(cx)
+            .settings
+            .read(cx)
+            .min_album_tracks();
+        album.track_count == 0 || album.track_count >= least
+    }
+
     pub fn saved_album(&self, album_id: &str) -> bool {
         self.favorites(album_id)
             .is_some_and(|favorites| favorites.albums.iter().any(|album| album.id == album_id))

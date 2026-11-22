@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Subsonic and Navidrome servers get a Radio page in the sidebar that lists the server's internet radio stations and plays them.
+- The Albums tab can hide albums with fewer than a chosen number of tracks, set under Settings > General > Library.
 
 ### Changed
 

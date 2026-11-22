@@ -13,6 +13,9 @@ use crate::shared::popups::matches_query;
 const STARTUP: &str = "startup";
 const PROVIDER: &str = "provider";
 const ENTRIES: &str = "entries";
+const MIN_ALBUM_TRACKS: &str = "min-album-tracks";
+/// The sizes the Albums tab can hide albums under. A hand-edited settings file may hold another.
+const ALBUM_TRACK_FLOORS: [u32; 4] = [2, 3, 4, 5];
 
 impl SettingsView {
     pub(super) fn general_groups(&self, cx: &App) -> Vec<Group> {
@@ -33,6 +36,8 @@ impl SettingsView {
                 Slot::Saver,
             ]),
             Group::new("settings-group-context-menus", "icons/list.svg").rows([Slot::AdaptiveMenu]),
+            Group::new("settings-group-library", "icons/library-big.svg")
+                .rows([Slot::MinAlbumTracks]),
         ]
     }
 
@@ -427,6 +432,44 @@ impl SettingsView {
         )
     }
 
+    /// How small an album may be before the Albums tab leaves it out, or off to list them all.
+    pub(super) fn min_album_tracks_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.settings.read(cx).min_album_tracks();
+        let current = album_floor_label(chosen);
+
+        let off = MenuItem::new("min-album-tracks-off", album_floor_label(0))
+            .selected(chosen == 0)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_min_album_tracks(0, cx));
+                cx.notify();
+            }));
+        let floors = ALBUM_TRACK_FLOORS.map(|floor| {
+            MenuItem::new(
+                ("min-album-tracks", floor as usize),
+                album_floor_label(floor),
+            )
+            .selected(floor == chosen)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_min_album_tracks(floor, cx));
+                cx.notify();
+            }))
+        });
+
+        let picker = Picker::new(MIN_ALBUM_TRACKS, &self.popovers, current)
+            .width(Picker::REGULAR)
+            .item(off)
+            .items(floors);
+
+        self.row(
+            t!("settings-min-album-tracks"),
+            picker
+                .name(t!("settings-min-album-tracks"))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn tray_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.settings.read(cx).close_to_tray();
 
@@ -491,6 +534,14 @@ impl SettingsView {
 
 /// The rows about the Windows taskbar button. Only Windows has that button, so the list is
 /// empty everywhere else and the row is left off the page.
+/// What the hide-small-albums picker reads for `floor`, the fewest tracks an album keeps.
+fn album_floor_label(floor: u32) -> SharedString {
+    match floor {
+        0 => t!("settings-min-album-tracks-off"),
+        floor => t!("settings-min-album-tracks-value", count = floor),
+    }
+}
+
 fn taskbar_slots() -> Vec<Slot> {
     match cfg!(target_os = "windows") {
         true => vec![Slot::TaskbarProgress],

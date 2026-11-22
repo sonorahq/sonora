@@ -350,6 +350,20 @@ impl LibraryView {
         })
         .detach();
 
+        // The Albums tab hides small albums by a setting, so changing it filters again. Other
+        // settings change far more often and leave the rows alone.
+        let mut min_album_tracks = settings.read(cx).min_album_tracks();
+        cx.observe(&settings, move |this, settings, cx| {
+            let next = settings.read(cx).min_album_tracks();
+            if next == min_album_tracks {
+                return;
+            }
+            min_album_tracks = next;
+            this.rebuild(cx);
+            cx.notify();
+        })
+        .detach();
+
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         cx.observe(&Scan::global(cx), |_, _, cx| cx.notify())
