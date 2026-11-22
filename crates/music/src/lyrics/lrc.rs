@@ -382,7 +382,7 @@ fn tighten(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
                 if trailing && tidied.starts_with(' ') {
                     tidied.remove(0);
                 }
-                if tidied.chars().next().is_some_and(closing_punctuation)
+                if closes(&tidied)
                     && let Some(previous) = words[..index]
                         .iter_mut()
                         .rev()
@@ -410,9 +410,9 @@ fn tighten(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
 /// plain space, and none stands before closing punctuation.
 fn settled(text: &str) -> bool {
     let mut spaced = false;
-    for letter in text.chars() {
+    for (at, letter) in text.char_indices() {
         let space = letter.is_whitespace();
-        if (space && (letter != ' ' || spaced)) || (spaced && closing_punctuation(letter)) {
+        if (space && (letter != ' ' || spaced)) || (spaced && closes(&text[at..])) {
             return false;
         }
         spaced = space;
@@ -423,12 +423,12 @@ fn settled(text: &str) -> bool {
 fn unspace_punctuation(text: &str) -> String {
     let mut tightened = String::with_capacity(text.len());
     let mut spacing = String::new();
-    for letter in text.chars() {
+    for (at, letter) in text.char_indices() {
         if letter.is_whitespace() {
             spacing.push(letter);
             continue;
         }
-        if !closing_punctuation(letter) {
+        if !closes(&text[at..]) {
             tightened.push_str(&spacing);
         }
         spacing.clear();
@@ -436,6 +436,17 @@ fn unspace_punctuation(text: &str) -> String {
     }
     tightened.push_str(&spacing);
     tightened
+}
+
+/// Whether `text` opens with punctuation that hugs the word before it. A dot right before a digit
+/// starts a number such as `.45` and keeps its space.
+fn closes(text: &str) -> bool {
+    let mut letters = text.chars();
+    let Some(first) = letters.next() else {
+        return false;
+    };
+    closing_punctuation(first)
+        && !(first == '.' && letters.next().is_some_and(|next| next.is_ascii_digit()))
 }
 
 fn closing_punctuation(letter: char) -> bool {
