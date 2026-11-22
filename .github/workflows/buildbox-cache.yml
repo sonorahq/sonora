@@ -5,6 +5,8 @@ name: buildbox-cache
 # copy of main's build and only compiles what its branch changed, and the buildbox never builds main
 # itself. The target is split into a layer of third-party crates, which only changes with
 # Cargo.lock, the toolchain or the weekly Arch refresh, and a small layer of the workspace crates.
+# The copy stays fresh in another folder because the build scripts name every asset relative to
+# their crate (see crates/embed).
 #
 # It stays out of the Actions cache, which ci.yml already fills: each run seeds itself from the
 # previous snapshot in the registry instead, and an unchanged layer is neither pushed nor pulled.
