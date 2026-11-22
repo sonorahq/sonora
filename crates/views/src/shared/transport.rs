@@ -111,24 +111,16 @@ pub(crate) fn percent(fraction: f32) -> SharedString {
     t!("unit-percent", value = (fraction * 100.).round())
 }
 
-/// The heart that saves or drops `track`, or none for a radio station, which no library keeps.
-/// A click toggles the track `playback` holds by then, which is the one shown, so callers only
-/// lend the track to read its state.
-pub(crate) fn like(
-    track: Option<&music::Track>,
-    playback: &Entity<Playback>,
-    cx: &App,
-) -> Option<Button> {
+/// The heart that saves or drops `track`. A click toggles the track `playback` holds by then,
+/// which is the one shown, so callers only lend the track to read its state.
+pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx: &App) -> Button {
     let theme = *cx.theme();
     let library = Sonora::global(cx).library.clone();
     let playback = playback.clone();
     let id = track.and_then(|track| track.id.as_deref());
-    if id.is_some_and(music::is_station_id) {
-        return None;
-    }
     let saved = id.is_some_and(|id| library.read(cx).saved(id));
 
-    let heart = Button::new("toggle-liked-track")
+    Button::new("toggle-liked-track")
         .ghost()
         .backgroundless()
         .small()
@@ -149,8 +141,7 @@ pub(crate) fn like(
             if let Some(track) = playback.read(cx).track().cloned() {
                 library.update(cx, |library, cx| library.toggle(track, cx));
             }
-        });
-    Some(heart)
+        })
 }
 
 /// `big` is only true in fullscreen, where these buttons float over the ambient

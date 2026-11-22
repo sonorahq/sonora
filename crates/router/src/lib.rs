@@ -27,9 +27,8 @@ impl LibraryTab {
 }
 
 /// A row the sidebar can hide from Settings. The four library pages are rows of their own,
-/// each opening its page of the merged streaming and local library. Radio follows them, and only
-/// for a provider that lists stations. History and Settings always sit in the account menu, so
-/// their rows are optional and stay out of the sidebar until asked for.
+/// each opening its page of the merged streaming and local library. History and Settings always
+/// sit in the account menu, so their rows are optional and stay out of the sidebar until asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
@@ -38,14 +37,13 @@ pub enum NavEntry {
     Albums,
     Artists,
     Playlists,
-    Radio,
     History,
     Settings,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Search,
         Self::History,
@@ -54,7 +52,6 @@ impl NavEntry {
         Self::Albums,
         Self::Artists,
         Self::Playlists,
-        Self::Radio,
         Self::Pins,
     ];
 
@@ -66,7 +63,6 @@ impl NavEntry {
             Self::Albums => "albums",
             Self::Artists => "artists",
             Self::Playlists => "playlists",
-            Self::Radio => "radio",
             Self::History => "history",
             Self::Settings => "settings",
             Self::Pins => "sidebar-pins",
@@ -81,7 +77,6 @@ impl NavEntry {
             Self::Albums => "nav-albums",
             Self::Artists => "nav-artists",
             Self::Playlists => "nav-playlists",
-            Self::Radio => "nav-radio",
             Self::History => "nav-history",
             Self::Settings => "nav-settings",
             Self::Pins => "nav-pinned",
@@ -372,8 +367,6 @@ pub enum Destination {
     Artist(SharedString),
     User(SharedString),
     Genre(SharedString),
-    /// The internet radio stations of a provider that lists them.
-    Radio,
     Search,
     Settings(SettingsPage),
     /// The equalizer's own settings page, opened from Sound.

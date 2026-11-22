@@ -64,7 +64,6 @@ nav-songs = Songs
 nav-albums = Albums
 nav-playlists = Playlists
 nav-artists = Artists
-nav-radio = Radio
 nav-local = Local Music
 nav-back = Back
 nav-forward = Forward
@@ -148,8 +147,6 @@ history-not-loaded = Listening history could not be loaded.
 history-clear = Clear history
 history-clear-title = Clear listening history
 history-clear-confirm = Every play is removed from this device. This cannot be undone.
-stations-empty = Radio stations added on your server will appear here.
-stations-not-loaded = Radio stations could not be loaded.
 filter-library = Filter your library
 filter-album = Filter album tracks
 filter-reset = Reset filters
@@ -206,11 +203,6 @@ count-songs =
     { $count ->
         [one] { $count } song
        *[other] { $count } songs
-    }
-count-stations =
-    { $count ->
-        [one] { $count } station
-       *[other] { $count } stations
     }
 count-tracks =
     { $count ->

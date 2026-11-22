@@ -553,8 +553,6 @@ impl History {
         }));
     }
 
-    /// Adds the track now playing to the history and tells its provider. A radio station is
-    /// no song, so it is never recorded.
     fn record(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.scope(cx) else {
             return;
@@ -562,7 +560,7 @@ impl History {
         let Some(mut track) = self.playback.read(cx).track().cloned() else {
             return;
         };
-        let Some(track_id) = track.id.clone().filter(|id| !music::is_station_id(id)) else {
+        let Some(track_id) = track.id.clone() else {
             return;
         };
         let Some(provider) = self.session.read(cx).slug_for(&track_id) else {

@@ -64,7 +64,6 @@ nav-songs = 곡
 nav-albums = 앨범
 nav-playlists = 플레이리스트
 nav-artists = 아티스트
-nav-radio = 라디오
 nav-local = 로컬 음악
 nav-back = 뒤로
 nav-forward = 앞으로
@@ -148,8 +147,6 @@ history-not-loaded = 재생 기록을 불러올 수 없습니다.
 history-clear = 기록 지우기
 history-clear-title = 재생 기록 지우기
 history-clear-confirm = 이 기기에서 모든 재생 기록이 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
-stations-empty = 서버에 추가된 라디오 방송국이 여기에 표시됩니다.
-stations-not-loaded = 라디오 방송국을 불러올 수 없습니다.
 filter-library = 라이브러리 필터링
 filter-album = 앨범 트랙 필터링
 filter-reset = 필터 초기화
@@ -205,11 +202,6 @@ count-songs =
     { $count ->
         [one] { $count }곡
        *[other] { $count }곡
-    }
-count-stations =
-    { $count ->
-        [one] 방송국 { $count }개
-       *[other] 방송국 { $count }개
     }
 count-tracks =
     { $count ->
