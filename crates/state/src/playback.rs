@@ -2342,6 +2342,23 @@ impl Playback {
         self.load_after(&track, Start::Pick, cx);
     }
 
+    /// Moves the queue on to the upcoming track at `index` and plays it from `at`, as a Sonora
+    /// Session does when it moves to a track this queue already has, so the rest of it stays.
+    pub(crate) fn play_upcoming_at(&mut self, index: usize, at: Duration, cx: &mut Context<Self>) {
+        use crate::QueuePosition;
+        let position = QueuePosition::Upcoming(index);
+        self.fetch = None;
+        let suggested = self.queue.read(cx).kind(position) == Some(crate::QueueKind::Suggested);
+        let track = self
+            .queue
+            .update(cx, |queue, cx| queue.select(position, cx));
+        let Some(track) = track else { return };
+        if suggested {
+            self.leave_station();
+        }
+        self.load_from(&track, at, Start::Pick, cx);
+    }
+
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
