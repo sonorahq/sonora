@@ -95,6 +95,8 @@ library-local-unconfigured = Configure your local library
 
 # app menu
 app-refresh = Refresh
+app-dev-badge = dev
+app-dev-build = Development build
 downloads-active = Downloading
 downloads-left = { $count ->
     [one] { $count } song left
