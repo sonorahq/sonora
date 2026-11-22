@@ -2664,14 +2664,15 @@ impl Playback {
             return;
         }
         // The clock parks at the target; the engine's Seeked starts it again once audio from
-        // there is playing. A playing or loading engine answers with a Seeked or its first
-        // Playing, so a seek asked for before that waits behind it and only the latest goes
-        // out. A paused one writes nothing to answer with, so it takes every seek at once.
+        // there is playing. A loading or paused engine takes the seek at once and reports the
+        // position with its Playing, so only a playing one needs the seek tracked. A loading
+        // engine keeps only the latest target itself, and the audio thread merges seeks that
+        // queue up behind a slow reopen.
         self.position = position;
         self.clock.reset(position, false);
         self.seek_target = Some(position);
-        let answers = matches!(self.state, PlaybackState::Playing | PlaybackState::Loading);
-        let parked = answers && self.seek_in_flight.is_some();
+        let playing = self.state == PlaybackState::Playing;
+        let parked = playing && self.seek_in_flight.is_some();
         log::debug!(
             "playback: seek to {position:?} while {:?}{}",
             self.state,
@@ -2680,7 +2681,7 @@ impl Playback {
                 false => "",
             }
         );
-        match (answers, self.seek_in_flight) {
+        match (playing, self.seek_in_flight) {
             (true, Some(_)) => self.seek_next = Some(position),
             (true, None) => {
                 self.seek_in_flight = Some(position);
