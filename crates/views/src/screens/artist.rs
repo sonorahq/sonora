@@ -94,15 +94,16 @@ const BANNER_SHADE: f32 = 0.85;
 /// The blur over a portrait standing in for a missing banner, enough to leave only its colours.
 const BANNER_WASH: Pixels = px(48.);
 
+/// The popular tracks the list can expand to. The table caps how many show, after sorting, so
+/// the collapsed list is the head of the expanded one.
 struct ArtistTracks {
     detail: Entity<ArtistDetail>,
-    shown: Rc<Cell<usize>>,
 }
 
 impl Tracks for ArtistTracks {
     fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
         let tracks = self.detail.read(cx).tracks();
-        tracks[..self.shown.get().min(tracks.len())].into()
+        tracks[..LISTED_MAX.min(tracks.len())].into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {
@@ -130,7 +131,8 @@ pub(crate) struct ArtistView {
     about_open: bool,
     favorites_open: bool,
     table: Entity<TableState<TrackSource>>,
-    shown: Rc<Cell<usize>>,
+    /// How many popular tracks the list shows, `LISTED` or `LISTED_MAX`.
+    shown: usize,
     mode: Mode,
     popular: Rc<Vec<Track>>,
     popular_page: usize,
@@ -176,7 +178,6 @@ impl ArtistView {
                 .playcounts,
         );
         let scroll = scrollbar.read(cx).scroll().clone();
-        let shown = Rc::new(Cell::new(LISTED));
         let table = cx.new(|cx| {
             let menu_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             crate::shared::tracks::follow_downloads(cx);
@@ -184,7 +185,6 @@ impl ArtistView {
                 columns,
                 ArtistTracks {
                     detail: detail.clone(),
-                    shown: shown.clone(),
                 },
                 playback.clone(),
                 menu_scrollbar,
@@ -202,6 +202,7 @@ impl ArtistView {
             let source = source.table(cx.weak_entity());
             let mut delegate = TableDelegate::new(source, width, cx);
             delegate.set_layout(saved, cx);
+            delegate.set_limit(Some(LISTED), cx);
             delegate.set_sorting(sorting.flatten(), cx);
             TableState::new(delegate, cx).follow(scroll)
         });
@@ -230,7 +231,7 @@ impl ArtistView {
                 this.about_open = false;
                 this.favorites_open = false;
                 this.rails.clear();
-                this.shown.set(LISTED);
+                this.show(LISTED, cx);
                 this.scrollbar.update(cx, |bar, cx| {
                     bar.set_max_offset(None, cx);
                     bar.scroll().set_offset(gpui::Point::default());
@@ -299,7 +300,7 @@ impl ArtistView {
             about_open: false,
             favorites_open: false,
             table,
-            shown,
+            shown: LISTED,
             mode,
             popular_page: 0,
             popular_columns: 0,
@@ -330,6 +331,14 @@ impl ArtistView {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
             table.rebuild(cx);
+        });
+    }
+
+    fn show(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.shown = count;
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_limit(Some(count), cx);
+            cx.notify();
         });
     }
 
@@ -970,7 +979,7 @@ impl ArtistView {
 
     fn listed(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let expanded = self.shown.get() > LISTED;
+        let expanded = self.shown > LISTED;
         let more = (self.popular.len() > LISTED).then(|| {
             Button::new("artist-popular-more")
                 .label(match expanded {
@@ -982,11 +991,13 @@ impl ArtistView {
                 .ghost()
                 .aria_expanded(expanded)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.shown.set(match expanded {
-                        true => LISTED,
-                        false => LISTED_MAX,
-                    });
-                    this.rebuild(cx);
+                    this.show(
+                        match expanded {
+                            true => LISTED,
+                            false => LISTED_MAX,
+                        },
+                        cx,
+                    );
                     cx.notify();
                 }))
         });
