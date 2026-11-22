@@ -99,28 +99,6 @@ pub struct Track {
     pub credits: Vec<Credit>,
 }
 
-/// An internet radio station a server lists. It plays as a track with no length, through
-/// [`Station::track`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Station {
-    pub id: String,
-    pub name: String,
-    /// The station's own website, when the server knows it.
-    pub homepage: Option<String>,
-}
-
-impl Station {
-    /// The station as a playable track. It has no artist, so no scrobbler is ever sent it.
-    pub fn track(&self) -> Track {
-        Track {
-            id: Some(format!("{}{}", crate::STATION_PREFIX, self.id)),
-            name: self.name.clone(),
-            playable: true,
-            ..Track::default()
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Playlist {

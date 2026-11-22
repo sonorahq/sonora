@@ -9,14 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Subsonic and Navidrome servers get a Radio page in the sidebar that lists the server's internet radio stations and plays them.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 
 ### Changed
 
 - Home on Subsonic and Navidrome servers labels the albums added to the server most recently as Recently added and adds a Newest releases shelf ordered by release year.
-- The Brazilian Portuguese translation is complete again, including sessions, smart playlists, audio settings and internet radio.
+- The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
 - Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.

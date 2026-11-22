@@ -436,7 +436,7 @@ impl PlayerBar {
             .when(explicit, |this| {
                 this.child(div().flex_none().child(Badge::explicit()))
             })
-            .children(like(track, &self.playback, cx));
+            .child(like(track, &self.playback, cx));
         let headline = match centered {
             true => {
                 // Equal clearance on both sides keeps the title itself centered. Actions sit
