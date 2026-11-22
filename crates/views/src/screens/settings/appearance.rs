@@ -301,9 +301,10 @@ impl SettingsView {
             .items_center()
             .gap_2()
             .child(step("font-smaller", "−", "settings-font-smaller", -1.))
-            .child(ui::spoken(
+            .child(ui::spoken_steady(
                 "settings-font-value",
-                t!("unit-px", value = look.font.round() as i64),
+                font_px(look.font),
+                [font_px(MIN_FONT), font_px(MAX_FONT)],
             ))
             .child(step("font-larger", "+", "settings-font-larger", 1.));
 
@@ -587,4 +588,9 @@ fn centred(content: impl IntoElement) -> Div {
         .items_center()
         .justify_center()
         .child(content)
+}
+
+/// A font size as the pixels its stepper shows.
+fn font_px(font: f32) -> SharedString {
+    t!("unit-px", value = font.round() as i64)
 }

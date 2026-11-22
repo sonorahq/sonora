@@ -103,7 +103,7 @@ pub use input::{
 pub use kbd::Kbd;
 pub use label::{
     Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
-    spoken_vacant, vacant,
+    spoken_steady, spoken_vacant, vacant,
 };
 pub use lattice::Lattice;
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};

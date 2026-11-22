@@ -3,6 +3,7 @@ use gpui::prelude::*;
 use gpui::{App, Div, ElementId, FontWeight, Rems, SharedString, Stateful, div, rems};
 
 use crate::metrics::Text;
+use crate::tabular;
 use crate::theme::ActiveTheme as _;
 
 /// How far the tails of letters may hang below a clipped line, as a share of the font size. The
@@ -30,6 +31,26 @@ pub fn spoken(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Statef
         .role(Role::Label)
         .aria_value(text.clone())
         .child(text)
+}
+
+/// A `spoken` value that keeps the width of the widest of `widths`, centred in tabular digits, so
+/// the buttons either side of a stepper stay put as the value changes. `widths` should hold every
+/// value the line can show, or at least the longest ones. Only `text` reaches screen readers.
+pub fn spoken_steady(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    widths: impl IntoIterator<Item = SharedString>,
+) -> Stateful<Div> {
+    spoken(id, text)
+        .flex()
+        .flex_col()
+        .items_center()
+        .font_features(tabular())
+        .children(
+            widths
+                .into_iter()
+                .map(|width| div().h_0().overflow_hidden().invisible().child(width)),
+        )
 }
 
 pub fn eyebrow(label: impl Into<SharedString>, cx: &App) -> Div {

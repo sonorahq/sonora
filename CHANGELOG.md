@@ -32,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 
+### Fixed
+
+- The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
+
 ## [0.50.3] - 2026-11-20
 
 ### Changed

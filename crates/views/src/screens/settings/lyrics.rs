@@ -141,9 +141,10 @@ impl SettingsView {
             .items_center()
             .gap_2()
             .child(step("smaller", "\u{2212}", "settings-font-smaller", -0.1))
-            .child(ui::spoken(
+            .child(ui::spoken_steady(
                 SharedString::from(format!("{id}-value")),
-                t!("unit-percent", value = (scale * 100.).round() as i64),
+                percent(scale),
+                [percent(MIN_LYRICS_SCALE), percent(MAX_LYRICS_SCALE)],
             ))
             .child(step("larger", "+", "settings-font-larger", 0.1));
 
@@ -475,4 +476,9 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         _ => return SharedString::from(provider.to_owned()),
     };
     i18n::lookup(key, None)
+}
+
+/// A lyrics scale as the percentage its stepper shows.
+fn percent(scale: f32) -> SharedString {
+    t!("unit-percent", value = (scale * 100.).round() as i64)
 }
