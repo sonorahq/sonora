@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
-use crate::ranged::{self, Address, Reach};
-use crate::stream::{Plain, Reader, Stream};
+use crate::ranged::{self, Reach};
+use crate::stream::{Plain, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
@@ -50,9 +50,7 @@ impl PlaybackFactory for Factory {
         engine::start(
             Subsonic {
                 client: self.client.clone(),
-                media: ranged::media_builder()
-                    .build()
-                    .unwrap_or_else(|_| self.client.http.clone()),
+                media: ranged::media("subsonic", || self.client.http.clone()),
                 transcode: config.transcode,
                 shelf: config.vault.as_ref().map(|vault| {
                     vault
@@ -131,23 +129,6 @@ impl Subsonic {
             file: None,
         })
     }
-
-    /// Whether the server is asked for the file as it is, rather than converted.
-    fn original(&self) -> bool {
-        self.transcode == Transcode::default()
-    }
-
-    /// What a seek past the download of `stream` fetches track `id` through, from `url`, when
-    /// the file is in a format a seek can enter part way. It has to be made on the runtime.
-    fn file(&self, id: &str, stream: &Stream, url: String) -> Option<Arc<ranged::File>> {
-        let media = self.media.clone();
-        let reach = Reach::new("subsonic", id, move |_| {
-            (Address::new("subsonic", media.clone(), url.clone()), Plain)
-        });
-        let file = ranged::File::detect(stream, reach)?;
-        log::debug!("subsonic: {id} can seek ahead as {:?}", file.kind());
-        Some(Arc::new(file))
-    }
 }
 
 #[async_trait]
@@ -176,8 +157,7 @@ impl Fetch for Subsonic {
                 let response = self.client.open_stream(id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response);
-                let seekable = (self.original() && ranged::ranges(&response))
-                    .then(|| response.url().to_string());
+                let seekable = self.transcode == Transcode::default() && ranged::ranges(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -195,7 +175,13 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                let file = seekable.and_then(|url| self.file(id, &stream, url));
+                let media = self.media.clone();
+                let file = remote.filter(|_| seekable).and_then(|remote| {
+                    let reach = Reach::new("subsonic", id, move |_| {
+                        (remote.address("subsonic", media.clone()), Plain)
+                    });
+                    ranged::File::detect(&stream, reach)
+                });
                 anyhow::Ok((stream, prepared, file))
             },
             async {
@@ -273,10 +259,13 @@ impl Fetch for Subsonic {
         loaded: &Loaded,
         at: Duration,
     ) -> Option<(Self::Source, Duration)> {
-        if let Some(entered) = ahead(id, loaded, at) {
-            return Some(entered);
-        }
-        self.open(id, loaded, at).map(|source| (source, at))
+        let file = loaded.file.as_ref().zip(loaded.details.duration);
+        let entered = file.and_then(|(file, length)| {
+            file.enter(&loaded.stream, length, at, |reader| {
+                ranged::forward("subsonic", id, Input::spliced(reader))
+            })
+        });
+        entered.or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
     }
 
     /// A decoder opened before a converted track finished arriving can only read forward, so
@@ -284,30 +273,4 @@ impl Fetch for Subsonic {
     fn reopen_to_seek(&self) -> bool {
         true
     }
-}
-
-/// Opens a decoder part way into a track still arriving and says where it starts. `None` when
-/// the track is whole, starts at the top, has no known length or cannot be entered part way,
-/// which leaves it to [`Fetch::open`].
-fn ahead(id: &str, loaded: &Loaded, at: Duration) -> Option<(rodio::Decoder<Input>, Duration)> {
-    let stream = &loaded.stream;
-    if at.is_zero() || (stream.done() && stream.failed().is_none()) {
-        return None;
-    }
-    let file = loaded.file.as_ref()?;
-    let length = loaded.details.duration?;
-    file.enter(stream, length, at, |reader| forward_decoder(id, reader))
-}
-
-/// A decoder that only reads forward and is not told the length, so opening it part way into
-/// a file reads no further than the first frame.
-fn forward_decoder(id: &str, reader: Reader) -> Option<rodio::Decoder<Input>> {
-    let built = rodio::Decoder::builder()
-        .with_symphonia_decoder::<Aac>()
-        .with_data(Input::spliced(reader))
-        .with_seekable(false)
-        .build();
-    built
-        .inspect_err(|error| log::warn!("playback: cannot decode the subsonic track {id}: {error}"))
-        .ok()
 }

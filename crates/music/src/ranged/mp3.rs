@@ -1,4 +1,4 @@
-//! MPEG audio files, MP3 above all, entered part way.
+//! MP3 files entered part way.
 //!
 //! An MPEG frame carries no time of its own, so a decoder entered part way counts from zero and
 //! the position it starts at is an estimate. A VBR file usually opens with a Xing frame whose
@@ -9,23 +9,13 @@
 
 use std::time::Duration;
 
-use super::Place;
 use crate::stream::{Body, Spool, Stream};
 
-/// The bitrates in kbit/s by the header's bitrate index, one row each for MPEG-1 layers I, II
-/// and III, then MPEG-2 and 2.5 layer I, then MPEG-2 and 2.5 layers II and III.
-const BITRATES: [[u16; 15]; 5] = [
-    [
-        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
-    ],
-    [
-        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
-    ],
+/// The layer III bitrates in kbit/s by the header's bitrate index, for MPEG-1 and then for
+/// MPEG-2 and 2.5.
+const BITRATES: [[u16; 15]; 2] = [
     [
         0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
-    ],
-    [
-        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
     ],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
 ];
@@ -44,13 +34,11 @@ const PADDING: usize = 4096;
 /// at the start of the file reads.
 const SCAN_WINDOW: usize = 16 * 1024;
 
-/// What one MPEG audio frame header says.
+/// What one MPEG layer III frame header says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     /// The two version bits, [`MPEG1`] for MPEG-1.
     version: u8,
-    /// The layer, from 1 to 3.
-    layer: u8,
     rate: u32,
     mono: bool,
     /// The whole frame in bytes, header included.
@@ -63,7 +51,7 @@ pub struct Layout {
     length: Duration,
     size: u64,
     /// Where the ID3 tags end, which a decoder entered part way is given in front of the frames.
-    head: usize,
+    pub head: usize,
     /// Where the first frame of audio starts, past a Xing or Info frame.
     start: u64,
     toc: Option<Toc>,
@@ -78,38 +66,20 @@ struct Toc {
     entries: [u8; 100],
 }
 
-/// What the start of an MP3 file says about where its frames are.
-#[derive(Clone, Copy, Debug)]
-struct Found {
-    head: usize,
-    first: usize,
-    start: usize,
-    xing: Option<Xing>,
-}
-
-/// What a Xing frame says that placing a time needs: how long the stream is from its first
-/// frame, and the table.
-#[derive(Clone, Copy, Debug)]
-struct Xing {
-    bytes: Option<u64>,
-    toc: [u8; 100],
-}
-
 impl Header {
-    /// The header at the start of `bytes`, when the first four bytes are one. Free-format and
-    /// reserved values are refused, which keeps random bytes from passing for a header.
+    /// The layer III header at the start of `bytes`, when the first four bytes are one. Other
+    /// layers, free-format and reserved values are refused, which keeps random bytes from
+    /// passing for a header.
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let [first, second, third, fourth] = *bytes.first_chunk::<4>()?;
-        if first != 0xff || second & 0xe0 != 0xe0 || fourth & 0x03 == 0x02 {
+        if first != 0xff
+            || second & 0xe0 != 0xe0
+            || (second >> 1) & 0x03 != 1
+            || fourth & 0x03 == 0x02
+        {
             return None;
         }
         let version = (second >> 3) & 0x03;
-        let layer = match (second >> 1) & 0x03 {
-            1 => 3,
-            2 => 2,
-            3 => 1,
-            _ => return None,
-        };
         let rates = match version {
             MPEG1 => [44100, 48000, 32000],
             2 => [22050, 24000, 16000],
@@ -117,39 +87,29 @@ impl Header {
             _ => return None,
         };
         let rate = *rates.get(usize::from((third >> 2) & 0x03))?;
-        let row = match (version, layer) {
-            (MPEG1, layer) => usize::from(layer) - 1,
-            (_, 1) => 3,
-            _ => 4,
-        };
+        let bitrates = &BITRATES[usize::from(version != MPEG1)];
         let bitrate = match usize::from(third >> 4) {
             0 | 15 => return None,
-            index => u32::from(BITRATES[row][index]) * 1000,
+            index => u32::from(bitrates[index]) * 1000,
         };
-        let padding = usize::from((third >> 1) & 0x01);
-        let length = match (layer, version) {
-            (1, _) => ((12 * bitrate / rate) as usize + padding) * 4,
-            (3, version) if version != MPEG1 => (72 * bitrate / rate) as usize + padding,
-            _ => (144 * bitrate / rate) as usize + padding,
+        let per_frame = match version {
+            MPEG1 => 144,
+            _ => 72,
         };
         Some(Self {
             version,
-            layer,
             rate,
             mono: fourth >> 6 == 0x03,
-            length,
+            length: (per_frame * bitrate / rate) as usize + usize::from((third >> 1) & 0x01),
         })
     }
 
     /// Whether `other` belongs to the same stream, which a frame and the one after it do.
     fn similar(&self, other: &Self) -> bool {
-        self.version == other.version
-            && self.layer == other.layer
-            && self.rate == other.rate
-            && self.mono == other.mono
+        self.version == other.version && self.rate == other.rate && self.mono == other.mono
     }
 
-    /// How long a layer III frame's side information is, which a Xing tag follows.
+    /// How long the frame's side information is, which a Xing tag follows.
     fn side_info(&self) -> usize {
         match (self.version == MPEG1, self.mono) {
             (true, true) => 17,
@@ -169,44 +129,13 @@ impl Layout {
             return None;
         }
         let size = main.total()?;
-        let found = main.awaiting(|_, spool, _| scan(spool)).flatten()?;
-        Some(Self::new(found, length, size))
+        main.awaiting(|_, spool, _| scan(spool, length, size))
+            .flatten()
     }
 
-    /// The layout `found` describes, for a track of `length` in a file of `size` bytes. A Xing
-    /// table whose stream length does not fit in the file is measured against the file instead.
-    fn new(found: Found, length: Duration, size: u64) -> Self {
-        let first = found.first as u64;
-        let toc = found.xing.map(|xing| Toc {
-            first,
-            bytes: xing
-                .bytes
-                .filter(|bytes| *bytes > 0 && first + bytes <= size)
-                .unwrap_or_else(|| size.saturating_sub(first)),
-            entries: xing.toc,
-        });
-        Self {
-            length,
-            size,
-            head: found.head,
-            start: (found.start as u64).min(size),
-            toc: toc.filter(|toc| toc.bytes > 0),
-        }
-    }
-
-    /// How far into the track `at` is, from nought to one.
-    fn share(&self, at: Duration) -> f64 {
-        (at.as_secs_f64() / self.length.as_secs_f64()).clamp(0.0, 1.0)
-    }
-}
-
-impl Place for Layout {
-    fn head(&self) -> usize {
-        self.head
-    }
-
-    fn byte(&self, at: Duration) -> u64 {
-        let share = self.share(at);
+    /// The byte `at` is taken to fall on.
+    pub fn byte(&self, at: Duration) -> u64 {
+        let share = (at.as_secs_f64() / self.length.as_secs_f64()).clamp(0.0, 1.0);
         let byte = match &self.toc {
             Some(toc) => toc.byte(share),
             None => self.start + ((self.size - self.start) as f64 * share) as u64,
@@ -214,7 +143,8 @@ impl Place for Layout {
         byte.clamp(self.start, self.size)
     }
 
-    fn time(&self, from: u64) -> Duration {
+    /// The time byte `from` is taken to fall on, the other way round from [`byte`](Self::byte).
+    pub fn time(&self, from: u64) -> Duration {
         let share = match &self.toc {
             Some(toc) => toc.share(from),
             None if self.size > self.start => {
@@ -281,16 +211,10 @@ pub fn sync(bytes: &[u8]) -> Option<usize> {
     })
 }
 
-/// Where an MP3 file's ID3 tags end, which is all a decoder entered part way needs in front of
-/// the frames. `Some(None)` when no MPEG frame follows the tags.
-pub fn head(spool: &Spool) -> Option<Option<usize>> {
-    scan(spool).map(|found| found.map(|found| found.head))
-}
-
-/// Reads the start of an MP3 file: the ID3 tags, the first frame after them, and the Xing tag
-/// that frame may be. `None` while too little has arrived to say, and `Some(None)` when no
-/// frame turns up close enough behind the tags.
-fn scan(spool: &Spool) -> Option<Option<Found>> {
+/// Reads the start of an MP3 file of `size` bytes and `length`: the ID3 tags, the first frame
+/// after them, and the Xing tag that frame may be. `None` while too little has arrived to say,
+/// and `Some(None)` when no frame turns up close enough behind the tags.
+fn scan(spool: &Spool, length: Duration, size: u64) -> Option<Option<Layout>> {
     let head = tags(spool)?;
     let wanted = head + SCAN_WINDOW;
     let full = spool.len() >= wanted;
@@ -300,12 +224,21 @@ fn scan(spool: &Spool) -> Option<Option<Found>> {
     };
     let frame = Header::parse(&window[skip..])?;
     let xing = xing(&frame, window.get(skip..skip + frame.length)?);
-    let first = head + skip;
-    Some(Some(Found {
-        head,
+    let first = (head + skip) as u64;
+    let toc = xing.flatten().map(|(bytes, entries)| Toc {
         first,
-        start: first + xing.map_or(0, |_| frame.length),
-        xing: xing.flatten(),
+        bytes: bytes
+            .filter(|bytes| *bytes > 0 && first + bytes <= size)
+            .unwrap_or_else(|| size.saturating_sub(first)),
+        entries,
+    });
+    let start = first + xing.map_or(0, |_| frame.length as u64);
+    Some(Some(Layout {
+        length,
+        size,
+        head,
+        start: start.min(size),
+        toc: toc.filter(|toc| toc.bytes > 0),
     }))
 }
 
@@ -331,12 +264,10 @@ fn tags(spool: &Spool) -> Option<usize> {
     }
 }
 
-/// What the Xing or Info tag in the first frame says. `None` for a frame of audio, and
-/// `Some(None)` for a tag with no usable table, as an Info tag on a constant bitrate file is.
-fn xing(frame: &Header, body: &[u8]) -> Option<Option<Xing>> {
-    if frame.layer != 3 {
-        return None;
-    }
+/// What the Xing or Info tag in the first frame says: the stream's length in bytes from that
+/// frame when it gives one, and the table. `None` for a frame of audio, and `Some(None)` for a
+/// tag with no usable table, as an Info tag on a constant bitrate file is.
+fn xing(frame: &Header, body: &[u8]) -> Option<Option<(Option<u64>, [u8; 100])>> {
     let at = 4 + frame.side_info();
     let table = match body.get(at..at + 4)? {
         b"Xing" => true,
@@ -360,24 +291,19 @@ fn xing(frame: &Header, body: &[u8]) -> Option<Option<Xing>> {
         .then(|| body.get(field..)?.first_chunk::<100>().copied())
         .flatten()
         .filter(|toc| toc.windows(2).all(|pair| pair[0] <= pair[1]) && toc[99] > toc[0]);
-    Some(toc.map(|toc| Xing { bytes, toc }))
+    Some(toc.map(|toc| (bytes, toc)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ranged::spool;
 
     /// An MPEG-1 layer III header at 128 kbit/s and 44.1 kHz, stereo, unpadded.
     const FRAME: [u8; 4] = [0xff, 0xfb, 0x90, 0x00];
 
     /// The length of a [`FRAME`].
     const LENGTH: usize = 417;
-
-    fn spool(bytes: &[u8]) -> Spool {
-        let mut spool = Spool::in_memory(None);
-        spool.append(bytes).unwrap();
-        spool
-    }
 
     /// `count` silent frames.
     fn frames(count: usize) -> Vec<u8> {
@@ -410,9 +336,12 @@ mod tests {
         tag
     }
 
-    fn laid_out(file: &[u8], seconds: u64) -> Layout {
-        let found = scan(&spool(file)).flatten().unwrap();
-        Layout::new(found, Duration::from_secs(seconds), file.len() as u64)
+    fn laid_out(file: &[u8], seconds: u64) -> Option<Option<Layout>> {
+        scan(
+            &spool(file),
+            Duration::from_secs(seconds),
+            file.len() as u64,
+        )
     }
 
     #[test]
@@ -429,24 +358,17 @@ mod tests {
 
     #[test]
     fn a_header_refuses_what_no_encoder_writes() {
-        assert_eq!(Header::parse(&[0xff, 0xf1, 0x50, 0x80]), None, "adts aac");
-        assert_eq!(
-            Header::parse(&[0xff, 0xfb, 0x00, 0x00]),
-            None,
-            "free format"
-        );
-        assert_eq!(
-            Header::parse(&[0xff, 0xfb, 0xf0, 0x00]),
-            None,
-            "bad bitrate"
-        );
-        assert_eq!(Header::parse(&[0xff, 0xfb, 0x9c, 0x00]), None, "bad rate");
-        assert_eq!(
-            Header::parse(&[0xff, 0xeb, 0x90, 0x00]),
-            None,
-            "reserved version"
-        );
-        assert_eq!(Header::parse(&FRAME[..3]), None, "too short");
+        for (bytes, why) in [
+            (&[0xff, 0xf1, 0x50, 0x80][..], "adts aac"),
+            (&[0xff, 0xfd, 0x90, 0x00], "layer ii"),
+            (&[0xff, 0xfb, 0x00, 0x00], "free format"),
+            (&[0xff, 0xfb, 0xf0, 0x00], "bad bitrate"),
+            (&[0xff, 0xfb, 0x9c, 0x00], "bad rate"),
+            (&[0xff, 0xeb, 0x90, 0x00], "reserved version"),
+            (&FRAME[..3], "too short"),
+        ] {
+            assert_eq!(Header::parse(bytes), None, "{why}");
+        }
     }
 
     #[test]
@@ -467,24 +389,25 @@ mod tests {
 
     #[test]
     fn an_mp3_head_ends_after_the_id3_tags() {
+        let head = |file: &[u8]| laid_out(file, 100).map(|layout| layout.map(|it| it.head));
         let mut file = id3(20);
         file.extend(id3(5));
         file.extend([0u8; 3]);
         file.extend(frames(40));
-        assert_eq!(head(&spool(&file)), Some(Some(45)));
-        assert_eq!(head(&spool(&frames(40))), Some(Some(0)), "no tag");
-        assert_eq!(head(&spool(&file[..20])), None, "tag still arriving");
-        assert_eq!(head(&spool(&file[..300])), None, "frames still arriving");
+        assert_eq!(head(&file), Some(Some(45)));
+        assert_eq!(head(&frames(40)), Some(Some(0)), "no tag");
+        assert_eq!(head(&file[..20]), None, "tag still arriving");
+        assert_eq!(head(&file[..300]), None, "frames still arriving");
         let mut other = b"fLaC".to_vec();
         other.resize(SCAN_WINDOW + 100, 0);
-        assert_eq!(head(&spool(&other)), Some(None));
+        assert_eq!(head(&other), Some(None));
     }
 
     #[test]
     fn a_constant_bitrate_file_places_time_by_its_bytes() {
         let mut file = id3(90);
         file.extend(frames(100));
-        let layout = laid_out(&file, 100);
+        let layout = laid_out(&file, 100).flatten().unwrap();
         assert_eq!(layout.start, 100);
         assert_eq!(layout.byte(Duration::ZERO), 100);
         assert_eq!(
@@ -503,7 +426,7 @@ mod tests {
         let mut file = id3(90);
         file.extend(xing_frame(0));
         file.extend(frames(100));
-        let layout = laid_out(&file, 100);
+        let layout = laid_out(&file, 100).flatten().unwrap();
         let first = 100u64;
         let bytes = file.len() as u64 - first;
         assert_eq!(layout.start, first + LENGTH as u64);
@@ -523,11 +446,11 @@ mod tests {
     fn a_xing_table_measures_against_its_own_stream_length() {
         let mut file = xing_frame(4 * 1000);
         file.extend(frames(100));
-        let layout = laid_out(&file, 100);
+        let layout = laid_out(&file, 100).flatten().unwrap();
         assert_eq!(layout.byte(Duration::from_secs(50)), 1000);
         let mut file = xing_frame(u32::MAX);
         file.extend(frames(100));
-        let layout = laid_out(&file, 100);
+        let layout = laid_out(&file, 100).flatten().unwrap();
         assert_eq!(
             layout.byte(Duration::from_secs(50)),
             file.len() as u64 / 4,

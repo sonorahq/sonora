@@ -10,7 +10,7 @@
 //! file. A provider that knows the byte of a position calls [`Reach::exact`]. One that only knows
 //! how long the track is and where its header ends describes the file as a [`Span`] and calls
 //! [`Reach::enter`], which guesses a byte from the time and lets the decoder read forward to the
-//! target, or [`Reach::enter_near`] for a format whose frames carry no time of their own.
+//! target.
 //!
 //! [`File`] puts those together for a plain audio file. It tells FLAC, Ogg and MP3 apart by
 //! their first bytes and enters each the way its frames allow. [`ogg`] and [`mp3`] hold what is
@@ -19,15 +19,17 @@
 pub mod mp3;
 pub mod ogg;
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::io::{Read, Seek};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::StatusCode;
-use reqwest::header::{ACCEPT_RANGES, HeaderMap, HeaderName, HeaderValue, RANGE};
+use reqwest::header::{ACCEPT_RANGES, HeaderMap, RANGE};
 
+use crate::aac::Aac;
 use crate::stream::{self, Body, Plain, Reader, Spool, Stream};
 
 /// How long one thing keeps being asked for, with the wait between asks doubling from
@@ -43,6 +45,10 @@ const LONGEST_WAIT: Duration = Duration::from_secs(8);
 /// request is asked again while that reader still waits.
 const MEDIA_CONNECT: Duration = Duration::from_secs(5);
 const MEDIA_STALL: Duration = Duration::from_secs(8);
+
+/// How many fresh urls one download asks for once the one it holds is refused. A refusal that
+/// outlasts them is not an expired url.
+const RENEWALS: u32 = 3;
 
 /// How far before a seek's target a file is entered, one lead per try. The file's bytes only
 /// roughly follow its time, so the decoder enters short of the target and reads forward to land
@@ -76,16 +82,10 @@ type Start<B> = dyn Fn(u64) -> (Address, B) + Send + Sync;
 /// that has expired is.
 #[async_trait]
 pub trait Renew: Send + Sync {
-    /// A fresh url for the same file. An error ends the download, so an implementation that
-    /// keeps being refused should give up after a few tries.
-    async fn url(&mut self) -> Result<String>;
-
-    /// Headers that replace the download's own of the same name once [`url`](Self::url) has
-    /// answered, for a server that expects a url to be asked for the way the client that got it
-    /// asks. None by default.
-    fn headers(&self) -> HeaderMap {
-        HeaderMap::new()
-    }
+    /// A fresh url for the same file, and headers that replace the download's own of the same
+    /// name, for a server that expects a url to be asked for the way the client that got it
+    /// asks.
+    async fn url(&self) -> Result<(String, HeaderMap)>;
 }
 
 /// Where one file is fetched from, and how every request for it is made.
@@ -98,7 +98,9 @@ pub struct Address {
     /// credentials of their own.
     headers: HeaderMap,
     /// Swaps in a fresh url when the server refuses the one held. Without it a refusal is final.
-    renew: Option<Box<dyn Renew>>,
+    renew: Option<Arc<dyn Renew>>,
+    /// How many more times `renew` may be asked.
+    renewals: u32,
     /// The most one request asks for, for a server that throttles long ranges. Each request
     /// then names its end and the next picks up where it stopped.
     cap: Option<u64>,
@@ -121,7 +123,7 @@ pub struct Resuming {
     until: Option<u64>,
     /// How many bytes this download carries, when the server said.
     total: Option<u64>,
-    /// The whole file's length, when the server said, which a resumed answer has to match.
+    /// The whole file's length, which every answer has to match once it is known.
     size: Option<u64>,
 }
 
@@ -151,18 +153,10 @@ pub struct Reach<B> {
 
 /// A download a seek started at its target, running to the end of the track beside the main
 /// one: the file's first `head` bytes, then the file from byte `from` on.
-pub struct Ahead<B> {
+struct Ahead<B> {
     stream: Stream<B>,
     head: usize,
     from: u64,
-}
-
-/// A reader over the file's head and then the file from a byte, and the download it reads when
-/// one had to be started for it. Hand `started` to [`Reach::keep`] once a decoder over `reader`
-/// has opened.
-pub struct Grafted<B> {
-    pub reader: Reader<B>,
-    pub started: Option<Ahead<B>>,
 }
 
 /// A file format a seek can enter part way, told apart by the file's first bytes.
@@ -178,20 +172,6 @@ pub enum Kind {
 pub struct File<B = Plain> {
     kind: Kind,
     reach: Reach<B>,
-}
-
-/// Places a time in a file by its bytes and a byte by its time, which is what entering a file
-/// part way goes on.
-pub trait Place {
-    /// Where the file's header ends, which a decoder entered part way is given in front of the
-    /// frames.
-    fn head(&self) -> usize;
-
-    /// The byte `at` is taken to fall on.
-    fn byte(&self, at: Duration) -> u64;
-
-    /// The time byte `from` is taken to fall on, the other way round from [`byte`](Self::byte).
-    fn time(&self, from: u64) -> Duration;
 }
 
 /// What placing a time in a file by its bytes goes on: how long the track runs, how long the
@@ -229,20 +209,20 @@ impl Address {
             url,
             headers: HeaderMap::new(),
             renew: None,
+            renewals: RENEWALS,
             cap: None,
         }
     }
 
-    /// Sends `value` as the `name` header of every request. reqwest drops an `Authorization`
-    /// header on a redirect to another host, so credentials stay with the server they are for.
-    pub fn header(mut self, name: HeaderName, value: HeaderValue) -> Self {
-        self.headers.insert(name, value);
+    /// Sends `headers` with every request. reqwest drops an `Authorization` header on a
+    /// redirect to another host, so credentials stay with the server they are for.
+    pub fn headers(mut self, headers: HeaderMap) -> Self {
+        self.headers.extend(headers);
         self
     }
 
-    /// Asks `renew` for a fresh url whenever the server answers 403 or 410.
-    pub fn renewed(mut self, renew: impl Renew + 'static) -> Self {
-        let renew: Box<dyn Renew> = Box::new(renew);
+    /// Asks `renew` for a fresh url whenever the server answers 403 or 410, a few times at most.
+    pub fn renewed(mut self, renew: Arc<dyn Renew>) -> Self {
         self.renew = Some(renew);
         self
     }
@@ -287,16 +267,12 @@ impl Resuming {
         self.total
     }
 
-    /// The whole file's length, once the first response said.
-    pub fn size(&self) -> Option<u64> {
-        self.size
-    }
-
     /// Opens a response from the first byte not yet received. A failed connection or server is
     /// asked again with a growing wait, and a refused url is renewed first. The first response
     /// says how long the download and the file are.
     async fn connect(&mut self) -> Result<()> {
-        let mut backoff = Backoff::new(self.address.name);
+        let name = self.address.name;
+        let mut backoff = Backoff::new(name);
         loop {
             match self.request().await {
                 Ok((response, ranged, until)) => {
@@ -315,12 +291,17 @@ impl Resuming {
                     return Ok(());
                 }
                 Err(Failure::Expired(error)) => {
-                    let Some(renew) = &mut self.address.renew else {
+                    let Some(renew) = &self.address.renew else {
                         return Err(error);
                     };
-                    log::debug!("{}: the file was refused: {error:#}", self.address.name);
-                    self.address.url = renew.url().await?;
-                    self.address.headers.extend(renew.headers());
+                    if self.address.renewals == 0 {
+                        return Err(error.context(format!("{name} keeps refusing the url")));
+                    }
+                    self.address.renewals -= 1;
+                    log::info!("{name}: asking for a fresh url after {error:#}");
+                    let (url, headers) = renew.url().await?;
+                    self.address.url = url;
+                    self.address.headers.extend(headers);
                 }
                 Err(Failure::Passing(error)) => backoff.wait(error).await?,
                 Err(Failure::Final(error)) => return Err(error),
@@ -448,26 +429,24 @@ impl<B: Body> Reach<B> {
         self
     }
 
-    /// Moves every graft forward onto the first frame `resync` finds at or after its byte, for
-    /// a format whose decoder could take stray bytes there for something else. A graft that
-    /// finds no frame within [`RESYNC_WINDOW`] stays where it was asked to be.
-    pub fn resynced(mut self, resync: Resync) -> Self {
-        self.resync = Some(resync);
-        self
-    }
-
-    /// A reader that serves the file's first `head` bytes and then the file from byte `from`.
-    /// It reads `main` when that has the byte or is close to it, the last download a seek
-    /// started when that one is, and otherwise a new download from there, which comes back in
-    /// [`Grafted::started`] to be kept once a decoder over it opens. A resynced reach moves the
-    /// splice onto the next frame, which waits for that frame to arrive.
-    pub fn graft(&self, main: &Stream<B>, head: usize, from: u64) -> Option<Grafted<B>> {
+    /// Opens a decoder with `open` over the file's first `head` bytes followed by the file from
+    /// byte `from`. It reads `main` when that has the byte or is close to it, the last download
+    /// a seek started when that one is, and otherwise a new download from there, which is kept
+    /// once `open` succeeds. A reach for MP3 moves the splice onto the next frame.
+    pub fn exact<D>(
+        &self,
+        main: &Stream<B>,
+        head: usize,
+        from: u64,
+        open: impl FnOnce(Reader<B>) -> Option<D>,
+    ) -> Option<D> {
         let (stream, at, started) = self.locate(main, head, from)?;
         let at = self.resync(&stream, at);
-        Some(Grafted {
-            reader: stream.spliced(head, at),
-            started,
-        })
+        let decoder = open(stream.spliced(head, at))?;
+        if let Some(ahead) = started {
+            *lock(&self.ahead) = Some(ahead);
+        }
+        Some(decoder)
     }
 
     /// The download that holds byte `from` or soon will, where that byte sits in its spool, and
@@ -478,7 +457,7 @@ impl<B: Body> Reach<B> {
         head: usize,
         from: u64,
     ) -> Option<(Stream<B>, usize, Option<Ahead<B>>)> {
-        if from < main.arrived() as u64 + self.nearby {
+        if self.covers(main, from) {
             return Some((main.clone(), usize::try_from(from).ok()?, None));
         }
         let held = lock(&self.ahead).clone();
@@ -489,7 +468,7 @@ impl<B: Body> Reach<B> {
         }) = held
             && start <= from
             && let Ok(into) = usize::try_from(from - start)
-            && ((head + into) as u64) < stream.arrived() as u64 + self.nearby
+            && self.covers(&stream, (head + into) as u64)
         {
             return Some((stream, head + into, None));
         }
@@ -497,9 +476,11 @@ impl<B: Body> Reach<B> {
         let start = from - from % self.align;
         let into = usize::try_from(from - start).ok()?;
         let (address, body) = (self.start)(start);
+        let mut file = Resuming::new(address, start);
+        file.size = main.total();
         let stream = {
             let _entered = self.runtime.enter();
-            Stream::seeded(&bytes, Resuming::new(address, start), None, body)
+            Stream::seeded(&bytes, file, None, body)
         };
         log::info!(
             "{}: fetching {} from byte {start} to reach a seek",
@@ -512,6 +493,13 @@ impl<B: Body> Reach<B> {
             from: start,
         };
         Some((stream, head + into, Some(ahead)))
+    }
+
+    /// Whether spool byte `at` of `stream` is there or soon will be. What has arrived always
+    /// is, and a download still running is waited for while it is less than `nearby` short.
+    fn covers(&self, stream: &Stream<B>, at: u64) -> bool {
+        let arrived = stream.arrived() as u64;
+        at < arrived || (!stream.done() && at < arrived + self.nearby)
     }
 
     /// Where the first frame at or after spool byte `at` of `stream` starts, once enough has
@@ -542,30 +530,6 @@ impl<B: Body> Reach<B> {
         found.unwrap_or(at)
     }
 
-    /// Keeps `started` as the download the last seek started, letting go of the one before.
-    /// Nothing changes when the graft read a download already there.
-    pub fn keep(&self, started: Option<Ahead<B>>) {
-        if let Some(ahead) = started {
-            *lock(&self.ahead) = Some(ahead);
-        }
-    }
-
-    /// Opens a decoder with `open` over the file's first `head` bytes followed by the file
-    /// from byte `from`, for a provider that knows exactly where a position starts, as a DASH
-    /// index says. A download started for it is kept once the decoder opens.
-    pub fn exact<D>(
-        &self,
-        main: &Stream<B>,
-        head: usize,
-        from: u64,
-        open: impl FnOnce(Reader<B>) -> Option<D>,
-    ) -> Option<D> {
-        let Grafted { reader, started } = self.graft(main, head, from)?;
-        let decoder = open(reader)?;
-        self.keep(started);
-        Some(decoder)
-    }
-
     /// Opens a decoder with `open` a little before `at` in a file that is still arriving and
     /// moves it to `at`, for a format whose frames say where they are in the track. Where to
     /// enter is guessed from the time, so a try that lands past `at` or fails to open is made
@@ -578,57 +542,29 @@ impl<B: Body> Reach<B> {
         mut open: impl FnMut(Reader<B>) -> Option<D>,
     ) -> Option<D> {
         let guesses = LEADS.iter().map(|lead| span.byte(at.saturating_sub(*lead)));
-        for from in guesses.chain([span.head as u64]) {
-            let Some(Grafted { reader, started }) = self.graft(main, span.head, from) else {
-                continue;
-            };
-            let Some(mut decoder) = open(reader) else {
-                continue;
-            };
-            match decoder.try_seek(at) {
-                Ok(()) => {
-                    self.keep(started);
-                    return Some(decoder);
-                }
-                Err(error) => log::debug!(
-                    "playback: entering the {} track {} at byte {from} missed {}s: {error}",
-                    self.name,
-                    self.id,
-                    at.as_secs()
-                ),
-            }
+        let entered = guesses.chain([span.head as u64]).find_map(|from| {
+            self.exact(main, span.head, from, |reader| {
+                let mut decoder = open(reader)?;
+                let seek = decoder.try_seek(at).inspect_err(|error| {
+                    log::debug!(
+                        "playback: entering the {} track {} at byte {from} missed {}s: {error}",
+                        self.name,
+                        self.id,
+                        at.as_secs()
+                    )
+                });
+                seek.ok().map(|()| decoder)
+            })
+        });
+        if entered.is_none() {
+            log::warn!(
+                "playback: cannot reach {}s in the {} track {}",
+                at.as_secs(),
+                self.name,
+                self.id
+            );
         }
-        log::warn!(
-            "playback: cannot reach {}s in the {} track {}",
-            at.as_secs(),
-            self.name,
-            self.id
-        );
-        None
-    }
-
-    /// Opens a decoder with `open` at the byte `place` puts `at` on, for a format whose frames
-    /// carry no time of their own, so a decoder entered part way counts from zero. It answers
-    /// the decoder and where in the track it is taken to start, which is an estimate for
-    /// [`crate::engine::Fetch::open_near`] to report.
-    pub fn enter_near<D>(
-        &self,
-        main: &Stream<B>,
-        place: impl Place,
-        at: Duration,
-        open: impl FnOnce(Reader<B>) -> Option<D>,
-    ) -> Option<(D, Duration)> {
-        let from = place.byte(at);
-        let decoder = self.exact(main, place.head(), from, open)?;
-        let start = place.time(from);
-        log::debug!(
-            "playback: entered the {} track {} at byte {from}, taken as {:.1}s for {:.1}s",
-            self.name,
-            self.id,
-            start.as_secs_f64(),
-            at.as_secs_f64()
-        );
-        Some((decoder, start))
+        entered
     }
 }
 
@@ -662,17 +598,13 @@ impl Kind {
 impl<B: Body> File<B> {
     /// The file `main` is downloading, when its first bytes are in a format a seek can enter
     /// part way, with `reach` fitted to that format.
-    pub fn detect(main: &Stream<B>, reach: Reach<B>) -> Option<Self> {
+    pub fn detect(main: &Stream<B>, mut reach: Reach<B>) -> Option<Arc<Self>> {
         let kind = main.with(|_, spool| Kind::detect(spool)).flatten()?;
-        let reach = match kind {
-            Kind::Mp3 => reach.resynced(mp3::sync),
-            Kind::Flac | Kind::Ogg => reach,
-        };
-        Some(Self { kind, reach })
-    }
-
-    pub fn kind(&self) -> Kind {
-        self.kind
+        if kind == Kind::Mp3 {
+            reach.resync = Some(mp3::sync);
+        }
+        log::debug!("{}: {} can seek ahead as {kind:?}", reach.name, reach.id);
+        Some(Arc::new(Self { kind, reach }))
     }
 
     /// Opens a decoder with `open` at `at` in a track of `length` that `main` is still
@@ -681,7 +613,8 @@ impl<B: Body> File<B> {
     /// the Xing table or the bitrate, and an MP3 position the download has nearly reached is
     /// left to the caller, which lands on it exactly by counting frames from the top.
     ///
-    /// `None` leaves the caller to open the file the way it would without a reach.
+    /// `None` leaves the caller to open the file the way it would without a reach, as it does
+    /// for a seek to the top or into a track already whole.
     pub fn enter<D: rodio::Source>(
         &self,
         main: &Stream<B>,
@@ -689,15 +622,28 @@ impl<B: Body> File<B> {
         at: Duration,
         open: impl FnMut(Reader<B>) -> Option<D>,
     ) -> Option<(D, Duration)> {
+        if !ahead(main, at) {
+            return None;
+        }
         let finder = match self.kind {
             Kind::Flac => flac_head,
             Kind::Ogg => ogg::head,
             Kind::Mp3 => {
                 let layout = mp3::Layout::measure(main, length)?;
-                if layout.byte(at) < main.arrived() as u64 + self.reach.nearby {
+                let from = layout.byte(at);
+                if from < main.arrived() as u64 + self.reach.nearby {
                     return None;
                 }
-                return self.reach.enter_near(main, layout, at, open);
+                let decoder = self.reach.exact(main, layout.head, from, open)?;
+                let start = layout.time(from);
+                log::debug!(
+                    "playback: entered the {} track {} at byte {from}, taken as {:.1}s for {:.1}s",
+                    self.reach.name,
+                    self.reach.id,
+                    start.as_secs_f64(),
+                    at.as_secs_f64()
+                );
+                return Some((decoder, start));
             }
         };
         let span = Span::measure(main, length, finder)?;
@@ -724,30 +670,6 @@ impl Span {
         let frames = self.size.saturating_sub(self.head as u64) as f64;
         let share = at.as_secs_f64() / self.length.as_secs_f64();
         self.head as u64 + (frames * share.clamp(0.0, 1.0)) as u64
-    }
-
-    /// The time byte `from` falls on, the other way round from [`byte`](Self::byte).
-    pub fn time(&self, from: u64) -> Duration {
-        let frames = self.size.saturating_sub(self.head as u64);
-        if frames == 0 {
-            return Duration::ZERO;
-        }
-        let share = from.saturating_sub(self.head as u64) as f64 / frames as f64;
-        self.length.mul_f64(share.clamp(0.0, 1.0))
-    }
-}
-
-impl Place for Span {
-    fn head(&self) -> usize {
-        self.head
-    }
-
-    fn byte(&self, at: Duration) -> u64 {
-        Span::byte(self, at)
-    }
-
-    fn time(&self, from: u64) -> Duration {
-        Span::time(self, from)
     }
 }
 
@@ -810,11 +732,39 @@ impl From<reqwest::Error> for Failure {
 }
 
 /// An http client for media bytes, which gives up on a stalled request sooner than an api
-/// client would, so a download asks again while its reader still waits.
-pub fn media_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+/// client would, so a download asks again while its reader still waits. `fallback` stands in
+/// when it cannot be built.
+pub fn media(name: &str, fallback: impl FnOnce() -> reqwest::Client) -> reqwest::Client {
+    let built = reqwest::Client::builder()
         .connect_timeout(MEDIA_CONNECT)
         .read_timeout(MEDIA_STALL)
+        .build();
+    built.unwrap_or_else(|error| {
+        log::warn!("{name}: cannot build the media client, streaming through another: {error}");
+        fallback()
+    })
+}
+
+/// Whether a seek to `at` in the track `main` is downloading may start a download of its own,
+/// which it may unless it goes to the top or the track is already whole.
+pub fn ahead<B: Body>(main: &Stream<B>, at: Duration) -> bool {
+    !at.is_zero() && !(main.done() && main.failed().is_none())
+}
+
+/// A decoder over `data` that only reads forward and is not told the length, so opening it part
+/// way into a file reads no further than the first frame. `name` and `id` name the track in the
+/// warning a file that will not decode leaves.
+pub fn forward<R>(name: &str, id: &str, data: R) -> Option<rodio::Decoder<R>>
+where
+    R: Read + Seek + Send + Sync + 'static,
+{
+    rodio::Decoder::builder()
+        .with_symphonia_decoder::<Aac>()
+        .with_data(data)
+        .with_seekable(false)
+        .build()
+        .inspect_err(|error| log::warn!("playback: cannot decode the {name} track {id}: {error}"))
+        .ok()
 }
 
 /// Whether `response` says how long the file is and that its server answers byte ranges, which
@@ -882,15 +832,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A spool in memory holding `bytes`, for the format tests.
+#[cfg(test)]
+fn spool(bytes: &[u8]) -> Spool {
+    let mut spool = Spool::in_memory(None);
+    spool.append(bytes).unwrap();
+    spool
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn spool(bytes: &[u8]) -> Spool {
-        let mut spool = Spool::in_memory(None);
-        spool.append(bytes).unwrap();
-        spool
-    }
 
     /// A FLAC header with one 34-byte STREAMINFO block and a last 4-byte padding block.
     fn flac() -> Vec<u8> {
@@ -957,7 +909,5 @@ mod tests {
             1100,
             "clamped to the end"
         );
-        assert_eq!(span.time(600), Duration::from_secs(50));
-        assert_eq!(span.time(10), Duration::ZERO, "inside the header");
     }
 }

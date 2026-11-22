@@ -5,9 +5,10 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use jiff::SignedDuration;
 use jiff::fmt::rfc2822::DateTimeParser;
-use reqwest::header::{CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
+use reqwest::header::{AUTHORIZATION, CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
 use symphonia::core::io::MediaSourceStreamOptions;
 
+use crate::ranged::Address;
 use crate::stream::{Reader, Stream};
 
 /// The largest metadata suffix retained separately from the sequential download.
@@ -59,6 +60,16 @@ impl Remote {
             .then(|| reqwest::header::HeaderValue::from_str(value).ok())
             .flatten();
         self
+    }
+
+    /// Where a download a seek starts fetches the file, with the same credentials as the range
+    /// requests.
+    pub(crate) fn address(&self, name: &'static str, http: reqwest::Client) -> Address {
+        let authorization = self
+            .authorization
+            .iter()
+            .map(|value| (AUTHORIZATION, value.clone()));
+        Address::new(name, http, self.url.to_string()).headers(authorization.collect())
     }
 
     /// Accepts only an exact partial response and bounds both its size and its lifetime.

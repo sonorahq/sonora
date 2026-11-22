@@ -27,14 +27,9 @@ pub fn head(spool: &Spool) -> Option<Option<usize>> {
     let mut at = 0usize;
     let mut serial = None;
     loop {
-        let mut pattern = [0u8; 4];
-        spool.read_at(at, &mut pattern).ok()?;
-        if &pattern != b"OggS" {
-            return Some(None);
-        }
         let mut header = [0u8; PAGE_HEADER];
         spool.read_at(at, &mut header).ok()?;
-        if header[4] != 0 {
+        if &header[..4] != b"OggS" || header[4] != 0 {
             return Some(None);
         }
         let granule = u64::from_le_bytes(header[6..14].try_into().ok()?);
@@ -48,8 +43,9 @@ pub fn head(spool: &Spool) -> Option<Option<usize>> {
         if at > 0 && granule != 0 && granule != NO_GRANULE {
             return Some(Some(at));
         }
-        let mut lacing = vec![0u8; usize::from(header[26])];
-        spool.read_at(at + PAGE_HEADER, &mut lacing).ok()?;
+        let mut lacing = [0u8; 255];
+        let lacing = &mut lacing[..usize::from(header[26])];
+        spool.read_at(at + PAGE_HEADER, lacing).ok()?;
         let body = lacing
             .iter()
             .map(|&length| usize::from(length))
@@ -64,12 +60,7 @@ pub fn head(spool: &Spool) -> Option<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn spool(bytes: &[u8]) -> Spool {
-        let mut spool = Spool::in_memory(None);
-        spool.append(bytes).unwrap();
-        spool
-    }
+    use crate::ranged::spool;
 
     /// One page of stream `serial` holding a single packet of `body` bytes.
     fn page(flags: u8, granule: u64, serial: u32, body: u8) -> Vec<u8> {
@@ -111,10 +102,7 @@ mod tests {
 
     #[test]
     fn an_ogg_head_refuses_other_files_and_streams() {
-        assert_eq!(
-            super::head(&spool(b"fLaC\0\0\0\0\0\0\0\0\0\0\0\0")),
-            Some(None)
-        );
+        assert_eq!(super::head(&spool(&[b'f'; PAGE_HEADER])), Some(None));
         let mut file = page(0, 0, 7, 19);
         file.extend(page(0, 960, 7, 40));
         assert_eq!(super::head(&spool(&file)), Some(None), "no first page");

@@ -16,6 +16,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use bytes::Bytes;
+use reqwest::header::HeaderMap;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
 
@@ -89,12 +90,12 @@ struct Parts {
     renewal: Renewal,
 }
 
-/// What a seek past a segmented download needs to start another download at its target, and
-/// the last one it started. A track from the vault has none, since all of it is there.
-struct Segmented {
+/// What a seek past the download needs to start another download at its target, and the last
+/// one it started. A track from the vault has none, since all of it is there.
+struct Reach {
     /// The runtime the downloads run on, which the audio thread enters to start one.
     runtime: tokio::runtime::Handle,
-    /// The init segment's url and then the media segments'.
+    /// The file's url, or the init segment's url and then the media segments'.
     urls: Vec<String>,
     codec: String,
     /// The download the last seek past the main one started. It is only replaced once a
@@ -133,9 +134,8 @@ pub struct Loaded {
     stream: Stream<Long>,
     /// Where a segmented track's segments start. `None` for a track that is one file.
     timeline: Option<Arc<Mutex<Timeline>>>,
-    /// What a seek past a segmented download needs. `None` for a track that is one file or
-    /// comes from the vault.
-    segmented: Option<Arc<Segmented>>,
+    /// What a seek past the download needs. `None` for a track from the vault.
+    reach: Option<Arc<Reach>>,
     /// What a seek past a FLAC file's download needs. `None` for any other track or one from
     /// the vault.
     file: Option<Arc<ranged::Reach<Long>>>,
@@ -292,11 +292,12 @@ impl Renewal {
 
 #[async_trait]
 impl ranged::Renew for Renewal {
-    async fn url(&mut self) -> Result<String> {
-        let Manifest::File { url, .. } = self.manifest().await? else {
+    /// The url of a fresh manifest, whose own budget the download's renewals stand in for.
+    async fn url(&self) -> Result<(String, HeaderMap)> {
+        let Manifest::File { url, .. } = self.clone().manifest().await? else {
             bail!("tidal no longer streams the track as one file");
         };
-        Ok(url)
+        Ok((url, HeaderMap::new()))
     }
 }
 
@@ -308,13 +309,7 @@ impl stream::Body for Long {
 
 impl Factory {
     pub fn new(client: TidalClient) -> Self {
-        let media = ranged::media_builder()
-            .build()
-            .context("cannot build the tidal media client")
-            .unwrap_or_else(|error| {
-                log::warn!("tidal: {error:#}, streaming through the api client");
-                client.http().clone()
-            });
+        let media = ranged::media("tidal", || client.http().clone());
         Self { client, media }
     }
 }
@@ -364,7 +359,7 @@ impl Tidal {
         Some(Loaded {
             stream,
             timeline,
-            segmented: None,
+            reach: None,
             file: None,
             duration: facts.duration_ms.map(Duration::from_millis),
             loudness: facts.lufs.map(|lufs| Loudness {
@@ -411,20 +406,21 @@ impl Tidal {
     async fn arrive(&self, id: &str, manifest: Manifest, facts: Facts) -> Result<Loaded> {
         let codec = manifest.codec().to_owned();
         let renewal = self.renewal(id, &codec);
-        let (stream, timeline, segmented, reach) = match manifest {
+        let (stream, timeline, urls, file) = match manifest {
             Manifest::File { url, .. } => {
+                let renewal = Arc::new(renewal);
                 let address = Address::new("tidal", self.media.clone(), url.clone());
                 let file = Resuming::open(address.renewed(renewal.clone())).await?;
                 let total = file.total();
                 let file = self.record(id, file, move || Some(facts));
-                let media = self.media.clone();
+                let (media, urls) = (self.media.clone(), vec![url.clone()]);
                 let reach = codec.eq_ignore_ascii_case("flac").then(|| {
                     Arc::new(ranged::Reach::new("tidal", id, move |_| {
                         let address = Address::new("tidal", media.clone(), url.clone());
                         (address.renewed(renewal.clone()), Long)
                     }))
                 });
-                (Stream::pulling(file, total, Long), None, None, reach)
+                (Stream::pulling(file, total, Long), None, urls, reach)
             }
             Manifest::Segments {
                 init,
@@ -462,21 +458,24 @@ impl Tidal {
                         ..facts
                     })
                 });
-                let segmented = Arc::new(Segmented {
-                    runtime: tokio::runtime::Handle::current(),
+                (
+                    Stream::pulling(parts, None, Long),
+                    Some(timeline),
                     urls,
-                    codec,
-                    ahead: Mutex::new(None),
-                });
-                let stream = Stream::pulling(parts, None, Long);
-                (stream, Some(timeline), Some(segmented), None)
+                    None,
+                )
             }
         };
         Ok(Loaded {
             stream: stream.primed().await?,
             timeline,
-            segmented,
-            file: reach,
+            reach: Some(Arc::new(Reach {
+                runtime: tokio::runtime::Handle::current(),
+                urls,
+                codec,
+                ahead: Mutex::new(None),
+            })),
+            file,
             duration: None,
             loudness: None,
             encoding: None,
@@ -505,8 +504,8 @@ impl Tidal {
             None => self.leap(id, loaded, timeline, at)?,
         };
         let decoder = forward_decoder(id, reader)?;
-        if let (Some(segmented), Some(ahead)) = (&loaded.segmented, started) {
-            *lock(&segmented.ahead) = Some(ahead);
+        if let (Some(reach), Some(ahead)) = (&loaded.reach, started) {
+            reach.keep(ahead);
         }
         Some((Trimmed::new(decoder, into, None), at))
     }
@@ -521,7 +520,7 @@ impl Tidal {
         timeline: &Mutex<Timeline>,
         at: Duration,
     ) -> Option<(Reader<Long>, Duration, Option<Ahead>)> {
-        let reach = loaded.segmented.as_ref()?;
+        let reach = loaded.reach.as_ref()?;
         let (index, starts) = {
             let main = lock(timeline);
             let index = main.index(at)?;
@@ -583,9 +582,7 @@ impl Tidal {
     /// Any other file is opened seekable and moved, which waits for the bytes at `at`.
     fn open_file(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Opened, Duration)> {
         let stream = &loaded.stream;
-        let whole = stream.done() && stream.failed().is_none();
-        if !at.is_zero()
-            && !whole
+        if ranged::ahead(stream, at)
             && let Some(reach) = &loaded.file
             && let Some(length) = loaded.duration
             && let Some(span) = Span::measure(stream, length, ranged::flac_head)
@@ -605,6 +602,13 @@ impl Tidal {
             return None;
         }
         Some((Trimmed::new(decoder, Duration::ZERO, None), at))
+    }
+}
+
+impl Reach {
+    /// Keeps `ahead` as the download the last seek started, letting go of the one before.
+    fn keep(&self, ahead: Ahead) {
+        *lock(&self.ahead) = Some(ahead);
     }
 }
 

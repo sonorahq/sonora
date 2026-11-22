@@ -288,19 +288,10 @@ mod tests {
     }
 
     #[test]
-    fn every_third_block_from_the_start_of_the_file_is_decrypted() {
-        let plain = plain();
-        let file = striped(&plain);
-        assert_ne!(file[..BLOCK], plain[..BLOCK]);
-        assert_eq!(file[BLOCK..3 * BLOCK], plain[BLOCK..3 * BLOCK]);
-        assert_eq!(decrypt(Striped::new(&KEY), &file), plain);
-    }
-
-    #[test]
     fn a_download_from_any_block_decrypts_as_the_whole_file_does() {
         let plain = plain();
         let file = striped(&plain);
-        for block in 1..=7 {
+        for block in 0..=7 {
             let start = block * BLOCK;
             let body = Striped::at(&KEY, start as u64);
             assert_eq!(

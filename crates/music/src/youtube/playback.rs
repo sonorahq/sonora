@@ -10,14 +10,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use ytmusic::{AudioStream, Locator, YtMusic};
 
-use crate::aac::Aac;
 use crate::audio::Trimmed;
 use crate::engine::{self, Fetch, Loudness};
 use crate::ranged::{self, Address, Reach};
@@ -39,8 +38,6 @@ const REFERENCE_LUFS: f32 = -14.0;
 /// download. The download asks for a mebibyte at a time at full speed, so a quarter of one
 /// arrives about as soon as a new request would be answered.
 const NEARBY: u64 = 256 * 1024;
-/// How many fresh urls one download a seek started may ask ytmusic for before it gives up.
-const RENEWALS: u32 = 3;
 /// The levels YouTube Music serves, best first. High is the best AAC stream there is, 256 kbps
 /// for a Premium account and 128 kbps otherwise, normal is the 128 kbps one and low the 48 kbps
 /// HE-AAC one.
@@ -83,20 +80,11 @@ pub struct Loaded {
 
 pub struct Factory {
     api: Arc<YtMusic>,
-    /// The client a seek's own download asks the stream host with.
-    media: reqwest::Client,
 }
 
 impl Factory {
     pub fn new(api: Arc<YtMusic>) -> Self {
-        let media = ranged::media_builder()
-            .build()
-            .context("cannot build the youtube media client")
-            .unwrap_or_else(|error| {
-                log::warn!("youtube: {error:#}, seeking with a default client");
-                reqwest::Client::new()
-            });
-        Self { api, media }
+        Self { api }
     }
 }
 
@@ -105,7 +93,7 @@ impl PlaybackFactory for Factory {
         engine::start(
             YouTube {
                 api: self.api.clone(),
-                media: self.media.clone(),
+                media: ranged::media("youtube", reqwest::Client::new),
                 ceiling: ceiling(config.quality),
                 shelf: config.vault.as_ref().map(|vault| vault.shelf("youtube")),
             },
@@ -116,6 +104,7 @@ impl PlaybackFactory for Factory {
 
 struct YouTube {
     api: Arc<YtMusic>,
+    /// The client a seek's own download asks the stream host with.
     media: reqwest::Client,
     /// The highest bitrate a stream is chosen at, in bits per second, or `None` for the best.
     ceiling: Option<u32>,
@@ -133,13 +122,6 @@ struct Facts {
     kbps: u32,
 }
 
-/// Asks ytmusic for a fresh url of a file a seek is downloading, a few times at most. The url
-/// goes to the main download too, since both share the locator.
-struct Renewal {
-    locator: Locator,
-    left: u32,
-}
-
 impl Source for AudioStream {
     async fn chunk(&mut self) -> Result<Option<Bytes>> {
         AudioStream::chunk(self).await
@@ -147,19 +129,11 @@ impl Source for AudioStream {
 }
 
 #[async_trait]
-impl ranged::Renew for Renewal {
-    async fn url(&mut self) -> Result<String> {
-        if self.left == 0 {
-            bail!("youtube keeps refusing the url");
-        }
-        self.left -= 1;
-        log::info!("youtube: asking for a fresh url to reach a seek");
-        self.locator.renew().await
-    }
-
-    /// The user agent of the client the fresh url came from, which can differ from the last.
-    fn headers(&self) -> HeaderMap {
-        headers(&self.locator)
+impl ranged::Renew for Locator {
+    /// A fresh url, which reaches the main download too since both share the locator, and the
+    /// user agent of the client it came from.
+    async fn url(&self) -> Result<(String, HeaderMap)> {
+        Ok((self.renew().await?, headers(self)))
     }
 }
 
@@ -258,15 +232,14 @@ impl Fetch for YouTube {
                 .as_ref()
                 .and_then(|segments| segments.entry(at + priming)),
         };
+        let open = |reader| ranged::forward("youtube", id, reader);
         let decoder = match (entry, &loaded.reach) {
             (Some(entry), Some(reach)) => {
-                reach.exact(&loaded.stream, entry.head, entry.graft as u64, |reader| {
-                    decoder(id, reader)
-                })?
+                reach.exact(&loaded.stream, entry.head, entry.graft as u64, open)
             }
-            (Some(entry), None) => decoder(id, loaded.stream.spliced(entry.head, entry.graft))?,
-            (None, _) => decoder(id, loaded.stream.reader())?,
-        };
+            (Some(entry), None) => open(loaded.stream.spliced(entry.head, entry.graft)),
+            (None, _) => open(loaded.stream.reader()),
+        }?;
         let take = loaded.edit.and_then(|edit| edit.take);
         // Without an index the only way to a position is through every sample before it.
         let (skip, take) = match entry {
@@ -325,7 +298,7 @@ async fn attempt_open(
         .await
         .context("stream metadata timed out")??;
     let total = audio.total();
-    let locator = audio.locator();
+    let locator = Arc::new(audio.locator());
     let audio = match shelf {
         Some(shelf) => {
             let facts = Facts {
@@ -366,7 +339,13 @@ async fn attempt_open(
     }
     let reach = segments.is_some().then(|| {
         let media = media.clone();
-        let reach = Reach::new("youtube", id, move |_| (address(&media, &locator), Plain));
+        let reach = Reach::new("youtube", id, move |_| {
+            let address = Address::new("youtube", media.clone(), locator.url());
+            let address = address
+                .capped(ytmusic::stream::CHUNK)
+                .renewed(locator.clone());
+            (address.headers(headers(&locator)), Plain)
+        });
         Arc::new(reach.nearby(NEARBY))
     });
     Ok(Loaded {
@@ -391,46 +370,13 @@ fn front(stream: &Stream) -> (Option<Segments>, Option<Trim>) {
         .unwrap_or_default()
 }
 
-/// An AAC decoder over `reader`, told neither the length nor that it may seek.
-fn decoder(id: &str, reader: Reader) -> Option<rodio::Decoder<Reader>> {
-    rodio::Decoder::builder()
-        .with_symphonia_decoder::<Aac>()
-        .with_data(reader)
-        .with_seekable(false)
-        .build()
-        .inspect_err(|error| log::warn!("playback: cannot decode the youtube track {id}: {error}"))
-        .ok()
-}
-
-/// How a seek's download asks for the file: the url and headers the main download asks with
-/// now, at most one ytmusic-sized range per request, and a few renewals of its own.
-fn address(media: &reqwest::Client, locator: &Locator) -> Address {
-    let address = Address::new("youtube", media.clone(), locator.url())
-        .capped(ytmusic::stream::CHUNK)
-        .renewed(Renewal {
-            locator: locator.clone(),
-            left: RENEWALS,
-        });
-    headers(locator)
-        .into_iter()
-        .filter_map(|(name, value)| Some((name?, value)))
-        .fold(address, |address, (name, value)| {
-            address.header(name, value)
-        })
-}
-
 /// The headers ytmusic sends with every request for the file, as reqwest takes them.
 fn headers(locator: &Locator) -> HeaderMap {
-    locator
-        .headers()
-        .into_iter()
-        .filter_map(|(name, value)| {
-            Some((
-                HeaderName::from_bytes(name.as_bytes()).ok()?,
-                HeaderValue::from_str(value).ok()?,
-            ))
-        })
-        .collect()
+    let headers = locator.headers().into_iter().filter_map(|(name, value)| {
+        let name = HeaderName::from_bytes(name.as_bytes()).ok()?;
+        Some((name, HeaderValue::from_str(value).ok()?))
+    });
+    headers.collect()
 }
 
 /// What tells two kept copies of one track apart: the bitrate ceiling it was fetched under.
