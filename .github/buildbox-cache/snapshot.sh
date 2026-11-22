@@ -9,9 +9,9 @@
 #
 # deps.tar.zst holds the third-party crates, so its bytes only change when they are rebuilt and the
 # buildbox skips downloading it otherwise. ws.tar.zst holds the workspace crates, the test binaries
-# and the sources the build saw. Left out, to keep the download small:
+# and the sources the build saw. It also holds the app binary: without it cargo compiles and links
+# the app crate again in every new checkout. Left out, to keep the download small:
 #   - the incremental caches, since a missing one only makes the next rebuild of that crate a full one
-#   - the app binaries, which every checkout links again anyway
 #   - the examples, which `cargo test` builds again in seconds
 #   - the split debuginfo (.dwo): builds never read it, only a debugger looks for it
 set -euo pipefail
@@ -82,14 +82,6 @@ alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
 workspace_unit = re.compile(
     rf"^target/debug/(?:deps|\.fingerprint|build|examples)/(?:lib)?(?:{alt})-[0-9a-f]{{16}}(?:[./].*)?$"
 )
-# The app binaries sit in target/debug and as hard links in deps under the same inode.
-top = os.path.join(snap, "target/debug")
-binaries = {
-    os.lstat(path).st_ino
-    for path in (os.path.join(top, name) for name in os.listdir(top))
-    if os.path.isfile(path) and not os.path.islink(path) and os.access(path, os.X_OK)
-}
-
 layers = {"deps": [], "ws": []}
 for root, dirs, files in os.walk(snap):
     rel_root = os.path.relpath(root, snap)
@@ -102,8 +94,7 @@ for root, dirs, files in os.walk(snap):
         layers["ws"].append(rel_root)
     for name in files + [d for d in dirs if os.path.islink(os.path.join(root, d))]:
         rel = os.path.normpath(os.path.join(rel_root, name))
-        path = os.path.join(snap, rel)
-        if rel.endswith(".dwo") or (not os.path.islink(path) and os.lstat(path).st_ino in binaries):
+        if rel.endswith(".dwo"):
             continue
         top_level = os.path.dirname(rel) in ("target", "target/debug")
         if rel.startswith("src/") or top_level or workspace_unit.match(rel):

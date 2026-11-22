@@ -3,6 +3,7 @@
 mod actions;
 #[cfg(windows)]
 mod app_icon;
+#[macro_use]
 mod assets;
 mod console;
 mod dock;
