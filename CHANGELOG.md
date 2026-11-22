@@ -29,6 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Repeat All starts a playlist over even when its last songs are unavailable, instead of stopping at the end.
 - Spotify and Deezer albums that span more than one disc number their songs by disc, as in 1.12 and 2.1, instead of counting straight through.
 - The play button on a pinned Liked Songs starts your liked songs instead of doing nothing.
+- Apple Music songs on networks that cannot reach some of Apple's playback servers start after a short pause instead of failing to play after 40 seconds.
 - Previous goes back to the last song again when SponsorBlock skips the opening of a YouTube Music track, instead of starting the same track over.
 - Seeking many times in a row, with the arrow keys or while a song is still starting, lands once on the last position instead of the song jumping on by itself afterwards.
 - Synced lyrics catch up right away when the playing song turns out to be somewhere other than where Sonora showed it, as could happen with Spotify through Soloist after launch or a song change, instead of standing still until you click a line.

@@ -259,15 +259,15 @@ pub async fn resolve(
         true => serde_json::json!({ "universalLibraryId": adam_id }),
         false => serde_json::json!({ "salableAdamId": adam_id }),
     };
-    let response = http
+    let request = http
         .post(PLAYBACK)
         .header(reqwest::header::USER_AGENT, AGENT)
         .header(reqwest::header::ORIGIN, "https://music.apple.com")
         .header(reqwest::header::REFERER, "https://music.apple.com/")
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
         .header("x-apple-music-user-token", user_token)
-        .json(&body)
-        .send()
+        .json(&body);
+    let response = send_reconnecting(request)
         .await
         .context("cannot reach apple web playback")?;
     let status = response.status();
@@ -541,15 +541,15 @@ async fn license(
         "isLibrary": AppleClient::is_mine(adam_id),
         "user-initiated": true,
     });
-    let response = http
+    let request = http
         .post(LICENSE)
         .header(reqwest::header::USER_AGENT, AGENT)
         .header(reqwest::header::ORIGIN, "https://music.apple.com")
         .header(reqwest::header::REFERER, "https://music.apple.com/")
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
         .header("x-apple-music-user-token", user_token)
-        .json(&envelope)
-        .send()
+        .json(&envelope);
+    let response = send_reconnecting(request)
         .await
         .context("cannot reach the apple license endpoint")?;
     let status = response.status();
@@ -591,6 +591,24 @@ async fn open_asset(
         .context("cannot fetch the encrypted track")?
         .error_for_status()
         .context("apple refused the encrypted track")
+}
+
+/// Sends `request` and sends it once more when the connection could not be opened. The play
+/// hosts sit behind edges that are sometimes unreachable from a given network, and a second
+/// try often reaches one that answers. A request that got past the connect step is never sent
+/// again.
+async fn send_reconnecting(request: reqwest::RequestBuilder) -> reqwest::Result<reqwest::Response> {
+    let again = request.try_clone();
+    match request.send().await {
+        Err(error) if error.is_connect() => {
+            let Some(again) = again else {
+                return Err(error);
+            };
+            log::info!("apple: cannot connect, trying once more: {error}");
+            again.send().await
+        }
+        answered => answered,
+    }
 }
 
 #[cfg(test)]
