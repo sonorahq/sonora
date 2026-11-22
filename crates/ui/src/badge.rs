@@ -1,7 +1,9 @@
+use crate::Text;
 use crate::theme::ActiveTheme as _;
 use gpui::prelude::*;
 use gpui::{
-    App, Div, IntoElement, RenderOnce, SharedString, StyleRefinement, Window, div, rems, svg,
+    App, Div, FontWeight, IntoElement, RenderOnce, SharedString, StyleRefinement, Window, div,
+    rems, svg,
 };
 
 /// The badge's side, in rems.
@@ -10,7 +12,8 @@ const SIDE: f32 = 1.;
 const GLYPH: f32 = 0.75;
 
 /// A small filled square beside a title that marks what the item is, such as explicit or a local
-/// file. It carries no name of its own, so the caller wraps it in a node that announces it.
+/// file, or a short word in a pill of the same height. It carries no name of its own, so the
+/// caller wraps it in a node that announces it.
 #[derive(IntoElement)]
 pub struct Badge {
     base: Div,
@@ -24,6 +27,8 @@ enum Mark {
     Explicit,
     /// A glyph from the active icon pack, inset from the edges.
     Icon(SharedString),
+    /// A short word, already resolved from Fluent, that widens the square into a pill.
+    Text(SharedString),
 }
 
 impl Badge {
@@ -42,6 +47,14 @@ impl Badge {
             mark: Mark::Icon(icon.into()),
         }
     }
+
+    /// A badge showing `text`, which the caller resolves from Fluent in its render.
+    pub fn text(text: impl Into<SharedString>) -> Self {
+        Self {
+            base: div(),
+            mark: Mark::Text(text.into()),
+        }
+    }
 }
 
 impl Styled for Badge {
@@ -55,25 +68,33 @@ impl RenderOnce for Badge {
         let Self { mut base, mark } = self;
         let theme = *cx.theme();
         let overrides = std::mem::take(base.style());
-        let (path, side) = match mark {
-            Mark::Explicit => (icons::path("icons/explicit.svg"), SIDE),
-            Mark::Icon(icon) => (icons::path(&icon), GLYPH),
+        let glyph = |path: SharedString, side: f32| {
+            svg()
+                .path(path)
+                .size(rems(side))
+                .text_color(theme.muted_foreground)
         };
 
-        let mut badge = base
-            .size(rems(SIDE))
+        let badge = base
+            .h(rems(SIDE))
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
             .bg(theme.muted)
-            .rounded_xs()
-            .child(
-                svg()
-                    .path(path)
-                    .size(rems(side))
-                    .text_color(theme.muted_foreground),
-            );
+            .rounded_xs();
+        let mut badge = match mark {
+            Mark::Explicit => badge
+                .w(rems(SIDE))
+                .child(glyph(icons::path("icons/explicit.svg"), SIDE)),
+            Mark::Icon(icon) => badge.w(rems(SIDE)).child(glyph(icons::path(&icon), GLYPH)),
+            Mark::Text(text) => badge
+                .px(theme.metrics.pad / 2.)
+                .text_size(theme.text(Text::Tiny))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.muted_foreground)
+                .child(text),
+        };
         badge.style().refine(&overrides);
         badge
     }

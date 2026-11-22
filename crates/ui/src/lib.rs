@@ -1,5 +1,6 @@
 mod arrow_ring;
 mod artwork;
+mod badge;
 mod button;
 mod card;
 mod checkbox;
@@ -7,7 +8,6 @@ mod controls;
 mod deck;
 mod drag;
 mod dropdown;
-mod explicit;
 mod filters;
 mod flight;
 mod form;
@@ -71,6 +71,7 @@ pub use arrow_ring::ArrowRing;
 pub use artwork::{
     Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
 };
+pub use badge::Badge;
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
 pub use card::Card;
@@ -81,7 +82,6 @@ pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
-pub use explicit::Badge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
