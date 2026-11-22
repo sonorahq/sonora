@@ -17,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
+- Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
 
 ### Fixed
 
@@ -29,6 +30,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Synced lyrics catch up right away when the playing song turns out to be somewhere other than where Sonora showed it, as could happen with Spotify through Soloist after launch or a song change, instead of standing still until you click a line.
 - Spotify's other apps show what plays next while Soloist plays an album or playlist, instead of an empty queue.
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
+- In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 
 ## [0.50.3] - 2026-11-20
 
