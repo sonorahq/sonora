@@ -7,7 +7,7 @@ name: buildbox-cache
 # Cargo.lock, the toolchain or the weekly Arch refresh, and a small layer of the workspace crates.
 #
 # It stays out of the Actions cache, which ci.yml already fills: each run seeds itself from the
-# previous snapshot in the registry instead.
+# previous snapshot in the registry instead, and an unchanged layer is neither pushed nor pulled.
 
 on:
   push:
