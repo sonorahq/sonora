@@ -164,7 +164,9 @@ Configuration with NixOS or Home Manager is provided by the module under `progra
 
 ### Windows
 
-#### winget
+#### WinGet
+
+Install with [WinGet](https://github.com/microsoft/winget-cli), which comes with Windows 10 and 11:
 
 ```powershell
 winget install SonoraHQ.Sonora
