@@ -38,16 +38,38 @@ rsync -rlpc --delete --exclude=/.git /checkout/ "$snap/src/"
 
 cd "$snap/src"
 rustup toolchain install
+touch /tmp/build-start
 cargo build --locked -p sonora
 cargo clippy --locked --workspace --all-targets
 cargo test --locked --workspace --no-run
 
 # Splits every file under $snap into the two layers, by the names cargo gives workspace units.
 cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
-python - "$snap" /tmp/metadata.json <<'PY'
+python - "$snap" /tmp/metadata.json /tmp/build-start <<'PY'
 import json, os, re, sys
+from collections import defaultdict
 
 snap, meta = sys.argv[1], json.load(open(sys.argv[2]))
+start = os.stat(sys.argv[3]).st_mtime
+
+# A unit compiled again in this run leaves the split debuginfo of its previous compile behind
+# under other codegen unit names. Drop every file of such a unit that this run did not write.
+deps = os.path.join(snap, "target/debug/deps")
+units = defaultdict(list)
+for name in os.listdir(deps):
+    unit = re.match(r"^(?:lib)?([A-Za-z0-9_]+-[0-9a-f]{16})", name)
+    if unit:
+        units[unit.group(1)].append(os.path.join(deps, name))
+stale = 0
+for files in units.values():
+    times = {f: os.lstat(f).st_mtime for f in files}
+    if max(times.values()) >= start:
+        for f, t in times.items():
+            if t < start:
+                os.remove(f)
+                stale += 1
+print(f"snapshot: removed {stale} files left from earlier compiles")
+
 names = set()
 for pkg in meta["packages"]:
     for name in [pkg["name"]] + [t["name"] for t in pkg["targets"]]:
@@ -62,10 +84,15 @@ for root, dirs, files in os.walk(snap):
     if rel_root in ("target/debug/incremental", "target/tmp"):
         dirs[:] = []
         continue
+    # Source folders go in as entries of their own, so they keep their mtimes: build scripts
+    # watch whole asset folders, and a folder newer than the build would run them again.
+    if rel_root == "src" or rel_root.startswith("src/"):
+        layers["ws"].append(rel_root)
     for name in files + [d for d in dirs if os.path.islink(os.path.join(root, d))]:
         rel = os.path.normpath(os.path.join(rel_root, name))
         top_level = os.path.dirname(rel) in ("target", "target/debug")
-        if rel.startswith("src/") or top_level or workspace_unit.match(rel):
+        examples = rel.startswith("target/debug/examples/")
+        if rel.startswith("src/") or top_level or examples or workspace_unit.match(rel):
             layers["ws"].append(rel)
         else:
             layers["deps"].append(rel)
