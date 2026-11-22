@@ -41,6 +41,8 @@ env:
 
 jobs:
   plain:
+    # A manual run on another branch would replace main's snapshot under the same tag.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
