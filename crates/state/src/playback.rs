@@ -2659,10 +2659,12 @@ impl Playback {
         }
     }
 
-    /// Sends the seek that queued up behind the one that just landed.
+    /// Sends the seek that queued up behind the one that just landed. It was counted in `seeks`
+    /// when it was asked for, so it goes out as this app's own doing, or a Sonora Session would
+    /// share a seek the session itself made as the listener's.
     fn follow_up_seek(&mut self, cx: &mut Context<Self>) {
         if let Some(next) = self.seek_next.take() {
-            self.seek(next, cx);
+            self.locally(cx, |this, cx| this.seek(next, cx));
         }
     }
 
