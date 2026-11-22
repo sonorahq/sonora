@@ -15,7 +15,7 @@ use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
-use router::{Destination, Navigation, SettingsPage, navigate, open_settings};
+use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
@@ -246,7 +246,11 @@ impl TitleBar {
                     .icon(crate::shared::provider_logo(slug))
                     .selected(info.active)
                     .on_click(move |_, _, cx| {
+                        let before = session.read(cx).provider_slug();
                         session.update(cx, |session, cx| session.switch(slug, cx));
+                        if session.read(cx).provider_slug() != before {
+                            open_startup(cx);
+                        }
                     })
             })
             .collect();
@@ -531,6 +535,13 @@ fn dev_badge() -> impl IntoElement {
         .flex_none()
         .ml_1()
         .child(Badge::text(t!("app-dev-badge")))
+}
+
+/// Opens the screen chosen as the startup page in Settings, where a newly switched provider lands.
+fn open_startup(cx: &mut App) {
+    let startup = Sonora::global(cx).settings.read(cx).startup().to_owned();
+    let screen = Screen::from_id(&startup).unwrap_or(Screen::Home);
+    navigate(screen.destination(), cx);
 }
 
 fn window_controls(leading: bool, traffic_light: bool) -> AnyElement {
