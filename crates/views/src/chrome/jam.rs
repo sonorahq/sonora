@@ -10,11 +10,13 @@ use gpui::{
     Pixels, Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
+use music::Contributor;
 use music::connect::{Jam, JamMember};
+use router::{Destination, Link as _};
 use state::{Devices, Outcome, Sonora, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Qr, Submit,
-    Text, Theme, single_line, snapped,
+    ActiveTheme as _, Avatar, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Perch, Qr,
+    Submit, Text, Theme, Tipped as _, single_line, snapped,
 };
 
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
@@ -44,6 +46,12 @@ const GLYPH_SHADE: f32 = 0.45;
 /// every face colour whatever the theme is, so a literal like `FACE_COLORS`.
 const INITIAL: f32 = 0.45;
 const INITIAL_COLOR: u32 = 0xffffff;
+/// How wide the face of whoever queued the playing song stands on the cover's corner, as a part
+/// of the cover, how far past the corner it reaches, as a part of the face, and the ring in the
+/// surface's colour that parts it from the cover.
+const STAMP: f32 = 0.5;
+const STAMP_REACH: f32 = 0.2;
+const STAMP_RING: Pixels = px(1.5);
 
 /// Asks whether to join the Jam a pasted link names. It shows for as long as `Devices` holds an
 /// invite, wherever the listener is in the app, and either answer hands the invite back.
@@ -412,12 +420,55 @@ pub(crate) fn name(member: &JamMember) -> &str {
 /// on the colour their id picks, so two people without pictures still tell apart. A name with no
 /// letter to show gets a person glyph instead.
 pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
-    if let Some(image) = &member.image {
+    portrait(&member.id, name(member), member.image.as_ref(), size)
+}
+
+/// The face of whoever queued a song, drawn as `face` draws them in the list of members, so the
+/// same person keeps the same picture or colour everywhere.
+pub(crate) fn adder_face(added: &Contributor, size: Pixels) -> AnyElement {
+    portrait(&added.id, &added.name, added.avatar.as_ref(), size)
+}
+
+/// The face of whoever queued the playing song, on the bottom right corner of a cover `cover`
+/// wide, ringed in `ring` so it stands apart from the art. It links to their profile and names
+/// them on hover. The cover's box has to be `relative`.
+pub(crate) fn stamp(
+    id: &'static str,
+    added: &Contributor,
+    cover: Pixels,
+    ring: Hsla,
+    window: &Window,
+) -> AnyElement {
+    let face = ui::snapped(cover * STAMP, window);
+    let ring_width = ui::snapped(STAMP_RING, window);
+    let outer = face + ring_width * 2.;
+    let reach = -ui::snapped(face * STAMP_REACH, window);
+    let name = t!("queue-added-by", name = added.name.as_str());
+    div()
+        .id(id)
+        .absolute()
+        .right(reach)
+        .bottom(reach)
+        .size(outer)
+        .rounded_full()
+        .border(ring_width)
+        .border_color(ring)
+        .bg(ring)
+        .aria_label(name.clone())
+        .link(Destination::User(added.id.clone().into()))
+        .tip_label(name, Perch::Above)
+        .child(adder_face(added, face))
+        .into_any_element()
+}
+
+/// The round picture behind `face` and `adder_face`, for the person `id` names.
+fn portrait(id: &str, name: &str, image: Option<&String>, size: Pixels) -> AnyElement {
+    if let Some(image) = image {
         return Avatar::new(Some(image.clone()))
             .size(size)
             .into_any_element();
     }
-    let color = color_of(&member.id);
+    let color = color_of(id);
     let glyph = Hsla {
         l: color.l * GLYPH_SHADE,
         ..color
@@ -430,7 +481,7 @@ pub(crate) fn face(member: &JamMember, size: Pixels) -> AnyElement {
         .size(size)
         .rounded_full()
         .bg(color)
-        .map(|this| match initial(name(member)) {
+        .map(|this| match initial(name) {
             Some(letter) => this
                 .text_size(size * INITIAL)
                 .font_weight(FontWeight::SEMIBOLD)

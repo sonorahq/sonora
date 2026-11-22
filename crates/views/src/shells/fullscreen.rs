@@ -23,7 +23,7 @@ use ui::{
     Tails as _, Text, Visualizer, Zoom, clock, entering, snapped,
 };
 
-use crate::chrome::{Aside, PlayerBar, TitleBarOptions};
+use crate::chrome::{Aside, PlayerBar, TitleBarOptions, jam, members};
 use crate::shared::menus::ItemMenu;
 use crate::shared::transport::{
     COVER_FLIGHT, CoverFade, ShellSwap, clock_ems, end_clock, fraction, like, moved, transport,
@@ -757,6 +757,22 @@ impl FullscreenView {
                     ),
                 )
             })
+            .when_some(members::picked_by(cx), |this, added| {
+                let id = added.id.clone();
+                this.child(
+                    Button::new("fullscreen-adder")
+                        .ghost()
+                        .small()
+                        .mt_1()
+                        .leading(jam::adder_face(&added, theme.text(Text::Body)))
+                        .label(t!("queue-added-by", name = added.name.as_str()))
+                        .tint(shared::quiet(&theme))
+                        .when(frosted, Button::frosted)
+                        .on_click(move |_, _, cx| {
+                            navigate(Destination::User(id.clone().into()), cx)
+                        }),
+                )
+            })
     }
 
     fn strip(&self, hide: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -789,7 +805,11 @@ impl FullscreenView {
                             .cursor_pointer()
                             .on_click(move |_, _, cx| open_album(&album, cx))
                     })
-                    .child(Artwork::new(track.and_then(|t| t.cover.clone())).size(cover)),
+                    .relative()
+                    .child(Artwork::new(track.and_then(|t| t.cover.clone())).size(cover))
+                    .children(members::picked_by(cx).map(|added| {
+                        jam::stamp("strip-adder", &added, cover, theme.background, window)
+                    })),
             )
             .child(
                 div()
