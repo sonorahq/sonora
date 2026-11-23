@@ -185,6 +185,7 @@ impl Updates {
             if moved {
                 this.found = None;
                 this.checked_at = None;
+                this.check_failed = false;
             }
             this.state = UpdateState::Quiet;
             cx.notify();
