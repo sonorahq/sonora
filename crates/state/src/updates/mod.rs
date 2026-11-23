@@ -397,8 +397,10 @@ impl Updates {
 
         let http = self.http.clone();
         let io = self.io.clone();
-        let progress = self.progress.clone();
-        progress.store(0, Ordering::Relaxed);
+        // A fresh counter, so a download the listener closed earlier and that still runs on
+        // tokio writes where nothing reads.
+        let progress = Arc::new(AtomicU32::new(0));
+        self.progress = progress.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
             let fetched =
                 join(io.spawn(async move {
