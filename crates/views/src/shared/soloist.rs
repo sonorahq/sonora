@@ -188,7 +188,7 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                // said only once pairing has waited a while, when a firewall is the likely cause
+                // said only once pairing has waited a while
                 if let Some(port) = self.soloist.read(cx).blocked_port() {
                     // as text, so no locale groups the digits of a port number
                     let port = port.to_string();
