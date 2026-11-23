@@ -269,6 +269,9 @@ pub(crate) struct Aside {
     lyrics_wraps: HashMap<usize, Wrapped>,
     lane_rooms: HashMap<usize, Pixels>,
     seen: Pixels,
+    /// Whether the rows took new heights last frame, when the hold moved the scroll to keep the
+    /// sheet in place. The rows do not lag behind that move, since the sheet did not slide.
+    reflowed: bool,
     flying: bool,
     flew: bool,
     slid: std::time::Instant,
@@ -379,6 +382,7 @@ impl Aside {
             lyrics_wraps: HashMap::new(),
             lane_rooms: HashMap::new(),
             seen: px(0.),
+            reflowed: false,
             flying: false,
             flew: true,
             slid: std::time::Instant::now(),
@@ -551,13 +555,13 @@ impl Aside {
         self.previous_active_line = None;
         self.departing_line = None;
         self.placing = true;
+        self.drifts.clear();
         self.forget_measurements();
     }
 
     fn forget_measurements(&mut self) {
         self.lyrics_wraps.clear();
         self.lane_rooms.clear();
-        self.drifts.clear();
         self.sheet_layout = None;
         self.settled.clear();
         self.was_settled.clear();
@@ -583,7 +587,10 @@ impl Aside {
 
         // follow the seen position
         let offset = scroll.offset().y + presentation;
-        let step = offset - self.seen;
+        let step = match std::mem::take(&mut self.reflowed) {
+            true => px(0.),
+            false => offset - self.seen,
+        };
         self.seen = offset;
         if nudges != self.nudges {
             self.flying = false;
@@ -1197,11 +1204,11 @@ impl Aside {
             self.lyrics_wrap_width = Some(wrap_width);
             self.lyrics_wrap_size = Some(wrap_size);
             self.forget_measurements();
-            // A sheet following the sung line puts that line back in its place once the rows
-            // have their new heights. A sheet the listener scrolled is held by its top instead.
+            self.reflowed = true;
+            // The hold keeps the followed line where it stood while the rows take their new
+            // heights, so the sheet only aims again, for when the end of the sheet moved it.
             if self.pinned {
                 self.aiming = true;
-                self.placing = true;
             }
             window.request_animation_frame();
         }
@@ -1750,9 +1757,13 @@ impl Aside {
             Some(lines) => self.verse_slack(lyric_row_count(lines), window, cx),
             None => (px(REST), px(REST)),
         };
+        // A sheet following the sung line holds that line in place when it reflows, in the same
+        // frame, and a sheet the listener scrolled holds its top.
+        let kept = self.followed.filter(|_| self.pinned && lines.is_some());
 
         let sheet = Scroller::new("lyrics", &self.verse_bar)
-            .hold_while(!self.pinned)
+            .hold_while(!self.pinned || kept.is_some())
+            .keep(kept)
             .reflowed(rewrapped)
             .bottom_inset(self.bottom(cx))
             .when(lines.is_some(), Scroller::manual_presentation)
