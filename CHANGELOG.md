@@ -29,6 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Removing a single track from history or a playlist shows a translated menu label again.
+- Once the fullscreen player hides the cursor, nothing under it stays highlighted, and a click brings the cursor and controls back instead of jumping to the lyric line or link beneath it.
 - With a light theme, the rest of the app no longer turns dark while the fullscreen player opens or closes.
 - Searching YouTube Music no longer fills the account's YouTube search history with every half-typed query.
 - Repeat All starts a playlist over even when its last songs are unavailable, instead of stopping at the end.

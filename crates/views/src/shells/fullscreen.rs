@@ -410,8 +410,9 @@ impl FullscreenView {
 
     /// Whether anything under the pointer should hold the chrome awake. A hover flag only counts
     /// while the pointer is over the window: one set when it left stays set, and a stale flag
-    /// would keep the controls up for good. A Jam invite drawn over the view holds it too, since
-    /// the pointer over the dialog never reaches the view and the cursor would hide under it.
+    /// would keep the controls up for good. A Jam invite or a panel's track menu drawn over the
+    /// view holds it too, since the pointer over either never reaches the view and the cursor
+    /// would hide under it.
     fn busy(&self, cx: &App) -> bool {
         let parked = self.volume.parked()
             || self.over_pill
@@ -425,6 +426,7 @@ impl FullscreenView {
             || self.volume.held
             || self.pending.is_some()
             || self.context_menu.is_some()
+            || (self.panel.is_some() && self.aside.read(cx).menu_open())
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
 
@@ -1287,6 +1289,27 @@ impl FullscreenView {
         rising_volume(&self.volume, &self.playback, ambient::shown(cx), cx)
     }
 
+    /// Covers the whole view while the controls sleep and the cursor is hidden, so nothing under
+    /// the pointer stays hovered and a click only wakes the controls instead of landing blind.
+    /// Scrolling passes through, and the layer takes over the root's own pointer listeners, which
+    /// no longer count as hovered beneath it.
+    fn dormant(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .inset_0()
+            .block_mouse_except_scroll()
+            .on_mouse_move(cx.listener(Self::hover))
+            .on_mouse_exit(cx.listener(|this, _: &MouseExitEvent, _, cx| {
+                this.left = true;
+                cx.notify();
+            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                cx.show_cursor();
+                this.stir(cx);
+            }))
+    }
+
     fn menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let (track, position) = self.context_menu.clone()?;
 
@@ -1746,6 +1769,9 @@ impl Render for FullscreenView {
             // A trackpad reports fingers that only touch it as a scroll that moves nothing.
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
                 if event.delta.pixel_delta(window.line_height()) != Point::default() {
+                    if !this.awake {
+                        cx.show_cursor();
+                    }
                     this.poke(cx);
                 }
             }))
@@ -1938,6 +1964,9 @@ impl Render for FullscreenView {
                     .when(idle < 1. || hide < 1., |this| {
                         this.child(self.corner(hide, idle, window, cx))
                     }),
+            })
+            .when(!self.awake && self.on_show, |this| {
+                this.child(self.dormant(cx))
             })
             .children(self.menu(cx))
     }
