@@ -460,12 +460,12 @@ impl FullscreenView {
     /// The player moving between the shells wins over a switch still running, so the two bars
     /// never part.
     fn cover_room(&self, hidden: f32, cx: &App) -> f32 {
-        let moving =
-            cx.try_global::<ShellSwap>().copied().unwrap_or_default() != ShellSwap::Settled;
+        if cx.try_global::<ShellSwap>().copied().unwrap_or_default() != ShellSwap::Settled {
+            return PlayerBar::cover_room(cx);
+        }
         match self.panel {
             Some(_) if self.landing => 1. - hidden,
             Some(_) => 1.,
-            None if moving => PlayerBar::cover_room(cx),
             None if self.switch.is_some() => hidden,
             None => 0.,
         }
