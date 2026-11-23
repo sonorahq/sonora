@@ -379,7 +379,8 @@ impl Scrobbling {
         if playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref() {
             self.position = playback.position();
         }
-        if *playback.state() != PlaybackState::Playing || !play.earned(playback.position()) {
+        let played = playback.position();
+        if *playback.state() != PlaybackState::Playing || !play.earned(played) {
             return;
         }
 
@@ -397,7 +398,7 @@ impl Scrobbling {
 
         let muted = self.muted(cx);
         for row in &mut self.rows {
-            if muted || row.sent || !row.live() {
+            if muted || row.sent || !row.live() || !row.service.earned(play, played) {
                 continue;
             }
             row.sent = true;

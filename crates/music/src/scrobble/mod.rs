@@ -154,6 +154,12 @@ pub trait Service: Send + Sync {
     /// the wait runs out.
     async fn connect(&self, secret: Secret) -> Result<Account>;
 
+    /// Whether `played` has earned the listen a submission to this service. Most services follow
+    /// [`Play::earned`], and one with a stricter rule of its own narrows it.
+    fn earned(&self, play: &Play, played: Duration) -> bool {
+        play.earned(played)
+    }
+
     /// Tells the service what is playing right now. A service with no such concept keeps the
     /// default and makes no request.
     async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {

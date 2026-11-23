@@ -1,7 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,11 @@ const RESOLVER: &str = "https://public.api.bsky.app";
 const CLIENT: &str = concat!("org.sonorahq.sonora/", env!("CARGO_PKG_VERSION"));
 /// How long a handle's own host gets to answer before resolution falls back to the AppView.
 const WELL_KNOWN_WAIT: Duration = Duration::from_secs(5);
+/// The lexicon counts a track shorter than this only once it has played to the end.
+const WHOLE_BELOW: Duration = Duration::from_secs(120);
+/// How far short of the end a short track may stop and still count as played to the end, since
+/// the last position report lands a moment before the track does.
+const END_SLACK: Duration = Duration::from_secs(3);
 
 /// teal.fm reads listens straight from the user's ATProto repository, so Sonora signs in to the
 /// account's PDS with an app password and writes the records itself. The app password is what the
@@ -74,7 +79,7 @@ impl TealFm {
     /// the refresh token is spent or revoked too.
     async fn renew(&self, account: &Account, stale: &Tokens) -> Result<Tokens> {
         let refreshed = async {
-            let answer = super::http()
+            let answer = http()?
                 .post(xrpc(&account.server, "com.atproto.server.refreshSession"))
                 .bearer_auth(&stale.refresh)
                 .send()
@@ -125,6 +130,10 @@ impl Service for TealFm {
 
     fn signup(&self) -> Option<&'static str> {
         Some(APP_PASSWORDS)
+    }
+
+    fn earned(&self, play: &Play, played: Duration) -> bool {
+        play.earned(played) && (play.duration >= WHOLE_BELOW || played + END_SLACK >= play.duration)
     }
 
     async fn connect(&self, secret: Secret) -> Result<Account> {
@@ -351,7 +360,7 @@ async fn post(
     access: &str,
     body: &impl Serialize,
 ) -> Result<Sent> {
-    let answer = super::http()
+    let answer = http()?
         .post(xrpc(&account.server, method))
         .bearer_auth(access)
         .json(body)
@@ -378,7 +387,7 @@ async fn post(
 /// Signs in to a PDS with an app password. `identifier` is the account's DID, so a handle that
 /// has since moved cannot sign in somebody else.
 async fn create_session(pds: &str, identifier: &str, password: &str) -> Result<Created> {
-    let answer = super::http()
+    let answer = http()?
         .post(xrpc(pds, "com.atproto.server.createSession"))
         .json(&serde_json::json!({ "identifier": identifier, "password": password }))
         .send()
@@ -416,7 +425,7 @@ async fn resolve(identifier: &str) -> Result<String> {
         return Ok(did);
     }
 
-    let answer = super::http()
+    let answer = http()?
         .get(xrpc(RESOLVER, "com.atproto.identity.resolveHandle"))
         .query(&[("handle", &handle)])
         .send()
@@ -434,7 +443,8 @@ async fn resolve(identifier: &str) -> Result<String> {
 
 /// The DID a handle's host serves at `/.well-known/atproto-did`, if it serves one.
 async fn well_known(handle: &str) -> Option<String> {
-    let answer = super::http()
+    let answer = http()
+        .ok()?
         .get(format!("https://{handle}/.well-known/atproto-did"))
         .timeout(WELL_KNOWN_WAIT)
         .send()
@@ -453,7 +463,7 @@ async fn pds(did: &str) -> Result<String> {
         (_, Some(host)) => format!("https://{}/.well-known/did.json", host.replace("%3A", ":")),
         _ => bail!("teal.fm cannot use the identity {did}"),
     };
-    let answer = super::http()
+    let answer = http()?
         .get(url)
         .send()
         .await
@@ -464,7 +474,7 @@ async fn pds(did: &str) -> Result<String> {
         .await
         .context("cannot read the did document")?;
 
-    document
+    let endpoint = document
         .service
         .iter()
         .find(|service| {
@@ -472,11 +482,24 @@ async fn pds(did: &str) -> Result<String> {
         })
         .and_then(|service| service.endpoint.as_str())
         .map(|endpoint| endpoint.trim_end_matches('/').to_owned())
-        .with_context(|| format!("the did document of {did} names no pds"))
+        .with_context(|| format!("the did document of {did} names no pds"))?;
+    if !endpoint.starts_with("https://") {
+        bail!("the pds of {did} does not use https, so its app password stays unsent");
+    }
+    Ok(endpoint)
 }
 
 fn xrpc(server: &str, method: &str) -> String {
     format!("{server}/xrpc/{method}")
+}
+
+/// The client every teal.fm request goes through. Unlike the shared scrobbling client it refuses
+/// plain http, redirects included, since it carries the app password and the tokens it buys.
+fn http() -> Result<&'static reqwest::Client> {
+    static HTTP: OnceLock<reqwest::Result<reqwest::Client>> = OnceLock::new();
+    HTTP.get_or_init(|| reqwest::Client::builder().https_only(true).build())
+        .as_ref()
+        .map_err(|error| anyhow!("cannot build the teal.fm http client: {error}"))
 }
 
 /// The `submissionClientAgent` string, `org.sonorahq.sonora/<version> (<os>)`.
