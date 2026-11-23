@@ -46,6 +46,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 - Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
+- Your Spotify API key no longer shows in the process list while Soloist runs.
 
 ### Fixed
 
