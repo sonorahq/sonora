@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use async_trait::async_trait;
 use futures::{StreamExt as _, stream};
 use tokio::task::JoinSet;
@@ -299,24 +299,37 @@ impl MusicApi for YouTubeClient {
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         let tracks = self.api.playlist(playlist_id).await?.tracks;
-        let seat = |list: &[ytmusic::Track]| {
+        let seats = |list: &[ytmusic::Track]| -> Vec<usize> {
             list.iter()
-                .position(|track| track.video_id.as_deref() == Some(track_id))
+                .enumerate()
+                .filter_map(|(index, track)| {
+                    (track.video_id.as_deref() == Some(track_id)).then_some(index)
+                })
+                .collect()
         };
-        let index = match seat(&tracks) {
-            Some(index) => index,
-            None => seat(&self.api.swap_playable(tracks.clone()).await)
-                .context("track is not in the playlist")?,
-        };
-        let track = tracks.get(index).context("track is not in the playlist")?;
-        let video_id = track.video_id.as_deref().context("track has no video id")?;
-        let set_video_id = track
-            .set_video_id
-            .as_deref()
-            .context("track cannot be removed from this playlist")?;
-        self.api
-            .remove_playlist_track(playlist_id, video_id, set_video_id)
-            .await
+        let mut indices = seats(&tracks);
+        if indices.is_empty() {
+            indices = seats(&self.api.swap_playable(tracks.clone()).await);
+        }
+        ensure!(!indices.is_empty(), "track is not in the playlist");
+        let entries: Vec<(&str, &str)> = indices
+            .into_iter()
+            .map(|index| {
+                let track = tracks.get(index).context("track is not in the playlist")?;
+                let video_id = track.video_id.as_deref().context("track has no video id")?;
+                let set_video_id = track
+                    .set_video_id
+                    .as_deref()
+                    .context("track cannot be removed from this playlist")?;
+                Ok((video_id, set_video_id))
+            })
+            .collect::<Result<_>>()?;
+        for (video_id, set_video_id) in entries {
+            self.api
+                .remove_playlist_track(playlist_id, video_id, set_video_id)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {

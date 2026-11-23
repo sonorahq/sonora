@@ -2130,17 +2130,23 @@ impl Library {
                 let id = client.create_playlist(&name).await?;
                 client.add_tracks_to_playlist(&id, &tracks).await?;
                 let fetched = client.playlist(&id).await.map(|detail| detail.playlist);
-                Ok(fetched.unwrap_or_else(|error| {
+                let playlist = fetched.unwrap_or_else(|error| {
                     log::warn!("library: a new playlist is not readable yet: {error:#}");
                     Playlist {
                         id,
                         name,
                         owned: true,
+                        track_count: tracks.len() as u32,
                         ..Default::default()
                     }
-                }))
+                });
+                Ok((playlist, tracks))
             },
-            Self::insert_playlist,
+            move |this, (playlist, tracks), cx| {
+                this.contents
+                    .insert(playlist.id.clone(), tracks.into_iter().collect());
+                this.insert_playlist(playlist, cx);
+            },
             cx,
         );
     }

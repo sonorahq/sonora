@@ -1,6 +1,6 @@
 use gpui::prelude::*;
 use gpui::{App, Context, Entity, Global, MouseDownEvent, Pixels, Point, Window, div};
-use state::Playback;
+use state::{Playback, Sonora};
 use ui::{Popup, Scrollbar};
 
 use crate::shared::menus::{Item, ItemMenu};
@@ -28,6 +28,13 @@ impl CardMenu {
     pub fn entity(cx: &mut App) -> Entity<Self> {
         if cx.try_global::<Installed>().is_none() {
             let menu = cx.new(|cx: &mut Context<Self>| {
+                let library = Sonora::global(cx).library.clone();
+                cx.observe(&library, |this, _, cx| {
+                    if this.open.is_some() {
+                        cx.notify();
+                    }
+                })
+                .detach();
                 let host = cx.entity_id();
                 let scrollbar = cx.new(|_| Scrollbar::inset().watching(host));
                 Self {
