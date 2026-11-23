@@ -43,22 +43,68 @@ rsync -rlpc --delete --exclude=/.git /checkout/ "$snap/src/"
 cd "$snap/src"
 rustup toolchain install
 touch /tmp/build-start
-cargo build --locked -p sonora
-cargo clippy --locked --workspace --all-targets
-cargo test --locked --workspace --no-run
+# The JSON messages name every unit the build used, fresh or compiled; the human output stays on
+# stderr.
+for build in "build --locked -p sonora" "clippy --locked --workspace --all-targets" \
+  "test --locked --workspace --no-run"; do
+  cargo $build --message-format=json-render-diagnostics >> /tmp/units.jsonl
+done
 
 # Splits every file under $snap into the two layers, by the names cargo gives workspace units.
 cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
-python - "$snap" /tmp/metadata.json /tmp/build-start <<'PY'
-import json, os, re, sys
+python - "$snap" /tmp/metadata.json /tmp/build-start /tmp/units.jsonl <<'PY'
+import json, os, re, shutil, sys
 from collections import defaultdict
 
 snap, meta = sys.argv[1], json.load(open(sys.argv[2]))
 start = os.stat(sys.argv[3]).st_mtime
+debug = os.path.join(snap, "target/debug")
+deps = os.path.join(debug, "deps")
+
+# A seed built from another Cargo.lock keeps the units of crates that changed version or source.
+# Every unit this run used shows up in cargo's messages, through a file or folder named with its
+# hash or, for a binary or example copied up without one, the inode it shares with its unit.
+unit_hash = re.compile(r"-([0-9a-f]{16})(?=\.|$)")
+used, inodes = set(), set()
+for line in open(sys.argv[4]):
+    if not line.startswith("{"):
+        continue
+    msg = json.loads(line)
+    if msg["reason"] == "compiler-artifact":
+        paths = msg["filenames"] + ([msg["executable"]] if msg.get("executable") else [])
+    elif msg["reason"] == "build-script-executed":
+        paths = [msg["out_dir"]]
+    else:
+        continue
+    for path in paths:
+        for part in path.rstrip("/").split("/")[-2:]:
+            if found := unit_hash.search(part):
+                used.add(found.group(1))
+        if os.path.exists(path):
+            inodes.add(os.stat(path).st_ino)
+for folder in ("deps", "examples"):
+    folder = os.path.join(debug, folder)
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        if (found := unit_hash.search(name)) and os.lstat(os.path.join(folder, name)).st_ino in inodes:
+            used.add(found.group(1))
+if len(used) < 100:
+    sys.exit(f"snapshot: cargo named only {len(used)} units, refusing to prune")
+pruned = 0
+for folder in ("deps", ".fingerprint", "build"):
+    for name in os.listdir(os.path.join(debug, folder)):
+        found = unit_hash.search(name)
+        if not found or found.group(1) in used:
+            continue
+        path = os.path.join(debug, folder, name)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+        pruned += 1
+print(f"snapshot: kept {len(used)} units, removed {pruned} entries of units no longer built")
 
 # A unit compiled again in this run leaves the split debuginfo of its previous compile behind
 # under other codegen unit names. Drop every file of such a unit that this run did not write.
-deps = os.path.join(snap, "target/debug/deps")
 units = defaultdict(list)
 for name in os.listdir(deps):
     unit = re.match(r"^(?:lib)?([A-Za-z0-9_]+-[0-9a-f]{16})", name)
@@ -125,13 +171,12 @@ if [[ -f /work/prev/deps.sum && -f /work/prev/deps.tar.zst ]] && cmp -s /work/pr
 else
   layers="deps ws"
 fi
-# The third-party layer is compressed hard since it is rarely compressed again. The workspace layer
-# changes on every push, so it trades a little size for being ready minutes sooner.
+# Level 12 packs the third-party layer in about 20 s where 19 takes over 4 minutes, for 18 % more
+# bytes, which the buildbox pulls from ghcr in about a second.
 for layer in $layers; do
-  if [[ $layer == deps ]]; then level=-19; else level=-12; fi
   tar -C "$snap" -c --format=posix --no-recursion --null -T "/tmp/$layer.list" \
     --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
     --owner=0 --group=0 --numeric-owner \
-    | zstd -q -T4 "$level" --long=27 -o "/work/out/$layer.tar.zst"
+    | zstd -q -T4 -12 --long=27 -o "/work/out/$layer.tar.zst"
 done
 ls -la /work/out
