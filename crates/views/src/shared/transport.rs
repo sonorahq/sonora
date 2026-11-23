@@ -15,7 +15,8 @@ pub(crate) const NOTCH: f32 = state::VOLUME_STEP;
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
 
 /// Whether the playing cover is in the air between the player bar and the fullscreen player,
-/// so the player bar leaves its own undrawn until the flight lands.
+/// so the player bar leaves its own undrawn until the flight lands. A narrow player with a panel
+/// open keeps the bar's cover in place and sends nothing flying.
 pub(crate) struct CoverAway(pub(crate) bool);
 
 impl Global for CoverAway {}
@@ -25,6 +26,14 @@ impl Global for CoverAway {}
 pub(crate) struct CoverFade(pub(crate) f32);
 
 impl Global for CoverFade {}
+
+/// How much room the player bar's cover takes beside the title, from 1 where it shows to 0 where
+/// the title has slid over its place. Below `Room::Wide` the fullscreen player's artwork tab
+/// tucks it away, since its big cover shows the same art, and the player bar under the player
+/// tucks its own along while the player opens and closes, so the two never part.
+pub(crate) struct CoverRoom(pub(crate) f32);
+
+impl Global for CoverRoom {}
 
 /// Which way the fullscreen player is moving between the shells, if it is. The player bar's
 /// fullscreen button and the player's leave button share one spot, so while the player moves

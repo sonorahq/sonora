@@ -1,33 +1,27 @@
-use router::{Destination, Link, navigate};
+use router::{Destination, Link};
 use ui::ActiveTheme as _;
-use ui::Tails as _;
-use ui::Tipped as _;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, Render, SharedString, StyledText,
+    AnyElement, App, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    Render, SharedString, Stateful,
 };
-use gpui::{Window, deferred, div, px};
+use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
-use ui::{
-    Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Perch, Pinnable, Popup, Room,
-    Scrollbar, Scrubber, ScrubberState,
-};
+use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState};
 
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::timeline::Timeline;
 use crate::chrome::{Chrome, SidebarRight};
 use crate::chrome::{jam, members};
 use crate::shared::menus::ItemMenu;
+use crate::shared::now_playing::track_details;
 use crate::shared::pins::Pinned as _;
-use crate::shared::transport::{
-    COVER_FLIGHT, CoverAway, ShellSwap, like, moved, percent, transport, volume_icon,
-};
-use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume, turn_volume};
+use crate::shared::transport::{COVER_FLIGHT, CoverAway, CoverRoom, ShellSwap, moved, transport};
+use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume, volume_slider};
 
 const SEEK_MAX: f32 = 560.;
 const VOLUME_WIDTH: f32 = 110.;
@@ -44,6 +38,8 @@ const COLUMN_GAP: f32 = 1.;
 const SIDE_GAP: f32 = 0.5;
 const TOOL_GAP: f32 = 0.25;
 const VOLUME_GAP: f32 = 0.25;
+/// The gap between the cover and the title in a now playing row, in rems.
+pub(crate) const COVER_GAP: f32 = 0.75;
 /// The width the classic bar's middle column holds while the volume slider gives way beside
 /// it, the least it shrinks to before the volume folds into a button, and the least it takes
 /// once the volume has folded, about the transport's own width over a short seek bar.
@@ -58,11 +54,26 @@ const STACK_GAP: f32 = 0.5;
 
 /// How the bar draws its volume control.
 #[derive(Clone, Copy)]
-enum Volume {
+pub(crate) enum Volume {
     /// The mute button with a slider this wide beside it.
     Slider(Pixels),
     /// The mute button alone, with a slider that rises over it on hover.
     Rising,
+}
+
+/// What a player bar lays out in every layout but the centred one. The narrow fullscreen player
+/// hands its own pieces to [`PlayerBar::arrange`], so its controls stand exactly where the bar's
+/// do. `now_playing` fills the room left of the controls and `corner` ends the bar.
+pub(crate) struct BarParts {
+    pub(crate) now_playing: AnyElement,
+    pub(crate) transport: AnyElement,
+    pub(crate) seek: AnyElement,
+    /// The sessions and panel buttons, which only the bar itself draws. The classic layout
+    /// counts them either way, so the controls around them stay put without them.
+    pub(crate) tools: Option<AnyElement>,
+    /// The volume control, drawn the way [`PlayerBar::volume`] says.
+    pub(crate) sound: AnyElement,
+    pub(crate) corner: AnyElement,
 }
 
 pub(crate) struct PlayerBar {
@@ -101,6 +112,7 @@ impl PlayerBar {
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<ShellSwap>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<CoverRoom>(|_, cx| cx.notify()).detach();
 
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
@@ -155,68 +167,19 @@ impl PlayerBar {
     /// The volume control, drawn the way `volume` says.
     fn sound(&self, volume: Volume, cx: &mut Context<Self>) -> AnyElement {
         match volume {
-            Volume::Slider(width) => self.slider(width, cx).into_any_element(),
+            Volume::Slider(width) => volume_slider(
+                &self.volume,
+                self.over_volume,
+                self.rising.held,
+                width,
+                &self.playback,
+                cx,
+            )
+            .into_any_element(),
             Volume::Rising => {
                 rising_volume(&self.rising, &self.playback, false, cx).into_any_element()
             }
         }
-    }
-
-    /// The mute button with a volume slider `width` wide beside it.
-    fn slider(&self, width: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.theme();
-        let empty = theme.muted_foreground.opacity(0.3);
-        let level = self.playback.read(cx).shown_volume(cx);
-        let muted = self.playback.read(cx).muted(cx);
-        let showing = self.over_volume.is_some() || self.rising.held;
-        let bubble = showing.then(|| (level, percent(level)));
-
-        div()
-            .id("player-volume")
-            .role(Role::Group)
-            .aria_label(t!("equalizer-status-volume"))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .on_scroll_wheel(cx.listener(turn_volume))
-            .child(
-                Button::new("volume")
-                    .ghost()
-                    .small()
-                    .icon(volume_icon(level))
-                    .tooltip_above(match muted {
-                        true => "player-unmute",
-                        false => "player-mute",
-                    })
-                    .tint(theme.muted_foreground)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.playback
-                            .update(cx, |playback, cx| playback.toggle_muted(cx));
-                    })),
-            )
-            .child(
-                div().w(width).flex_none().child(
-                    Scrubber::new(&self.volume, level)
-                        .name(t!("equalizer-status-volume"))
-                        .value(percent(level))
-                        .colors(theme.progress_bar, empty, theme.foreground)
-                        .when_some(bubble, |this, (at, text)| this.bubble(at, text))
-                        .on_move(cx.listener(|this, fraction: &f32, _, cx| {
-                            let level = *fraction;
-                            this.rising.held = true;
-                            this.playback
-                                .update(cx, |playback, cx| playback.slide_volume(level, cx));
-                            cx.notify();
-                        }))
-                        .on_release(cx.listener(|this, _: &MouseUpEvent, _, cx| {
-                            this.rising.held = false;
-                            this.playback
-                                .update(cx, |playback, cx| playback.end_volume_slide(cx));
-                            cx.notify();
-                        })),
-                ),
-            )
     }
 
     fn side_buttons(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -292,12 +255,7 @@ impl PlayerBar {
         }
     }
 
-    fn now_playing(
-        &self,
-        room: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    fn now_playing(&self, room: bool, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let label = match self.playback.read(cx).shown_track(cx) {
             Some(track) => match members::picked_by(cx) {
                 Some(added) => SharedString::from(format!(
@@ -316,24 +274,32 @@ impl PlayerBar {
             .aria_label(label)
             .flex()
             .items_center()
-            .gap_3()
+            .gap(rems(COVER_GAP))
             .flex_1()
             .min_w_0()
-            .child(self.artwork(window, cx))
-            .when(room, |this| this.child(self.track_details(false, cx)))
+            .child(Self::tuck(
+                self.artwork(window, cx),
+                Self::cover_room(cx),
+                window,
+                cx,
+            ))
+            .when(room, |this| this.child(self.details(cx)))
+    }
+
+    /// The title and artist block beside the cover.
+    fn details(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let shown = self.playback.read(cx).shown_track(cx);
+        track_details(shown.as_ref(), &self.playback, false, Self::menu_at, cx)
+    }
+
+    fn menu_at(&mut self, position: Point<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_playing_menu(position, cx);
     }
 
     /// The playing cover keeps its album link and context menu in every layout.
-    fn artwork(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn artwork(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
-        let layout = self.settings.read(cx).player_bar_layout();
-        let artwork = ui::snapped(
-            match layout == PlayerBarLayout::Compact && !Self::stacked(window, layout) {
-                true => theme.metrics.thumb,
-                false => theme.metrics.row,
-            },
-            window,
-        );
+        let artwork = Self::cover_side(window, cx);
         let away = cx.try_global::<CoverAway>().is_some_and(|away| away.0);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
@@ -381,131 +347,6 @@ impl PlayerBar {
             .children(stamp)
             .flex_none()
     }
-
-    /// Track and artist links, explicit badge and favorite action, optionally centered without
-    /// moving the cover or transport with them.
-    fn track_details(&self, centered: bool, cx: &mut Context<Self>) -> gpui::Div {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        let artists = theme.text(ui::Text::Small);
-        let shown = self.playback.read(cx).shown_track(cx);
-        let track = shown.as_ref();
-        let explicit = track.is_some_and(|track| track.explicit);
-        let title = match track {
-            Some(track) => {
-                let name = SharedString::from(track.name.clone());
-                let text = StyledText::new(name.clone());
-                let layout = text.layout().clone();
-                div()
-                    .id("now-playing-track")
-                    .when_some(track.pin(), Pinnable::pin)
-                    .map(|this| match track.album_id.clone() {
-                        Some(album_id) => this
-                            .aria_label(name.clone())
-                            .hover(|style| style.underline())
-                            .link(Destination::Album(album_id.into())),
-                        None => this.role(Role::Label).aria_value(name.clone()),
-                    })
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            window.prevent_default();
-                            this.open_playing_menu(event.position, cx);
-                        }),
-                    )
-                    .child(text)
-                    .tip_clipped(name, layout, Perch::Above)
-                    .min_w_0()
-                    .truncate()
-                    .tails()
-            }
-            None => div()
-                .id("now-playing-album")
-                .role(Role::Status)
-                .aria_label(t!("player-nothing-playing"))
-                .child(t!("player-nothing-playing"))
-                .min_w_0()
-                .text_color(muted)
-                .truncate(),
-        };
-        let actions = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .when(explicit, |this| {
-                this.child(div().flex_none().child(Badge::explicit()))
-            })
-            .child(like(track, &self.playback, cx));
-        let headline = match centered {
-            true => {
-                // Equal clearance on both sides keeps the title itself centered. Actions sit
-                // outside its measured width and remain reachable even for a truncated title.
-                let clearance = theme.metrics.control_small
-                    * match explicit {
-                        true => 2.,
-                        false => 1.,
-                    }
-                    + theme.metrics.pad;
-                div().w_full().flex().justify_center().px(clearance).child(
-                    div()
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .min_w_0()
-                        .min_h(theme.text(ui::Text::Body) * ui::LEADING)
-                        .child(title)
-                        .child(
-                            actions
-                                .absolute()
-                                .left(gpui::relative(1.))
-                                .ml(theme.metrics.pad * 0.5)
-                                .top_0()
-                                .bottom_0(),
-                        ),
-                )
-            }
-            // The row is one line of the title tall, so the heart beside it reaches past it rather
-            // than pushing the artist line down.
-            false => div()
-                .w_full()
-                .flex()
-                .min_w_0()
-                .items_center()
-                .h(theme.text(ui::Text::Body) * ui::LEADING)
-                .gap_1()
-                .child(title)
-                .child(actions),
-        };
-        div()
-            .flex()
-            .flex_col()
-            .line_height(gpui::relative(ui::LEADING))
-            .gap(theme.metrics.pad / 2.)
-            .when(centered, |this| this.items_center())
-            .justify_center()
-            .flex_1()
-            .min_w_0()
-            .child(headline)
-            .when_some(track, |this, track| {
-                this.child(
-                    InlineLinks::new(
-                        "now-playing-artist",
-                        track.artist_refs.iter().map(|artist| {
-                            InlineLink::new(artist.name.clone(), artist.id.clone().map(Into::into))
-                        }),
-                        track.artists.clone(),
-                        muted,
-                    )
-                    .text_size(artists)
-                    .when(centered, |this| this.justify_center())
-                    .truncate()
-                    .on_click(|id, cx| {
-                        navigate(Destination::Artist(id), cx);
-                    }),
-                )
-            })
-    }
 }
 
 impl PlayerBar {
@@ -540,15 +381,6 @@ impl PlayerBar {
             .min(keep)
             .min(row - rising * 2.);
         (middle, Volume::Rising)
-    }
-
-    /// The volume slider keeps its full width until the window is as narrow as the one that
-    /// stacks the classic bar, so a layout that stacks sooner still matches it.
-    fn volume_width(window: &Window) -> Pixels {
-        match Chrome::window_room(window).fits(Room::Roomy) {
-            true => px(VOLUME_WIDTH),
-            false => px(VOLUME_TIGHT),
-        }
     }
 
     /// Centered needs room for its three columns; smaller windows keep every control reachable
@@ -587,33 +419,251 @@ impl PlayerBar {
         };
         ui::snapped(height, window)
     }
+
+    /// How many icon buttons stand before the volume: the sessions picker while it shows and
+    /// the panel buttons while the window has room for the right panel.
+    fn tool_count(window: &Window, cx: &App) -> usize {
+        usize::from(Self::picker_shown(cx)) + Self::panel_buttons(window, cx)
+    }
+
+    /// Whether the bar shows its Sessions picker.
+    fn picker_shown(cx: &App) -> bool {
+        Sonora::global(cx).settings.read(cx).sessions_button()
+            && (Sonora::global(cx).devices.read(cx).available()
+                || Sonora::global(cx).listening.read(cx).available(cx))
+    }
+
+    /// How many panel buttons the bar shows, none while the window has no room for the panel.
+    fn panel_buttons(window: &Window, cx: &App) -> usize {
+        match SidebarRight::available(window) {
+            true => 1 + usize::from(Sonora::global(cx).settings.read(cx).lyrics_enabled()),
+            false => 0,
+        }
+    }
+
+    /// The tools for a view below `Room::Wide` that copies the bar's layout: `sessions` where the
+    /// bar shows its picker. The bar has no panel buttons there, and its tools take their place
+    /// in the row even when they draw nothing, so the copy's do too and its seek bar ends where
+    /// the bar's does.
+    pub(crate) fn tools_like(sessions: Entity<SessionsButton>, cx: &App) -> Div {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .when(Self::picker_shown(cx), |this| this.child(sessions))
+    }
+
+    /// How the bar draws its volume control at this width, in whatever layout it has.
+    pub(crate) fn volume(window: &Window, cx: &App) -> Volume {
+        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        match (Self::stacked(window, layout), layout) {
+            // A narrow bar keeps its seek bar long and folds the volume into the mute button.
+            (true, _) => Volume::Rising,
+            (false, PlayerBarLayout::Classic) => {
+                Self::classic(window, Self::tool_count(window, cx), cx).1
+            }
+            (false, _) => Volume::Slider(px(VOLUME_WIDTH)),
+        }
+    }
+
+    /// How big the playing cover draws at this width: a thumbnail in an unstacked compact bar
+    /// and a row's height everywhere else.
+    pub(crate) fn cover_side(window: &Window, cx: &App) -> Pixels {
+        let theme = cx.theme();
+        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        let side = match layout == PlayerBarLayout::Compact && !Self::stacked(window, layout) {
+            true => theme.metrics.thumb,
+            false => theme.metrics.row,
+        };
+        ui::snapped(side, window)
+    }
+
+    /// How far above the bar's middle a stacked bar's cover and title row sits, half of the seek
+    /// row and the gap over it. The narrow fullscreen player lowers that row by as much while
+    /// its controls sleep, so it rests centred in the bar. An unstacked bar is already centred.
+    pub(crate) fn title_lift(window: &Window, cx: &App) -> Pixels {
+        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        match Self::stacked(window, layout) {
+            true => {
+                let lift = (window.rem_size() * STACK_GAP + cx.theme().metrics.control_small) / 2.;
+                ui::snapped(lift, window)
+            }
+            false => Pixels::ZERO,
+        }
+    }
+
+    /// Whether the title and artist show beside the cover, which needs a window from
+    /// `Room::Snug` up.
+    pub(crate) fn shows_track(window: &Window) -> bool {
+        Chrome::window_room(window).fits(Room::Snug)
+    }
+
+    /// Gives `base` the bar's ground: the frosted surface or the secondary colour the settings
+    /// pick, the border along its top and the window's bottom corners. The narrow fullscreen
+    /// player stands its own bar on the same ground, so the two draw alike to the pixel.
+    pub(crate) fn surface(base: Stateful<Div>, window: &Window, cx: &App) -> Stateful<Div> {
+        let theme = *cx.theme();
+        let transparent = Sonora::global(cx)
+            .settings
+            .read(cx)
+            .player_bar_translucent();
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let radius: Option<Pixels> = {
+            let _ = window;
+            None
+        };
+        base.when_some(radius, |this, radius| this.rounded_b(radius))
+            .when_else(
+                transparent,
+                |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
+                |this| this.when(!theme.transparent, |this| this.bg(theme.secondary)),
+            )
+            .border_t_1()
+            .border_color(theme.border)
+    }
+
+    /// How much room the cover takes beside the title right now, which [`CoverRoom`] sets.
+    pub(crate) fn cover_room(cx: &App) -> f32 {
+        cx.try_global::<CoverRoom>()
+            .map_or(1., |room| room.0.clamp(0., 1.))
+    }
+
+    /// Tucks the cover that starts a now playing row away by `room`. It keeps its size and spot
+    /// and fades, while what follows it slides over its place, so a cover a flight targets never
+    /// changes its bounds. With no room left it answers no pointer either.
+    pub(crate) fn tuck(
+        cover: Stateful<Div>,
+        room: f32,
+        window: &Window,
+        cx: &App,
+    ) -> Stateful<Div> {
+        if room >= 1. {
+            return cover;
+        }
+        let taken = Self::cover_side(window, cx) + window.rem_size() * COVER_GAP;
+        cover
+            .mr(Pixels::ZERO - taken * (1. - room))
+            .opacity(room)
+            .when(room <= 0., |this| this.invisible())
+    }
+
+    /// Gives `base` the bar's height and padding for the layout it has at this width.
+    fn frame(base: Stateful<Div>, window: &Window, cx: &App) -> Stateful<Div> {
+        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        base.flex()
+            .w_full()
+            .h(Self::height(window, cx))
+            .flex_none()
+            .px_5()
+            .when(Self::stacked(window, layout), |this| this.py_2())
+    }
+
+    /// Lays `parts` out in `base` the way the bar is laid out at this width, for every layout
+    /// but an unstacked centred one, which the bar draws itself. `base` is sized and padded here.
+    pub(crate) fn arrange(
+        base: Stateful<Div>,
+        parts: BarParts,
+        window: &Window,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let theme = *cx.theme();
+        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        let base = Self::frame(base, window, cx);
+        let BarParts {
+            now_playing,
+            transport,
+            seek,
+            tools,
+            sound,
+            corner,
+        } = parts;
+        let now_playing = div().flex().flex_1().min_w_0().child(now_playing);
+        match (Self::stacked(window, layout), layout) {
+            (true, _) => base
+                .flex_col()
+                .justify_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w_full()
+                        .child(now_playing)
+                        .child(transport),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .w_full()
+                        .child(div().flex_1().min_w_0().child(seek))
+                        .children(tools)
+                        .child(sound)
+                        .child(corner),
+                ),
+            (false, PlayerBarLayout::Compact) => base
+                .items_center()
+                .gap_3()
+                .child(now_playing.max_w(theme.metrics.cover * 1.6))
+                .child(transport)
+                .child(div().flex_1().min_w_0().child(seek))
+                .children(tools)
+                .child(sound)
+                .child(corner),
+            // The two sides share what the middle leaves them evenly, so the transport and the
+            // seek bar stay centred. `classic` works out how wide the middle is.
+            _ => {
+                let (middle, _) = Self::classic(window, Self::tool_count(window, cx), cx);
+                base.items_center()
+                    .gap_4()
+                    .child(now_playing)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_1()
+                            .flex_none()
+                            .w(middle)
+                            .child(transport)
+                            .child(seek),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .justify_end()
+                            .gap_2()
+                            .children(tools)
+                            .child(sound)
+                            .child(corner),
+                    )
+            }
+        }
+    }
 }
 
 impl Render for PlayerBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let span = Chrome::window_room(window);
         let layout = self.settings.read(cx).player_bar_layout();
         let stacked = Self::stacked(window, layout);
-        let transparent = self.settings.read(cx).player_bar_translucent();
-        let height = Self::height(window, cx);
         // Equal wings keep the title centered while reserving the original volume slider width.
         let centered_wing = theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.;
-        let show_track = span.fits(Room::Snug);
         let sides = match SidebarRight::available(window) {
             true => Some(self.side_buttons(cx)),
             false => None,
         };
         // the Sessions button stands with the panel buttons, one gap apart like them, and takes no
         // gap of its own while it draws nothing or the listener hid it
-        let picker = self.settings.read(cx).sessions_button()
-            && (Sonora::global(cx).devices.read(cx).available()
-                || Sonora::global(cx).listening.read(cx).available(cx));
-        let tools = usize::from(picker)
-            + match sides.is_some() {
-                true => 1 + usize::from(self.settings.read(cx).lyrics_enabled()),
-                false => 0,
-            };
+        let picker = Self::picker_shown(cx);
         let buttons = div()
             .flex()
             .flex_none()
@@ -624,31 +674,16 @@ impl Render for PlayerBar {
 
         let seek = self.timeline.clone();
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let radius = crate::chrome::window_radius(self.settings.read(cx), cx, window);
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let radius: Option<Pixels> = None;
-
-        let base = div()
-            .id("player-bar")
-            .role(Role::Toolbar)
-            .aria_label(t!("settings-page-player-bar"))
-            .flex()
-            .w_full()
-            .h(height)
-            .flex_none()
-            .px_5()
-            .when(stacked, |this| this.py_2())
-            .when_some(radius, |this, radius| this.rounded_b(radius))
-            .when_else(
-                transparent,
-                |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
-                |this| this.when(!theme.transparent, |this| this.bg(theme.secondary)),
-            )
-            .border_t_1()
-            .border_color(theme.border)
-            .occlude()
-            .on_mouse_move(cx.listener(Self::hover));
+        let base = Self::surface(
+            div()
+                .id("player-bar")
+                .role(Role::Toolbar)
+                .aria_label(t!("settings-page-player-bar")),
+            window,
+            cx,
+        )
+        .occlude()
+        .on_mouse_move(cx.listener(Self::hover));
 
         let context_menu = self.context_menu.clone().map(|(track, position)| {
             Popup::new(position, self.track_menu.for_track(&track, cx)).on_close(cx.listener(
@@ -660,31 +695,7 @@ impl Render for PlayerBar {
         });
 
         let content = match (stacked, layout) {
-            (true, _) => base
-                .flex_col()
-                .justify_center()
-                .gap_2()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .w_full()
-                        .child(self.now_playing(show_track, window, cx))
-                        .child(transport(&self.playback, false, cx)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .w_full()
-                        .child(div().flex_1().min_w_0().child(seek))
-                        .child(buttons)
-                        .child(self.sound(Volume::Slider(Self::volume_width(window)), cx))
-                        .child(self.fullscreen_button(cx)),
-                ),
-            (false, PlayerBarLayout::Centered) => base
+            (false, PlayerBarLayout::Centered) => Self::frame(base, window, cx)
                 .items_center()
                 .py(theme.metrics.pad)
                 .gap_3()
@@ -708,7 +719,11 @@ impl Render for PlayerBar {
                         .flex()
                         .flex_col()
                         .justify_center()
-                        .child(self.track_details(true, cx).w_full())
+                        .child({
+                            let shown = self.playback.read(cx).shown_track(cx);
+                            track_details(shown.as_ref(), &self.playback, true, Self::menu_at, cx)
+                                .w_full()
+                        })
                         .child(div().flex_none().w_full().child(seek)),
                 )
                 .child(
@@ -724,49 +739,24 @@ impl Render for PlayerBar {
                         .child(self.sound(Volume::Slider(px(VOLUME_WIDTH)), cx))
                         .child(self.fullscreen_button(cx)),
                 ),
-            (false, PlayerBarLayout::Compact) => base
-                .items_center()
-                .gap_3()
-                .child(
-                    self.now_playing(show_track, window, cx)
-                        .max_w(theme.metrics.cover * 1.6),
-                )
-                .child(transport(&self.playback, false, cx))
-                .child(div().flex_1().min_w_0().child(seek))
-                .child(buttons)
-                .child(self.sound(Volume::Slider(px(VOLUME_WIDTH)), cx))
-                .child(self.fullscreen_button(cx)),
-            // The two sides share what the middle leaves them evenly, so the transport and the
-            // seek bar stay centred. `classic` works out how wide the middle is and how the
-            // volume draws.
             _ => {
-                let (middle, volume) = Self::classic(window, tools, cx);
-                base.items_center()
-                    .gap_4()
-                    .child(self.now_playing(show_track, window, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap_1()
-                            .flex_none()
-                            .w(middle)
-                            .child(transport(&self.playback, false, cx))
-                            .child(seek),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .justify_end()
-                            .gap_2()
-                            .child(buttons)
-                            .child(self.sound(volume, cx))
-                            .child(self.fullscreen_button(cx)),
-                    )
+                let parts = BarParts {
+                    now_playing: self
+                        .now_playing(Self::shows_track(window), window, cx)
+                        .into_any_element(),
+                    // The wrapper matches the one the fullscreen player hears the pointer through, so
+                    // the two round to the same pixels.
+                    transport: div()
+                        .flex()
+                        .items_center()
+                        .child(transport(&self.playback, false, cx))
+                        .into_any_element(),
+                    seek: seek.into_any_element(),
+                    tools: Some(buttons.into_any_element()),
+                    sound: self.sound(Self::volume(window, cx), cx),
+                    corner: self.fullscreen_button(cx),
+                };
+                Self::arrange(base, parts, window, cx)
             }
         };
 
