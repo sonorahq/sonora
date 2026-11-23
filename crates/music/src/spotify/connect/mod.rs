@@ -5,12 +5,12 @@
 //! The worker keeps Sonora's queue authoritative and exchanges state with Spotify's Dealer and
 //! Connect endpoints.
 
-mod dealer;
 mod jam;
 pub(super) mod sequence;
 
 pub(super) use jam::INVITE;
-use jam::{JAM_TOPIC, Read};
+use jam::Read;
+use spotifyapis::proto::jam::JAM_TOPIC;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher as _};
@@ -21,24 +21,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
-use flate2::{Compression, write::GzEncoder};
-use http::{
-    HeaderMap, HeaderValue, Method, StatusCode,
-    header::{ACCEPT, CONTENT_ENCODING, CONTENT_TYPE},
-};
+use http::StatusCode;
 
-use crate::spotify::proto::connect::{
-    Capabilities, Cluster, ClusterUpdate, ContextIndex, ContextPlayerOptions, Device as WireDevice,
-    DeviceInfo, DeviceType, PlayerState, ProvidedTrack, PutStateReason, PutStateRequest,
-    SetVolumeCommand, SetVolumeRequest, Suppressions,
-};
-use crate::spotify::proto::connect::{ContextPage, ContextTrack, TransferState};
-use crate::spotify::proto::playlist::PlaylistModificationInfo;
-use crate::spotify::{collection as catalog, session::Session, transport, wire};
-use dealer::{Command as Wire, Dealer, Message, PayloadValue, PlayCommand, Reply, Request};
+use crate::spotify::{auth::sign_in_error, collection as catalog, session::Session, wire};
 use futures::future::BoxFuture;
 use prost::Message as _;
 use sha1::{Digest as _, Sha1};
+use spotifyapis::dealer::{
+    self, Command as Wire, Dealer, Message, PayloadValue, PlayCommand, Reply, Request,
+};
+use spotifyapis::proto::collection::UPDATE_TOPIC as COLLECTION_TOPIC;
+use spotifyapis::proto::connect::{
+    CLUSTER_TOPIC, Capabilities, Cluster, ClusterUpdate, ContextIndex, ContextPlayerOptions,
+    Device as WireDevice, DeviceInfo, DeviceType, PlayerState, ProvidedTrack, PutStateReason,
+    PutStateRequest, SetVolumeCommand, SetVolumeRequest, Suppressions, VOLUME_TOPIC,
+};
+use spotifyapis::proto::connect::{ContextPage, ContextTrack, TransferState};
+use spotifyapis::proto::playlist::{
+    PLAYLIST_TOPIC, PlaylistModificationInfo, RootlistModificationInfo, USER_TOPIC,
+};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
@@ -357,7 +358,7 @@ impl Worker {
             self.refresh_roster().await;
         } else if self.dealer.is_none() {
             self.dealer = Some(DealerLink {
-                socket: Dealer::start(self.session.clone()),
+                socket: Dealer::start(self.session.api().clone()),
                 retry_at: None,
             });
         }
@@ -400,14 +401,14 @@ impl Worker {
     /// Routes account notifications, playback updates, and Jam events.
     fn dealer_message(&mut self, message: Message) -> anyhow::Result<()> {
         let uri = &message.uri;
-        if dealer::topic(uri, "hm://connect-state/v1/cluster") {
+        if dealer::topic(uri, CLUSTER_TOPIC) {
             let update: ClusterUpdate = message.decode_protobuf()?;
             if let Some(cluster) = update.cluster {
                 self.report_cluster(cluster);
             }
-        } else if dealer::topic(uri, "hm://connect-state/v1/connect/volume") {
+        } else if dealer::topic(uri, VOLUME_TOPIC) {
             self.volume(message.decode_protobuf()?);
-        } else if dealer::topic(uri, "hm://collection/collection") {
+        } else if dealer::topic(uri, COLLECTION_TOPIC) {
             if let PayloadValue::Raw(bytes) = message.payload {
                 for event in collection_changes(bytes)? {
                     self.out.send(event).ok();
@@ -415,26 +416,44 @@ impl Worker {
             }
         } else if self.mode == Mode::Publish && dealer::topic(uri, JAM_TOPIC) {
             self.jam_update(message);
-        } else if dealer::topic(uri, "hm://playlist/v2/playlist") {
+        } else if dealer::topic(uri, PLAYLIST_TOPIC) {
             let PayloadValue::Raw(bytes) = message.payload else {
                 return Ok(());
             };
             let change = PlaylistModificationInfo::decode(bytes)?;
             let uri = change.uri();
             if let Some(id) = uri.strip_prefix("spotify:playlist:") {
-                crate::spotify::playlists::invalidate_summary(
-                    &self.session,
-                    id,
-                    change.new_revision.as_deref().unwrap_or_default(),
-                );
                 self.out.send(Event::PlaylistChanged(id.to_owned())).ok();
             }
-        } else if dealer::topic(uri, "hm://playlist/user")
+        } else if dealer::topic(uri, USER_TOPIC)
             || dealer::topic(
                 uri,
                 &format!("hm://playlist/v2/user/{}/rootlist", self.session.username()),
             )
         {
+            if let PayloadValue::Raw(bytes) = message.payload
+                && let Ok(notice) = RootlistModificationInfo::decode(bytes.clone())
+            {
+                let revision = if notice.new_revision.starts_with(b"spotify:") {
+                    // Some notifications put the root-list URI before the revision.
+                    PlaylistModificationInfo::decode(bytes)
+                        .ok()
+                        .and_then(|update| {
+                            let root = format!("spotify:user:{}:rootlist", self.session.username());
+                            (update.uri() == root)
+                                .then_some(update.new_revision)
+                                .flatten()
+                        })
+                } else {
+                    Some(notice.new_revision)
+                };
+                if revision
+                    .as_deref()
+                    .is_some_and(|revision| self.session.has_rootlist_revision(revision))
+                {
+                    return Ok(());
+                }
+            }
             self.out.send(Event::LibraryChanged).ok();
         }
         Ok(())
@@ -454,11 +473,6 @@ impl Worker {
         if was_ready {
             self.out.send(Event::Roster(Roster::default())).ok();
         }
-        self.drop_held();
-    }
-
-    /// Answers the Jam link held for the dealer as unreadable, as the dealer did not come up.
-    fn drop_held(&mut self) {
         if self.held.take().is_some() {
             self.out.send(Event::Invite(None)).ok();
         }
@@ -503,7 +517,13 @@ impl Worker {
         if !self.dealer_ready() {
             return;
         }
-        if let Err(error) = device_state(&self.session, Method::DELETE, "", Bytes::new()).await {
+        if let Err(error) = self
+            .session
+            .api()
+            .unregister_device(self.session.device_id())
+            .await
+            .map_err(sign_in_error)
+        {
             log::warn!("connect: cannot leave the device list: {error}");
         }
     }
@@ -582,13 +602,14 @@ impl Worker {
         }
         let Some(now) = &self.now else {
             if self.active_since.take().is_some()
-                && let Err(error) = device_state(
-                    &self.session,
-                    Method::PUT,
-                    "/inactive?notify=false",
-                    Bytes::new(),
-                )
-                .await
+                && let Err(error) = {
+                    let connection = self.session.connection_id().to_owned();
+                    self.session
+                        .api()
+                        .deactivate_device(self.session.device_id(), &connection)
+                        .await
+                        .map_err(sign_in_error)
+                }
             {
                 log::warn!("connect: cannot go inactive: {error}");
             }
@@ -646,7 +667,9 @@ impl Worker {
                 self.observe_clock(&cluster);
                 Some(cluster)
             }
-            Err(error) if transport::status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) => {
+            Err(error)
+                if spotifyapis::http::status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) =>
+            {
                 self.backoff = (self.backoff * 2).clamp(BACKOFF_FIRST, BACKOFF_LAST);
                 let until = Instant::now() + self.backoff;
                 self.blocked_until = Some(until);
@@ -1022,7 +1045,6 @@ impl Worker {
     /// jam names a context Sonora cannot read itself. Both send no tracks along, so the context
     /// is read back first to find the song and what follows it.
     fn play(&self, play: PlayCommand) {
-        let uri = play.context.uri.clone();
         let out = self.out.clone();
         let session = self.session.clone();
         let blind = play.context.pages.iter().all(|page| page.tracks.is_empty());
@@ -1030,7 +1052,13 @@ impl Worker {
             skip.track_uri.as_deref().is_none_or(str::is_empty)
                 && skip.track_uid.as_deref().is_some_and(|uid| !uid.is_empty())
         });
-        let (Some(uri), true) = (uri, blind && (by_uid || collection_is_unread(&play))) else {
+        let Some(uri) = play
+            .context
+            .uri
+            .as_deref()
+            .filter(|uri| blind && (by_uid || collection(uri).is_none()))
+            .map(str::to_owned)
+        else {
             out.send(Event::Command(Command::Start(started_by_play(play, None))))
                 .ok();
             return;
@@ -1134,27 +1162,6 @@ impl Worker {
 }
 
 /// Sends device state with the connection ID assigned by Sonora's Dealer socket.
-async fn device_state(
-    session: &Session,
-    method: Method,
-    suffix: &str,
-    body: Bytes,
-) -> anyhow::Result<Bytes> {
-    let mut headers =
-        HeaderMap::from_iter([(ACCEPT, HeaderValue::from_static("application/x-protobuf"))]);
-    if method == Method::PUT {
-        headers.insert("x-spotify-connection-id", session.connection_id().parse()?);
-        if !body.is_empty() {
-            headers.insert(
-                CONTENT_TYPE,
-                HeaderValue::from_static("application/x-protobuf"),
-            );
-        }
-    }
-    let path = format!("/connect-state/v1/devices/{}{suffix}", session.device_id());
-    transport::send(session, method, &path, headers, body).await
-}
-
 /// Registers this Dealer connection as a hidden, non-playable observer.
 async fn register_observer(session: &Session) -> anyhow::Result<Cluster> {
     let request = PutStateRequest {
@@ -1178,45 +1185,41 @@ async fn register_observer(session: &Session) -> anyhow::Result<Cluster> {
 
 /// Sends a Connect state update and decodes the account cluster returned by Spotify.
 async fn put_state(session: &Session, request: PutStateRequest) -> anyhow::Result<Cluster> {
-    let body = device_state(session, Method::PUT, "", request.encode_to_vec().into()).await?;
-    Ok(Cluster::decode(body)?)
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .put_device_state(session.device_id(), &connection, &request)
+        .await
+        .map_err(sign_in_error)
 }
 
 /// Asks Spotify to move playback from one device to another, restoring a paused state.
 async fn move_playback(session: &Session, from: &str, to: &str) -> anyhow::Result<()> {
-    device_command(
-        session,
-        Method::POST,
-        "transfer",
-        from,
-        to,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
-            "transfer_options": { "restore_paused": "restore" },
-        }))?
-        .into(),
-    )
-    .await
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .transfer_playback(from, to, &connection)
+        .await
+        .map_err(sign_in_error)
 }
 
 /// Sends a control to the remote device without changing the local queue.
 async fn control(session: &Session, device: &str, command: Command) {
     let result = match command {
         Command::Volume(level) => {
-            device_command(
-                session,
-                Method::PUT,
-                "volume",
-                session.device_id(),
-                device,
-                "application/x-protobuf",
-                SetVolumeRequest {
-                    volume: Some(volume_word(level) as i32),
-                }
-                .encode_to_vec()
-                .into(),
-            )
-            .await
+            let connection = session.connection_id().to_owned();
+            session
+                .api()
+                .set_volume(
+                    session.device_id(),
+                    device,
+                    &connection,
+                    &SetVolumeRequest {
+                        volume: Some(volume_word(level) as i32),
+                    },
+                )
+                .await
+                .map_err(sign_in_error)
         }
         command => {
             let Some(command) = wire_command(&command, session.username()) else {
@@ -1230,65 +1233,18 @@ async fn control(session: &Session, device: &str, command: Command) {
     }
 }
 
-/// Sends a device-to-device Connect action in the format its route accepts.
-async fn device_command(
-    session: &Session,
-    method: Method,
-    command: &str,
-    from: &str,
-    to: &str,
-    mime: &'static str,
-    body: Bytes,
-) -> anyhow::Result<()> {
-    let from = crate::escape::component(from);
-    let to = crate::escape::component(to);
-    let path = format!("/connect-state/v1/connect/{command}/from/{from}/to/{to}");
-    let mut headers = HeaderMap::new();
-    transport::add_connection_id(session, &mut headers)?;
-    let mime = HeaderValue::from_static(mime);
-    headers.insert(ACCEPT, mime.clone());
-    headers.insert(CONTENT_TYPE, mime);
-    transport::send(session, method, &path, headers, body).await?;
-    Ok(())
-}
-
-/// Sends the same gzip command envelope for seeks, targeted skips, and other player controls.
+/// Sends a prepared player command to another Connect device.
 async fn player_command(
     session: &Session,
     device: &str,
-    mut command: serde_json::Value,
+    command: serde_json::Value,
 ) -> anyhow::Result<()> {
-    let from = crate::escape::component(session.device_id());
-    let to = crate::escape::component(device);
-    let path = format!("/connect-state/v1/player/command/from/{from}/to/{to}");
-    let options = if command["endpoint"] == "play" {
-        "play_options"
-    } else {
-        "options"
-    };
-    for key in [
-        "override_restrictions",
-        "only_for_local_device",
-        "system_initiated",
-    ] {
-        command[options][key] = false.into();
-    }
-    command["logging_params"] = serde_json::json!({});
-    let mut gzip = GzEncoder::new(Vec::new(), Compression::fast());
-    serde_json::to_writer(
-        &mut gzip,
-        &serde_json::json!({
-            "command": command,
-            "connection_type": "wlan",
-            "intent_id": format!("{:032x}", fastrand::u128(..)),
-        }),
-    )?;
-    let mut headers = HeaderMap::new();
-    transport::add_connection_id(session, &mut headers)?;
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
-    transport::send(session, Method::POST, &path, headers, gzip.finish()?.into()).await?;
-    Ok(())
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .player_command(session.device_id(), device, &connection, command)
+        .await
+        .map_err(sign_in_error)
 }
 
 /// How much a put matters when two are due at once: the stronger one goes out.
@@ -1326,7 +1282,7 @@ fn device_info(session: &Session, name: &str, observer: bool) -> DeviceInfo {
     let mut info = DeviceInfo {
         name: name.to_owned(),
         device_id: session.device_id().to_owned(),
-        client_id: session.client_id().to_owned(),
+        client_id: session.api().client_id().to_owned(),
         device_type: DeviceType::Observer as i32,
         ..Default::default()
     };
@@ -1561,15 +1517,6 @@ impl<'a> Occurrence<'a> {
     }
 }
 
-impl sequence::Resolved {
-    fn queued_position(&self, track: &QueuedTrack, index: Option<usize>) -> Option<usize> {
-        let mut key = Occurrence::from_queue(track);
-        // Local queue identities have no corresponding UID in Spotify's context.
-        key.uid = key.uid.filter(|uid| !uid.starts_with("sonora-"));
-        self.position(key, index)
-    }
-}
-
 /// The occurrence IDs Spotify supplies for the currently published context.
 #[derive(Default)]
 struct Uids {
@@ -1596,8 +1543,10 @@ impl Uids {
         }
         listed
             .and_then(|rows| {
-                rows.queued_position(track, index)
-                    .map(|index| &rows.tracks[index])
+                let mut key = Occurrence::from_queue(track);
+                // Local queue identities have no corresponding UID in Spotify's context.
+                key.uid = key.uid.filter(|uid| !uid.starts_with("sonora-"));
+                rows.position(key, index).map(|index| &rows.tracks[index])
             })
             .map(|row| {
                 row.uid
@@ -1868,13 +1817,6 @@ fn started_by_transfer(state: TransferState, now: i64) -> Start {
 
 /// Whether a play command names a context that Sonora has no collection to read back, such as a
 /// jam, so its tracks can only come from the context itself.
-fn collection_is_unread(play: &PlayCommand) -> bool {
-    play.context
-        .uri
-        .as_deref()
-        .is_some_and(|uri| collection(uri).is_none())
-}
-
 /// What a play command from another device asks for.
 fn started_by_play(play: PlayCommand, resolved: Option<sequence::Resolved>) -> Start {
     let rows = resolved.unwrap_or_else(|| sequence::Resolved::from_pages(play.context.pages));
@@ -1936,7 +1878,7 @@ fn millis(time: SystemTime) -> u64 {
 
 /// Track deltas and invalidations for other saved collections reported by Dealer.
 fn collection_changes(bytes: Bytes) -> Result<impl Iterator<Item = Event>, prost::DecodeError> {
-    use crate::spotify::proto::connect::CollectionUpdate;
+    use spotifyapis::proto::collection::CollectionUpdate;
     Ok(CollectionUpdate::decode(bytes)?
         .items
         .into_iter()

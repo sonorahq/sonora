@@ -3,22 +3,26 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::spotify::proto::metadata::ImageSize;
-use crate::spotify::proto::metadata::{
-    Album as AlbumMessage, Artist as ArtistMessage, Track as TrackMessage,
-};
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use bytes::Bytes;
 use prost::Message;
+use spotifyapis::proto::metadata::ImageSize;
+use spotifyapis::proto::metadata::{
+    Album as AlbumMessage, Artist as ArtistMessage, Track as TrackMessage,
+};
+use tokio::sync::mpsc;
 
-use super::proto::collection::{CollectionItem, PageRequest, PageResponse, WriteRequest};
-use super::proto::metadata::{
+use super::albums::{ALBUM_PREFIX, hydrate_saved_albums};
+use crate::spotify::{auth::sign_in_error, feeds, wire};
+use crate::{
+    ArtistRef, Credit, GenreItem, Page, PinTarget, PinTargetKind, SavedCollectionPages, Track,
+};
+use spotifyapis::proto::collection::{CollectionItem, PageRequest, WriteRequest};
+use spotifyapis::proto::metadata::{
     AudioAttributes, BatchedEntityRequest, BatchedExtensionResponse, EntityRequest, ExtensionKind,
     ExtensionQuery, Reputation, TrackDescriptors,
 };
-use crate::spotify::{feeds, transport, wire};
-use crate::{ArtistRef, Credit, GenreItem, PinTarget, PinTargetKind, Track};
 
 const LIKED_TRACKS: &str = "spotify:collection:tracks";
 const TRACK_PREFIX: &str = "spotify:track:";
@@ -34,13 +38,12 @@ const CACHE_ENTRIES: usize = 512;
 const CACHE_VALUE_BYTES: usize = 32 * 1024;
 const MAX_METADATA_AGE: Duration = Duration::from_secs(300);
 
-const PAGING: &str = "/collection/v2/paging";
-const WRITE: &str = "/collection/v2/write";
-const CONTENT: &str = "application/vnd.collection-v2.spotify.proto";
 pub(crate) const COLLECTION: &str = "collection";
 pub(crate) const ARTISTS: &str = "artist";
 pub(super) const PINS: &str = "ylpin";
 const PAGE: i32 = 300;
+// Main collection pages contain both tracks and albums.
+const COLLECTION_PAGE: i32 = 2_000;
 
 static UPDATE: AtomicU64 = AtomicU64::new(0);
 
@@ -61,6 +64,59 @@ struct CachedEntity {
 
 pub async fn saved_tracks(session: &Session) -> Result<Vec<Track>> {
     let items = saved_items(session, COLLECTION, TRACK_PREFIX).await?;
+    hydrate_saved_tracks(session, items).await
+}
+
+/// Reads the mixed collection once, then hydrates each list independently.
+pub(super) fn saved_collection(session: Session) -> SavedCollectionPages {
+    let (tracks_out, tracks) = mpsc::channel(1);
+    let (albums_out, albums) = mpsc::channel(1);
+    tokio::spawn(async move {
+        let items = tokio::select! {
+            items = saved_items(&session, COLLECTION, "spotify:") => items,
+            () = async { tokio::join!(tracks_out.closed(), albums_out.closed()); } => return,
+        };
+        let items = match items {
+            Ok(items) => items,
+            Err(error) => {
+                tracks_out.try_send(Err(anyhow::anyhow!("{error:#}"))).ok();
+                albums_out.try_send(Err(error)).ok();
+                return;
+            }
+        };
+        let mut tracks = Vec::new();
+        let mut albums = Vec::new();
+        for item in items {
+            if item.uri.starts_with(TRACK_PREFIX) {
+                tracks.push(item);
+            } else if item.uri.starts_with(ALBUM_PREFIX) {
+                albums.push(item);
+            }
+        }
+        tokio::join!(
+            send_saved_page(tracks_out, hydrate_saved_tracks(&session, tracks)),
+            send_saved_page(albums_out, hydrate_saved_albums(&session, albums)),
+        );
+    });
+    SavedCollectionPages { tracks, albums }
+}
+
+/// Finishes one list independently and stops its hydration if the consumer leaves.
+async fn send_saved_page<T>(
+    out: mpsc::Sender<Result<Page<T>>>,
+    work: impl Future<Output = Result<Vec<T>>>,
+) {
+    tokio::select! {
+        biased;
+        () = out.closed() => {}
+        result = work => {
+            out.try_send(result.map(|items| Page { total: Some(items.len()), items })).ok();
+        }
+    }
+}
+
+/// Hydrates saved tracks in collection order and applies their saved dates.
+async fn hydrate_saved_tracks(session: &Session, items: Vec<CollectionItem>) -> Result<Vec<Track>> {
     let uris: Vec<_> = items.iter().map(|item| item.uri.clone()).collect();
     let mut known = metadata(session, &uris).await?;
     Ok(items
@@ -268,8 +324,11 @@ impl Cache {
         }
 
         if !request.entity_request.is_empty() {
-            let response: BatchedExtensionResponse =
-                transport::rpc(session, transport::METADATA, request).await?;
+            let response: BatchedExtensionResponse = session
+                .api()
+                .extended_metadata(request)
+                .await
+                .map_err(sign_in_error)?;
             let mut cache = self.0.lock().expect("Spotify metadata cache poisoned");
             for array in response.extended_metadata {
                 let Ok(kind) = ExtensionKind::try_from(array.extension_kind) else {
@@ -511,8 +570,12 @@ pub(super) async fn set_saved(session: &Session, set: &str, uri: &str, saved: bo
             std::process::id()
         ),
     };
-    transport::post_proto(session, WRITE, CONTENT, true, &request)
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .update_collection(&request, &connection)
         .await
+        .map_err(sign_in_error)
         .context("cannot update the saved collection")?;
     Ok(())
 }
@@ -531,12 +594,18 @@ pub(crate) async fn saved_items(
             username: username.to_owned(),
             set: set.to_owned(),
             token,
-            limit: PAGE,
+            limit: if set == COLLECTION {
+                COLLECTION_PAGE
+            } else {
+                PAGE
+            },
         };
-        let raw = transport::post_proto(session, PAGING, CONTENT, false, &request)
+        let page = session
+            .api()
+            .collection_page(&request)
             .await
+            .map_err(sign_in_error)
             .context("cannot read the saved collection")?;
-        let page = PageResponse::decode(raw).context("cannot decode the collection page")?;
 
         found.extend(
             page.items
@@ -587,7 +656,7 @@ pub(super) async fn pins(session: &Session) -> Result<Vec<PinTarget>> {
         .filter(|(_, uri)| seen.insert(uri.clone()))
         .collect();
     let uris = pins.iter().map(|(_, uri)| uri.as_str()).collect();
-    let mut cards = feeds::cards(session, uris, false).await?;
+    let mut cards = feeds::cards(session, uris, HashMap::new(), false).await?;
     Ok(pins
         .into_iter()
         .map(|(kind, uri)| {
@@ -619,7 +688,7 @@ mod tests {
     #[test]
     fn decodes_collection_items_and_preserves_absent_timestamps() {
         // Two nested items, followed by a continuation token.
-        let page = PageResponse::decode(
+        let page = spotifyapis::proto::collection::PageResponse::decode(
             &b"\x0a\x06\x0a\x01a\x10\xac\x02\x0a\x05\x0a\x01b\x18\x01\x12\x04next"[..],
         )
         .unwrap();

@@ -125,8 +125,6 @@ powerbar-song = Go to song
 # search page
 search-placeholder = What do you want to listen to?
 search-browse = Browse
-search-browse-see-all = See all
-search-browse-see-all-for = See all { $shelf }
 search-submit = Search
 search-open-link = Open link in Sonora
 search-recent = Recent searches

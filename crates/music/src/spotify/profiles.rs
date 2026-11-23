@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 
-use crate::spotify::proto::metadata::{ExtensionKind, IdentityProfile};
-use crate::spotify::proto::profile::{Profile, PublicPlaylist};
-use crate::spotify::{collection, transport, wire};
-use crate::{Contributor, Playlist, UserDetail, UserProfile, escape};
+use crate::spotify::{auth::sign_in_error, collection, wire};
+use crate::{Contributor, Playlist, UserDetail, UserProfile};
+use spotifyapis::proto::metadata::{ExtensionKind, IdentityProfile};
+use spotifyapis::proto::profile::PublicPlaylist;
 
 const USER_PREFIX: &str = "spotify:user:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
@@ -19,15 +19,17 @@ pub fn username(uri: &str) -> String {
 
 pub async fn profile(session: &Session, user_id: &str) -> Result<UserDetail> {
     let id = username(user_id);
-    let path = format!(
-        "/user-profile-view/v3/profile/{}?playlist_limit={PLAYLISTS}&artist_limit=0",
-        escape::component(&id)
-    );
-    let headers = transport::proto_headers(transport::PROTOBUF, None);
-    let found: Profile = transport::get(session, &path, headers)
+    let found = session
+        .api()
+        .profile(&id, PLAYLISTS)
         .await
+        .map_err(sign_in_error)
         .with_context(|| format!("cannot read the profile of {id}"))?;
-    let playlists = found.public_playlists.iter().filter_map(listed).collect();
+    let playlists = found
+        .public_playlists
+        .into_iter()
+        .filter_map(listed)
+        .collect();
 
     Ok(UserDetail {
         name: if found.name.is_empty() {
@@ -129,7 +131,7 @@ pub(super) async fn playlist_owners(session: &Session, playlists: &mut [Playlist
     }
 }
 
-fn listed(found: &PublicPlaylist) -> Option<Playlist> {
+fn listed(found: PublicPlaylist) -> Option<Playlist> {
     let id = found
         .uri
         .strip_prefix(PLAYLIST_PREFIX)
@@ -138,18 +140,18 @@ fn listed(found: &PublicPlaylist) -> Option<Playlist> {
 
     Some(Playlist {
         id: id.to_owned(),
-        name: found.name.clone(),
+        name: found.name,
         owner: if found.owner_name.is_empty() {
             owner_id.clone()
         } else {
-            found.owner_name.clone()
+            found.owner_name
         },
         owner_id,
         owned: false,
         collaborative: false,
         blend: false,
         public: true,
-        cover: wire::fetchable(&found.image_url).then(|| found.image_url.clone()),
+        cover: wire::fetchable(&found.image_url).then_some(found.image_url),
         track_count: 0,
         modified_at: None,
         read_only: false,

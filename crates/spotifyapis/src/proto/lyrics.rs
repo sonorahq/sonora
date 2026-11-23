@@ -1,5 +1,7 @@
 //! Spotify's color-lyrics v3 protobuf response.
 
+pub(crate) const ENDPOINT: &str = "/color-lyrics/v3/track";
+
 /// The optional lyric sheet returned for a track.
 #[derive(prost::Message)]
 pub struct Answer {

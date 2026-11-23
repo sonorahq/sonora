@@ -39,7 +39,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
-- Spotify Browse in Search groups categories into shelves with See all links.
 - Spotify renews sign-ins in the background. Sign in again once if you’re upgrading from the previous Spotify player.
 - Spotify playback without Soloist follows Sonora’s playback cache settings immediately.
 

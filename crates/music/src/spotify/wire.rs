@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
 
-use crate::spotify::proto::metadata::Image;
-use crate::spotify::proto::metadata::ImageSize;
-use crate::spotify::proto::playlist::{ListAttributes, SelectedListContent as RootList};
+use spotifyapis::proto::metadata::Image;
+use spotifyapis::proto::metadata::ImageSize;
+use spotifyapis::proto::playlist::{ListAttributes, SelectedListContent as RootList};
 
 use crate::models;
 
@@ -14,8 +14,10 @@ const IMAGE_PREFIXES: [&str; 3] = [
     "https://image-cdn-ak.spotifycdn.com/image/",
 ];
 const ALBUM_COVER: &str = "ab67616d0000";
+const ARTIST_PORTRAIT: &str = "ab6761610000";
 /// The size codes that follow `ALBUM_COVER` in an album cover id.
 const LARGE: &str = "b273";
+const MEDIUM: &str = "1e02";
 const ORIGINAL: &str = "82c1";
 const BLEND: &str = "blend";
 const BY_SIZE: [&str; 4] = ["xlarge", "large", "default", "small"];
@@ -84,21 +86,45 @@ pub(super) fn playlist_image(address: &str) -> Option<String> {
 /// two-byte size code and a hash shared by every size, and `82c1` asks the CDN for the original
 /// upload, up to 2000 pixels where the listed sizes stop at 640.
 pub fn cover_at(url: &str, size: models::CoverSize) -> Option<String> {
-    let id = IMAGE_PREFIXES
-        .iter()
-        .find_map(|prefix| url.strip_prefix(*prefix))?;
-    let (album, rest) = id.split_at_checked(ALBUM_COVER.len())?;
-    if album != ALBUM_COVER || rest.len() != 28 {
-        return None;
-    }
     let code = match size {
         models::CoverSize::Large => LARGE,
         models::CoverSize::Full => ORIGINAL,
     };
-    Some(format!(
-        "{IMAGE_CDN}{ALBUM_COVER}{code}{}",
-        &rest[code.len()..]
-    ))
+    let (_, hash) = album_cover_id(url)?;
+    Some(format!("{IMAGE_CDN}{ALBUM_COVER}{code}{hash}"))
+}
+
+/// Uses a verified Spotify CDN size that covers the requested physical pixels.
+pub(super) fn thumbnail_at(url: &str, edge: u32) -> Option<String> {
+    if let Some((code, hash)) = album_cover_id(url) {
+        return (code == LARGE && edge <= 300)
+            .then(|| format!("{IMAGE_CDN}{ALBUM_COVER}{MEDIUM}{hash}"));
+    }
+    let (current, hash) = sized_image_id(url, ARTIST_PORTRAIT)?;
+    let (pixels, _) = [(160, "f178"), (320, "5174"), (640, "e5eb")]
+        .into_iter()
+        .find(|&(_, code)| code == current)?;
+    let smaller = match edge {
+        0..=160 if pixels > 160 => "f178",
+        161..=320 if pixels > 320 => "5174",
+        _ => return None,
+    };
+    Some(format!("{IMAGE_CDN}{ARTIST_PORTRAIT}{smaller}{hash}"))
+}
+
+fn album_cover_id(url: &str) -> Option<(&str, &str)> {
+    sized_image_id(url, ALBUM_COVER)
+}
+
+fn sized_image_id<'a>(url: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
+    let id = IMAGE_PREFIXES
+        .iter()
+        .find_map(|prefix| url.strip_prefix(*prefix))?
+        .strip_prefix(kind)?;
+    if id.len() != 28 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(id.split_at(4))
 }
 
 /// An image's width in pixels, taken from its size class when the metadata leaves the width
@@ -196,7 +222,7 @@ fn playlist_row(
     owner: &str,
     length: i32,
     stamp: i64,
-    permissions: Option<&crate::spotify::proto::playlist::Capabilities>,
+    permissions: Option<&spotifyapis::proto::playlist::Capabilities>,
 ) -> models::Playlist {
     let label = |name: &str| {
         if name.is_empty() {

@@ -4444,6 +4444,7 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "shannon",
+ "spotifyapis",
  "storage",
  "symphonia",
  "tempfile",
@@ -5688,6 +5689,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f29a7c4c7a84cef41a53d338a2d10d4f1b043ea5c3dde26db22ee2c9c1b1c75b"
+dependencies = [
+ "prost",
 ]
 
 [[package]]
@@ -7155,6 +7165,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9571ea910ebd84c86af4b3ed27f9dbdc6ad06f17c5f96146b2b671e2976744f"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "spotifyapis"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "fastrand",
+ "flate2",
+ "futures",
+ "log",
+ "percent-encoding",
+ "prost",
+ "prost-types",
+ "reqwest 0.13.5",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

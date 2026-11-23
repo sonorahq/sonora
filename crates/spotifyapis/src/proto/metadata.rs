@@ -2,6 +2,8 @@
 
 use bytes::Bytes;
 
+pub(crate) const ENDPOINT: &str = "/extended-metadata/v0/extended-metadata";
+
 #[derive(prost::Message)]
 pub struct Artist {
     #[prost(bytes = "bytes", optional, tag = "1")]
@@ -664,3 +666,11 @@ pub enum ExtensionKind {
 //     #[prost(message, optional, tag = "1")]
 //     pub original_audio: Option<Audio>,
 // }
+
+#[derive(prost::Message)]
+pub struct SearchGenreMetadata {
+    #[prost(string, tag = "1")]
+    pub name: String,
+    #[prost(string, tag = "2")]
+    pub image_url: String,
+}

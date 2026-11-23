@@ -389,19 +389,38 @@ impl Shelf {
         if !self.is_wanted(id) {
             return Some(kept);
         }
-        let shelf = self.clone();
-        let owned = id.to_owned();
-        let promoted = tokio::task::spawn_blocking(move || shelf.promote(&owned, kept))
-            .await
-            .map_err(anyhow::Error::from)
-            .and_then(|promoted| promoted);
-        match promoted {
+        match self.promote_cached(id, kept).await {
             Ok(kept) => Some(kept),
             Err(error) => {
                 log::warn!("vault: cannot move a cached track to the downloads: {error:#}");
                 self.find_in(prk, Place::Cache, id, variant)
             }
         }
+    }
+
+    /// Pins a complete cached copy without asking the provider to fetch it again.
+    pub(crate) async fn pin_cached(&self, id: &str, variant: &str) -> bool {
+        if !self.vault.caching.load(Ordering::Relaxed) {
+            return false;
+        }
+        let Some(prk) = self.vault.ready().await else {
+            return false;
+        };
+        let Some(kept) = self.find_in(prk, Place::Cache, id, variant) else {
+            return false;
+        };
+        self.promote_cached(id, kept)
+            .await
+            .inspect_err(|error| {
+                log::warn!("vault: cannot move a cached track to the downloads: {error:#}")
+            })
+            .is_ok()
+    }
+
+    async fn promote_cached(&self, id: &str, kept: Kept) -> Result<Kept> {
+        let shelf = self.clone();
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || shelf.promote(&id, kept)).await?
     }
 
     /// Wraps `source` so that everything it yields is sealed into the vault as it passes, and

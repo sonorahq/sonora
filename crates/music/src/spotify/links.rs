@@ -35,19 +35,14 @@ pub(super) fn read(text: &str) -> Option<Linked> {
     }
 }
 
-/// Reads the parts of a URI after `spotify:` or of a page path after the locale, including the
-/// old form that names a playlist under its owner as `user/<owner>/playlist/<id>`.
+/// Reads the kind and ID from a Spotify URI or web path.
 fn from_parts<'a>(mut parts: impl Iterator<Item = &'a str>) -> Option<Linked> {
-    match parts.next()? {
-        "user" => {
-            let user = parts.next()?;
-            match (parts.next(), parts.next()) {
-                (Some(kind), Some(id)) => route(kind, id),
-                _ => route("user", user),
-            }
-        }
-        kind => route(kind, parts.next()?),
+    let kind = parts.next()?;
+    let id = parts.next()?;
+    if kind == "user" && parts.next().is_some() {
+        return None;
     }
+    route(kind, id)
 }
 
 fn route(kind: &str, id: &str) -> Option<Linked> {
@@ -73,7 +68,7 @@ mod tests {
         for (link, expected) in [
             ("spotify:track:t", Linked::Track("t".into())),
             ("spotify://album/a", Linked::Album("a".into())),
-            ("spotify:user:u:playlist:p", Linked::Playlist("p".into())),
+            ("spotify:playlist:p", Linked::Playlist("p".into())),
             (
                 "https://open.spotify.com/intl-de/artist/a?si=abc",
                 Linked::Artist("a".into()),
@@ -93,6 +88,8 @@ mod tests {
         for link in [
             "https://example.com/track/t",
             "spotify:show:s",
+            "spotify:user:u:playlist:p",
+            "https://open.spotify.com/user/u/playlist/p",
             "spotify:track:",
             "spotify:track",
         ] {

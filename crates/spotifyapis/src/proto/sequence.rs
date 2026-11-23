@@ -4,6 +4,11 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 
+pub(crate) const RESOLVE_CONTEXT: &str =
+    "/sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext";
+pub(crate) const RESOLVE_PAGE: &str =
+    "/sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolvePage";
+
 /// A batch of context queries and the device making them.
 #[derive(prost::Message)]
 pub struct ContextRequest {

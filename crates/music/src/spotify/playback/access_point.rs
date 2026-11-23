@@ -22,13 +22,13 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use super::super::proto::audio::{
+use crate::{SignInFailure, SignInProblem, Throttled, spotify::session::Session};
+use spotifyapis::proto::access_point::{
     APLoginFailed, APResponseMessage, APWelcome, AuthenticationType, BuildInfo, ClientHello,
     ClientProof, ClientResponseEncrypted, CpuFamily, Cryptosuite, ErrorCode, LoginCredentials,
     LoginCryptoDiffieHellmanHello, LoginCryptoDiffieHellmanResponse, LoginCryptoHelloUnion,
     LoginCryptoResponseUnion, Os, Platform, Product, ProductFlags, SystemInfo,
 };
-use crate::{SignInFailure, SignInProblem, Throttled, spotify::session::Session};
 
 const PING: u8 = 0x04;
 const PONG: u8 = 0x49;
@@ -102,8 +102,12 @@ impl AudioKeys {
             if let Some(point) = held.as_ref().filter(|point| !point.is_closed()) {
                 point.clone()
             } else {
-                let token = session.access_token().await?;
-                let addresses = &session.endpoints().await?.accesspoint;
+                let api = session.api();
+                let (addresses, token) = tokio::try_join!(api.access_points(), async {
+                    api.access_token()
+                        .await
+                        .map_err(crate::spotify::auth::sign_in_error)
+                })?;
                 let point = AccessPoint::connect(
                     addresses,
                     &token,

@@ -1,21 +1,29 @@
 use std::collections::HashMap;
 
-use super::proto::metadata::ExtensionKind;
-use crate::spotify::proto::metadata::Album as AlbumMessage;
-use crate::spotify::proto::metadata::AlbumType;
-use crate::spotify::proto::metadata::CopyrightType;
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
+use spotifyapis::proto::metadata::Album as AlbumMessage;
+use spotifyapis::proto::metadata::AlbumType;
+use spotifyapis::proto::metadata::CopyrightType;
+use spotifyapis::proto::{collection::CollectionItem, metadata::ExtensionKind};
 
 use crate::spotify::{collection, wire};
 use crate::{Album, AlbumDetail, ReleaseType, Track};
 
-const ALBUM_PREFIX: &str = "spotify:album:";
+pub(super) const ALBUM_PREFIX: &str = "spotify:album:";
 const TRACK_PREFIX: &str = "spotify:track:";
 const UNKNOWN: &str = "Unknown";
 
 pub async fn saved_albums(session: &Session) -> Result<Vec<Album>> {
     let items = collection::saved_items(session, collection::COLLECTION, ALBUM_PREFIX).await?;
+    hydrate_saved_albums(session, items).await
+}
+
+/// Hydrates saved albums in collection order and applies their saved dates.
+pub(super) async fn hydrate_saved_albums(
+    session: &Session,
+    items: Vec<CollectionItem>,
+) -> Result<Vec<Album>> {
     let uris: Vec<String> = items.iter().map(|item| item.uri.clone()).collect();
     let mut known = metadata(session, &uris).await?;
     Ok(items

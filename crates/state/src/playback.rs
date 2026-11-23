@@ -1639,7 +1639,7 @@ impl Playback {
             Some(Whence::Album) => "album",
             Some(Whence::Playlist) => "playlist",
             Some(Whence::Artist) => "artist",
-            _ => "track",
+            _ => "tracks",
         };
         let id = id.to_owned();
         let from = origin.clone();
@@ -1658,9 +1658,10 @@ impl Playback {
                 this.enqueue = None;
                 match loaded {
                     Ok(tracks) => {
+                        let count = tracks.len();
                         let placed = this.place(tracks, origin, placement, cx);
                         if let Some(key) = placed.and_then(|placed| placed.toast(source)) {
-                            Toasts::show(Outcome::Done, key, cx);
+                            Toasts::post(Toast::new(Outcome::Done, key).count(count), cx);
                         }
                     }
                     Err(error) => {

@@ -5,14 +5,11 @@ use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use http::{HeaderValue, StatusCode, header};
 
-use super::proto::lyrics::{Answer, Line, Sheet, SyncData, SyncType};
-use super::{auth, search, transport};
+use super::{auth, search};
 use crate::lyrics::{catalog, lrc};
-use crate::{
-    Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice, escape,
-};
+use crate::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
+use spotifyapis::proto::lyrics::{Line, Sheet, SyncData, SyncType};
 
 const SOURCE: &str = "Spotify";
 
@@ -73,28 +70,14 @@ impl LyricsProvider for SpotifyLyrics {
     }
 }
 
-const ENDPOINT: &str = "/color-lyrics/v3/track";
-
 pub async fn lyrics(session: &Session, track_id: &str) -> Result<Option<Lyrics>> {
-    let path = format!("{ENDPOINT}/{}", escape::component(track_id));
-    let mut headers = transport::proto_headers(transport::PROTOBUF, Some("Linux"));
-    headers.insert(
-        header::USER_AGENT,
-        HeaderValue::from_static(concat!("Sonora/", env!("CARGO_PKG_VERSION"))),
-    );
-    let answer: Answer = match transport::get(session, &path, headers).await {
-        Ok(answer) => answer,
-        Err(error)
-            if matches!(
-                transport::status(&error),
-                Some(StatusCode::NOT_FOUND | StatusCode::GONE)
-            ) =>
-        {
-            return Ok(None);
-        }
-        Err(error) => return Err(error).context("cannot fetch Spotify lyrics"),
-    };
-    Ok(answer.lyrics.and_then(sheet))
+    let answer = session
+        .api()
+        .lyrics(track_id)
+        .await
+        .map_err(auth::sign_in_error)
+        .context("cannot fetch Spotify lyrics")?;
+    Ok(answer.and_then(|answer| answer.lyrics).and_then(sheet))
 }
 
 fn sheet(sheet: Sheet) -> Option<Lyrics> {

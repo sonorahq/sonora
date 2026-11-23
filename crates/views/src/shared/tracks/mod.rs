@@ -460,7 +460,11 @@ impl TrackSource {
 
     fn index_cell(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> AnyElement {
         let playing = self.now_playing(cell.row, cx);
-        let playable = self.plays_now(track, cx);
+        let playable = self.plays_now(track, cx)
+            && !self
+                .playlist
+                .as_ref()
+                .is_some_and(|detail| detail.read(cx).previewing_playlist());
         let (preload, press) = match playable {
             false => (None, None),
             true => {

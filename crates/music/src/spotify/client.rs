@@ -11,9 +11,9 @@ use crate::spotify::{
     albums, artists, collection, connect::sequence, playlists, profiles, search, wire,
 };
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, BrowseShelf,
-    CoverSize, GenreDetail, HomeFeed, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track,
-    UserDetail, UserProfile,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
+    GenreDetail, HomeFeed, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track, UserDetail,
+    UserProfile,
 };
 
 pub struct SpotifyClient {
@@ -87,6 +87,10 @@ impl MusicApi for SpotifyClient {
         collection::saved_tracks(&self.session).await
     }
 
+    async fn saved_collection_paged(&self) -> Option<crate::SavedCollectionPages> {
+        Some(collection::saved_collection(self.session.clone()))
+    }
+
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
         collection::set_saved(
             &self.session,
@@ -150,7 +154,15 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
-        playlists::playlist(&self.session, playlist_id).await
+        playlists::playlist(&self.session, playlist_id, None).await
+    }
+
+    async fn playlist_with_preview(
+        &self,
+        playlist_id: &str,
+        preview: tokio::sync::mpsc::Sender<crate::PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        playlists::playlist(&self.session, playlist_id, Some(preview)).await
     }
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
@@ -220,10 +232,19 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn home(&self) -> Result<HomeFeed> {
-        super::feeds::home(&self.session).await
+        let mut pages = self.home_paged().await?;
+        let mut feed = HomeFeed::default();
+        while let Some(page) = pages.recv().await {
+            feed = page?;
+        }
+        Ok(feed)
     }
 
-    async fn browse(&self) -> Result<Vec<BrowseShelf>> {
+    async fn home_paged(&self) -> Result<crate::Feed> {
+        Ok(super::feeds::home_paged(self.session.clone()))
+    }
+
+    async fn genres(&self) -> Result<Vec<Genre>> {
         super::feeds::landing(&self.session).await
     }
 
@@ -256,11 +277,27 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
-        playlists::set_cover(&self.session, playlist_id, image).await
+        self.edit_playlist_appearance(playlist_id, None, image)
+            .await
+            .map(drop)
+    }
+
+    async fn edit_playlist_appearance(
+        &self,
+        playlist_id: &str,
+        name: Option<&str>,
+        image: Option<&[u8]>,
+    ) -> Result<Option<String>> {
+        playlists::edit_appearance(&self.session, playlist_id, name, image).await
     }
 
     async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
-        playlists::add_track(&self.session, playlist_id, track_id).await
+        self.add_tracks_to_playlist(playlist_id, &[track_id.to_owned()])
+            .await
+    }
+
+    async fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[String]) -> Result<()> {
+        playlists::add_tracks(&self.session, playlist_id, track_ids).await
     }
 
     async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
@@ -296,11 +333,18 @@ impl MusicApi for SpotifyClient {
         let mut playlists = Vec::new();
         let mut offset = 0;
         let mut seen = HashSet::new();
+        let mut revision = None;
         loop {
             let rootlist = playlists::rootlist_page(&self.session, offset, 300).await?;
             let Some(contents) = &rootlist.contents else {
+                revision = None;
                 break;
             };
+            if offset == 0 {
+                revision = rootlist.revision.clone();
+            } else if revision != rootlist.revision {
+                revision = None;
+            }
             let count = contents.items.len();
             playlists.extend(
                 wire::playlists_from(&rootlist)
@@ -317,6 +361,7 @@ impl MusicApi for SpotifyClient {
             playlist.owned = playlist.owner_id == self.session.username();
         }
         profiles::playlist_owners(&self.session, &mut playlists).await;
+        self.session.remember_rootlist_revision(revision);
 
         Ok(playlists)
     }

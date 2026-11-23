@@ -90,6 +90,7 @@ pub trait Renew: Send + Sync {
 }
 
 /// Where one file is fetched from, and how every request for it is made.
+#[derive(Clone)]
 pub struct Address {
     /// The subsystem the download logs as, such as `"tidal"`.
     name: &'static str,

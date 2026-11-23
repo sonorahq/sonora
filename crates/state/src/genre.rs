@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{Context, Entity, Task};
-use music::{BrowseShelf, GenreDetail, GenreSection, MusicApi};
+use music::{Genre, GenreDetail, GenreSection, MusicApi};
 use serde::Deserialize;
 use tokio::task::AbortHandle;
 
@@ -24,7 +24,7 @@ type Covers = HashMap<String, Option<String>>;
 /// The genres the search page browses. Nothing is fetched until a screen calls `load`, and a
 /// sign-in fetches them again only after that.
 pub struct Genres {
-    shelves: Rc<Vec<BrowseShelf>>,
+    genres: Rc<Vec<Genre>>,
     /// Whether a screen has asked for the genres, so a sign-in knows to fetch them.
     wanted: bool,
     loading: bool,
@@ -52,7 +52,7 @@ impl Genres {
             SessionEvent::SignedOut => {
                 this.task = None;
                 this.dressing = None;
-                this.shelves = Rc::new(Vec::new());
+                this.genres = Rc::new(Vec::new());
                 this.loading = false;
                 this.error = None;
                 cx.notify();
@@ -62,7 +62,7 @@ impl Genres {
         .detach();
 
         Self {
-            shelves: Rc::new(Vec::new()),
+            genres: Rc::new(Vec::new()),
             wanted: false,
             loading: false,
             error: None,
@@ -74,17 +74,16 @@ impl Genres {
         }
     }
 
-    pub fn shelves(&self) -> Rc<Vec<BrowseShelf>> {
-        self.shelves.clone()
+    pub fn genres(&self) -> Rc<Vec<Genre>> {
+        self.genres.clone()
     }
 
     pub fn adopt(&mut self, id: &str, cover: Option<String>, cx: &mut Context<Self>) {
         let Some(cover) = cover else {
             return;
         };
-        let Some(genre) = Rc::make_mut(&mut self.shelves)
+        let Some(genre) = Rc::make_mut(&mut self.genres)
             .iter_mut()
-            .flat_map(|shelf| &mut shelf.genres)
             .find(|genre| genre.id == id && genre.cover.is_none())
         else {
             return;
@@ -95,15 +94,9 @@ impl Genres {
     }
 
     pub fn forget(&mut self, id: &str, cx: &mut Context<Self>) {
-        let mut changed = false;
-        let shelves = Rc::make_mut(&mut self.shelves);
-        for shelf in shelves.iter_mut() {
-            let count = shelf.genres.len();
-            shelf.genres.retain(|genre| genre.id != id);
-            changed |= count != shelf.genres.len();
-        }
-        shelves.retain(|shelf| !shelf.genres.is_empty() || shelf.see_all.is_some());
-        if changed {
+        let kept = self.genres.len();
+        Rc::make_mut(&mut self.genres).retain(|genre| genre.id != id);
+        if self.genres.len() != kept {
             cx.notify();
         }
     }
@@ -120,7 +113,7 @@ impl Genres {
     /// wanted, and the sign-in fetches them.
     pub fn load(&mut self, cx: &mut Context<Self>) {
         self.wanted = true;
-        if self.loading || !self.shelves.is_empty() {
+        if self.loading || !self.genres.is_empty() {
             return;
         }
         let Some(client) = self.session.read(cx).client() else {
@@ -134,13 +127,13 @@ impl Genres {
         let io = self.io.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
             let lister = client.clone();
-            let loaded = join(io.spawn(async move { lister.browse().await })).await;
+            let loaded = join(io.spawn(async move { lister.genres().await })).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match crate::settled(loaded, cx) {
-                    Ok(shelves) => {
-                        this.shelves = Rc::new(shelves);
+                    Ok(genres) => {
+                        this.genres = Rc::new(genres);
                         this.dress(client, cx);
                     }
                     Err(reason) => this.error = Some(reason),
@@ -156,10 +149,8 @@ impl Genres {
     /// stored for the next launch. A genre whose picture cannot be found keeps the placeholder.
     fn dress(&mut self, client: Arc<dyn MusicApi>, cx: &mut Context<Self>) {
         let listed: Vec<String> = self
-            .shelves
+            .genres
             .iter()
-            .filter(|shelf| shelf.title.is_empty())
-            .flat_map(|shelf| &shelf.genres)
             .filter(|genre| genre.cover.is_none())
             .take(DRESSED)
             .map(|genre| genre.id.clone())

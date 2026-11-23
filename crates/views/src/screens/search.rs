@@ -22,8 +22,8 @@ use ui::ActiveTheme as _;
 use ui::{
     Activate, Button, Card, Cascade, Deck, Deselect, Dismiss, Dropdown, InlineLink, InlineLinks,
     Pinnable, Popup, Room, Scrollbar, Scroller, SelectLeft, SelectNext, SelectPrevious,
-    SelectRight, Separator, Skeleton, Submit, Text, Theme, Unfold, VAST, clock, eyebrow, heading,
-    scrolled, snapped, tabular, vacant,
+    SelectRight, Separator, Submit, Text, Theme, Unfold, VAST, clock, eyebrow, scrolled, snapped,
+    tabular, vacant,
 };
 
 use crate::shared::cards;
@@ -1057,94 +1057,26 @@ impl SearchView {
     }
 
     fn browse(&self, gutter: Pixels, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let state = self.genres.read(cx);
-        let shelves = state.shelves();
+        let found = self.genres.read(cx).genres();
         let theme = *cx.theme();
         let pad = theme.metrics.inset;
-        let width = cells::content_width(window, pad * 2., cx).min(VAST);
-        let content = match shelves.as_slice() {
-            [flat] if flat.title.is_empty() => {
-                shelves::grid("genre", Rc::new(flat.genres.clone()), width, window, cx)
-            }
-            [] if state.is_loading() => div()
-                .flex()
-                .gap(theme.metrics.pad)
-                .children((0..shelves::lanes(width)).map(|_| {
-                    Skeleton::new()
-                        .flex_1()
-                        .h(shelves::category_height(cx))
-                        .rounded(theme.radius)
-                }))
-                .into_any_element(),
-            [] => vacant(t!("genre-empty"), cx).into_any_element(),
-            _ => div()
-                .flex()
-                .flex_col()
-                .gap(pad + theme.metrics.pad)
-                .children(shelves.iter().map(|shelf| {
-                    let title = SharedString::from(shelf.title.clone());
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(theme.metrics.pad * 2.)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap(theme.metrics.pad)
-                                .child(
-                                    heading(title.clone(), cx)
-                                        .id(SharedString::from(format!(
-                                            "browse-shelf-{}",
-                                            shelf.id
-                                        )))
-                                        .role(Role::Heading)
-                                        .aria_level(3)
-                                        .aria_label(title),
-                                )
-                                .when_some(shelf.see_all.as_ref(), |row, id| {
-                                    let id = SharedString::from(id.clone());
-                                    row.child(
-                                        Button::new(SharedString::from(format!("browse-all-{id}")))
-                                            .small()
-                                            .outline()
-                                            .label(t!("search-browse-see-all"))
-                                            .name(t!(
-                                                "search-browse-see-all-for",
-                                                shelf = shelf.title.as_str()
-                                            ))
-                                            .trailing("icons/chevron-right.svg")
-                                            .on_click(move |_, _, cx| {
-                                                navigate(Destination::Genre(id.clone()), cx);
-                                            }),
-                                    )
-                                }),
-                        )
-                        .child(shelves::categories(&shelf.id, &shelf.genres, width, cx))
-                }))
-                .into_any_element(),
-        };
+        let width = cells::content_width(window, pad * 2., cx);
+        let plates = shelves::grid("genre", found, width, window, cx);
 
-        let label = t!("search-browse");
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
-            .gap(theme.metrics.pad)
-            .child(
-                div().px(gutter).child(
-                    div()
-                        .id("search-browse-heading")
-                        .role(Role::Heading)
-                        .aria_level(2)
-                        .aria_label(label.clone())
-                        .text_size(theme.text(Text::Display))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(label),
-                ),
-            )
+            .child(div().px(gutter).child({
+                let label = t!("search-browse");
+                div()
+                    .id("search-browse-heading")
+                    .role(Role::Heading)
+                    .aria_level(2)
+                    .aria_label(label.clone())
+                    .child(eyebrow(label, cx))
+            }))
             .child(
                 Scroller::new("search-browse", &self.browsing)
                     .hold()
@@ -1152,9 +1084,8 @@ impl SearchView {
                     .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .fade_top(FADE)
                     .px(gutter)
-                    .pt(theme.metrics.pad)
                     .pb(pad)
-                    .child(content),
+                    .child(plates),
             )
             .into_any_element()
     }

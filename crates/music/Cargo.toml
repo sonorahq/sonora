@@ -41,6 +41,7 @@ open.workspace = true
 opensubsonic.workspace = true
 percent-encoding.workspace = true
 prost.workspace = true
+spotifyapis.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 roxmltree.workspace = true

@@ -1,26 +1,15 @@
 //! Jam invites, membership, and Dealer notifications.
 
-use bytes::Bytes;
-use http::{HeaderValue, Method, StatusCode};
-use prost::Message as _;
+use http::StatusCode;
 
-use super::{Worker, dealer::Message};
+use super::Worker;
 use crate::connect::{Event, Invite, Jam, JamMember, Mode};
-use crate::spotify::{
-    proto::connect::{SessionUpdate, SessionUpdateReason, SocialSession},
-    session::Session,
-    transport,
-};
+use crate::spotify::{auth::sign_in_error, session::Session};
+use spotifyapis::dealer::Message;
+use spotifyapis::proto::jam::{SessionUpdate, SessionUpdateReason, SocialSession};
 
 /// Where a Jam's token goes to make a link that opens in Spotify's apps and on the web.
 pub(in crate::spotify) const INVITE: &str = "https://open.spotify.com/socialsession/";
-/// The dealer topic that reports changes to the group session the listener is in.
-pub(super) const JAM_TOPIC: &str = "social-connect/v2/session_update";
-const JAM_JOIN: &str = "/social-connect/v2/sessions/join";
-const JAM_CURRENT: &str = "/social-connect/v2/sessions/current";
-const JAM_START: &str = "/social-connect/v2/sessions/current_or_new";
-const JAM_INFO: &str = "/social-connect/v2/sessions/info";
-const JAM_ACTIONS: &str = "/social-connect/v3/sessions";
 
 impl Worker {
     /// Joins the group session a shared link names, as a listener on this device. Spotify then
@@ -32,11 +21,13 @@ impl Worker {
         let Some(token) = jam_token(link).await else {
             return log::warn!("connect: no jam token in the link");
         };
-        let endpoint = format!(
-            "{JAM_JOIN}/{token}?playback_control=listen_and_control&join_type=deeplinking&local_device_id={}",
-            self.session.device_id()
-        );
-        self.enter_jam(&Method::POST, &endpoint).await;
+        let connection = self.session.connection_id().to_owned();
+        let result = self
+            .session
+            .api()
+            .join_jam(&token, self.session.device_id(), &connection)
+            .await;
+        self.enter_jam(result);
     }
 
     /// Starts one bootstrap read while the worker keeps processing Dealer updates.
@@ -72,10 +63,18 @@ impl Worker {
     /// The group session the account is in. Spotify answers 404 when there is none, which is
     /// `Ok(None)`, unlike a request that failed.
     async fn current_session(session: &Session) -> anyhow::Result<Option<Read>> {
-        match jam_read(session, &Method::GET, JAM_CURRENT).await {
-            Ok(Some(read)) => Ok(Some(read)),
+        let connection = session.connection_id().to_owned();
+        match session
+            .api()
+            .current_jam(&connection)
+            .await
+            .map_err(sign_in_error)
+        {
+            Ok(Some(read)) => Ok(Some(read_social(read, session.username()))),
             Ok(None) => Err(anyhow::anyhow!("the jam answer cannot be read")),
-            Err(error) if transport::status(&error) == Some(StatusCode::NOT_FOUND) => Ok(None),
+            Err(error) if spotifyapis::http::status(&error) == Some(StatusCode::NOT_FOUND) => {
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }
@@ -100,13 +99,17 @@ impl Worker {
             log::warn!("connect: no jam token in the link");
             return None;
         };
-        let read = jam_read(&self.session, &Method::GET, &format!("{JAM_INFO}/{token}"))
+        let connection = self.session.connection_id().to_owned();
+        let session = self
+            .session
+            .api()
+            .jam_invite(&token, &connection)
             .await
             .inspect_err(|error| log::warn!("connect: cannot look up the jam: {error}"))
             .ok()??;
         Some(Invite {
             link: format!("{INVITE}{token}"),
-            jam: read.jam,
+            jam: read_social(session, self.session.username()).jam,
         })
     }
 
@@ -116,18 +119,19 @@ impl Worker {
         if self.mode != Mode::Publish || !self.dealer_ready() {
             return log::warn!("connect: cannot start a jam while not listed as a device");
         }
-        // activate is what the desktop app asks for, and what has the session show in the others
-        let endpoint = format!(
-            "{JAM_START}?activate=true&local_device_id={}&type=REMOTE",
-            self.session.device_id()
-        );
-        self.enter_jam(&Method::GET, &endpoint).await;
+        let connection = self.session.connection_id().to_owned();
+        let result = self
+            .session
+            .api()
+            .start_jam(self.session.device_id(), &connection)
+            .await;
+        self.enter_jam(result);
     }
 
     /// Applies a start or join response, leaving empty responses for Dealer to complete.
-    async fn enter_jam(&mut self, method: &Method, endpoint: &str) {
-        match jam_read(&self.session, method, endpoint).await {
-            Ok(Some(read)) => self.set_jam(Some(read)),
+    fn enter_jam(&mut self, result: anyhow::Result<Option<SocialSession>>) {
+        match result.map_err(sign_in_error) {
+            Ok(Some(read)) => self.set_jam(Some(read_social(read, self.session.username()))),
             Ok(None) => {}
             Err(error) => {
                 log::warn!("connect: cannot start or join the jam: {error}");
@@ -161,11 +165,14 @@ impl Worker {
             self.out.send(Event::LeaveFailed).ok();
             return;
         };
-        let (method, suffix) = match owner {
-            true => (Method::DELETE, ""),
-            false => (Method::POST, "/leave"),
-        };
-        match jam_action(&self.session, &method, &id, suffix).await {
+        let connection = self.session.connection_id().to_owned();
+        match self
+            .session
+            .api()
+            .leave_jam(&id, owner, self.session.device_id(), &connection)
+            .await
+            .map_err(sign_in_error)
+        {
             Ok(_) => {
                 self.set_jam(None);
             }
@@ -199,8 +206,13 @@ impl Worker {
         else {
             return log::warn!("connect: only the owner of a jam can remove a member");
         };
-        let suffix = format!("/member/{member}/kick");
-        let answer = jam_action(&self.session, &Method::POST, &id, &suffix).await;
+        let connection = self.session.connection_id().to_owned();
+        let answer = self
+            .session
+            .api()
+            .kick_jam_member(&id, member, self.session.device_id(), &connection)
+            .await
+            .map_err(sign_in_error);
         match answer {
             Ok(_) => {
                 if let Some(Some(read)) = &mut self.jam {
@@ -215,7 +227,7 @@ impl Worker {
         }
     }
 
-    /// Accepts binary Jam updates and the JSON notifications some Dealer hosts still send.
+    /// Handles Jam notifications, which Dealer can send as JSON even after a protobuf REST call.
     pub(super) fn jam_update(&mut self, message: Message) {
         let update: anyhow::Result<SessionUpdate> = message.decode();
         let Ok(mut update) = update else {
@@ -297,23 +309,6 @@ pub(super) struct Read {
     id: String,
 }
 
-/// Reads a group session from a REST answer, or `None` when the answer names none.
-async fn jam_read(
-    session: &Session,
-    method: &Method,
-    endpoint: &str,
-) -> anyhow::Result<Option<Read>> {
-    let body = jam_request(session, method, endpoint).await?;
-    if body.is_empty() {
-        return Ok(None);
-    }
-    let session_data = SocialSession::decode(body)?;
-    Ok(
-        (!session_data.session_id.is_empty())
-            .then(|| read_social(session_data, session.username())),
-    )
-}
-
 /// Converts one decoded session, retaining owner-only invite links.
 fn read_social(session: SocialSession, own: &str) -> Read {
     let link = session
@@ -340,7 +335,10 @@ fn read_social(session: SocialSession, own: &str) -> Read {
                     .into_iter()
                     .find(|name| !name.is_empty())
                     .unwrap_or_else(|| id.clone()),
-                image: image_of(&image),
+                image: match image.strip_prefix("spotify:image:") {
+                    Some(id) => Some(format!("https://i.scdn.co/image/{id}")),
+                    None => image.starts_with("https://").then_some(image),
+                },
                 username: member.username,
                 id,
             })
@@ -360,40 +358,6 @@ fn read_social(session: SocialSession, own: &str) -> Read {
         },
         id: session.session_id,
     }
-}
-
-/// The address of a picture Spotify names either by a link or by an `spotify:image:` uri.
-fn image_of(image: &str) -> Option<String> {
-    match image.strip_prefix("spotify:image:") {
-        Some(id) => Some(format!("https://i.scdn.co/image/{id}")),
-        None => image.starts_with("https://").then(|| image.to_owned()),
-    }
-}
-
-/// Applies a membership change to a known session from the local device.
-async fn jam_action(
-    session: &Session,
-    method: &Method,
-    id: &str,
-    suffix: &str,
-) -> anyhow::Result<()> {
-    let device = session.device_id();
-    let endpoint = format!("{JAM_ACTIONS}/{id}{suffix}?local_device_id={device}");
-    jam_request(session, method, &endpoint).await?;
-    Ok(())
-}
-
-/// Uses Dealer's connection ID for Jam calls, including the stateful GET that starts one.
-async fn jam_request(session: &Session, method: &Method, endpoint: &str) -> anyhow::Result<Bytes> {
-    let separator = if endpoint.contains('?') { '&' } else { '?' };
-    let endpoint = format!("{endpoint}{separator}alt=protobuf");
-    let mut headers = transport::proto_headers(transport::PROTOBUF, None);
-    let id = HeaderValue::from_str(&session.connection_id())?;
-    if !id.is_empty() {
-        headers.insert("x-spotify-connection-id", id.clone());
-        headers.insert("spotify-connection-id", id);
-    }
-    transport::send(session, method.clone(), &endpoint, headers, Bytes::new()).await
 }
 
 /// Whether `id` is non-empty and made only of letters, digits and the `extra` characters, which

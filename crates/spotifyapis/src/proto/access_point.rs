@@ -1,4 +1,4 @@
-//! Native audio access-point authentication and storage resolution.
+//! Native audio access-point authentication.
 //!
 //! These login messages authenticate the TCP session for audio keys.
 
@@ -255,14 +255,4 @@ pub struct LoginCryptoResponseUnion {
 pub struct LoginCryptoDiffieHellmanResponse {
     #[prost(bytes, required, tag = "10")]
     pub hmac: Vec<u8>,
-}
-
-#[derive(prost::Message)]
-pub struct StorageResolveResponse {
-    #[prost(int32, tag = "1")]
-    pub result: i32,
-    #[prost(string, repeated, tag = "2")]
-    pub cdnurl: Vec<String>,
-    // #[prost(bytes, tag = "4")]
-    // pub fileid: Vec<u8>,
 }

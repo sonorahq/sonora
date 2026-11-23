@@ -3,13 +3,9 @@ use std::collections::HashSet;
 use anyhow::{Context as _, Result};
 use bytes::Bytes;
 
-use crate::spotify::proto::{connect::ContextTrack, sequence as proto};
-use crate::spotify::{collection, session::Session, transport};
+use crate::spotify::{auth::sign_in_error, collection, session::Session};
+use spotifyapis::proto::{connect::ContextTrack, sequence as proto};
 
-const RESOLVE_CONTEXT: &str =
-    "/sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext";
-const RESOLVE_PAGE: &str =
-    "/sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolvePage";
 const MAX_PAGES: usize = 40;
 const RADIO_TRACKS: usize = 50;
 
@@ -25,8 +21,11 @@ pub(in crate::spotify) async fn resolve(session: &Session, uri: &str) -> Result<
         queries: vec![query(uri)],
         client: Some(sequence_client(session)),
     };
-    let mut response: proto::ContextResponse =
-        transport::rpc(session, RESOLVE_CONTEXT, request).await?;
+    let mut response: proto::ContextResponse = session
+        .api()
+        .resolve_context(request)
+        .await
+        .map_err(sign_in_error)?;
     let result = response
         .results
         .remove(&0)
@@ -178,7 +177,11 @@ async fn resolve_pages(
     let mut response: proto::PageResponse = if count == 0 {
         proto::PageResponse::default()
     } else {
-        transport::rpc(session, RESOLVE_PAGE, request).await?
+        session
+            .api()
+            .resolve_pages(request)
+            .await
+            .map_err(sign_in_error)?
     };
     Ok((0..count as u32).map(move |index| {
         let page = response

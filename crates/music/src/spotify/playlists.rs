@@ -1,60 +1,52 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use crate::spotify::proto::metadata::ExtensionKind;
-use crate::spotify::proto::playlist::{
-    Add, AttributeKind, AttributesRequestedFields, ChangeInfo, CreateListReply, Delta,
-    GetListRequest, GetListResponse, GetListsRequest, GetListsResponse, Item, ItemAttributes,
-    ItemAttributesPartialState, ItemRequestedFields, Kind, ListAttributes,
-    ListAttributesPartialState, ListChanges, ListEntity, ListEntityRequestedFields, ListIdentifier,
-    ListResponseRequestedFields, Mov, Op, Pagination, RegisterPlaylistImageRequest,
-    RegisterPlaylistImageResponse, Rem, RequestOptions, RequestedFields, SelectedListContent,
-    SourceInfo, UpdateItemAttributes, UpdateListAttributes,
-};
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, anyhow};
 use bytes::Bytes;
 use futures::{StreamExt as _, stream};
-use http::header::{ACCEPT, CONTENT_TYPE};
-use http::{HeaderMap, HeaderValue};
 use prost::Message as _;
-use serde::Deserialize;
+use spotifyapis::proto::list_read::{
+    AttributeKind, Attributes, AttributesRequestedFields, GetListRequest, GetListResponse,
+    GetListsRequest, GetListsResponse, ItemRequestedFields, ListEntity, ListEntityRequestedFields,
+    ListIdentifier, ListResponseRequestedFields, MetaItemsRequestedFields, Pagination,
+    RequestOptions, RequestedFields,
+};
+use spotifyapis::proto::metadata::ExtensionKind;
+use spotifyapis::proto::playlist::{
+    Add, ChangeInfo, Delta, Item, ItemAttributes, ItemAttributesPartialState, Kind, ListAttributes,
+    ListAttributesPartialState, ListChanges, Mov, Op, RegisterPlaylistImageRequest, Rem,
+    SelectedListContent, SourceInfo, UpdateItemAttributes, UpdateListAttributes,
+};
+use tokio::sync::mpsc;
 
 use crate::cover::{self, CoverLimits};
 use crate::order;
-use crate::spotify::{collection, profiles, transport, wire};
-use crate::{Contributor, Playlist, PlaylistDetail, Track, escape};
+use crate::spotify::{auth::sign_in_error, collection, profiles, wire};
+use crate::{Contributor, Playlist, PlaylistDetail, PlaylistPreview, Track};
 
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const COVER_SLACK: usize = 4;
 /// Membership returns every track URI, so keep these batches smaller than cover slices.
 const MEMBERSHIP_BATCH: usize = 8;
-/// Revalidate bursts of change notifications, periodically rereading permissions and ownership.
-const SUMMARY_AGE: Duration = Duration::from_secs(30);
 const SOURCE_CLIENT: i32 = 2;
 const PICTURE_ATTRIBUTE: i32 = 3;
-/// Where the Spotify clients upload a playlist picture before they attach it.
-const IMAGE_UPLOAD: &str = "https://image-upload.spotify.com/v4/playlist";
 /// Spotify shows a playlist cover at 640 pixels at most, and its public API caps one at 256 KB.
 const COVER_LIMITS: CoverLimits = CoverLimits {
     side: 640,
     bytes: 256 * 1024,
 };
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Uploaded {
-    upload_token: String,
-}
-
 pub async fn create(session: &Session, name: &str) -> Result<String> {
     let body = changes(None, rename_op(name));
-    let reply = post(session, "/playlist/v2/playlist", &body)
+    let connection = session.connection_id().to_owned();
+    let reply = session
+        .api()
+        .create_playlist(&body, &connection)
         .await
+        .map_err(sign_in_error)
         .context("cannot create the playlist")?;
-    let reply = CreateListReply::decode(reply).context("cannot decode the created playlist")?;
 
     let id = reply
         .uri
@@ -72,8 +64,7 @@ pub async fn create(session: &Session, name: &str) -> Result<String> {
 
 pub async fn add_to_library(session: &Session, playlist_id: &str) -> Result<()> {
     let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
-    let revision = rootlist_revision(session, rootlist_uri(session)).await?;
-    let body = changes(Some(&revision), add_op(&uri));
+    let body = changes(None, add_op([item(uri)]));
     rootlist_edit(session, &body)
         .await
         .context("cannot add the playlist to the library")
@@ -86,10 +77,14 @@ pub async fn rename(session: &Session, playlist_id: &str, name: &str) -> Result<
         .context("cannot rename the playlist")
 }
 
-/// Uploads `image` and makes it the playlist's picture, as the Spotify clients do, or takes the
-/// picture off when it is `None` so Spotify shows its mosaic again.
-pub async fn set_cover(session: &Session, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
-    let op = match image {
+/// Registers a cover, then updates the cover and any new name in the same playlist write.
+pub async fn edit_appearance(
+    session: &Session,
+    playlist_id: &str,
+    name: Option<&str>,
+    image: Option<&[u8]>,
+) -> Result<Option<String>> {
+    let picture = match image {
         Some(image) => {
             let jpeg = cover::square_jpeg(image, COVER_LIMITS)?;
             let token = upload_image(session, jpeg)
@@ -98,39 +93,51 @@ pub async fn set_cover(session: &Session, playlist_id: &str, image: Option<&[u8]
             let picture = register_image(session, playlist_id, &token)
                 .await
                 .context("cannot register the cover")?;
-            picture_op(picture)
+            Some(picture)
         }
-        None => no_picture_op(),
+        None => None,
     };
+    let cover = picture.as_deref().and_then(wire::image_url);
+    let cleared = if picture.is_none() {
+        vec![PICTURE_ATTRIBUTE]
+    } else {
+        Vec::new()
+    };
+    let op = list_attributes_op(
+        ListAttributes {
+            name: name.map(str::to_owned),
+            picture,
+            ..Default::default()
+        },
+        cleared,
+    );
     edit(session, playlist_id, &changes(None, op))
         .await
-        .context("cannot change the playlist cover")
+        .context("cannot change the playlist appearance")?;
+    Ok(cover)
 }
 
 /// Sends a JPEG to Spotify's image upload host and answers the token that names it.
 async fn upload_image(session: &Session, jpeg: Vec<u8>) -> Result<String> {
-    let headers = HeaderMap::from_iter([
-        (ACCEPT, HeaderValue::from_static("application/json")),
-        (CONTENT_TYPE, HeaderValue::from_static("image/jpeg")),
-    ]);
-    let reply = transport::post_service(session, IMAGE_UPLOAD, headers, jpeg.into()).await?;
-    let uploaded: Uploaded =
-        serde_json::from_slice(&reply).context("cannot decode the upload reply")?;
-    Ok(uploaded.upload_token)
+    session
+        .api()
+        .upload_playlist_image(jpeg.into())
+        .await
+        .map_err(sign_in_error)
 }
 
 /// Turns an upload token into the picture id a playlist attribute holds.
 async fn register_image(session: &Session, playlist_id: &str, token: &str) -> Result<Bytes> {
-    let endpoint = format!(
-        "/playlist/v2/playlist/{}/register-image",
-        escape::component(playlist_id)
-    );
+    let connection = session.connection_id().to_owned();
     let request = RegisterPlaylistImageRequest {
         upload_token: token.to_owned(),
     };
-    let reply = post(session, &endpoint, &request).await?;
-    let registered = RegisterPlaylistImageResponse::decode(reply)
-        .context("cannot decode the registered picture")?;
+    let registered = session
+        .api()
+        .register_playlist_image(playlist_id, &request, &connection)
+        .await
+        .map_err(sign_in_error)
+        .context("cannot register the playlist picture")?;
     anyhow::ensure!(
         !registered.picture.is_empty(),
         "Spotify omitted the registered picture ID"
@@ -159,14 +166,18 @@ pub async fn set_public(session: &Session, playlist_id: &str, public: bool) -> R
         .context("cannot change playlist visibility")
 }
 
-pub async fn add_track(session: &Session, playlist_id: &str, track_id: &str) -> Result<()> {
-    let uri = format!("{TRACK_PREFIX}{track_id}");
-    let content = edit_snapshot(session, playlist_id).await?;
-    let body = changes(Some(&content.revision), add_op(&uri));
+pub async fn add_tracks(session: &Session, playlist_id: &str, track_ids: &[String]) -> Result<()> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    let items = track_ids
+        .iter()
+        .map(|id| item(format!("{TRACK_PREFIX}{id}")));
+    let body = changes(None, add_op(items));
 
     edit(session, playlist_id, &body)
         .await
-        .context("cannot add the track to the playlist")
+        .context("cannot add tracks to the playlist")
 }
 
 pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) -> Result<()> {
@@ -218,10 +229,15 @@ pub async fn reorder(
         .context("cannot reorder the playlist")
 }
 
-pub async fn playlist(session: &Session, playlist_id: &str) -> Result<PlaylistDetail> {
+/// Loads the complete snapshot and publishes ordered previews while hydrating it.
+pub(super) async fn playlist(
+    session: &Session,
+    playlist_id: &str,
+    preview: Option<mpsc::Sender<PlaylistPreview>>,
+) -> Result<PlaylistDetail> {
     let content = snapshot(session, playlist_id).await?;
     let mut playlist = wire::playlist_from(playlist_id, &content, session.username());
-    let tracks = playlist_tracks_and_profiles(session, &content, &mut playlist).await?;
+    let tracks = playlist_tracks_and_profiles(session, &content, &mut playlist, preview).await?;
 
     Ok(PlaylistDetail {
         playlist,
@@ -230,118 +246,20 @@ pub async fn playlist(session: &Session, playlist_id: &str) -> Result<PlaylistDe
     })
 }
 
-/// The last full summary and the revision it describes.
-#[derive(Clone)]
-pub(super) struct Summary {
-    playlist: Playlist,
-    revision: Bytes,
-    read_at: Instant,
-}
-
-/// A Dealer revision can identify an outdated summary without a DiffLists request.
-pub(super) fn invalidate_summary(session: &Session, id: &str, revision: &[u8]) {
-    if revision.is_empty() {
-        return;
-    }
-    let mut cache = session
-        .playlist_summaries()
-        .lock()
-        .expect("Spotify playlist summary cache poisoned");
-    if cache
-        .get(id)
-        .is_some_and(|entry| entry.revision != revision)
-    {
-        cache.remove(id);
-    }
-}
-
-/// Revalidates recent summaries together, rereading full snapshots for changed playlists.
-pub(super) async fn summaries(session: &Session, ids: Vec<String>) -> Vec<Playlist> {
-    let mut pending: HashSet<_> = ids.into_iter().collect();
-    let cache = session.playlist_summaries();
-    let recent: Vec<_> = {
-        let mut cache = cache
-            .lock()
-            .expect("Spotify playlist summary cache poisoned");
-        cache.retain(|_, summary| summary.read_at.elapsed() < SUMMARY_AGE);
-        pending
-            .iter()
-            .filter_map(|id| cache.get(id).cloned())
-            .collect()
-    };
-    for summary in &recent {
-        pending.remove(&summary.playlist.id);
-    }
-    // Cold entries do not need a revision check before their snapshot can start.
-    let ((mut updated, changed), cold) = tokio::join!(
-        refresh_recent_summaries(session, &recent),
-        fetch_summaries(session, pending),
-    );
-    {
-        let mut cache = cache
-            .lock()
-            .expect("Spotify playlist summary cache poisoned");
-        for summary in cold.into_iter().chain(changed) {
-            updated.push(summary.playlist.clone());
-            if !summary.revision.is_empty() {
-                cache.insert(summary.playlist.id.clone(), summary);
-            }
-        }
-    }
-    profiles::playlist_owners(session, &mut updated).await;
-    updated
-}
-
-/// Reuses unchanged summaries and reads fresh snapshots for the rest.
-async fn refresh_recent_summaries(
-    session: &Session,
-    recent: &[Summary],
-) -> (Vec<Playlist>, Vec<Summary>) {
-    let mut unchanged_playlists = Vec::new();
-    let mut changed = Vec::new();
-    for batch in recent.chunks(BATCH) {
-        let revisions: Vec<_> = batch
-            .iter()
-            .map(|summary| (summary.playlist.id.as_str(), &summary.revision))
-            .collect();
-        match unchanged(session, &revisions).await {
-            Ok(unchanged) => {
-                for (summary, unchanged) in batch.iter().zip(unchanged) {
-                    if unchanged {
-                        unchanged_playlists.push(summary.playlist.clone());
-                    } else {
-                        changed.push(summary.playlist.id.clone());
-                    }
-                }
-            }
-            Err(error) => {
-                log::debug!("playlists: cannot revalidate playlist summaries: {error:#}");
-                changed.extend(batch.iter().map(|summary| summary.playlist.id.clone()));
-            }
-        }
-    }
-    (unchanged_playlists, fetch_summaries(session, changed).await)
-}
-
-async fn fetch_summaries(session: &Session, ids: impl IntoIterator<Item = String>) -> Vec<Summary> {
+/// Reads current playlist summaries without fetching their entries.
+pub(super) async fn summaries(session: &Session, mut ids: Vec<String>) -> Vec<Playlist> {
     let username = session.username();
-    stream::iter(ids)
+    ids.sort_unstable();
+    ids.dedup();
+    let mut playlists = stream::iter(ids)
         .map(|id| async move {
-            let endpoint = format!(
-                "/playlist/v2/playlist/{}?from=0&length=0",
-                escape::component(&id),
-            );
-            match read_snapshot(session, &endpoint).await {
-                Ok(content) => Some(Summary {
-                    playlist: wire::playlist_from(&id, &content, username),
-                    // Keep the revision without retaining the response buffer in the cache.
-                    revision: content
-                        .revision
-                        .as_deref()
-                        .map(Bytes::copy_from_slice)
-                        .unwrap_or_default(),
-                    read_at: Instant::now(),
-                }),
+            match session
+                .api()
+                .playlist(&id, true)
+                .await
+                .map_err(sign_in_error)
+            {
+                Ok(content) => Some(wire::playlist_from(&id, &content, username)),
                 Err(error) => {
                     log::warn!("playlists: cannot refresh Spotify playlist {id}: {error:#}");
                     None
@@ -350,8 +268,10 @@ async fn fetch_summaries(session: &Session, ids: impl IntoIterator<Item = String
         })
         .buffer_unordered(4)
         .filter_map(std::future::ready)
-        .collect()
-        .await
+        .collect::<Vec<_>>()
+        .await;
+    profiles::playlist_owners(session, &mut playlists).await;
+    playlists
 }
 
 /// Fetches track metadata and credits together from the URIs in the playlist snapshot.
@@ -359,71 +279,107 @@ async fn playlist_tracks_and_profiles(
     session: &Session,
     content: &SelectedListContent,
     playlist: &mut Playlist,
+    preview: Option<mpsc::Sender<PlaylistPreview>>,
 ) -> Result<Vec<Track>> {
     let items = track_items(content);
-    let uris: HashSet<_> = items.clone().map(|item| item.uri.as_str()).collect();
     let mut ids: HashSet<_> = items
         .clone()
         .filter_map(|item| item.attributes.as_ref())
         .map(|attrs| profiles::username(attrs.added_by()))
         .filter(|id| !id.is_empty())
         .collect();
-    if ids.len() < 2 && !playlist.blend {
+    let show_contributors = ids.len() > 1 || playlist.blend;
+    if !show_contributors {
         ids.clear();
     }
     let own_name = session
         .display_name()
         .filter(|_| playlist.owner_id == session.username());
-    if own_name.is_none() && !playlist.owner_id.is_empty() {
+    if let Some(name) = own_name {
+        name.clone_into(&mut playlist.owner);
+    } else if !playlist.owner_id.is_empty() {
         ids.insert(playlist.owner_id.clone());
     }
-    let profiles: Vec<_> = ids
+    let profile_uris: Vec<_> = ids
         .into_iter()
         .map(|id| format!("spotify:user:{id}"))
         .collect();
-    let requests: Vec<_> = uris
+    let mut pending = HashSet::new();
+    let mut requests: Vec<_> = profile_uris
         .iter()
-        .map(|&uri| (uri, collection::TRACK_DETAILS))
-        .chain(
-            profiles
-                .iter()
-                .map(|uri| (uri.as_str(), &[ExtensionKind::UserProfile][..])),
-        )
+        .map(|uri| (uri.as_str(), &[ExtensionKind::UserProfile][..]))
         .collect();
-    let mut data = collection::extended_batch(session, &requests).await?;
-    let known: HashMap<_, _> = uris
-        .into_iter()
-        .filter_map(|uri| Some((uri, collection::take_track(&mut data, uri)?)))
-        .collect();
-    let known_profiles: HashMap<_, _> = profiles
-        .into_iter()
-        .filter_map(|uri| {
-            let profile = collection::take(&mut data, ExtensionKind::UserProfile, &uri)?;
-            let card = profiles::contributor(&uri, profile);
-            Some((card.id.clone(), Arc::new(card)))
+    requests.extend(
+        items
+            .clone()
+            .map(|item| item.uri.as_str())
+            .filter(|uri| pending.insert(*uri))
+            .map(|uri| (uri, collection::TRACK_DETAILS)),
+    );
+    let batches: Vec<_> = requests
+        .chunks(collection::BATCH)
+        .map(|batch| async move {
+            Ok::<_, anyhow::Error>((batch, collection::extended_batch(session, batch).await?))
         })
         .collect();
-    let mut tracks: Vec<_> = items
-        .filter_map(|item| Some(listed_track(known.get(item.uri.as_str())?, item)))
-        .collect();
-    if let Some(owner) = known_profiles.get(&playlist.owner_id) {
-        playlist.owner.clone_from(&owner.name);
-    } else if let Some(name) = own_name {
-        name.clone_into(&mut playlist.owner);
-    }
-    let many = tracks
-        .iter()
-        .filter_map(|track| track.added_by.as_ref().map(|user| &user.id))
-        .collect::<HashSet<_>>()
-        .len()
-        > 1;
-    for track in &mut tracks {
-        if !many && !playlist.blend {
-            track.added_by = None;
-        } else if let Some(added) = track.added_by.as_mut()
-            && let Some(found) = known_profiles.get(&added.id)
+    let mut batches = stream::iter(batches).buffered(2);
+    let mut items = items.peekable();
+    let mut known = HashMap::new();
+    let mut profiles = HashMap::new();
+    let mut tracks = Vec::new();
+    while let Some(batch) = batches.next().await {
+        let (requests, mut data) = batch?;
+        for &(uri, kinds) in requests {
+            if kinds == [ExtensionKind::UserProfile] {
+                if let Some(data) = collection::take(&mut data, ExtensionKind::UserProfile, uri) {
+                    let card = profiles::contributor(uri, data);
+                    if card.id == playlist.owner_id && own_name.is_none() {
+                        playlist.owner.clone_from(&card.name);
+                    }
+                    profiles.insert(card.id.clone(), Arc::new(card));
+                }
+            } else {
+                pending.remove(uri);
+                if let Some(track) = collection::take_track(&mut data, uri) {
+                    known.insert(uri, track);
+                }
+            }
+        }
+        let start = tracks.len();
+        while let Some(item) = items.next_if(|item| !pending.contains(item.uri.as_str())) {
+            let Some(track) = known.get(item.uri.as_str()) else {
+                continue;
+            };
+            let mut track = listed_track(track, item);
+            if !show_contributors {
+                track.added_by = None;
+            } else if let Some(added) = track.added_by.as_mut()
+                && let Some(found) = profiles.get(&added.id)
+            {
+                *added = found.clone();
+            }
+            tracks.push(track);
+        }
+        if !pending.is_empty()
+            && start < tracks.len()
+            && let Some(out) = &preview
         {
-            *added = found.clone();
+            out.send(PlaylistPreview {
+                playlist: playlist.clone(),
+                tracks: tracks[start..].to_vec(),
+            })
+            .await
+            .ok();
+        }
+    }
+    if !playlist.blend && show_contributors {
+        let mut contributors = tracks.iter().filter_map(|track| track.added_by.as_ref());
+        if let Some(first) = contributors.next()
+            && contributors.all(|added| added.id == first.id)
+        {
+            for track in &mut tracks {
+                track.added_by = None;
+            }
         }
     }
     Ok(tracks)
@@ -565,14 +521,12 @@ fn listed_track(track: &Track, item: &Item) -> Track {
 }
 
 async fn snapshot(session: &Session, playlist_id: &str) -> Result<SelectedListContent> {
-    let endpoint = format!("/playlist/v2/playlist/{}", escape::component(playlist_id));
-    read_snapshot(session, &endpoint)
+    session
+        .api()
+        .playlist(playlist_id, false)
         .await
+        .map_err(sign_in_error)
         .context("cannot read the playlist")
-}
-
-async fn read_snapshot(session: &Session, endpoint: &str) -> Result<SelectedListContent> {
-    transport::get(session, endpoint, HeaderMap::new()).await
 }
 
 /// Reads the revision and ordered items used by indexed playlist edits.
@@ -598,11 +552,12 @@ async fn projected_snapshot(session: &Session, uri: String) -> Result<Snapshot> 
 }
 
 async fn edit(session: &Session, playlist_id: &str, body: &ListChanges) -> Result<()> {
-    let endpoint = format!(
-        "/playlist/v2/playlist/{}/changes",
-        escape::component(playlist_id)
-    );
-    post(session, &endpoint, body).await.map(|_| ())
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .edit_playlist(playlist_id, body, &connection)
+        .await
+        .map_err(sign_in_error)
 }
 
 /// Reads a rootlist page with ownership, visibility, permissions and other library metadata.
@@ -611,21 +566,17 @@ pub(super) async fn rootlist_page(
     from: usize,
     length: usize,
 ) -> Result<SelectedListContent> {
-    let endpoint = format!(
-        "/playlist/v2/user/{}/rootlist?decorate=revision,attributes,length,owner,capabilities,status_code&from={from}&length={length}",
-        escape::component(session.username())
-    );
-    read_snapshot(session, &endpoint)
+    session
+        .api()
+        .rootlist_page(from, length)
         .await
+        .map_err(sign_in_error)
         .context("cannot read the rootlist")
 }
 
-fn rootlist_uri(session: &Session) -> String {
-    format!("spotify:user:{}:rootlist", session.username())
-}
-
 async fn rootlist(session: &Session, uri: &str) -> Result<(Snapshot, i32)> {
-    let rootlist = projected_snapshot(session, rootlist_uri(session)).await?;
+    let rootlist_uri = format!("spotify:user:{}:rootlist", session.username());
+    let rootlist = projected_snapshot(session, rootlist_uri).await?;
     let index = position(&rootlist, uri)
         .ok_or_else(|| anyhow!("cannot find the playlist in the rootlist"))?;
 
@@ -633,15 +584,12 @@ async fn rootlist(session: &Session, uri: &str) -> Result<(Snapshot, i32)> {
 }
 
 async fn rootlist_edit(session: &Session, body: &ListChanges) -> Result<()> {
-    let endpoint = format!(
-        "/playlist/v2/user/{}/rootlist/changes",
-        escape::component(session.username())
-    );
-    post(session, &endpoint, body).await.map(|_| ())
-}
-
-async fn post(session: &Session, endpoint: &str, body: &impl prost::Message) -> Result<Bytes> {
-    transport::post_proto(session, endpoint, transport::PROTOBUF, true, body).await
+    let connection = session.connection_id().to_owned();
+    session
+        .api()
+        .edit_rootlist(body, &connection)
+        .await
+        .map_err(sign_in_error)
 }
 
 fn changes(revision: Option<&Bytes>, op: Op) -> ListChanges {
@@ -667,18 +615,18 @@ fn changes_of(revision: Option<&Bytes>, ops: Vec<Op>) -> ListChanges {
     }
 }
 
-fn item(uri: &str) -> Item {
+fn item(uri: impl Into<String>) -> Item {
     Item {
-        uri: uri.to_owned(),
+        uri: uri.into(),
         attributes: None,
     }
 }
 
-fn add_op(uri: &str) -> Op {
+fn add_op(items: impl IntoIterator<Item = Item>) -> Op {
     Op {
         kind: Kind::Add as i32,
         add: Some(Add {
-            items: vec![item(uri)],
+            items: items.into_iter().collect(),
             add_last: Some(true),
             ..Default::default()
         }),
@@ -745,21 +693,6 @@ fn rename_op(name: &str) -> Op {
     )
 }
 
-fn picture_op(picture: Bytes) -> Op {
-    list_attributes_op(
-        ListAttributes {
-            picture: Some(picture),
-            ..Default::default()
-        },
-        Vec::new(),
-    )
-}
-
-/// Clears the playlist picture using Spotify's attribute ID.
-fn no_picture_op() -> Op {
-    list_attributes_op(ListAttributes::default(), vec![PICTURE_ATTRIBUTE])
-}
-
 fn list_attributes_op(values: ListAttributes, no_value: Vec<i32>) -> Op {
     Op {
         kind: Kind::UpdateListAttributes as i32,
@@ -792,8 +725,6 @@ fn position(content: &Snapshot, uri: &str) -> Option<i32> {
     i32::try_from(content.items.iter().position(|item| item == uri)?).ok()
 }
 
-const GET_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/GetLists";
-const DIFF_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/DiffLists";
 const BATCH: usize = 100;
 
 /// An ordered playlist snapshot with the revision used to submit an edit.
@@ -815,19 +746,6 @@ impl Query {
             page,
         }
     }
-}
-
-/// Reads the root-list revision for appends, which do not need existing entries.
-async fn rootlist_revision(session: &Session, uri: String) -> Result<Bytes> {
-    let (_, revision) = read(session, &[Query { uri, page: None }], || fields([], []))
-        .await?
-        .pop()
-        .context("Spotify omitted the root list")??;
-    anyhow::ensure!(
-        !revision.is_empty(),
-        "Spotify omitted the root-list revision"
-    );
-    Ok(revision)
 }
 
 /// Reads ordered item URIs for several playlists, with independent page windows.
@@ -864,12 +782,21 @@ async fn items(session: &Session, queries: &[Query]) -> Vec<Result<Snapshot>> {
 pub(super) struct BrowseSection {
     pub(super) title: String,
     pub(super) items: Vec<(String, Option<String>)>,
+    pub(super) playlists: HashMap<String, Playlist>,
 }
+
+const CARD_FIELDS: [AttributeKind; 4] = [
+    AttributeKind::Name,
+    AttributeKind::OwnerUsername,
+    AttributeKind::PictureFileId,
+    AttributeKind::PictureSizes,
+];
 
 /// Reads the requested Browse sections together, preserving their order and full directories.
 pub(super) async fn browse_sections(
     session: &Session,
     uris: Vec<String>,
+    with_cards: bool,
 ) -> Result<Vec<BrowseSection>> {
     if uris.is_empty() {
         return Ok(Vec::new());
@@ -879,10 +806,18 @@ pub(super) async fn browse_sections(
         .map(|uri| Query { uri, page: None })
         .collect();
     read(session, &queries, || {
-        fields(
+        let mut fields = fields(
             [AttributeKind::Name],
             [AttributeKind::Uri, AttributeKind::FormatListAttributes],
-        )
+        );
+        if with_cards {
+            fields.list_response.entity.meta_items = Some(MetaItemsRequestedFields {
+                attributes: Some(AttributesRequestedFields {
+                    requested_field: CARD_FIELDS.map(|kind| kind as i32).into(),
+                }),
+            });
+        }
+        fields
     })
     .await?
     .into_iter()
@@ -903,24 +838,27 @@ pub(super) async fn browse_sections(
                 Some((attributes.uri, target))
             })
             .collect();
-        Ok(BrowseSection { title, items })
+        let playlists = entity
+            .meta_items
+            .into_iter()
+            .filter_map(|(uri, meta)| {
+                let card = playlist_card(uri.strip_prefix(PLAYLIST_PREFIX)?, meta.attributes?)?;
+                // Incomplete projections still get the same direct read as other cards.
+                (!card.owner_id.is_empty() && card.cover.is_some()).then_some((uri, card))
+            })
+            .collect();
+        Ok(BrowseSection {
+            title,
+            items,
+            playlists,
+        })
     })
     .collect()
 }
 
 /// Reads the names, owners, and covers needed for playlist cards in one projection.
 pub(super) async fn cards(session: &Session, ids: &[String]) -> HashMap<String, Playlist> {
-    let fields = || {
-        fields(
-            [
-                AttributeKind::Name,
-                AttributeKind::OwnerUsername,
-                AttributeKind::PictureFileId,
-                AttributeKind::PictureSizes,
-            ],
-            [],
-        )
-    };
+    let fields = || fields(CARD_FIELDS, []);
     let mut cards = HashMap::new();
     for ids in ids.chunks(BATCH) {
         let queries: Vec<_> = ids.iter().map(|id| Query::playlist(id, None)).collect();
@@ -935,42 +873,56 @@ pub(super) async fn cards(session: &Session, ids: &[String]) -> HashMap<String, 
             let Ok((entity, _)) = reply else {
                 continue;
             };
-            let Some(attributes) = entity.attributes else {
-                continue;
-            };
-            if attributes.name.is_empty() {
-                continue;
+            if let Some(card) = entity.attributes.and_then(|attrs| playlist_card(id, attrs)) {
+                cards.insert(format!("{PLAYLIST_PREFIX}{id}"), card);
             }
-            let cover = attributes
-                .picture_sizes
-                .iter()
-                .flat_map(|sizes| &sizes.picture_size)
-                .rev()
-                .find_map(|size| wire::playlist_image(&size.url))
-                .or_else(|| match std::str::from_utf8(&attributes.picture_file_id) {
-                    Ok(link) if link.starts_with("spotify:image:") => wire::playlist_image(link),
-                    _ if attributes.picture_file_id.len() == 20 => {
-                        wire::image_url(&attributes.picture_file_id)
-                    }
-                    _ => None,
-                });
-            cards.insert(
-                format!("spotify:playlist:{id}"),
-                Playlist {
-                    id: id.clone(),
-                    name: attributes.name,
-                    owner_id: attributes.owner_username,
-                    cover,
-                    public: true,
-                    ..Default::default()
-                },
-            );
         }
     }
     cards
 }
 
-/// Selects list and item attributes independently for GetLists and DiffLists.
+fn playlist_card(id: &str, attributes: Attributes) -> Option<Playlist> {
+    if attributes.name.is_empty() {
+        return None;
+    }
+    let cover = attributes
+        .picture_sizes
+        .as_ref()
+        .and_then(|sizes| {
+            let sizes = &sizes.picture_size;
+            ["default", "large", "xlarge", "small"]
+                .into_iter()
+                .find_map(|target| {
+                    sizes
+                        .iter()
+                        .filter(|size| size.target_name == target)
+                        .find_map(|size| wire::playlist_image(&size.url))
+                })
+                .or_else(|| {
+                    sizes
+                        .iter()
+                        .rev()
+                        .find_map(|size| wire::playlist_image(&size.url))
+                })
+        })
+        .or_else(|| match std::str::from_utf8(&attributes.picture_file_id) {
+            Ok(link) if link.starts_with("spotify:image:") => wire::playlist_image(link),
+            _ if attributes.picture_file_id.len() == 20 => {
+                wire::image_url(&attributes.picture_file_id)
+            }
+            _ => None,
+        });
+    Some(Playlist {
+        id: id.to_owned(),
+        name: attributes.name,
+        owner_id: attributes.owner_username,
+        cover,
+        public: true,
+        ..Default::default()
+    })
+}
+
+/// Selects list and item attributes independently for GetLists.
 fn fields<const L: usize, const I: usize>(
     list: [AttributeKind; L],
     items: [AttributeKind; I],
@@ -985,6 +937,7 @@ fn fields<const L: usize, const I: usize>(
         items: attributes(items).map(|attributes| ItemRequestedFields {
             attributes: Some(attributes),
         }),
+        meta_items: None,
     };
     RequestedFields {
         list_response: ListResponseRequestedFields { entity },
@@ -992,34 +945,6 @@ fn fields<const L: usize, const I: usize>(
 }
 
 type ListResult = Result<(ListEntity, Bytes)>;
-
-/// An empty per-list reply confirms the supplied revision. Any other reply needs a fresh read.
-async fn unchanged(session: &Session, revisions: &[(&str, &Bytes)]) -> Result<Vec<bool>> {
-    let requests = revisions
-        .iter()
-        .map(|(id, revision)| GetListRequest {
-            identifier: ListIdentifier {
-                uri: format!("spotify:playlist:{id}"),
-                revision: (*revision).clone(),
-            },
-            options: RequestOptions {
-                requested_fields: fields([AttributeKind::Name], []),
-                pagination: None,
-            },
-        })
-        .collect();
-    let response: GetListsResponse =
-        transport::rpc(session, DIFF_LISTS, GetListsRequest { requests }).await?;
-    anyhow::ensure!(
-        response.responses.len() == revisions.len(),
-        "Spotify returned the wrong number of playlist revision checks"
-    );
-    Ok(response
-        .responses
-        .iter()
-        .map(bytes::Bytes::is_empty)
-        .collect())
-}
 
 /// Preserves independent successes and errors in the request order.
 async fn read(
@@ -1049,8 +974,11 @@ async fn read(
             })
         })
         .collect();
-    let response: GetListsResponse =
-        transport::rpc(session, GET_LISTS, GetListsRequest { requests }).await?;
+    let response: GetListsResponse = session
+        .api()
+        .get_lists(GetListsRequest { requests })
+        .await
+        .map_err(sign_in_error)?;
     anyhow::ensure!(
         response.responses.len() == slots.len(),
         "Spotify returned the wrong number of lists"
@@ -1126,7 +1054,7 @@ mod tests {
             let index = position(&content, uri).unwrap();
             let body = changes_of(
                 Some(&content.revision),
-                vec![add_op(uri), remove_op(uri, index)],
+                vec![add_op([item(uri)]), remove_op(uri, index)],
             );
             assert_eq!(body.base_revision.as_ref(), Some(&content.revision));
             let [add, rem] = body.deltas[0].ops.as_slice() else {

@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use moka::{future::Cache, sync::Cache as SyncCache};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, GenreDetail,
-    MusicApi, PlaylistDetail, Track,
+    MusicApi, PlaylistDetail, PlaylistPreview, Track,
 };
+use tokio::sync::mpsc;
 
 const ARTISTS: usize = 32;
 const ARTIST_PROFILES: usize = 64;
@@ -40,6 +41,14 @@ trait CatalogBackend: Send + Sync {
         Ok(AlbumCatalogue::default())
     }
     async fn playlist(&self, id: &str) -> Result<PlaylistDetail>;
+    /// Uses the ordinary detail load when the backend has no previews.
+    async fn playlist_with_preview(
+        &self,
+        id: &str,
+        _preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.playlist(id).await
+    }
     async fn playlist_continuation(
         &self,
         continuation: &str,
@@ -81,6 +90,13 @@ impl CatalogBackend for ApiBackend {
     }
     async fn playlist(&self, id: &str) -> Result<PlaylistDetail> {
         self.0.playlist(id).await
+    }
+    async fn playlist_with_preview(
+        &self,
+        id: &str,
+        preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.0.playlist_with_preview(id, preview).await
     }
     async fn playlist_continuation(
         &self,
@@ -273,6 +289,17 @@ impl CatalogSource {
 
     pub(crate) async fn playlist(&self, id: &str) -> Result<Arc<PlaylistDetail>> {
         self.playlists.load(id, self.backend.playlist(id)).await
+    }
+
+    /// Caches the complete playlist while passing interim batches to the page.
+    pub(crate) async fn playlist_with_preview(
+        &self,
+        id: &str,
+        preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<Arc<PlaylistDetail>> {
+        self.playlists
+            .load(id, self.backend.playlist_with_preview(id, preview))
+            .await
     }
 
     pub(crate) async fn invalidate_playlist(&self, id: &str) {

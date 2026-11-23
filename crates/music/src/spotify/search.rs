@@ -1,37 +1,35 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Result;
 
-use super::proto::search::{AlbumType, Entity, MainViewResponse};
-use super::{collection, session::Session, transport, wire};
+use super::{auth::sign_in_error, collection, session::Session, wire};
 use crate::{Album, ArtistRef, CoverSize, Found, Playlist, ReleaseType, SavedArtist, Track};
+use spotifyapis::{
+    SearchKind,
+    proto::search::{AlbumType, Entity},
+};
 
 const LIMIT: usize = 20;
-const PATH: &str = "/searchview/v3/search";
 
 /// Runs one ranked search for a catalogue type. SearchView's limit is shared
 /// across types in a blended response.
-async fn hits(session: &Session, term: &str, kind: &str) -> Result<Vec<Entity>> {
+async fn hits(session: &Session, term: &str, kind: SearchKind) -> Result<Vec<Entity>> {
     let term = term.trim();
     if term.is_empty() {
         return Ok(Vec::new());
     }
 
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    let request_id = request_id();
-    let query = crate::escape::component(term);
-    let path = format!(
-        "{PATH}?query={query}&entity_types={kind}&limit={LIMIT}&timestamp={timestamp}&request_id={request_id}&show_type=podcast"
-    );
-
-    let headers = transport::proto_headers("application/protobuf", Some("Linux"));
-    let response: MainViewResponse = transport::get(session, &path, headers).await?;
+    let response = session
+        .api()
+        .search(term, kind, LIMIT)
+        .await
+        .map_err(sign_in_error)?;
     Ok(response.hits.into_iter().take(LIMIT).collect())
 }
 
 /// Hydrates ranked track URIs with core catalogue metadata in one batch.
 pub(super) async fn tracks(session: &Session, term: &str) -> Result<Vec<Track>> {
-    let uris: Vec<_> = hits(session, term, "track")
+    let uris: Vec<_> = hits(session, term, SearchKind::Track)
         .await?
         .into_iter()
         .map(|hit| hit.uri)
@@ -40,14 +38,14 @@ pub(super) async fn tracks(session: &Session, term: &str) -> Result<Vec<Track>> 
     collection::ordered_tracks(
         session,
         &uris,
-        &[super::proto::metadata::ExtensionKind::TrackV4],
+        &[spotifyapis::proto::metadata::ExtensionKind::TrackV4],
     )
     .await
 }
 
 /// Reads recording identifiers and credits for lyric matching directly from SearchView.
 pub(super) async fn lyric_tracks(session: &Session, term: &str) -> Result<Vec<Track>> {
-    Ok(hits(session, term, "track")
+    Ok(hits(session, term, SearchKind::Track)
         .await?
         .into_iter()
         .filter_map(|hit| {
@@ -78,7 +76,7 @@ pub(super) async fn lyric_tracks(session: &Session, term: &str) -> Result<Vec<Tr
 }
 
 pub(super) async fn albums(session: &Session, term: &str) -> Result<Vec<Album>> {
-    Ok(hits(session, term, "album")
+    Ok(hits(session, term, SearchKind::Album)
         .await?
         .into_iter()
         .filter_map(album)
@@ -86,7 +84,7 @@ pub(super) async fn albums(session: &Session, term: &str) -> Result<Vec<Album>> 
 }
 
 pub(super) async fn artists(session: &Session, term: &str) -> Result<Vec<SavedArtist>> {
-    Ok(hits(session, term, "artist")
+    Ok(hits(session, term, SearchKind::Artist)
         .await?
         .into_iter()
         .filter_map(|hit| {
@@ -101,7 +99,7 @@ pub(super) async fn artists(session: &Session, term: &str) -> Result<Vec<SavedAr
 }
 
 pub(super) async fn playlists(session: &Session, term: &str) -> Result<Vec<Playlist>> {
-    Ok(hits(session, term, "playlist")
+    Ok(hits(session, term, SearchKind::Playlist)
         .await?
         .into_iter()
         .filter_map(playlist)
@@ -136,6 +134,18 @@ fn album(hit: Entity) -> Option<Album> {
     };
     let release_date = crate::calendar::parse_release_date(&album.user_country_release_iso_time)
         .or_else(|| crate::calendar::release_date(album.release_year, 0, 0))
+        .or_else(|| {
+            let stamp = album.release_time?;
+            let date = jiff::Timestamp::new(stamp.seconds, stamp.nanos)
+                .ok()?
+                .to_zoned(jiff::tz::TimeZone::UTC)
+                .date();
+            crate::calendar::release_date(
+                date.year().into(),
+                date.month().into(),
+                date.day().into(),
+            )
+        })
         .unwrap_or_default();
     let cover = wire::playlist_image(&hit.image_uri);
     let cover_large = cover
@@ -180,14 +190,4 @@ fn id(uri: &str, prefix: &str) -> Option<String> {
     uri.strip_prefix(prefix)
         .filter(|id| !id.is_empty())
         .map(str::to_owned)
-}
-
-/// Formats the per-request identifier as a UUIDv4.
-fn request_id() -> String {
-    let [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p] = fastrand::u128(..).to_be_bytes();
-    let c0 = (g & 0x0f) | 0x40;
-    let d0 = (i & 0x3f) | 0x80;
-    format!(
-        "{a:02x}{b:02x}{c:02x}{d:02x}-{e:02x}{f:02x}-{c0:02x}{h:02x}-{d0:02x}{j:02x}-{k:02x}{l:02x}{m:02x}{n:02x}{o:02x}{p:02x}"
-    )
 }

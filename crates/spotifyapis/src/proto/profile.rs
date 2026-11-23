@@ -1,5 +1,7 @@
 //! User profile views and the public playlist cards they carry.
 
+pub(crate) const ENDPOINT: &str = "/user-profile-view/v3/profile";
+
 /// Profile, audience counts, and public playlists from one profile-view request.
 #[derive(prost::Message)]
 pub struct Profile {

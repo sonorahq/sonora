@@ -89,8 +89,7 @@ impl MusicPlayer for Official {
         let quality = self.audio.quality;
         let (done, answer) = oneshot::channel();
         tokio::spawn(async move {
-            let result = media::download(&session, &shelf, &id, quality, progress).await;
-            done.send(result).ok();
+            let _ = done.send(media::download(&session, &shelf, &id, quality, progress).await);
         });
         Box::pin(async move { answer.await.context("the spotify session stopped")? })
     }

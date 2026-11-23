@@ -13,10 +13,7 @@ mod playlists;
 mod profiles;
 mod search;
 mod session;
-mod transport;
 mod wire;
-
-mod proto;
 
 use std::sync::Arc;
 
@@ -37,6 +34,11 @@ pub struct SpotifyProvider {
 }
 
 impl SpotifyProvider {
+    /// Selects a smaller Spotify album cover when it fits the physical thumbnail size.
+    pub fn thumbnail_at(cover: &str, edge: u32) -> Option<String> {
+        wire::thumbnail_at(cover, edge)
+    }
+
     pub fn new(config: AuthConfig) -> Self {
         Self {
             account: Arc::new(auth::Account::new(config)),
@@ -85,7 +87,7 @@ impl MusicProvider for SpotifyProvider {
     }
 
     fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
-        Some(Box::pin(async { transport::discover().await.is_ok() }))
+        Some(Box::pin(spotifyapis::http::reachable()))
     }
 
     fn public_art(&self) -> bool {

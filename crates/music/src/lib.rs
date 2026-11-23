@@ -59,11 +59,10 @@ pub use audio::Meter;
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    BrowseShelf, Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem,
-    GenreSection, HomeFeed, ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine,
-    LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail,
-    ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile,
-    Voice, WritingSystem,
+    Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
+    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
+    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
+    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
 pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
@@ -210,6 +209,11 @@ pub trait MusicApi: Send + Sync {
         Ok(whole(self.saved_tracks().await?))
     }
 
+    /// Opens both saved lists together when the provider can read them in one pass.
+    async fn saved_collection_paged(&self) -> Option<SavedCollectionPages> {
+        None
+    }
+
     /// Every track the provider has. Only a `Shape::Catalog` provider answers.
     async fn all_tracks(&self) -> Result<Vec<Track>> {
         Ok(Vec::new())
@@ -306,6 +310,24 @@ pub trait MusicApi: Send + Sync {
     /// Only a provider whose capabilities list `playlist_covers` answers.
     async fn set_playlist_cover(&self, _playlist_id: &str, _image: Option<&[u8]>) -> Result<()> {
         anyhow::bail!("this provider cannot change a playlist's cover")
+    }
+
+    /// Changes a playlist's cover and optionally its name, returning the cover URL when known.
+    async fn edit_playlist_appearance(
+        &self,
+        playlist_id: &str,
+        name: Option<&str>,
+        image: Option<&[u8]>,
+    ) -> Result<Option<String>> {
+        self.set_playlist_cover(playlist_id, image).await?;
+        if let Some(name) = name {
+            self.rename_playlist(playlist_id, name).await?;
+        }
+        Ok(self
+            .playlist(playlist_id)
+            .await
+            .ok()
+            .and_then(|detail| detail.playlist.cover))
     }
 
     /// Reads one playlist's smart rules and edit bookkeeping. Only a provider whose
@@ -421,6 +443,16 @@ pub trait MusicApi: Send + Sync {
         Ok(AlbumCatalogue::default())
     }
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail>;
+
+    /// Loads a playlist in full, optionally sending ordered track batches as they arrive.
+    async fn playlist_with_preview(
+        &self,
+        playlist_id: &str,
+        _preview: tokio::sync::mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.playlist(playlist_id).await
+    }
+
     async fn playlist_continuation(
         &self,
         _continuation: &str,
@@ -534,18 +566,6 @@ pub trait MusicApi: Send + Sync {
 
     async fn name_home_playlists(&self, sections: Vec<GenreSection>) -> Vec<GenreSection> {
         sections
-    }
-
-    /// Categories grouped as the provider presents them on the Search landing page.
-    async fn browse(&self) -> Result<Vec<BrowseShelf>> {
-        let genres = self.genres().await?;
-        if genres.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(vec![BrowseShelf {
-            genres,
-            ..Default::default()
-        }])
     }
 
     async fn genres(&self) -> Result<Vec<Genre>> {
@@ -1247,6 +1267,18 @@ pub struct Page<T> {
 /// carries the error a page broke on, after which nothing more comes. Dropping it stops the
 /// provider fetching.
 pub type Pages<T> = tokio::sync::mpsc::Receiver<Result<Page<T>>>;
+
+/// The next ordered rows of a playlist and its header.
+pub struct PlaylistPreview {
+    pub playlist: Playlist,
+    pub tracks: Vec<Track>,
+}
+
+/// The independently delivered tracks and albums from a shared collection read.
+pub struct SavedCollectionPages {
+    pub tracks: Pages<Track>,
+    pub albums: Pages<Album>,
+}
 
 /// The home feed arriving a lot at a time: every message is the whole feed so far, arranged
 /// the way the provider wants it drawn, so each one can replace the last on the page. The

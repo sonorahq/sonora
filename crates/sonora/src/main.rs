@@ -199,6 +199,7 @@ fn main() -> ExitCode {
                 .update(cx, |settings, cx| settings.set_system_theme(reported, cx));
         }
         ui::Theme::init(look, &overrides, cx);
+        ui::set_artwork_variants(music::spotify::SpotifyProvider::thumbnail_at, cx);
 
         let lingers = tray::install(show_window, toggle_window, cx);
         if lingers {

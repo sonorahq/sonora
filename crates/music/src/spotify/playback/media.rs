@@ -7,14 +7,11 @@
 //! starts a second download near the target through [`ranged`].
 
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::access_point::KeyDenied;
-use crate::spotify::proto::audio::StorageResolveResponse;
-use crate::spotify::proto::metadata::ExtensionKind;
-use crate::spotify::proto::metadata::Track as TrackMessage;
-use crate::spotify::{collection, session::Session, transport, wire};
+use crate::spotify::{auth::sign_in_error, collection, session::Session, wire};
 use aes::cipher::StreamCipherSeek as _;
 use aes::cipher::{KeyIvInit as _, StreamCipher as _};
 use anyhow::{Context as _, Result};
@@ -27,11 +24,13 @@ use prost::Message as _;
 use reqwest::Url;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
+use spotifyapis::proto::metadata::ExtensionKind;
+use spotifyapis::proto::metadata::Track as TrackMessage;
 
 use crate::Quality;
 use crate::engine::{self, Fetch, Loudness};
 use crate::ranged::{self, Address, Reach, Resuming, Span};
-use crate::stream::{Body, Source, Spool, Stream};
+use crate::stream::{Body, Source, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, Fraction, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
 
@@ -46,11 +45,6 @@ const MAX_RANGE: u64 = 2 * 1024 * 1024;
 const MAX_DOWNLOAD: u64 = 256 * 1024 * 1024;
 
 type Cipher = ctr::Ctr128BE<aes::Aes128>;
-
-/// The client CDN downloads go through, which gives up on a stalled request sooner than the api
-/// client.
-static MEDIA: LazyLock<reqwest::Client> =
-    LazyLock::new(|| ranged::media("spotify", reqwest::Client::new));
 
 /// The existing vault format for an encrypted Spotify file and its playback facts.
 #[derive(Serialize, Deserialize)]
@@ -107,13 +101,6 @@ pub(super) struct Unlocked {
     cipher: Cipher,
 }
 
-/// Where a file sits on the CDN, and how to ask for a fresh url once that one expires.
-#[derive(Clone)]
-struct Located {
-    url: String,
-    renewal: Arc<dyn ranged::Renew>,
-}
-
 /// What a download asks Spotify for a fresh CDN url of the file it is fetching with.
 struct Renewal {
     session: Session,
@@ -160,28 +147,25 @@ impl Fetch for Audio {
     async fn load(&self, id: &str) -> Result<Loaded> {
         if let Some(shelf) = &self.shelf {
             shelf.settle().await;
+            if self.session.is_none() || shelf.holds(id) {
+                let shelf = shelf.clone();
+                let id = id.to_owned();
+                let saved = tokio::task::spawn_blocking(move || {
+                    read_saved(Some(&shelf), &id)
+                        .map(|(facts, mut media)| Loaded::from_facts(&facts, media.loudness()))
+                })
+                .await
+                .context("cannot open Spotify download")?;
+                if saved.is_ok() || self.session.is_none() {
+                    return saved;
+                }
+            }
         }
-        let shelf = self.shelf.clone();
-        let saved_id = id.to_owned();
-        let saved = tokio::task::spawn_blocking(move || {
-            read_saved(shelf.as_ref(), &saved_id)
-                .map(|(facts, mut media)| Loaded::from_facts(&facts, media.loudness()))
-        })
-        .await
-        .context("cannot open Spotify download")?;
-        if saved.is_ok() || self.session.is_none() {
-            return saved;
-        }
-
         let session = self
             .session
             .as_ref()
             .context("Spotify playback requires sign-in")?;
-        let variant = match self.quality {
-            Quality::Low => "vorbis-96",
-            Quality::Normal => "vorbis-160",
-            _ => "vorbis-320",
-        };
+        let variant = variant(self.quality);
         if let Some(shelf) = &self.shelf
             && let Some(kept) = shelf.find(id, variant).await
             && let Ok(facts) = serde_json::from_slice::<Facts>(&kept.facts)
@@ -189,14 +173,14 @@ impl Fetch for Audio {
             return Loaded::streaming(&facts, kept.source, Some(kept.length), None).await;
         }
         let mut media = resolve_media(session, id, self.quality).await?;
-        let (response, located) = open_file(session, &media.facts.file_id).await?;
+        let (response, address) = open_file(session, &media.facts.file_id).await?;
         media.fetch_key(session).await?;
         crate::soloist::granted();
         let facts = media.facts;
         let total = response.total();
         let reach = facts.key.map(|key| {
             Reach::new("spotify", id, move |start| {
-                (located.address(), Unlocked::at(&key, start))
+                (address.clone(), Unlocked::at(&key, start))
             })
         });
         let source = match &self.shelf {
@@ -296,7 +280,9 @@ impl Fetch for Audio {
             .zip(loaded.duration)
             .filter(|((stream, _), _)| ranged::ahead(stream, at))
             .and_then(|((stream, reach), length)| {
-                let span = Span::measure(stream, length, ogg_head)?;
+                let span = Span::measure(stream, length, |spool| {
+                    ranged::ogg::head_after(spool, VORBIS_HEADER_LEN as usize)
+                })?;
                 reach.enter(stream, span, at, |reader| {
                     let mut media = Media::new(reader, None, None, loaded.format).ok()?;
                     media.seek(SeekFrom::Start(0)).ok()?;
@@ -455,7 +441,7 @@ pub(super) async fn download(
     progress: Fraction,
 ) -> Result<()> {
     shelf.settle().await;
-    if shelf.holds(id) {
+    if shelf.holds(id) || shelf.pin_cached(id, variant(quality)).await {
         progress.set(1.0);
         return Ok(());
     }
@@ -520,22 +506,25 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
         .into_iter()
         .next()
         .context("Spotify omitted the track for download")?;
-    let (playable, wire) = if vorbis(&track, quality).is_some() {
-        (track, wire)
-    } else {
-        let alternatives: Vec<_> = track
-            .alternative
-            .iter()
-            .filter_map(|track| collection::base62(track.gid()))
-            .map(|id| format!("spotify:track:{id}"))
-            .collect();
-        metadata(session, &alternatives)
-            .await?
-            .into_iter()
-            .find(|(track, _)| vorbis(track, quality).is_some())
-            .context("Spotify has no playable download for this track")?
+    let (playable, wire, (format, file)) = match vorbis(&track, quality) {
+        Some(file) => (track, wire, file),
+        None => {
+            let alternatives: Vec<_> = track
+                .alternative
+                .iter()
+                .filter_map(|track| collection::base62(track.gid()))
+                .map(|id| format!("spotify:track:{id}"))
+                .collect();
+            metadata(session, &alternatives)
+                .await?
+                .into_iter()
+                .find_map(|(track, wire)| {
+                    let file = vorbis(&track, quality)?;
+                    Some((track, wire, file))
+                })
+                .context("Spotify has no playable download for this track")?
+        }
     };
-    let (format, file) = vorbis(&playable, quality).context("Spotify omitted the audio file")?;
     let track = <[u8; 16]>::try_from(playable.gid()).context("invalid Spotify audio track ID")?;
     let mut file_id = String::with_capacity(file.len() * 2);
     wire::append_hex(&mut file_id, &file);
@@ -552,33 +541,35 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
 }
 
 /// Resolves the file's signed CDN urls and opens it at the first that answers, and says where.
-async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Located)> {
+async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Address)> {
+    let http = spotifyapis::http::media_client()?;
     let renewal: Arc<dyn ranged::Renew> = Arc::new(Renewal {
         session: session.clone(),
         file_id: file_id.to_owned(),
     });
     for url in cdn_urls(session, file_id).await? {
-        let located = Located {
-            url,
-            renewal: renewal.clone(),
-        };
-        let Ok(file) = Resuming::open(located.address()).await else {
+        let address = Address::new("spotify", http.clone(), url)
+            .capped(MAX_RANGE)
+            .renewed(renewal.clone());
+        let Ok(file) = Resuming::open(address.clone()).await else {
             continue;
         };
         anyhow::ensure!(
             file.total().is_some_and(|total| total <= MAX_DOWNLOAD),
             "Spotify track is too large"
         );
-        return Ok((file, located));
+        return Ok((file, address));
     }
     anyhow::bail!("cannot open Spotify audio on its CDN")
 }
 
 /// The https urls Spotify's CDN serves a file at, in the order Spotify gave them.
 async fn cdn_urls(session: &Session, file_id: &str) -> Result<Vec<String>> {
-    let endpoint = format!("/storage-resolve/files/audio/interactive/{file_id}");
-    let resolved: StorageResolveResponse =
-        transport::get(session, &endpoint, HeaderMap::new()).await?;
+    let resolved = session
+        .api()
+        .resolve_audio(file_id)
+        .await
+        .map_err(sign_in_error)?;
     anyhow::ensure!(resolved.result == 0, "Spotify did not grant a CDN download");
     let secure = |address: &String| {
         Url::parse(address).is_ok_and(|url| {
@@ -603,6 +594,14 @@ async fn metadata(session: &Session, uris: &[String]) -> Result<Vec<(TrackMessag
             Some((TrackMessage::decode(raw.clone()).ok()?, raw))
         })
         .collect())
+}
+
+fn variant(quality: Quality) -> &'static str {
+    match quality {
+        Quality::Low => "vorbis-96",
+        Quality::Normal => "vorbis-160",
+        _ => "vorbis-320",
+    }
 }
 
 /// Picks the requested Vorbis bitrate first, then looks for a supported fallback.
@@ -642,16 +641,6 @@ impl Body for Unlocked {
     }
 }
 
-impl Located {
-    /// How every request for the file is made: in ranges of at most [`MAX_RANGE`], with a fresh
-    /// url asked for once the CDN refuses this one.
-    fn address(&self) -> Address {
-        Address::new("spotify", MEDIA.clone(), self.url.clone())
-            .capped(MAX_RANGE)
-            .renewed(self.renewal.clone())
-    }
-}
-
 #[async_trait]
 impl ranged::Renew for Renewal {
     async fn url(&self) -> Result<(String, HeaderMap)> {
@@ -659,9 +648,4 @@ impl ranged::Renew for Renewal {
         let url = urls.into_iter().next().context("Spotify gave no CDN url")?;
         Ok((url, HeaderMap::new()))
     }
-}
-
-/// Where the Ogg header pages of a Spotify file end, past Spotify's own header in front of them.
-fn ogg_head(spool: &Spool) -> Option<Option<usize>> {
-    ranged::ogg::head_after(spool, VORBIS_HEADER_LEN as usize)
 }

@@ -2460,25 +2460,18 @@ impl Library {
                     })?),
                     None => None,
                 };
-                client.set_playlist_cover(&id, image.as_deref()).await?;
-                if let Some(name) = &name {
-                    client.rename_playlist(&id, name).await?;
-                }
-                let reported = match client.playlist(&id).await {
-                    Ok(detail) => detail.playlist.cover,
-                    Err(error) => {
-                        log::warn!("library: cannot read a playlist after its cover: {error:#}");
-                        None
-                    }
-                };
+                let reported = client
+                    .edit_playlist_appearance(&id, name.as_deref(), image.as_deref())
+                    .await?;
                 Ok(match picture {
                     Some(path) if reported.is_none() || reported == before => {
-                        Some(format!("file://{}", path.display()))
+                        (Some(format!("file://{}", path.display())), true)
                     }
-                    _ => reported,
+                    Some(_) => (reported, false),
+                    None => (reported, true),
                 })
             },
-            move |this, cover, cx| {
+            move |this, (cover, refresh), cx| {
                 let bare = cover.is_none();
                 this.amend_playlist(
                     &changed,
@@ -2493,7 +2486,9 @@ impl Library {
                 if bare {
                     this.build_mosaics(cx);
                 }
-                cx.emit(LibraryEvent::PlaylistChanged(changed));
+                if refresh || this.playlist(&changed).is_none() {
+                    cx.emit(LibraryEvent::PlaylistChanged(changed));
+                }
             },
             cx,
         );
@@ -3785,13 +3780,23 @@ impl Library {
         let playlists = client.clone();
         let albums = client.clone();
         let artists = client.clone();
+        let (albums_out, albums_in) = oneshot::channel();
         let mut tasks = vec![
             self.stream(
                 shelf,
                 LibraryPart::Tracks,
                 async move {
                     match shape {
-                        Shape::Saved => tracks.saved_tracks_paged().await,
+                        Shape::Saved => match tracks.saved_collection_paged().await {
+                            Some(pages) => {
+                                albums_out.send(Some(pages.albums)).ok();
+                                Ok(pages.tracks)
+                            }
+                            None => {
+                                albums_out.send(None).ok();
+                                tracks.saved_tracks_paged().await
+                            }
+                        },
                         Shape::Catalog(_) => tracks.all_tracks_paged().await,
                     }
                 },
@@ -3808,7 +3813,10 @@ impl Library {
                 LibraryPart::Albums,
                 async move {
                     match shape {
-                        Shape::Saved => albums.saved_albums_paged().await,
+                        Shape::Saved => match albums_in.await? {
+                            Some(pages) => Ok(pages),
+                            None => albums.saved_albums_paged().await,
+                        },
                         Shape::Catalog(_) => albums.all_albums_paged().await,
                     }
                 },

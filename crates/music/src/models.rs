@@ -296,15 +296,6 @@ pub struct Genre {
     pub cover: Option<String>,
 }
 
-/// A row of categories on the Search landing page and its optional directory.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BrowseShelf {
-    pub id: String,
-    pub title: String,
-    pub genres: Vec<Genre>,
-    pub see_all: Option<String>,
-}
-
 /// One card of a browse shelf. A provider's home and genre pages mix whatever the shelf holds,
 /// so a track or an artist sits beside albums and playlists in the same row.
 #[derive(Clone, Debug, PartialEq)]

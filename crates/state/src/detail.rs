@@ -4,8 +4,9 @@ use std::sync::Arc;
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, ArtistRef, Capabilities, Contributor, Playlist,
-    PlaylistDetail, ReleaseType, SavedArtist, Track,
+    PlaylistDetail, PlaylistPreview, ReleaseType, SavedArtist, Track,
 };
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 use crate::{
@@ -309,6 +310,11 @@ impl Detail {
         self.loading
     }
 
+    /// Whether the playlist is showing only the first rows of its initial load.
+    pub fn previewing_playlist(&self) -> bool {
+        self.kind == Some(Collection::Playlist) && self.loading && !self.tracks.is_empty()
+    }
+
     /// Appends provider pages in sequence while keeping the first page immediately usable.
     fn load_more(&mut self, cx: &mut Context<Self>) {
         if self.loading_more {
@@ -572,6 +578,8 @@ impl Detail {
         let local = music::is_local_id(&id)
             .then(|| self.session.read(cx).local_client())
             .flatten();
+        let (preview, mut batches) = mpsc::channel(2);
+        let preview = (kind == Collection::Playlist && self.tracks.is_empty()).then_some(preview);
         let request = self.io.spawn({
             let id = id.clone();
             async move {
@@ -596,7 +604,11 @@ impl Detail {
                         if fresh {
                             catalog.invalidate_playlist(&id).await;
                         }
-                        catalog.playlist(&id).await.map(Loaded::Playlist).map(Some)
+                        let detail = match preview {
+                            Some(out) => catalog.playlist_with_preview(&id, out).await?,
+                            None => catalog.playlist(&id).await?,
+                        };
+                        Ok(Some(Loaded::Playlist(detail)))
                     }
                 }
             }
@@ -604,6 +616,14 @@ impl Detail {
         self.request = Some(request.abort_handle());
 
         self.task = Some(cx.spawn(async move |this, cx| {
+            while let Some(batch) = batches.recv().await {
+                if this
+                    .update(cx, |this, cx| this.preview_playlist(batch, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
             let loaded = join(request).await;
 
             this.update(cx, |this, cx| {
@@ -624,6 +644,20 @@ impl Detail {
             })
             .ok();
         }));
+    }
+
+    /// Adds ready rows while retaining the load in progress until the full snapshot arrives.
+    fn preview_playlist(&mut self, batch: PlaylistPreview, cx: &mut Context<Self>) {
+        if self.tracks.is_empty() {
+            let mut playlist = batch.playlist;
+            if playlist.cover.is_none() {
+                playlist.cover = self.known_mosaic(&playlist, cx);
+            }
+            self.header = Some(playlist_header(&playlist));
+            self.playlist = Some(playlist);
+        }
+        self.tracks.extend(batch.tracks);
+        cx.notify();
     }
 
     fn known_mosaic(&self, playlist: &Playlist, cx: &Context<Self>) -> Option<String> {

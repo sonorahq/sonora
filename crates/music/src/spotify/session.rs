@@ -1,16 +1,13 @@
-use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex as SyncMutex, RwLock, RwLockReadGuard};
 
-use anyhow::{Context as _, Result};
-use reqwest::Url;
+use bytes::Bytes;
 use tokio::sync::OnceCell;
 
-use super::auth::OAuth;
+use spotifyapis::auth::OAuth;
+
 use super::collection;
 use super::playback::AudioKeys;
-use super::playlists::Summary;
-use super::transport::{self, Endpoints};
 
 /// An OAuth-authenticated Spotify account shared by API and playback consumers.
 #[derive(Clone)]
@@ -18,31 +15,29 @@ pub struct Session(Arc<Inner>);
 
 /// Account state, service discovery and the optional native audio connection.
 struct Inner {
-    oauth: OAuth,
+    api: Arc<spotifyapis::Session>,
     audio_keys: AudioKeys,
     device_id: String,
     session_id: String,
     connection_id: RwLock<String>,
-    endpoints: OnceCell<Endpoints>,
     display_name: OnceCell<String>,
     soloist_playback: Arc<AtomicBool>,
     metadata: collection::Cache,
-    playlist_summaries: SyncMutex<HashMap<String, Summary>>,
+    rootlist_revision: SyncMutex<Option<Bytes>>,
 }
 
 impl Session {
-    pub(super) fn new(oauth: OAuth, device_id: String) -> Self {
+    pub(super) fn new(oauth: Arc<OAuth>, device_id: String) -> Self {
         Self(Arc::new(Inner {
-            oauth,
+            api: Arc::new(spotifyapis::Session::new(oauth)),
             audio_keys: AudioKeys::default(),
             device_id,
             session_id: format!("{:032x}", fastrand::u128(..)),
             connection_id: RwLock::default(),
-            endpoints: OnceCell::new(),
             display_name: OnceCell::new(),
             soloist_playback: Arc::default(),
             metadata: collection::Cache::default(),
-            playlist_summaries: SyncMutex::default(),
+            rootlist_revision: SyncMutex::default(),
         }))
     }
 
@@ -59,13 +54,28 @@ impl Session {
         &self.0.metadata
     }
 
-    pub(super) fn playlist_summaries(&self) -> &SyncMutex<HashMap<String, Summary>> {
-        &self.0.playlist_summaries
+    /// Records the revision of the complete playlist library, if every page agreed on it.
+    pub(super) fn remember_rootlist_revision(&self, revision: Option<Bytes>) {
+        *self
+            .0
+            .rootlist_revision
+            .lock()
+            .expect("Spotify root-list lock poisoned") =
+            revision.filter(|revision| !revision.is_empty());
+    }
+
+    pub(super) fn has_rootlist_revision(&self, revision: &[u8]) -> bool {
+        self.0
+            .rootlist_revision
+            .lock()
+            .expect("Spotify root-list lock poisoned")
+            .as_deref()
+            == Some(revision)
     }
 
     /// The canonical username returned by Spotify Accounts at sign-in.
     pub(super) fn username(&self) -> &str {
-        self.0.oauth.username()
+        self.api().username()
     }
 
     /// Reuses the account's sign-in name when rendering its playlist cards.
@@ -87,10 +97,6 @@ impl Session {
         &self.0.session_id
     }
 
-    pub(super) fn client_id(&self) -> &str {
-        self.0.oauth.client_id()
-    }
-
     pub(super) fn connection_id(&self) -> RwLockReadGuard<'_, String> {
         self.0
             .connection_id
@@ -108,42 +114,7 @@ impl Session {
         );
     }
 
-    /// Picks a regional host or the global host supplied in the discovery response.
-    pub(super) async fn api_url(&self) -> Result<Url> {
-        let hosts = &self.endpoints().await?.spclient;
-        hosts
-            .regional
-            .iter()
-            .chain(&hosts.global)
-            .find_map(|address| transport::regional_url("https", address))
-            .context("Spotify discovery returned no API host")
-    }
-
-    /// Returns the Dealer hosts supplied in the discovery response.
-    pub(super) async fn dealer_urls(&self) -> Result<Vec<Url>> {
-        Ok(self
-            .endpoints()
-            .await?
-            .dealer
-            .iter()
-            .filter_map(|address| transport::regional_url("wss", address))
-            .collect())
-    }
-
-    pub(super) async fn endpoints(&self) -> Result<&Endpoints> {
-        self.0
-            .endpoints
-            .get_or_try_init(transport::discover)
-            .await
-            .context("Spotify endpoint discovery failed")
-    }
-
-    pub(super) fn has_current_grant(&self) -> bool {
-        self.0.oauth.has_current_grant()
-    }
-
-    /// Gets a bearer for direct Spotify requests from the account's OAuth grant.
-    pub(super) async fn access_token(&self) -> Result<String> {
-        self.0.oauth.token().await
+    pub(super) fn api(&self) -> &Arc<spotifyapis::Session> {
+        &self.0.api
     }
 }

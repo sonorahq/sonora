@@ -1,5 +1,7 @@
 //! SearchView v3 catalogue projections.
 
+pub(crate) const ENDPOINT: &str = "/searchview/v3/search";
+
 /// Ranked hits from a SearchView main-view request.
 #[derive(prost::Message)]
 pub struct MainViewResponse {
@@ -19,7 +21,7 @@ pub struct MainViewResponse {
     // pub filter_catalog: Option<FilterCatalog>,
 }
 
-/// A search hit with the common fields and the projections read by Sonora.
+/// A search hit with common fields and catalogue projections.
 #[derive(prost::Message)]
 pub struct Entity {
     #[prost(string, tag = "1")]
@@ -112,20 +114,11 @@ pub struct Track {
     // #[prost(int32, tag = "17")]
     // pub classification: i32,
     #[prost(message, optional, tag = "18")]
-    pub duration: Option<Duration>,
+    pub duration: Option<prost_types::Duration>,
     // #[prost(int32, tag = "19")]
     // pub content_access: i32,
     // #[prost(bool, tag = "20")]
     // pub is_chaptered: bool,
-}
-
-/// SearchView's Google protobuf duration.
-#[derive(prost::Message)]
-pub struct Duration {
-    #[prost(int64, tag = "1")]
-    pub seconds: i64,
-    #[prost(int32, tag = "2")]
-    pub nanos: i32,
 }
 
 /// A release card and its artist credits.
@@ -139,8 +132,8 @@ pub struct Album {
     pub release_year: i32,
     // #[prost(int32, tag = "4")]
     // pub state: i32,
-    // #[prost(message, optional, tag = "5")]
-    // pub release_time: Option<prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    pub release_time: Option<prost_types::Timestamp>,
     #[prost(string, tag = "6")]
     pub user_country_release_iso_time: String,
     #[prost(message, repeated, tag = "7")]

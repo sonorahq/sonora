@@ -70,6 +70,7 @@ mod waves;
 pub use arrow_ring::ArrowRing;
 pub use artwork::{
     Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
+    set_artwork_variants,
 };
 pub use badge::Badge;
 pub use button::{Button, SMALL_INSET};

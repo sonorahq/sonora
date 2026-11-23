@@ -20,6 +20,7 @@ cli = { path = "crates/cli" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
 music = { path = "crates/music" }
+spotifyapis = { path = "crates/spotifyapis" }
 state = { path = "crates/state" }
 storage = { path = "crates/storage" }
 input = { path = "crates/input" }
@@ -211,6 +212,7 @@ ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "62b36b8" }
 
 percent-encoding = "2.3"
 prost = "0.14"
+prost-types = "0.14"
 pulseaudio = "0.3.2"
 opensubsonic = "0.7"
 tokio = { version = "1.54", features = [

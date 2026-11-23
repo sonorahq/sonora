@@ -1,18 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::spotify::proto::metadata::{
+use crate::spotify::session::Session;
+use anyhow::{Context as _, Result};
+use spotifyapis::proto::metadata::{
     AlbumGroup, Artist as ArtistMessage, Image, RelatedCreators, RelatedEntities, Reputation,
     VisualIdentity,
 };
-use crate::spotify::session::Session;
-use anyhow::{Context as _, Result};
 
-use super::proto::metadata::ExtensionKind;
 use crate::spotify::{albums, collection, collection::take, connect::sequence, wire};
 use crate::{
     Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SUGGESTIONS,
     SavedArtist, Track,
 };
+use spotifyapis::proto::metadata::ExtensionKind;
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
