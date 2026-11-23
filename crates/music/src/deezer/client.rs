@@ -1466,6 +1466,15 @@ impl MusicApi for DeezerClient {
                 log::warn!("deezer: the disc numbers of album {album_id} took too long")
             }
         }
+        let genres: Vec<_> = detail["genres"]["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|genre| wire::text(genre, &["name"]).map(str::to_owned))
+            .collect();
+        for track in &mut tracks {
+            track.genres.clone_from(&genres);
+        }
         let album =
             wire::album(&detail).with_context(|| format!("cannot read the album {album_id}"))?;
         Ok(AlbumDetail { album, tracks })

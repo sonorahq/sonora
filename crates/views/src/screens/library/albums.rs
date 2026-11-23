@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::io::Write as _;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
+use ui::{ActiveTheme as _, Filter, FilterChange, RangeAxis, Unit};
 
 use gpui::{AnyElement, App, Entity, SharedString, TextAlign};
 use i18n::t;
@@ -12,6 +12,7 @@ use state::{
 use ui::rank::{HANDY, NICE, SPARE, USEFUL};
 use ui::{Cell, ColumnSpec, Menu, Pin, Sort, TableSource, Width};
 
+use crate::chrome::tools;
 use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING, YEAR};
 use crate::shared::menus::{ItemMenu, album_menu};
@@ -287,7 +288,7 @@ impl TableSource for AlbumSource {
                     bounds,
                     value,
                     unit: Unit::Plain,
-                    values: Some(years),
+                    values: Some(years.into()),
                 }
                 .clamped(),
             ));
@@ -303,26 +304,18 @@ impl TableSource for AlbumSource {
                     bounds,
                     value,
                     unit: Unit::Plain,
-                    values: Some(counts),
+                    values: Some(counts.into()),
                 }
                 .clamped(),
             ));
         }
         if self.catalog(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-favorites",
-                label: t!("filter-favorites"),
-                on: self.starred,
-            }));
+            axes.push(tools::flag("filter-favorites", self.starred));
         }
         // Offline mode already keeps the shelf to its downloads, so the filter would do nothing.
         let offered = self.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
         if offered && !self.downloads_only(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-downloaded",
-                label: t!("filter-downloaded"),
-                on: self.downloaded,
-            }));
+            axes.push(tools::flag("filter-downloaded", self.downloaded));
         }
         axes.extend(self.reach.axes(self.albums(cx).mixed()));
         axes
@@ -334,11 +327,11 @@ impl TableSource for AlbumSource {
         }
         match change {
             FilterChange::Range("filter-year", value) => {
-                self.year_span = Some(value);
+                self.year_span = value;
                 true
             }
             FilterChange::Range("filter-tracks", value) => {
-                self.tracks_span = Some(value);
+                self.tracks_span = value;
                 true
             }
             FilterChange::Flag("filter-favorites", value) => {

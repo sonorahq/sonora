@@ -124,6 +124,16 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Checks a packed protobuf field without allocating its values, validating the whole field.
+pub(crate) fn contains_varint(bytes: &[u8], value: u64) -> Result<bool> {
+    let mut reader = Reader::new(bytes);
+    let mut found = false;
+    while reader.at < reader.bytes.len() {
+        found |= reader.varint()? == value;
+    }
+    Ok(found)
+}
+
 pub(crate) fn text(bytes: &[u8]) -> Result<String> {
     Ok(std::str::from_utf8(bytes)
         .context("field is not utf-8")?

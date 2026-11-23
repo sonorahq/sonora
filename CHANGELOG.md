@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
+- Filter tracks by release year, play count, popularity, collaborations and tags, with genre, mood and BPM filters where available.
 
 ### Changed
 
@@ -25,6 +26,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
+- Page controls sit beside their content, and the filter button shows active filters.
+- See mood, BPM and genre metadata for tracks where available.
 
 ### Fixed
 

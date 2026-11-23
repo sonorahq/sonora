@@ -11,7 +11,7 @@ use music::{Album, Track};
 use state::{Origin, Playback};
 use ui::{
     ActiveTheme as _, Artwork, Badge, Button, Flight, LEADING, MenuItem, Perch, Pin, Pinnable as _,
-    Skeleton, TableState, Tails as _, Text, Theme, Tipped as _, spoken,
+    Skeleton, TableState, Tails as _, Text, Theme, Tipped as _, runtime, spoken,
 };
 
 use crate::shared::tracks::{self, TrackSource};
@@ -100,6 +100,14 @@ impl HeroMetaStrip {
     pub(crate) fn item(mut self, item: impl IntoElement) -> Self {
         self.items.push(MetaItem::Element(item.into_any_element()));
         self
+    }
+
+    /// Adds a nonzero runtime to the metadata strip.
+    pub(crate) fn duration(self, duration: std::time::Duration) -> Self {
+        match duration.is_zero() {
+            true => self,
+            false => self.text(runtime(duration)),
+        }
     }
 }
 
@@ -359,6 +367,7 @@ pub(crate) struct PageHero {
     fallback: Option<SharedString>,
     accent: bool,
     eyebrow: Option<SharedString>,
+    tools: Option<AnyElement>,
     meta: Option<AnyElement>,
     actions: Option<AnyElement>,
     circle: bool,
@@ -379,6 +388,7 @@ impl PageHero {
             fallback: None,
             accent: false,
             eyebrow: None,
+            tools: None,
             meta: None,
             actions: None,
             circle: false,
@@ -450,6 +460,17 @@ impl PageHero {
         self
     }
 
+    /// Sets the eyebrow label and adjacent controls.
+    pub(crate) fn top_bar(
+        mut self,
+        category: impl Into<SharedString>,
+        tools: impl IntoElement,
+    ) -> Self {
+        self.eyebrow = Some(category.into());
+        self.tools = Some(tools.into_any_element());
+        self
+    }
+
     pub(crate) fn meta(mut self, meta: impl IntoElement) -> Self {
         self.meta = Some(meta.into_any_element());
         self
@@ -483,6 +504,13 @@ impl RenderOnce for PageHero {
         let theme = *cx.theme();
 
         let art = theme.metrics.cover;
+        let head = self.eyebrow.map(|label| {
+            let label = eyebrow_label(label, cx);
+            match self.tools {
+                Some(tools) => crate::shared::page::row(label, tools),
+                None => label.into_any_element(),
+            }
+        });
         let drag_start = self.drag_start.map(Rc::from);
         let starter = drag_start.clone();
         let cover_click: Option<Rc<CoverHandler>> = self.cover_click.map(Rc::from);
@@ -491,6 +519,8 @@ impl RenderOnce for PageHero {
             return div()
                 .id(self.id)
                 .flex()
+                .w_full()
+                .min_w_0()
                 .flex_none()
                 .items_end()
                 .gap(COVER_GAP)
@@ -512,7 +542,7 @@ impl RenderOnce for PageHero {
                         .justify_end()
                         .gap_2()
                         .line_height(relative(LEADING))
-                        .children(self.eyebrow.map(|eyebrow| eyebrow_label(eyebrow, cx)))
+                        .children(head)
                         .child(
                             skeleton_line(theme.text(Text::Display)).child(
                                 Skeleton::new()
@@ -536,6 +566,8 @@ impl RenderOnce for PageHero {
             .id(self.id.clone())
             .when_some(self.pin, |hero, pin| hero.pin(pin))
             .flex()
+            .w_full()
+            .min_w_0()
             .flex_none()
             .items_end()
             .gap(COVER_GAP)
@@ -588,7 +620,7 @@ impl RenderOnce for PageHero {
                     .justify_end()
                     .gap_2()
                     .line_height(relative(LEADING))
-                    .children(self.eyebrow.map(|eyebrow| eyebrow_label(eyebrow, cx)))
+                    .children(head)
                     .child(
                         div()
                             .flex()
@@ -629,7 +661,15 @@ impl RenderOnce for PageHero {
                             }),
                     )
                     .children(self.meta)
-                    .children(self.actions.map(|actions| div().pt_1().child(actions))),
+                    .children(self.actions.map(|actions| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .w_full()
+                            .min_w_0()
+                            .pt_1()
+                            .child(actions)
+                    })),
             )
     }
 }

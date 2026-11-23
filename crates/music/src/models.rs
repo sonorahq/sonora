@@ -72,7 +72,7 @@ pub struct Credit {
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
 /// caller that builds one from `..Default::default()` sets `playable` itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Track {
     pub id: Option<String>,
@@ -89,12 +89,16 @@ pub struct Track {
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
+    pub release_year: Option<u32>,
     pub playcount: Option<u64>,
     pub popularity: u32,
     pub explicit: bool,
     pub track_number: u32,
     pub disc_number: u32,
+    pub genres: Vec<String>,
     pub tags: Vec<String>,
+    pub moods: Vec<String>,
+    pub bpm: Option<f32>,
     pub languages: Vec<String>,
     pub credits: Vec<Credit>,
 }
@@ -232,7 +236,7 @@ fn is_no_label(label: &str) -> bool {
     label.eq_ignore_ascii_case(NO_LABEL)
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -264,7 +268,7 @@ pub struct Genre {
 
 /// One card of a browse shelf. A provider's home and genre pages mix whatever the shelf holds,
 /// so a track or an artist sits beside albums and playlists in the same row.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GenreItem {
     Playlist(Playlist),
     Album(Album),
@@ -273,7 +277,7 @@ pub enum GenreItem {
     Artist(SavedArtist),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreSection {
     pub title: String,
     pub items: Vec<GenreItem>,
@@ -310,7 +314,7 @@ impl Found {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct HomeFeed {
     /// What the user has been playing lately, in every shape the provider lists it: songs and
     /// videos, but also the albums, playlists and artists they came from.
@@ -319,7 +323,7 @@ pub struct HomeFeed {
     pub sections: Vec<GenreSection>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreDetail {
     pub name: String,
     pub sections: Vec<GenreSection>,
@@ -375,7 +379,7 @@ pub struct TrackTags {
     pub lyrics: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
@@ -417,7 +421,7 @@ pub struct SavedArtist {
     pub added_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
@@ -435,7 +439,7 @@ pub struct Artist {
 
 /// What an artist page fills in once its overview is already on screen. Every list
 /// replaces what `MusicApi::artist` answered with, and an empty one leaves that part alone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArtistCatalogue {
     pub albums: Vec<Album>,
     pub top_tracks: Vec<Track>,
