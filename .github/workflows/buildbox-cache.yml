@@ -23,6 +23,10 @@ on:
       - rust-toolchain.toml
       - .github/buildbox-cache/**
       - .github/workflows/buildbox-cache.yml
+  # The weekly cold build runs right after the ISO week turns over, so the first push of the week
+  # finds a snapshot instead of waiting half an hour for one.
+  schedule:
+    - cron: '17 0 * * 1'
   workflow_dispatch:
 
 # Only the newest main matters, so a newer push cancels the build of an older one.
@@ -69,12 +73,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # A snapshot seeds this build only while everything that rebuilds the third-party crates is
-      # the same. The ISO week in the key rebuilds cold once a week, after the Arch packages moved.
+      # A snapshot seeds this build only while everything that rebuilds every crate is the same.
+      # Cargo.lock stays out: cargo rebuilds just the crates a lock change touches, and snapshot.sh
+      # drops the units the build stopped using. The ISO week in the key rebuilds cold once a week,
+      # after the Arch packages moved.
       - name: Restore the previous snapshot
         id: restore
         run: |
-          key=$(cd checkout && { cat Cargo.lock rust-toolchain.toml .cargo/config.toml \
+          key=$(cd checkout && { cat rust-toolchain.toml .cargo/config.toml \
             .github/buildbox-cache/packages; echo "$SNAPSHOT_FORMAT"; date -u +%G-W%V; } \
             | sha256sum | cut -c1-32)
           echo "key=$key" >> "$GITHUB_OUTPUT"
