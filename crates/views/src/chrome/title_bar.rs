@@ -263,11 +263,18 @@ impl TitleBar {
                     .selected(info.active && info.guest)
                     .on_click(move |_, _, cx| {
                         let before = session.read(cx).provider_slug();
+                        let idle = !session.read(cx).is_pending();
                         session.update(cx, |session, cx| match stored {
                             true => session.switch(slug, cx),
                             false => session.sign_in(slug, SignIn::Anonymous, cx),
                         });
-                        if session.read(cx).provider_slug() != before {
+                        // an anonymous sign-in only takes over the provider once it lands, so a
+                        // started one counts as the switch
+                        let switched = match stored {
+                            true => session.read(cx).provider_slug() != before,
+                            false => idle && session.read(cx).is_pending() && before != Some(slug),
+                        };
+                        if switched {
                             open_startup(cx);
                         }
                     }),
