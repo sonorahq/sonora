@@ -3,13 +3,14 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, FontWeight, SharedString, div, img};
+use gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, img};
 use i18n::t;
-use state::Channel;
-use ui::{ActiveTheme as _, Avatar, Glowing as _, Switch, Text};
+use state::{Channel, UpdateState};
+use ui::{ActiveTheme as _, Avatar, Button, Glowing as _, Switch, Text};
 
-use super::rows::{outward, segmented};
+use super::rows::{Row, outward, segmented};
 use super::{Group, SettingsView, Slot, group_heading};
+use crate::shared::cells::relative_stamp;
 
 /// How large the app icon stands, in covers.
 const MARK_TILE: f32 = 0.5;
@@ -69,17 +70,19 @@ impl SettingsView {
             .into_iter()
             .flatten();
         vec![
-            Group::untitled().rows(
-                [Slot::Version, Slot::Updates]
-                    .into_iter()
-                    .chain(itself)
-                    .chain([Slot::Log, Slot::License, Slot::Source]),
-            ),
+            Group::new("settings-group-updates", "icons/refresh-cw.svg")
+                .rows([Slot::Version, Slot::Updates].into_iter().chain(itself)),
+            Group::new("settings-group-project", "icons/info.svg").rows([
+                Slot::Log,
+                Slot::License,
+                Slot::Source,
+            ]),
         ]
     }
 
-    /// The version row, which for a nightly also names the commit it was built from.
-    pub(super) fn version_row(&self) -> AnyElement {
+    /// The version row: the build running, which for a nightly also names its commit, what
+    /// the last look for updates found, and the button that looks again now.
+    pub(super) fn version_row(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let version: SharedString = match state::commit() {
             Some(commit) => t!(
                 "settings-version-commit",
@@ -88,19 +91,72 @@ impl SettingsView {
             ),
             None => state::version().into(),
         };
-        self.row(
-            t!("settings-version"),
-            ui::spoken("settings-version-value", version).into_any_element(),
+        let updates = self.updates.read(cx);
+        let checking = updates.checking();
+        let status = match (updates.state(), checking) {
+            (_, true) => t!("settings-update-status-checking"),
+            (UpdateState::Offered(release), false) => t!(
+                "settings-update-status-found",
+                version = release.version.as_str()
+            ),
+            (UpdateState::Ready(release), false) => t!(
+                "settings-update-status-ready",
+                version = release.version.as_str()
+            ),
+            (UpdateState::Fetching(release), false) => {
+                t!("update-downloading", name = release.version.as_str())
+            }
+            (UpdateState::Failed, false) => t!("update-failed"),
+            (UpdateState::Quiet, false) if !updates.can_check() => {
+                t!("settings-update-status-managed")
+            }
+            (UpdateState::Quiet, false) if updates.check_failed() => {
+                t!("settings-update-status-failed")
+            }
+            (UpdateState::Quiet, false) => match updates.checked_at() {
+                Some(at) => {
+                    let when = relative_stamp(Some(at));
+                    t!("settings-update-status-latest", when = when.as_ref())
+                }
+                None => t!("settings-update-status-never"),
+            },
+        };
+        let can_check = updates.can_check();
+
+        let turn = {
+            let mut spin = self.update_spin.borrow_mut();
+            match checking {
+                true => spin.start(),
+                false => spin.stop(),
+            }
+            spin.turn(window, cx)
+        };
+        let check = Button::new("check-updates-now")
+            .outline()
+            .small()
+            .icon("icons/refresh-cw.svg")
+            .turned(turn)
+            .label(t!("settings-check-updates"))
+            .disabled(checking || !can_check)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.updates.update(cx, |updates, cx| updates.check(cx));
+            }));
+
+        Row::new(
+            t!("settings-version-title", version = version.as_ref()),
+            check.into_any_element(),
         )
+        .detail(status)
+        .into_any_element()
     }
 
     pub(super) fn updates_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.settings.read(cx).check_updates();
 
         self.row(
-            t!("settings-check-updates"),
+            t!("settings-auto-check"),
             Switch::new("check-updates", on)
-                .name(t!("settings-check-updates"))
+                .name(t!("settings-auto-check"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings
                         .update(cx, |settings, cx| settings.set_check_updates(!on, cx));

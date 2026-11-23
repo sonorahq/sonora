@@ -4,6 +4,8 @@ mod staged;
 
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -12,7 +14,7 @@ use i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::{AppSettings, Io, join};
+use crate::{AppSettings, Io, Outcome, Toast, Toasts, join};
 use install::Install;
 use staged::Staged;
 
@@ -27,6 +29,8 @@ const NIGHTLY_TAG: &str = "nightly-build";
 const NIGHTLY_TITLE: &str = "Nightly ";
 /// How many leading hex digits of a commit hash the version row shows, as `git` abbreviates it.
 const SHORT_COMMIT: usize = 7;
+/// The steps a download counts its progress in, so it fits an atomic integer.
+const PROGRESS_STEPS: f32 = 10_000.;
 /// How often a running Sonora asks GitHub again, so a copy left open in the tray for days still
 /// hears about a release.
 const POLL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -127,7 +131,8 @@ impl Release {
 pub enum UpdateState {
     Quiet,
     Offered(Release),
-    Fetching,
+    /// The listener asked to install the release, which is downloading.
+    Fetching(Release),
     /// The release is downloaded and prepared, and goes in the next time Sonora starts.
     Ready(Release),
     Failed,
@@ -145,6 +150,14 @@ pub struct Updates {
     automatic: bool,
     /// The version whose card the listener closed, which later looks leave quiet.
     dismissed: Option<String>,
+    /// The loading toast of a look the listener asked for, which the look settles when it ends.
+    checking: Option<usize>,
+    /// When a look last heard back from GitHub, in Unix seconds.
+    checked_at: Option<i64>,
+    /// Whether the last look failed to hear back from GitHub.
+    check_failed: bool,
+    /// How far the running download has got, in [`PROGRESS_STEPS`], written on tokio.
+    progress: Arc<AtomicU32>,
     _settings: Subscription,
     _poll: Task<()>,
 }
@@ -167,6 +180,9 @@ impl Updates {
                 forget(&this.io);
             }
             this.look(moved, cx);
+            if this.task.is_none() {
+                this.report(Heard::Abandoned, cx);
+            }
         });
         let poll = cx.spawn(async move |this, cx| {
             loop {
@@ -185,6 +201,10 @@ impl Updates {
             channel,
             automatic,
             dismissed: None,
+            checking: None,
+            checked_at: None,
+            check_failed: false,
+            progress: Arc::default(),
             _settings: watch,
             _poll: poll,
         };
@@ -207,13 +227,122 @@ impl Updates {
         self.offered().is_some_and(Release::installable)
     }
 
+    /// Whether a look the listener asked for is still waiting on GitHub.
+    pub fn checking(&self) -> bool {
+        self.checking.is_some()
+    }
+
+    /// When Sonora last heard back from GitHub, in Unix seconds, or `None` before the first look
+    /// of this run has.
+    pub fn checked_at(&self) -> Option<i64> {
+        self.checked_at
+    }
+
+    /// Whether the last look could not reach GitHub or read its answer.
+    pub fn check_failed(&self) -> bool {
+        self.check_failed
+    }
+
+    /// How far the running download has got, from 0 to 1, or `None` while nothing downloads or
+    /// the server has not said how large the update is. It is written off the main thread, so a
+    /// view that shows it redraws on its own while the state is [`UpdateState::Fetching`].
+    pub fn progress(&self) -> Option<f32> {
+        if !matches!(self.state, UpdateState::Fetching(_)) {
+            return None;
+        }
+        match self.progress.load(Ordering::Relaxed) {
+            0 => None,
+            steps => Some(steps as f32 / PROGRESS_STEPS),
+        }
+    }
+
+    /// Whether this copy can look for updates at all. A nightly a package manager installed
+    /// follows the package manager instead.
+    pub fn can_check(&self) -> bool {
+        updates_itself() || Channel::running() == Channel::Stable
+    }
+
+    /// Looks for a newer build now because the listener asked, even with update checks turned
+    /// off, and reports how the look went in a toast that loads until GitHub answers. A card the
+    /// listener closed earlier comes back. An update that is downloading or ready only shows its
+    /// card again.
+    pub fn check(&mut self, cx: &mut Context<Self>) {
+        if self.checking.is_some() {
+            return;
+        }
+        self.dismissed = None;
+        if !self.can_check() {
+            Toasts::show(Outcome::Info, "update-managed", cx);
+            return;
+        }
+        if matches!(self.state, UpdateState::Fetching(_) | UpdateState::Ready(_)) {
+            cx.notify();
+            return;
+        }
+        self.checking = Some(Toasts::post(
+            Toast::new(Outcome::Loading, "update-checking"),
+            cx,
+        ));
+        cx.notify();
+        if self.task.is_none() {
+            self.look(true, cx);
+        }
+    }
+
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         if let UpdateState::Offered(release) | UpdateState::Ready(release) = &self.state {
             self.dismissed = Some(release.version.clone());
         }
         self.task = None;
         self.state = UpdateState::Quiet;
+        self.report(Heard::Abandoned, cx);
         cx.notify();
+    }
+
+    /// Turns the toast of a look the listener asked for into one that loads while the release it
+    /// found downloads in the background, since the card only shows once it is ready.
+    fn downloading(&mut self, version: &str, cx: &mut Context<Self>) {
+        if let Some(id) = self.checking {
+            Toasts::settle(
+                id,
+                Toast::new(Outcome::Loading, "update-downloading").name(version.to_owned()),
+                cx,
+            );
+        }
+    }
+
+    /// Records what a look heard and settles the toast of a look the listener asked for: a
+    /// success when the running build is the newest, a failure when GitHub could not be asked,
+    /// and nothing when a release was found, since its card says so.
+    fn report(&mut self, heard: Heard, cx: &mut Context<Self>) {
+        match &heard {
+            Heard::Latest | Heard::Found => {
+                self.checked_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|since| since.as_secs() as i64);
+                self.check_failed = false;
+            }
+            Heard::Failed(_) => self.check_failed = true,
+            Heard::Abandoned => {}
+        }
+        cx.notify();
+        let Some(id) = self.checking.take() else {
+            return;
+        };
+        match heard {
+            Heard::Latest => Toasts::settle(
+                id,
+                Toast::new(Outcome::Done, "update-latest").name(version()),
+                cx,
+            ),
+            Heard::Failed(error) => Toasts::settle(
+                id,
+                Toast::new(Outcome::Failed, "update-check-failed").detail(error),
+                cx,
+            ),
+            Heard::Found | Heard::Abandoned => Toasts::close(id, cx),
+        }
     }
 
     /// Downloads the offered build, checks it against the release's checksums and puts it in
@@ -223,19 +352,23 @@ impl Updates {
         let Some(release) = self.offered().cloned() else {
             return;
         };
-        let (Some(package), Some(sums)) = (release.package, release.sums) else {
+        let (Some(package), Some(sums)) = (release.package.clone(), release.sums.clone()) else {
             return;
         };
-        self.state = UpdateState::Fetching;
+        let version = release.version.clone();
+        self.state = UpdateState::Fetching(release);
         cx.notify();
 
         let http = self.http.clone();
         let io = self.io.clone();
-        let version = release.version;
+        let progress = self.progress.clone();
+        progress.store(0, Ordering::Relaxed);
         self.task = Some(cx.spawn(async move |this, cx| {
             let fetched =
-                join(io.spawn(async move { download(&http, &package, &sums, &version).await }))
-                    .await;
+                join(io.spawn(async move {
+                    download(&http, &package, &sums, &version, &progress).await
+                }))
+                .await;
             let applied = match fetched {
                 Ok(path) => join(io.spawn_blocking(move || Install::current().apply(&path))).await,
                 Err(error) => Err(error),
@@ -297,7 +430,7 @@ impl Updates {
             return;
         }
         if self.task.is_some()
-            || matches!(self.state, UpdateState::Fetching | UpdateState::Ready(_))
+            || matches!(self.state, UpdateState::Fetching(_) | UpdateState::Ready(_))
         {
             return;
         }
@@ -310,12 +443,20 @@ impl Updates {
             let release = match found {
                 Ok(Some(release)) => release,
                 Ok(None) => {
-                    this.update(cx, |this, _| this.task = None).ok();
+                    this.update(cx, |this, cx| {
+                        this.task = None;
+                        this.report(Heard::Latest, cx);
+                    })
+                    .ok();
                     return;
                 }
                 Err(error) => {
                     log::warn!("updates: cannot ask github: {error:#}");
-                    this.update(cx, |this, _| this.task = None).ok();
+                    this.update(cx, |this, cx| {
+                        this.task = None;
+                        this.report(Heard::Failed(error.to_string()), cx);
+                    })
+                    .ok();
                     return;
                 }
             };
@@ -323,6 +464,8 @@ impl Updates {
                 this.update(cx, |this, cx| this.offer(release, cx)).ok();
                 return;
             }
+            this.update(cx, |this, cx| this.downloading(&release.version, cx))
+                .ok();
             let staging = release.clone();
             let staged = join(io.spawn(async move { stage(&http, &staging, channel).await })).await;
             this.update(cx, |this, cx| match staged {
@@ -336,13 +479,17 @@ impl Updates {
                     }
                     log::info!("updates: {} is ready for the next start", staged.version);
                     this.task = None;
+                    this.report(Heard::Found, cx);
                     if this.dismissed.as_deref() != Some(release.version.as_str()) {
                         this.state = UpdateState::Ready(release);
                         cx.notify();
                     }
                 }
                 // The change in settings that brought this about already cleared the update.
-                Ok(_) => this.task = None,
+                Ok(_) => {
+                    this.task = None;
+                    this.report(Heard::Abandoned, cx);
+                }
                 Err(error) => {
                     log::warn!("updates: cannot stage {}: {error:#}", release.version);
                     this.offer(release, cx);
@@ -355,12 +502,25 @@ impl Updates {
     /// Shows the card for `release` unless the listener already closed it once.
     fn offer(&mut self, release: Release, cx: &mut Context<Self>) {
         self.task = None;
+        self.report(Heard::Found, cx);
         if self.dismissed.as_deref() == Some(release.version.as_str()) {
             return;
         }
         self.state = UpdateState::Offered(release);
         cx.notify();
     }
+}
+
+/// What a look heard back, which [`Updates::report`] records and tells the listener about.
+enum Heard {
+    /// The running build is the newest on its channel.
+    Latest,
+    /// A newer build is out and its card is shown or on its way.
+    Found,
+    /// GitHub could not be asked, for the reason given.
+    Failed(String),
+    /// The look was cancelled before it heard anything.
+    Abandoned,
 }
 
 /// The channel settings ask for and whether updates install themselves, which needs update
@@ -474,7 +634,7 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
         .sums
         .as_deref()
         .context("the release has no checksums")?;
-    let path = download(http, package, sums, &release.version).await?;
+    let path = download(http, package, sums, &release.version, &AtomicU32::new(0)).await?;
     let prepared = tokio::task::spawn_blocking(move || Install::current().prepare(&path)).await??;
     Ok(Staged {
         version: release.version.clone(),
@@ -485,12 +645,14 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
 }
 
 /// Streams the asset into the update folder while hashing it, and keeps it only when the hash
-/// matches the one the release lists.
+/// matches the one the release lists. How far it has got goes into `progress` in
+/// [`PROGRESS_STEPS`] whenever the server says how large the asset is.
 async fn download(
     http: &reqwest::Client,
     package: &Asset,
     sums: &str,
     version: &str,
+    progress: &AtomicU32,
 ) -> Result<PathBuf> {
     let listed = http
         .get(sums)
@@ -523,10 +685,17 @@ async fn download(
     std::fs::create_dir_all(&folder).context("cannot make the update folder")?;
     let path = folder.join(format!("sonora-{version}-{}", package.name));
     let mut file = std::fs::File::create(&path).context("cannot keep the update")?;
+    let total = response.content_length().filter(|total| *total > 0);
+    let mut received = 0_u64;
     let mut hasher = Sha256::new();
     while let Some(chunk) = response.chunk().await.context("cannot read the update")? {
         hasher.update(&chunk);
         file.write_all(&chunk).context("cannot keep the update")?;
+        received += chunk.len() as u64;
+        if let Some(total) = total {
+            let done = (received as f32 / total as f32).min(1.);
+            progress.store((done * PROGRESS_STEPS) as u32, Ordering::Relaxed);
+        }
     }
     drop(file);
 

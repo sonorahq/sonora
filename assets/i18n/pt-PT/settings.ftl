@@ -379,7 +379,6 @@ update-detail = Está na versão { $running }. Veja o que mudou ou atualize agor
 update-detail-notes = Está na versão { $running }. Veja o que mudou e atualize o Sonora da forma como o instalou.
 update-notes = O que há de novo
 update-now = Atualizar
-update-working = A transferir a atualização…
 update-failed = Não foi possível instalar a atualização. Tente novamente pela página de lançamentos.
 update-never = Não verificar atualizações
 notice-never = Não mostrar novamente

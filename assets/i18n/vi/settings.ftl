@@ -486,7 +486,6 @@ update-detail = Bạn đang dùng { $running }. Xem những thay đổi hoặc c
 update-detail-notes = Bạn đang dùng { $running }. Xem những thay đổi, rồi cập nhật Sonora theo cách bạn đã cài đặt.
 update-notes = Có gì mới
 update-now = Cập nhật
-update-working = Đang tải xuống bản cập nhật…
 update-failed = Không thể cài đặt bản cập nhật. Hãy thử lại từ trang phát hành.
 update-never = Không kiểm tra cập nhật
 notice-never = Không hiển thị lại
