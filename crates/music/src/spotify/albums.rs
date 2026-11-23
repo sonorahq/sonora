@@ -111,8 +111,7 @@ pub(super) fn album_from(uri: &str, album: &AlbumMessage) -> Album {
         release_date: album
             .date
             .as_ref()
-            .and_then(|date| crate::calendar::release_date(date.year(), date.month(), date.day()))
-            .unwrap_or_default(),
+            .and_then(|date| crate::ReleaseDate::from_parts(date.year(), date.month(), date.day())),
         label: album.label().to_owned(),
         copyrights: album
             .copyright

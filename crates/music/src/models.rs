@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ReleaseDate;
+
 /// A size of the same cover that a provider can name without fetching anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -89,7 +91,7 @@ pub struct Track {
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
     /// ISO release date with the precision the provider supplied.
-    pub release_date: Option<String>,
+    pub release_date: Option<ReleaseDate>,
     pub playcount: Option<u64>,
     pub popularity: u32,
     pub explicit: bool,
@@ -106,18 +108,13 @@ pub struct Track {
 
 impl Track {
     /// Returns the track release date, filling in compatible detail from the album.
-    pub fn release_date_with<'a>(&'a self, album_date: Option<&'a str>) -> Option<&'a str> {
-        let date = self.release_date.as_deref();
+    pub fn release_date_with(&self, album_date: Option<ReleaseDate>) -> Option<ReleaseDate> {
         album_date
-            .filter(|album| !album.is_empty())
-            .filter(|album| {
-                date.is_none_or(|date| {
-                    album
-                        .strip_prefix(date)
-                        .is_some_and(|rest| rest.starts_with('-'))
-                })
+            .filter(|&album| {
+                self.release_date
+                    .is_none_or(|date| date.is_prefix_of(album))
             })
-            .or(date)
+            .or(self.release_date)
     }
 }
 
@@ -211,7 +208,7 @@ pub struct Album {
     pub release_type: ReleaseType,
     pub year: i32,
     pub track_count: u32,
-    pub release_date: String,
+    pub release_date: Option<ReleaseDate>,
     pub label: String,
     pub copyrights: Vec<String>,
     pub added_at: Option<i64>,
@@ -220,13 +217,11 @@ pub struct Album {
 impl Album {
     /// Fills in release dates for tracks loaded alongside this album.
     pub(crate) fn date_tracks(&self, tracks: &mut [Track]) {
-        let date = crate::calendar::parse_release_date(&self.release_date)
-            .or_else(|| crate::calendar::release_date(self.year, 0, 0));
+        let date = self
+            .release_date
+            .or_else(|| ReleaseDate::from_parts(self.year, 0, 0));
         for track in tracks {
-            let current = track.release_date_with(date.as_deref());
-            if current != track.release_date.as_deref() {
-                track.release_date = current.map(str::to_owned);
-            }
+            track.release_date = track.release_date_with(date);
         }
     }
 

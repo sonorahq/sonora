@@ -632,8 +632,7 @@ impl SubsonicClient {
                 .song_count
                 .map(|count| count.max(0) as u32)
                 .unwrap_or(tracks as u32),
-            release_date: wire::release_date(detail.release_date.as_ref(), year)
-                .unwrap_or_default(),
+            release_date: wire::release_date(detail.release_date.as_ref(), year),
             label: wire::labels(detail.record_labels.as_deref()),
             copyrights: Vec::new(),
             added_at: iso_8601_to_epoch(detail.created.as_deref()),

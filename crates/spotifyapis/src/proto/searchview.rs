@@ -235,7 +235,7 @@ impl Session {
         );
         let query = component(query);
         let path = format!(
-            "{}?query={query}&entity_types={kind}&limit={limit}&timestamp={timestamp}&request_id={request_id}&show_type=podcast",
+            "{}?query={query}&entity_types={kind}&limit={limit}&timestamp={timestamp}&request_id={request_id}",
             ENDPOINT
         );
         http::get(self, &path, linux_headers()).await

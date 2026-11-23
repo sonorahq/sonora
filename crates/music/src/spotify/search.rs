@@ -143,24 +143,22 @@ fn album(hit: Entity) -> Option<Album> {
         AlbumType::Single => ReleaseType::Single,
         AlbumType::Compilation => ReleaseType::Compilation,
         AlbumType::Ep => ReleaseType::Ep,
-        AlbumType::Audiobook => ReleaseType::Audiobook,
-        AlbumType::Podcast => ReleaseType::Podcast,
+        AlbumType::Audiobook | AlbumType::Podcast => return None,
     };
-    let release_date = crate::calendar::parse_release_date(&album.user_country_release_iso_time)
-        .or_else(|| crate::calendar::release_date(album.release_year, 0, 0))
+    let release_date = crate::ReleaseDate::parse(&album.user_country_release_iso_time)
+        .or_else(|| crate::ReleaseDate::from_parts(album.release_year, 0, 0))
         .or_else(|| {
             let stamp = album.release_time?;
             let date = jiff::Timestamp::new(stamp.seconds, stamp.nanos)
                 .ok()?
                 .to_zoned(jiff::tz::TimeZone::UTC)
                 .date();
-            crate::calendar::release_date(
+            crate::ReleaseDate::from_parts(
                 date.year().into(),
                 date.month().into(),
                 date.day().into(),
             )
-        })
-        .unwrap_or_default();
+        });
     let cover = wire::playlist_image(&hit.image_uri);
     let cover_large = cover
         .as_deref()

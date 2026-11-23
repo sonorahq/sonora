@@ -24,12 +24,12 @@ use futures::future::BoxFuture;
 use sha1::{Digest as _, Sha1};
 use spotifyapis::dealer::{self, Command as Wire, Dealer, Message, PlayCommand, Reply, Request};
 use spotifyapis::id::{CatalogueId, TRACK_PREFIX, track_id as uri_id, track_uri};
-use spotifyapis::player_command;
+use spotifyapis::player_command::{ConnectDevice, Play};
 use spotifyapis::proto::collection::{CollectionUpdate, UPDATE_TOPIC as COLLECTION_TOPIC};
 use spotifyapis::proto::connect_state::{
     CLUSTER_TOPIC, Capabilities, Cluster, ClusterUpdate, ContextIndex, ContextPlayerOptions,
     Device as WireDevice, DeviceInfo, DeviceType, PlayerState, ProvidedTrack, PutStateReason,
-    PutStateRequest, SetVolumeCommand, SetVolumeRequest, Suppressions, VOLUME_TOPIC,
+    PutStateRequest, SetVolumeCommand, Suppressions, VOLUME_TOPIC,
 };
 use spotifyapis::proto::connect_state::{ContextTrack, TransferState};
 use spotifyapis::proto::playlist_v2::{PLAYLIST_TOPIC, PlaylistModificationInfo, USER_TOPIC};
@@ -48,35 +48,23 @@ const SPIRC_VERSION: &str = "3.2.6";
 const CONNECT_STATE_MEMBER: i32 = 2;
 const VERY_HIGH_AUDIO_QUALITY: i32 = 4;
 const VOLUME_STEPS: i32 = 64;
-/// The context a state names when it has none, which Spotify needs to see to keep the device
-/// active.
+// Idle state needs a placeholder context to remain registered.
 const UNKNOWN_CONTEXT: &str = "spotify:unknown";
-/// How long a command waits for the app to act on it before the state is put regardless, so the
-/// device that sent it always hears that it was handled.
-const ACK_DELAY: Duration = Duration::from_millis(600);
-/// How long after claiming playback a report of another active device is taken to be older than
-/// the claim.
-const CLAIM_GRACE: Duration = Duration::from_secs(3);
-/// Delay before retrying a failed Dealer subscription.
-const OBSERVER_RETRY: Duration = Duration::from_secs(10);
-/// How many characters of the digest make the uid Spotify's apps give a track they find listed
-/// without one.
 const DERIVED_UID: usize = 20;
-/// The most upcoming tracks a start carries over from the device that sent it.
 const CARRIED: usize = 80;
-/// The recent history window Spotify includes in its player state.
 const PREVIOUS: usize = 10;
-/// A fresh cluster snapshot carries the exact shuffled queue and previous-track order.
-const QUEUE_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
-/// How long a new name settles before it is put, so a name typed in is put once.
+
+// Give playback time to apply a remote command before publishing its resulting state.
+const ACK_DELAY: Duration = Duration::from_millis(600);
 const RENAME_DELAY: Duration = Duration::from_millis(800);
-/// The least time between two puts of the state. A change that comes sooner waits for the next
-/// slot and is put with everything that changed meanwhile.
+const OBSERVER_RETRY: Duration = Duration::from_secs(10);
+// Give cluster updates time to reflect a new local playback claim.
+const CLAIM_GRACE: Duration = Duration::from_secs(3);
+const QUEUE_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
+
+// State publication has separate thresholds for routine updates, handoffs, and throttling.
 const PUT_GAP: Duration = Duration::from_secs(1);
-/// Reuse an acknowledged playback state only within the observed desktop handoff window.
 const TRANSFER_STATE_AGE: Duration = Duration::from_secs(2);
-/// How long puts wait after Spotify refuses one for coming too often, and the most they wait
-/// after being refused again and again.
 const BACKOFF_FIRST: Duration = Duration::from_secs(2);
 const BACKOFF_LAST: Duration = Duration::from_secs(60);
 
@@ -91,7 +79,8 @@ struct Worker {
     session: Session,
     out: UnboundedSender<Event>,
     name: String,
-    dealer: Option<DealerLink>,
+    dealer: Option<Dealer>,
+    registration_retry: Option<Instant>,
     mode: Mode,
     soloist_device: Option<String>,
     soloist_ready: bool,
@@ -123,18 +112,10 @@ struct Worker {
     ack_at: Option<Instant>,
     rename_at: Option<Instant>,
     playback: ClusterPlayback,
-    /// The reason of a put that is due but held back, and when it may go out.
-    pending: Option<(Instant, PutStateReason)>,
+    pending: Option<PutStateReason>,
     last_put: Option<Instant>,
     confirmed_transfer_state: Option<Instant>,
-    blocked_until: Option<Instant>,
-    backoff: Duration,
-}
-
-/// The running Dealer task and its pending observer registration retry.
-struct DealerLink {
-    socket: Dealer,
-    retry_at: Option<Instant>,
+    backoff: Option<(Instant, Duration)>,
 }
 
 /// Playback from the latest cluster, with the last remote snapshot available for transfers.
@@ -159,6 +140,7 @@ impl Worker {
             out,
             name,
             dealer: None,
+            registration_retry: None,
             mode: Mode::Off,
             soloist_device: None,
             soloist_ready: false,
@@ -183,20 +165,19 @@ impl Worker {
             pending: None,
             last_put: None,
             confirmed_transfer_state: None,
-            blocked_until: None,
-            backoff: Duration::ZERO,
+            backoff: None,
         }
     }
 
     async fn run(mut self, mut inputs: UnboundedReceiver<Input>) {
         loop {
-            let retry_at = self.dealer.as_ref().and_then(|link| link.retry_at);
+            let put_at = self.put_at();
             tokio::select! {
                 input = inputs.recv() => {
                     let Some(input) = input else { break };
                     self.input(input).await;
                 }
-                event = async { self.dealer.as_mut()?.socket.next().await }, if self.dealer.is_some() => {
+                event = async { self.dealer.as_mut()?.next().await }, if self.dealer.is_some() => {
                     match event {
                         Some(dealer::Event::Connected(id)) => self.connection_id(id).await,
                         Some(dealer::Event::Disconnected) => self.disconnected(),
@@ -222,7 +203,7 @@ impl Worker {
                 Some(read) = async { Some(self.jam_read.as_mut()?.await) }, if self.jam_read.is_some() => {
                     self.finish_jam_read(read);
                 }
-                () = acknowledge(self.rename_at) => {
+                () = wait_until(self.rename_at) => {
                     self.rename_at = None;
                     if self.mode == Mode::Publish
                         && self.dealer_ready()
@@ -231,9 +212,9 @@ impl Worker {
                         self.report_cluster(cluster);
                     }
                 }
-                () = acknowledge(retry_at) => self.refresh_roster().await,
-                () = acknowledge(self.pending.map(|(at, _)| at)) => self.flush().await,
-                () = acknowledge(self.ack_at) => {
+                () = wait_until(self.registration_retry) => self.refresh_roster().await,
+                () = wait_until(put_at) => self.flush().await,
+                () = wait_until(self.ack_at) => {
                     self.ack_at = None;
                     if self.now.is_some() {
                         self.want_put(PutStateReason::PlayerStateChanged);
@@ -312,8 +293,8 @@ impl Worker {
         };
         // The target starts from the last published state.
         let blocked = self
-            .blocked_until
-            .is_some_and(|until| until > Instant::now());
+            .backoff
+            .is_some_and(|(until, _)| until > Instant::now());
         let outbound = from == mine && to != mine && self.now.is_some();
         if outbound
             && !blocked
@@ -365,15 +346,12 @@ impl Worker {
         // A registration belongs to its Dealer connection. Start the new role on a
         // fresh connection after unregistering the previous device.
         self.disconnected();
-        self.dealer = (mode != Mode::Off).then(|| DealerLink {
-            socket: Dealer::start(self.session.api().clone()),
-            retry_at: None,
-        });
+        self.dealer = (mode != Mode::Off).then(|| Dealer::start(self.session.api().clone()));
     }
 
     /// Registers this Dealer connection for playback updates.
     async fn refresh_roster(&mut self) {
-        self.retry_registration_at(None);
+        self.registration_retry = None;
         match self.mode {
             Mode::Off => {}
             Mode::Publish => self.announce().await,
@@ -388,16 +366,10 @@ impl Worker {
                     Ok(cluster) => self.report_cluster(cluster),
                     Err(error) => {
                         log::warn!("connect: cannot subscribe to playback updates: {error:#}");
-                        self.retry_registration_at(Some(Instant::now() + OBSERVER_RETRY));
+                        self.registration_retry = Some(Instant::now() + OBSERVER_RETRY);
                     }
                 }
             }
-        }
-    }
-
-    fn retry_registration_at(&mut self, at: Option<Instant>) {
-        if let Some(link) = &mut self.dealer {
-            link.retry_at = at;
         }
     }
 
@@ -461,7 +433,7 @@ impl Worker {
     fn disconnected(&mut self) {
         self.confirmed_transfer_state = None;
         self.play_read = None;
-        self.retry_registration_at(None);
+        self.registration_retry = None;
         self.ack_at = None;
         self.pending = None;
         let was_ready = self.dealer_ready();
@@ -629,19 +601,26 @@ impl Worker {
         self.want_put(reason);
     }
 
-    /// Coalesces state updates until the normal spacing and rate-limit delay have passed.
+    /// Coalesces updates without losing the most important pending reason.
     fn want_put(&mut self, reason: PutStateReason) {
-        let reason = self
-            .pending
-            .map(|(_, held)| held)
-            .filter(|held| rank(*held) > rank(reason))
-            .unwrap_or(reason);
-        let at = self.last_put.map_or_else(Instant::now, |at| at + PUT_GAP);
-        self.pending = Some((self.blocked_until.map_or(at, |limit| at.max(limit)), reason));
+        self.pending = Some(
+            self.pending
+                .filter(|held| rank(*held) > rank(reason))
+                .unwrap_or(reason),
+        );
+    }
+
+    /// A pending update waits for both the ordinary interval and any active backoff.
+    fn put_at(&self) -> Option<Instant> {
+        self.pending?;
+        let at = self
+            .last_put
+            .map_or_else(Instant::now, |sent| sent + PUT_GAP);
+        Some(self.backoff.map_or(at, |(limit, _)| at.max(limit)))
     }
 
     async fn flush(&mut self) {
-        let Some((_, reason)) = self.pending.take() else {
+        let Some(reason) = self.pending.take() else {
             return;
         };
         if self.mode == Mode::Publish && self.dealer_ready() && self.now.is_some() {
@@ -663,21 +642,21 @@ impl Worker {
                 if active && cluster.active_device_id == self.session.device_id() {
                     self.confirmed_transfer_state = Some(sent);
                 }
-                self.backoff = Duration::ZERO;
-                self.blocked_until = None;
+                self.backoff = None;
                 self.observe_clock(&cluster);
                 Some(cluster)
             }
             Err(error)
                 if spotifyapis::http_status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) =>
             {
-                self.backoff = (self.backoff * 2).clamp(BACKOFF_FIRST, BACKOFF_LAST);
-                let until = Instant::now() + self.backoff;
-                self.blocked_until = Some(until);
+                let delay = self
+                    .backoff
+                    .map_or(BACKOFF_FIRST, |(_, delay)| (delay * 2).min(BACKOFF_LAST));
+                self.backoff = Some((Instant::now() + delay, delay));
                 self.want_put(reason);
                 log::warn!(
                     "connect: Spotify asked for fewer state updates, waiting {}s",
-                    self.backoff.as_secs()
+                    delay.as_secs()
                 );
                 None
             }
@@ -692,7 +671,7 @@ impl Worker {
         let stamp = unix_millis();
         let mut info = device_info(&self.session, &self.name, false);
         if let Some(now) = &self.now {
-            info.volume = volume_word(now.volume);
+            info.volume = volume_word(now.volume).into();
         }
         PutStateRequest {
             member_type: CONNECT_STATE_MEMBER,
@@ -858,12 +837,17 @@ impl Worker {
         let Some((_, target)) = queue_target(player, Occurrence::from_queue(track), forward) else {
             return;
         };
-        let command = if forward {
-            player_command::skip_next_to(target)
+        let connection = self.session.connection_id().to_owned();
+        let device =
+            self.session
+                .api()
+                .connect_device(self.session.device_id(), device, &connection);
+        let result = if forward {
+            device.skip_to(target).await
         } else {
-            history_play_command(player, target)
+            play_history(&device, player, target).await
         };
-        if let Err(error) = player_command(&self.session, device, command).await {
+        if let Err(error) = result.map_err(sign_in_error) {
             log::warn!("connect: cannot jump in the remote queue: {error}");
         }
     }
@@ -1173,53 +1157,38 @@ async fn move_playback(session: &Session, from: &str, to: &str) -> anyhow::Resul
     let connection = session.connection_id().to_owned();
     session
         .api()
-        .transfer_playback(from, to, &connection)
+        .connect_device(from, to, &connection)
+        .transfer()
         .await
         .map_err(sign_in_error)
 }
 
 /// Sends a control to the remote device without changing the local queue.
 async fn control(session: &Session, device: &str, command: Command) {
+    let connection = session.connection_id().to_owned();
+    let remote = session
+        .api()
+        .connect_device(session.device_id(), device, &connection);
     let result = match command {
-        Command::Volume(level) => {
-            let connection = session.connection_id().to_owned();
-            session
-                .api()
-                .set_volume(
-                    session.device_id(),
-                    device,
-                    &connection,
-                    &SetVolumeRequest {
-                        volume: Some(volume_word(level) as i32),
-                    },
-                )
+        Command::Play => remote.resume().await,
+        Command::Pause => remote.pause().await,
+        Command::Next => remote.next().await,
+        Command::Previous => remote.previous().await,
+        Command::Seek(at) => remote.seek(at).await,
+        Command::Shuffle(on) => remote.shuffle(on).await,
+        Command::Repeat(mode) => {
+            remote
+                .repeat(mode != Repeat::Off, mode == Repeat::One)
                 .await
-                .map_err(sign_in_error)
         }
-        command => {
-            let Some(command) = wire_command(&command, session.username()) else {
-                return;
-            };
-            player_command(session, device, command).await
-        }
+        Command::Enqueue { id, .. } => remote.enqueue(&track_uri(&id)).await,
+        Command::Start(start) => play_from(&remote, &start, session.username()).await,
+        Command::Volume(level) => remote.volume(volume_word(level)).await,
+        _ => return,
     };
-    if let Err(error) = result {
+    if let Err(error) = result.map_err(sign_in_error) {
         log::warn!("connect: cannot control {device}: {error}");
     }
-}
-
-/// Sends a prepared player command to another Connect device.
-async fn player_command(
-    session: &Session,
-    device: &str,
-    command: serde_json::Value,
-) -> anyhow::Result<()> {
-    let connection = session.connection_id().to_owned();
-    session
-        .api()
-        .player_command(session.device_id(), device, &connection, command)
-        .await
-        .map_err(sign_in_error)
 }
 
 /// How much a put matters when two are due at once: the stronger one goes out.
@@ -1231,8 +1200,8 @@ fn rank(reason: PutStateReason) -> u8 {
     }
 }
 
-/// Resolves when the time for a pending acknowledgement comes, and never when there is none.
-async fn acknowledge(at: Option<Instant>) {
+/// Waits for an optional deadline, leaving an unscheduled timer dormant.
+async fn wait_until(at: Option<Instant>) {
     match at {
         Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending().await,
@@ -1266,7 +1235,7 @@ fn device_info(session: &Session, name: &str, observer: bool) -> DeviceInfo {
         is_observable: true,
         supports_gzip_pushes: true,
         supports_playlist_v2: true,
-        supported_types: vec!["audio/track".into(), "audio/episode".into()],
+        supported_types: vec!["audio/track".into()],
         hidden: observer,
         ..Default::default()
     };
@@ -1298,72 +1267,44 @@ fn device_info(session: &Session, name: &str, observer: bool) -> DeviceInfo {
     info
 }
 
-/// A command for another device in the JSON the player command endpoint takes.
-fn wire_command(command: &Command, username: &str) -> Option<serde_json::Value> {
-    Some(match command {
-        Command::Play => serde_json::json!({ "endpoint": "resume" }),
-        Command::Pause => serde_json::json!({ "endpoint": "pause" }),
-        Command::Next => serde_json::json!({ "endpoint": "skip_next" }),
-        Command::Previous => serde_json::json!({ "endpoint": "skip_prev" }),
-        Command::Seek(at) => {
-            serde_json::json!({ "endpoint": "seek_to", "value": at.as_millis() as u64 })
-        }
-        Command::Shuffle(on) => {
-            serde_json::json!({ "endpoint": "set_shuffling_context", "value": on })
-        }
-        Command::Repeat(mode) => serde_json::json!({
-            "endpoint": "set_options",
-            "repeating_context": *mode != Repeat::Off,
-            "repeating_track": *mode == Repeat::One,
-            "logging_params": {},
-        }),
-        Command::Enqueue { id, .. } => serde_json::json!({
-            "endpoint": "add_to_queue",
-            "track": {
-                "uri": track_uri(id),
-                "metadata": { "is_queued": "true" },
-                "provider": "queue",
-            },
-            "logging_params": {},
-        }),
-        Command::Start(start) => play_command(start, username)?,
-        _ => return None,
-    })
-}
-
-/// A play command asking another device to start `start`: its collection from the track, or the
-/// track on its own. `None` when it names neither.
-fn play_command(start: &Start, username: &str) -> Option<serde_json::Value> {
+/// Starts playback on another device from Sonora’s selected context.
+async fn play_from(
+    device: &ConnectDevice<'_>,
+    start: &Start,
+    username: &str,
+) -> anyhow::Result<()> {
     let start = &start.state;
     let track = start.track.as_ref().map(|track| track_uri(&track.id));
     let context = match &start.context {
         Some(collection) => collection_uri(collection, username),
-        None => track.clone()?,
+        None => match &track {
+            Some(uri) => uri.clone(),
+            None => return Ok(()),
+        },
     };
-    let mut options = serde_json::json!({
-        "seek_to": start.position.as_millis() as u64,
-        "initially_paused": !start.playing,
-    });
-    if let Some(shuffle) = start.shuffle {
-        options["player_options_override"]["shuffling_context"] = shuffle.into();
-    }
-    if let Some(repeat) = start.repeat {
-        options["player_options_override"]["repeating_context"] = (repeat == Repeat::All).into();
-        options["player_options_override"]["repeating_track"] = (repeat == Repeat::One).into();
-    }
-    Some(player_command::play(
-        &context,
-        &format!("context://{context}"),
-        track
-            .as_deref()
-            .zip(start.track.as_ref().map(|track| track.uid.as_str())),
-        options,
-        ("sonora", SEMVER),
-    ))
+    device
+        .play(Play {
+            context_uri: &context,
+            context_url: &format!("context://{context}"),
+            target: track
+                .as_deref()
+                .zip(start.track.as_ref().map(|track| track.uid.as_str())),
+            position: start.position,
+            paused: !start.playing,
+            shuffle: start.shuffle,
+            repeat_context: start.repeat.map(|repeat| repeat == Repeat::All),
+            repeat_track: start.repeat.map(|repeat| repeat == Repeat::One),
+            origin: ("sonora", SEMVER),
+        })
+        .await
 }
 
 /// Starts a history entry explicitly because Previous can restart the current song.
-fn history_play_command(player: &PlayerState, target: &ProvidedTrack) -> serde_json::Value {
+async fn play_history(
+    device: &ConnectDevice<'_>,
+    player: &PlayerState,
+    target: &ProvidedTrack,
+) -> anyhow::Result<()> {
     let context = if target.is_queued() {
         None
     } else {
@@ -1385,23 +1326,20 @@ fn history_play_command(player: &PlayerState, target: &ProvidedTrack) -> serde_j
     } else {
         format!("context://{context}")
     };
-    let mut options = serde_json::json!({
-        "seek_to": 0, "initially_paused": false,
-    });
-    if let Some(current) = &player.options {
-        options["player_options_override"] = serde_json::json!({
-            "shuffling_context": current.shuffling_context,
-            "repeating_context": current.repeating_context,
-            "repeating_track": current.repeating_track,
-        });
-    }
-    player_command::play(
-        context,
-        &url,
-        Some((&target.uri, uid)),
-        options,
-        ("sonora", SEMVER),
-    )
+    let options = player.options.as_ref();
+    device
+        .play(Play {
+            context_uri: context,
+            context_url: &url,
+            target: Some((&target.uri, uid)),
+            position: Duration::ZERO,
+            paused: false,
+            shuffle: options.map(|options| options.shuffling_context),
+            repeat_context: options.map(|options| options.repeating_context),
+            repeat_track: options.map(|options| options.repeating_track),
+            origin: ("sonora", SEMVER),
+        })
+        .await
 }
 
 /// The repeat mode a player state's two flags name, when it says either.
@@ -1856,8 +1794,8 @@ fn play_id() -> String {
 }
 
 /// A volume from 0 to 1 on Spotify's 16-bit scale.
-fn volume_word(level: f32) -> u32 {
-    (level.clamp(0., 1.) * u16::MAX as f32).round() as u32
+fn volume_word(level: f32) -> u16 {
+    (level.clamp(0., 1.) * u16::MAX as f32).round() as u16
 }
 
 fn unix_millis() -> u64 {

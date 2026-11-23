@@ -463,7 +463,7 @@ impl DetailView {
             .map(|header| header.artist_refs.clone())
             .unwrap_or_default();
         let owner = header.and_then(|header| header.owner.clone());
-        let release_date = header.and_then(|header| header.release_date.as_deref());
+        let release_date = header.and_then(|header| header.release_date);
         let owner_name = header.and_then(|header| header.owner_name.clone());
         let track_count = header.map(|header| header.track_count).unwrap_or(0);
         let listed = self.detail.read(cx).tracks();

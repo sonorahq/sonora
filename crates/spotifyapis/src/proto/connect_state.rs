@@ -247,7 +247,7 @@ pub struct Capabilities {
 
 /// An outbound volume command, including an explicit zero when muting.
 #[derive(prost::Message)]
-pub struct SetVolumeRequest {
+struct SetVolumeRequest {
     #[prost(int32, optional, tag = "1")]
     pub volume: Option<i32>,
 }
@@ -726,25 +726,34 @@ impl Session {
     }
 
     /// Sets the volume of another Spotify Connect device.
-    pub async fn set_volume(
+    pub(crate) async fn set_volume(
         &self,
         from: &str,
         to: &str,
         connection: &str,
-        request: &SetVolumeRequest,
+        volume: u16,
     ) -> Result<()> {
         self.device_command(
             Method::PUT,
             &between_devices(VOLUME, from, to),
             connection,
             http::PROTOBUF,
-            request.encode_to_vec().into(),
+            SetVolumeRequest {
+                volume: Some(volume.into()),
+            }
+            .encode_to_vec()
+            .into(),
         )
         .await
     }
 
     /// Transfers playback between devices and restores the paused state.
-    pub async fn transfer_playback(&self, from: &str, to: &str, connection: &str) -> Result<()> {
+    pub(crate) async fn transfer_playback(
+        &self,
+        from: &str,
+        to: &str,
+        connection: &str,
+    ) -> Result<()> {
         let body = json!({"transfer_options": {"restore_paused": "restore"}});
         self.device_command(
             Method::POST,

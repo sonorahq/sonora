@@ -329,8 +329,8 @@ impl Covers {
             release_date: item
                 .premiere_date
                 .as_deref()
-                .and_then(crate::calendar::parse_release_date)
-                .or_else(|| crate::calendar::release_date(item.production_year?, 0, 0)),
+                .and_then(crate::ReleaseDate::parse)
+                .or_else(|| crate::ReleaseDate::from_parts(item.production_year?, 0, 0)),
             playcount: item.user_data.as_ref().and_then(|data| data.play_count),
             popularity: 0,
             explicit: false,
@@ -374,11 +374,8 @@ impl Covers {
                 .as_deref()
                 .and_then(|date| date.get(..10))
                 .filter(|date| !date.ends_with("-01-01"))
-                .map(str::to_owned)
-                .unwrap_or_else(|| match year {
-                    0 => String::new(),
-                    _ => year.to_string(),
-                }),
+                .and_then(crate::ReleaseDate::parse)
+                .or_else(|| crate::ReleaseDate::from_parts(year, 0, 0)),
             label: item
                 .studios
                 .iter()

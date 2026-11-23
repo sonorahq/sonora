@@ -49,29 +49,29 @@ pub(crate) fn copyright_notices(album: &Album) -> Vec<SharedString> {
     }
 }
 
-pub(crate) fn release_date_label(value: &str) -> SharedString {
-    let mut parts = value.split('-');
-    let year = parts.next().unwrap_or_default();
-    let month = match parts.next() {
-        Some("01") => t!("month-1"),
-        Some("02") => t!("month-2"),
-        Some("03") => t!("month-3"),
-        Some("04") => t!("month-4"),
-        Some("05") => t!("month-5"),
-        Some("06") => t!("month-6"),
-        Some("07") => t!("month-7"),
-        Some("08") => t!("month-8"),
-        Some("09") => t!("month-9"),
-        Some("10") => t!("month-10"),
-        Some("11") => t!("month-11"),
-        Some("12") => t!("month-12"),
-        _ => return SharedString::from(value.to_owned()),
+pub(crate) fn release_date_label(value: music::ReleaseDate) -> SharedString {
+    let (year, month, day) = value.parts();
+    let year = format!("{year:04}");
+    let month = match month {
+        Some(1) => t!("month-1"),
+        Some(2) => t!("month-2"),
+        Some(3) => t!("month-3"),
+        Some(4) => t!("month-4"),
+        Some(5) => t!("month-5"),
+        Some(6) => t!("month-6"),
+        Some(7) => t!("month-7"),
+        Some(8) => t!("month-8"),
+        Some(9) => t!("month-9"),
+        Some(10) => t!("month-10"),
+        Some(11) => t!("month-11"),
+        Some(12) => t!("month-12"),
+        _ => return SharedString::from(year),
     };
-    match parts.next() {
+    match day {
         Some(day) => t!(
             "date-full",
             month = &month,
-            day = day.trim_start_matches('0'),
+            day = day.to_string(),
             year = year
         ),
         None => t!("date-month-year", month = &month, year = year),

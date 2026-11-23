@@ -11,6 +11,8 @@ pub const PLAYLIST_TOPIC: &str = "hm://playlist/v2/playlist";
 pub const USER_TOPIC: &str = "hm://playlist/user";
 const PLAYLIST_ENDPOINT: &str = "/playlist/v2/playlist";
 const USER_ENDPOINT: &str = "/playlist/v2/user";
+const SOURCE_CLIENT: i32 = 2;
+const PICTURE_ATTRIBUTE: i32 = 3;
 
 /// Identifies the JPEG staged by Spotify's image upload service.
 #[derive(prost::Message)]
@@ -490,5 +492,129 @@ impl crate::dealer::Message {
         (update.uri() == root)
             .then_some(update.new_revision)
             .flatten()
+    }
+}
+
+/// One change that applies `ops` in turn on `revision`, or on whatever the list holds when
+/// there is none.
+pub fn changes(revision: Option<&Bytes>, ops: impl IntoIterator<Item = Op>) -> ListChanges {
+    ListChanges {
+        base_revision: revision.cloned(),
+        deltas: vec![Delta {
+            ops: ops.into_iter().collect(),
+            info: Some(ChangeInfo {
+                source: Some(SourceInfo {
+                    client: Some(SOURCE_CLIENT),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }],
+        want_resulting_revisions: Some(true),
+    }
+}
+
+fn item(uri: impl Into<String>) -> Item {
+    Item {
+        uri: uri.into(),
+        attributes: None,
+    }
+}
+
+/// Appends the supplied URIs to the end of the list.
+pub fn append(uris: impl IntoIterator<Item = impl Into<String>>) -> Op {
+    Op {
+        kind: Kind::Add as i32,
+        add: Some(Add {
+            items: uris.into_iter().map(item).collect(),
+            add_last: Some(true),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// Removes one URI at its position in the referenced revision.
+pub fn remove(uri: &str, index: i32) -> Op {
+    Op {
+        kind: Kind::Rem as i32,
+        rem: Some(Rem {
+            from_index: Some(index),
+            length: Some(1),
+            items: vec![item(uri)],
+            items_as_key: Some(true),
+        }),
+        ..Default::default()
+    }
+}
+
+/// Updates the playlist name.
+pub fn rename(name: &str) -> Op {
+    list_attributes_op(
+        ListAttributes {
+            name: Some(name.to_owned()),
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+}
+
+fn list_attributes_op(values: ListAttributes, no_value: Vec<i32>) -> Op {
+    Op {
+        kind: Kind::UpdateListAttributes as i32,
+        update_list_attributes: Some(UpdateListAttributes {
+            new_attributes: ListAttributesPartialState { values, no_value },
+        }),
+        ..Default::default()
+    }
+}
+
+/// Sets the visibility of a rootlist item at the supplied index.
+pub fn visibility(index: i32, public: bool) -> Op {
+    Op {
+        kind: Kind::UpdateItemAttributes as i32,
+        update_item_attributes: Some(UpdateItemAttributes {
+            index: Some(index),
+            new_attributes: ItemAttributesPartialState {
+                values: ItemAttributes {
+                    public: Some(public),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// Updates the optional name and replaces the cover, clearing it when no picture is supplied.
+pub fn appearance(name: Option<&str>, picture: Option<Bytes>) -> Op {
+    let clear = if picture.is_none() {
+        vec![PICTURE_ATTRIBUTE]
+    } else {
+        Vec::new()
+    };
+    list_attributes_op(
+        ListAttributes {
+            name: name.map(str::to_owned),
+            picture,
+            ..Default::default()
+        },
+        clear,
+    )
+}
+
+/// Moves one item before an index in the list as it stood before the move.
+pub fn move_one(from: i32, before: i32) -> Op {
+    Op {
+        kind: Kind::Mov as i32,
+        mov: Some(Mov {
+            from_index: Some(from),
+            length: Some(1),
+            to_index: Some(before),
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }

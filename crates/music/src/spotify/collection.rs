@@ -335,7 +335,7 @@ pub(super) fn track_from(uri: &str, track: &TrackMessage) -> Track {
             .album
             .as_ref()
             .and_then(|album| album.date.as_ref())
-            .and_then(|date| crate::calendar::release_date(date.year(), date.month(), date.day())),
+            .and_then(|date| crate::ReleaseDate::from_parts(date.year(), date.month(), date.day())),
         playcount: None,
         popularity: track.popularity.clamp(0, 100) as u32,
         explicit: track.explicit.unwrap_or_default(),

@@ -178,7 +178,7 @@ impl SongView {
             .detail
             .read(cx)
             .album()
-            .map(|detail| detail.album.release_date.as_str());
+            .and_then(|detail| detail.album.release_date);
         track.release_date_with(album).map(release_date_label)
     }
 

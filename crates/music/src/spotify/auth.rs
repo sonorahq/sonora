@@ -77,23 +77,14 @@ impl Account {
     }
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            client_id: DEFAULT_CLIENT_ID.to_owned(),
-            redirect_uri: DEFAULT_REDIRECT_URI.to_owned(),
-            cache_dir: credentials::dir("spotify"),
-        }
-    }
-}
-
 impl AuthConfig {
     pub fn from_env() -> Self {
-        let mut config = Self::default();
-        if let Ok(redirect_uri) = std::env::var("SONORA_REDIRECT_URI") {
-            config.redirect_uri = redirect_uri;
+        Self {
+            client_id: DEFAULT_CLIENT_ID.to_owned(),
+            redirect_uri: std::env::var("SONORA_REDIRECT_URI")
+                .unwrap_or_else(|_| DEFAULT_REDIRECT_URI.to_owned()),
+            cache_dir: credentials::dir("spotify"),
         }
-        config
     }
 
     /// Whether a Spotify OAuth sign-in has been saved.

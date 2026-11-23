@@ -44,6 +44,8 @@ async fn search_tracks(
 
 Use one [`Session`](src/session.rs) per signed-in account. The crate shares HTTP clients and refreshes the bearer when needed. Some Connect and Jam operations take a [Dealer](src/dealer.rs) connection ID.
 
+Use `Session::connect_device(from, to, connection_id)` to address a Connect device. The returned handle supports playback controls, queue commands, volume, and transfer. A queue jump takes the occurrence selected by the caller. [Connect controls](src/player_command.rs)
+
 For projected list reads, pass a set of list, entry, or referenced-list fields to `Session::get_lists`. It preserves query order and returns a separate result for each list, so one failed lookup does not discard the others. [List projections](src/proto/list_read_service.rs)
 
 ## Using the audio APIs

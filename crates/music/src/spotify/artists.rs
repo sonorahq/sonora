@@ -298,7 +298,7 @@ fn newest_first<T>(releases: impl Iterator<Item = T>, model: impl Fn(&T) -> &Alb
         })
         .collect();
 
-    releases.sort_by(|left, right| model(right).release_date.cmp(&model(left).release_date));
+    releases.sort_by_key(|release| std::cmp::Reverse(model(release).release_date));
     releases
 }
 
@@ -502,15 +502,15 @@ mod tests {
         .map(|(name, release_type, release_date)| Album {
             name: name.into(),
             release_type,
-            release_date: release_date.into(),
+            release_date: crate::ReleaseDate::parse(release_date),
             ..Album::default()
         });
         assert_eq!(
             newest_first(releases.into_iter(), |album| album)
                 .into_iter()
-                .map(|album| album.release_date)
+                .map(|album| album.release_date.unwrap().year())
                 .collect::<Vec<_>>(),
-            ["2022", "2021", "2020"]
+            [2022, 2021, 2020]
         );
         assert_eq!(plain_text("A &amp; B<br>Live"), "A & B Live");
     }

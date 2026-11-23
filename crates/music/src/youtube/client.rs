@@ -128,7 +128,7 @@ impl MusicApi for YouTubeClient {
             }
         };
         let mut albums: Vec<Album> = albums.into_iter().map(wire::album).collect();
-        albums.sort_by(|left, right| right.release_date.cmp(&left.release_date));
+        albums.sort_by_key(|album| std::cmp::Reverse(album.release_date));
         let releases = stream::iter(albums)
             .map(|album| async move { (self.album_tracks(&album.id).await, album.id) })
             .buffered(ALBUM_READS)

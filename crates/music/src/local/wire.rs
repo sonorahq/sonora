@@ -250,12 +250,9 @@ fn numbered(stem: &str) -> Option<String> {
 }
 
 /// One file as a scan reads it: the track, and the tags its album is grouped, dated and labelled by.
-/// The index stores it whole, so a new field makes every stored row unreadable and each file is read
-/// again once.
+/// The index stores the tagged row so unchanged files do not need to be read again.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Tagged {
-    #[serde(default)]
-    pub metadata_version: u32,
     pub track: Track,
     /// The album artist the tags name, `None` when they name none.
     pub album_artist: Option<String>,
@@ -270,19 +267,6 @@ pub struct Tagged {
     pub label: String,
 }
 
-impl Tagged {
-    pub(super) const METADATA_VERSION: u32 = 2;
-    /// The row as the index stored it, with the album artist copied onto the track when the
-    /// row was stored before tracks carried one, since such a row is never read from the file
-    /// again while the file stays the same.
-    pub fn restored(mut self) -> Self {
-        if self.track.album_artist.is_empty() {
-            self.track.album_artist = self.album_artist.clone().unwrap_or_default();
-        }
-        self
-    }
-}
-
 struct FallbackProbe {
     duration: std::time::Duration,
     title: Option<String>,
@@ -291,10 +275,9 @@ struct FallbackProbe {
     album_artist: Option<String>,
     track_number: u32,
     disc_number: u32,
-    release_date: Option<String>,
+    release_date: Option<crate::ReleaseDate>,
     release: Vec<String>,
     genres: Vec<String>,
-    tags: Vec<String>,
     moods: Vec<String>,
     bpm: Option<f32>,
     composers: Vec<String>,
@@ -370,7 +353,6 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
     let mut release_date = None;
     let mut release = Vec::new();
     let mut genres = Vec::new();
-    let mut tags = Vec::new();
     let mut moods = Vec::new();
     let mut bpm = None;
     let mut composers = Vec::new();
@@ -419,9 +401,6 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
                 Some(StandardTagKey::Genre) => {
                     genres.extend(clean_val(&tag.value));
                 }
-                Some(StandardTagKey::PodcastKeywords) => {
-                    tags.extend(clean_val(&tag.value));
-                }
                 Some(StandardTagKey::Mood) => {
                     moods.extend(clean_val(&tag.value));
                 }
@@ -441,7 +420,7 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
                     compilation |= flagged(&tag.value.to_string());
                 }
                 Some(StandardTagKey::Date) if release_date.is_none() => {
-                    release_date = crate::calendar::parse_release_date(&tag.value.to_string());
+                    release_date = crate::ReleaseDate::parse(&tag.value.to_string());
                 }
                 _ => {}
             }
@@ -471,7 +450,6 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
         release_date,
         release,
         genres,
-        tags,
         moods,
         bpm,
         composers,
@@ -612,17 +590,15 @@ pub fn track_from_file(
     let release_date = tag
         .and_then(|tag| tag.date())
         .and_then(|date| {
-            crate::calendar::release_date(
+            crate::ReleaseDate::from_parts(
                 i32::from(date.year),
                 i32::from(date.month.unwrap_or_default()),
                 i32::from(date.day.unwrap_or_default()),
             )
         })
-        .or_else(|| fallback.as_ref()?.release_date.clone())
-        .or_else(|| crate::calendar::release_date(lenient.as_ref()?.year?, 0, 0));
-    let year = release_date
-        .as_deref()
-        .and_then(|date| date.get(..4)?.parse().ok());
+        .or_else(|| fallback.as_ref()?.release_date)
+        .or_else(|| crate::ReleaseDate::from_parts(lenient.as_ref()?.year?, 0, 0));
+    let year = release_date.map(|date| date.year() as i32);
 
     let release = match tag {
         Some(tag) => release_type(
@@ -635,12 +611,11 @@ pub fn track_from_file(
             .and_then(|fb| release_type(fb.release.iter().map(String::as_str), fb.compilation)),
     };
 
-    let (genres, tags, moods, bpm, composers, languages, label) = match (tag, fallback) {
+    let (genres, moods, bpm, composers, languages, label) = match (tag, fallback) {
         (Some(tag), _) => {
             let listed = |key| clean_multiple(tag.get_strings(key));
             (
                 listed(ItemKey::Genre),
-                listed(ItemKey::PodcastKeywords),
                 listed(ItemKey::Mood),
                 [ItemKey::Bpm, ItemKey::IntegerBpm]
                     .into_iter()
@@ -656,7 +631,6 @@ pub fn track_from_file(
         }
         (None, Some(fb)) => (
             fb.genres,
-            fb.tags,
             fb.moods,
             fb.bpm,
             fb.composers,
@@ -684,7 +658,6 @@ pub fn track_from_file(
     };
 
     Some(Tagged {
-        metadata_version: Tagged::METADATA_VERSION,
         track: Track {
             id: Some(track_id(path)),
             name,
@@ -706,7 +679,7 @@ pub fn track_from_file(
             isrc: None,
             release_date,
             genres,
-            tags,
+            tags: Vec::new(),
             moods,
             bpm,
             languages: languages.iter().map(|code| language_code(code)).collect(),
@@ -756,10 +729,7 @@ pub fn album_from_tracks(
         release_type: release,
         year,
         track_count: tracks.len() as u32,
-        release_date: match year > 0 {
-            true => year.to_string(),
-            false => String::new(),
-        },
+        release_date: crate::ReleaseDate::from_parts(year, 0, 0),
         label,
         copyrights: Vec::new(),
         added_at: tracks.iter().filter_map(|track| track.added_at).max(),
@@ -987,20 +957,6 @@ fn language_code(code: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_row_stored_before_the_track_named_its_album_artist_names_it_once_restored() {
-        let row = serde_json::json!({
-            "track": { "name": "Blue Monday", "artists": "New Order, Arthur Baker" },
-            "album_artist": "New Order",
-            "album_artists": [],
-            "year": null,
-            "release": null,
-            "label": "",
-        });
-        let tagged: Tagged = serde_json::from_value(row).unwrap();
-        assert_eq!(tagged.track.album_artist, "");
-        assert_eq!(tagged.restored().track.album_artist, "New Order");
-    }
     use lofty::tag::{ItemValue, TagItem, TagType};
 
     fn scratch(name: &str) -> std::path::PathBuf {

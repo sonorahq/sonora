@@ -70,7 +70,7 @@ pub struct Header {
     pub artist: Option<String>,
     pub artist_refs: Vec<ArtistRef>,
     pub owner: Option<Contributor>,
-    pub release_date: Option<String>,
+    pub release_date: Option<music::ReleaseDate>,
     /// The owner's name when the provider gives no id to link it to.
     pub owner_name: Option<String>,
     /// Zero when the provider does not report a count.
@@ -859,10 +859,9 @@ fn album_header(album: &Album) -> Header {
         artist: Some(album.artists.clone()),
         artist_refs: album.artist_refs.clone(),
         owner: None,
-        release_date: match album.release_date.is_empty() {
-            true => (album.year > 0).then(|| album.year.to_string()),
-            false => Some(album.release_date.clone()),
-        },
+        release_date: album
+            .release_date
+            .or_else(|| music::ReleaseDate::from_parts(album.year, 0, 0)),
         owner_name: None,
         track_count: album.track_count,
         cover: album.cover_large.clone().or_else(|| album.cover.clone()),

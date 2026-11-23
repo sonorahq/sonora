@@ -9,11 +9,7 @@ use spotifyapis::proto::extended_metadata::ExtensionKind;
 use spotifyapis::proto::list_read_service::{
     AttributeKind, Attributes, ListEntity, ListProjection, ListQuery,
 };
-use spotifyapis::proto::playlist_v2::{
-    Add, ChangeInfo, Delta, Item, ItemAttributes, ItemAttributesPartialState, Kind, ListAttributes,
-    ListAttributesPartialState, ListChanges, Mov, Op, RegisterPlaylistImageRequest, Rem,
-    SourceInfo, UpdateItemAttributes, UpdateListAttributes,
-};
+use spotifyapis::proto::playlist_v2::{self, ListChanges, Op, RegisterPlaylistImageRequest};
 use tokio::sync::mpsc;
 
 use crate::cover::{self, CoverLimits};
@@ -26,8 +22,6 @@ const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const COVER_SLACK: usize = 4;
 /// Membership returns every track URI, so keep these batches smaller than cover slices.
 const MEMBERSHIP_BATCH: usize = 8;
-const SOURCE_CLIENT: i32 = 2;
-const PICTURE_ATTRIBUTE: i32 = 3;
 /// Spotify shows a playlist cover at 640 pixels at most, and its public API caps one at 256 KB.
 const COVER_LIMITS: CoverLimits = CoverLimits {
     side: 640,
@@ -35,7 +29,7 @@ const COVER_LIMITS: CoverLimits = CoverLimits {
 };
 
 pub async fn create(session: &Session, name: &str) -> Result<String> {
-    let body = changes(None, rename_op(name));
+    let body = playlist_v2::changes(None, [playlist_v2::rename(name)]);
     let connection = session.connection_id().to_owned();
     let reply = session
         .api()
@@ -60,14 +54,14 @@ pub async fn create(session: &Session, name: &str) -> Result<String> {
 
 pub async fn add_to_library(session: &Session, playlist_id: &str) -> Result<()> {
     let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
-    let body = changes(None, add_op([item(uri)]));
+    let body = playlist_v2::changes(None, [playlist_v2::append([uri])]);
     rootlist_edit(session, &body)
         .await
         .context("cannot add the playlist to the library")
 }
 
 pub async fn rename(session: &Session, playlist_id: &str, name: &str) -> Result<()> {
-    let body = changes(None, rename_op(name));
+    let body = playlist_v2::changes(None, [playlist_v2::rename(name)]);
     edit(session, playlist_id, &body)
         .await
         .context("cannot rename the playlist")
@@ -109,20 +103,8 @@ pub async fn edit_appearance(
         None => None,
     };
     let cover = picture.as_deref().and_then(wire::image_url);
-    let cleared = if picture.is_none() {
-        vec![PICTURE_ATTRIBUTE]
-    } else {
-        Vec::new()
-    };
-    let op = list_attributes_op(
-        ListAttributes {
-            name: name.map(str::to_owned),
-            picture,
-            ..Default::default()
-        },
-        cleared,
-    );
-    edit(session, playlist_id, &changes(None, op))
+    let body = playlist_v2::changes(None, [playlist_v2::appearance(name, picture)]);
+    edit(session, playlist_id, &body)
         .await
         .context("cannot change the playlist appearance")?;
     Ok(cover)
@@ -133,7 +115,7 @@ pub async fn remove_from_library(session: &Session, playlist_id: &str) -> Result
     let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
     let (rootlist, index) = rootlist(session, &uri).await?;
 
-    let body = changes(Some(&rootlist.revision), remove_op(&uri, index));
+    let body = playlist_v2::changes(Some(&rootlist.revision), [playlist_v2::remove(&uri, index)]);
     rootlist_edit(session, &body)
         .await
         .context("cannot remove the playlist from the library")
@@ -143,7 +125,10 @@ pub async fn set_public(session: &Session, playlist_id: &str, public: bool) -> R
     let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
     let (rootlist, index) = rootlist(session, &uri).await?;
 
-    let body = changes(Some(&rootlist.revision), visibility_op(index, public));
+    let body = playlist_v2::changes(
+        Some(&rootlist.revision),
+        [playlist_v2::visibility(index, public)],
+    );
     rootlist_edit(session, &body)
         .await
         .context("cannot change playlist visibility")
@@ -153,10 +138,8 @@ pub async fn add_tracks(session: &Session, playlist_id: &str, track_ids: &[Strin
     if track_ids.is_empty() {
         return Ok(());
     }
-    let items = track_ids
-        .iter()
-        .map(|id| item(format!("{TRACK_PREFIX}{id}")));
-    let body = changes(None, add_op(items));
+    let items = track_ids.iter().map(|id| format!("{TRACK_PREFIX}{id}"));
+    let body = playlist_v2::changes(None, [playlist_v2::append(items)]);
 
     edit(session, playlist_id, &body)
         .await
@@ -169,7 +152,7 @@ pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) 
     let index =
         position(&content, &uri).ok_or_else(|| anyhow!("cannot find the track in the playlist"))?;
 
-    let body = changes(Some(&content.revision), remove_op(&uri, index));
+    let body = playlist_v2::changes(Some(&content.revision), [playlist_v2::remove(&uri, index)]);
     edit(session, playlist_id, &body)
         .await
         .context("cannot remove the track from the playlist")
@@ -206,7 +189,7 @@ pub async fn reorder(
     if ops.is_empty() {
         return Ok(());
     }
-    let body = changes_of(Some(&content.revision), ops);
+    let body = playlist_v2::changes(Some(&content.revision), ops);
     edit(session, playlist_id, &body)
         .await
         .context("cannot reorder the playlist")
@@ -684,61 +667,6 @@ async fn rootlist_edit(session: &Session, body: &ListChanges) -> Result<()> {
         .map_err(sign_in_error)
 }
 
-fn changes(revision: Option<&Bytes>, op: Op) -> ListChanges {
-    changes_of(revision, vec![op])
-}
-
-/// One change that applies `ops` in turn on `revision`, or on whatever the list holds when
-/// there is none.
-fn changes_of(revision: Option<&Bytes>, ops: Vec<Op>) -> ListChanges {
-    ListChanges {
-        base_revision: revision.cloned(),
-        deltas: vec![Delta {
-            ops,
-            info: Some(ChangeInfo {
-                source: Some(SourceInfo {
-                    client: Some(SOURCE_CLIENT),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-        }],
-        want_resulting_revisions: Some(true),
-    }
-}
-
-fn item(uri: impl Into<String>) -> Item {
-    Item {
-        uri: uri.into(),
-        attributes: None,
-    }
-}
-
-fn add_op(items: impl IntoIterator<Item = Item>) -> Op {
-    Op {
-        kind: Kind::Add as i32,
-        add: Some(Add {
-            items: items.into_iter().collect(),
-            add_last: Some(true),
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
-}
-
-fn remove_op(uri: &str, index: i32) -> Op {
-    Op {
-        kind: Kind::Rem as i32,
-        rem: Some(Rem {
-            from_index: Some(index),
-            length: Some(1),
-            items: vec![item(uri)],
-            items_as_key: Some(true),
-        }),
-        ..Default::default()
-    }
-}
-
 /// The moves that put the listed rows in the order `wanted`, where `held` gives each listed
 /// row's index among the items. Spotify applies them in turn and counts each `to_index` in the
 /// items before that move, as the place the moved item goes in front of.
@@ -762,56 +690,12 @@ fn move_ops(
     order::placements(items.len(), held, &steps)?
         .into_iter()
         .map(|placement| {
-            Ok(Op {
-                kind: Kind::Mov as i32,
-                mov: Some(Mov {
-                    from_index: Some(i32::try_from(placement.from)?),
-                    length: Some(1),
-                    to_index: Some(i32::try_from(placement.before)?),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
+            Ok(playlist_v2::move_one(
+                i32::try_from(placement.from)?,
+                i32::try_from(placement.before)?,
+            ))
         })
         .collect()
-}
-
-fn rename_op(name: &str) -> Op {
-    list_attributes_op(
-        ListAttributes {
-            name: Some(name.to_owned()),
-            ..Default::default()
-        },
-        Vec::new(),
-    )
-}
-
-fn list_attributes_op(values: ListAttributes, no_value: Vec<i32>) -> Op {
-    Op {
-        kind: Kind::UpdateListAttributes as i32,
-        update_list_attributes: Some(UpdateListAttributes {
-            new_attributes: ListAttributesPartialState { values, no_value },
-        }),
-        ..Default::default()
-    }
-}
-
-fn visibility_op(index: i32, public: bool) -> Op {
-    Op {
-        kind: Kind::UpdateItemAttributes as i32,
-        update_item_attributes: Some(UpdateItemAttributes {
-            index: Some(index),
-            new_attributes: ItemAttributesPartialState {
-                values: ItemAttributes {
-                    public: Some(public),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
 }
 
 fn position(content: &Snapshot, uri: &str) -> Option<i32> {
@@ -1019,12 +903,14 @@ mod tests {
         let mut ops = move_ops(&content, &held, &shown, &reversed).unwrap();
         let move_op = ops[0].mov.as_ref().unwrap();
         assert_eq!((move_op.from_index(), move_op.to_index()), (2, 0));
-        ops.push(remove_op("spotify:track:b", 2));
-        let body = changes_of(Some(&content.revision), ops);
+        ops.push(playlist_v2::remove("spotify:track:b", 2));
+        let body = playlist_v2::changes(Some(&content.revision), ops);
         assert_eq!(body.base_revision.as_ref(), Some(&content.revision));
         assert_eq!(body.deltas[0].ops[1].rem.as_ref().unwrap().from_index(), 2);
 
-        let update = visibility_op(7, true).update_item_attributes.unwrap();
+        let update = playlist_v2::visibility(7, true)
+            .update_item_attributes
+            .unwrap();
         assert_eq!(update.index(), 7);
         assert!(update.new_attributes.values.public());
     }

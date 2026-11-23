@@ -258,7 +258,7 @@ pub fn track(value: &Value) -> Option<Track> {
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
         release_date: text(value, &["PHYSICAL_RELEASE_DATE", "release_date"])
             .or_else(|| text(&album, &["release_date"]))
-            .and_then(calendar::parse_release_date),
+            .and_then(crate::ReleaseDate::parse),
         bpm: value
             .get("bpm")
             .and_then(|bpm| bpm.as_f64().or_else(|| bpm.as_str()?.parse().ok()))
@@ -343,7 +343,7 @@ pub fn album(value: &Value) -> Option<Album> {
         },
         year,
         track_count: number(value, &["NB_TRAK", "nb_tracks"]).unwrap_or(0) as u32,
-        release_date: release.to_owned(),
+        release_date: crate::ReleaseDate::parse(release),
         label: text(value, &["label", "LABEL"])
             .unwrap_or_default()
             .to_owned(),

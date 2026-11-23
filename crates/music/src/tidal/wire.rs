@@ -160,7 +160,7 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),
         added_at: added(wrapper),
         added_by: None,
-        release_date: text(album, "releaseDate").and_then(crate::calendar::parse_release_date),
+        release_date: text(album, "releaseDate").and_then(crate::ReleaseDate::parse),
         playcount: None,
         popularity: count(value, "popularity").unwrap_or(0),
         explicit: value
@@ -208,7 +208,7 @@ pub fn album(wrapper: &Value) -> Option<Album> {
             .and_then(|year| year.parse().ok())
             .unwrap_or(0),
         track_count: count(value, "numberOfTracks").unwrap_or(0),
-        release_date: release_date.get(..10).unwrap_or(release_date).to_owned(),
+        release_date: crate::ReleaseDate::parse(release_date),
         label: String::new(),
         copyrights: text(value, "copyright")
             .map(|copyright| vec![copyright.to_owned()])

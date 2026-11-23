@@ -56,6 +56,7 @@ use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
 
 pub use audio::Meter;
+pub use calendar::ReleaseDate;
 pub use equalizer::Equalizer;
 pub use models::SearchPart;
 pub use models::{

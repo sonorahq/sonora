@@ -34,7 +34,7 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         cover,
         duration: Duration::from_secs(song.duration.unwrap_or(0).max(0) as u64),
         added_at: iso_8601_to_epoch(song.created.as_deref()),
-        release_date: crate::calendar::release_date(song.year.unwrap_or_default(), 0, 0),
+        release_date: crate::ReleaseDate::from_parts(song.year.unwrap_or_default(), 0, 0),
         playcount: song.play_count.map(|count| count as u64),
         explicit: song.explicit_status.as_deref() == Some("explicit"),
         track_number: song.track.unwrap_or(0).max(0) as u32,
@@ -68,16 +68,16 @@ fn genres(listed: Option<&[ItemGenre]>, single: Option<String>) -> Vec<String> {
         .collect()
 }
 
-/// Formats the date of an OpenSubsonic release, falling back to the legacy year.
-pub(super) fn release_date(date: Option<&ItemDate>, year: i32) -> Option<String> {
+/// Reads the date of an OpenSubsonic release, falling back to the legacy year.
+pub(super) fn release_date(date: Option<&ItemDate>, year: i32) -> Option<crate::ReleaseDate> {
     date.and_then(|date| {
-        crate::calendar::release_date(
+        crate::ReleaseDate::from_parts(
             date.year.unwrap_or(year),
             date.month.unwrap_or_default(),
             date.day.unwrap_or_default(),
         )
     })
-    .or_else(|| crate::calendar::release_date(year, 0, 0))
+    .or_else(|| crate::ReleaseDate::from_parts(year, 0, 0))
 }
 
 pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String>) -> Album {
@@ -99,7 +99,7 @@ pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String
         release_type: release_type(source.release_types.as_deref(), source.is_compilation),
         year,
         track_count: source.song_count.unwrap_or(0).max(0) as u32,
-        release_date: release_date(source.release_date.as_ref(), year).unwrap_or_default(),
+        release_date: release_date(source.release_date.as_ref(), year),
         label,
         copyrights: Vec::new(),
         added_at: iso_8601_to_epoch(source.created.as_deref()),
