@@ -22,6 +22,8 @@ pub struct Hold {
     scroll: ScrollHandle,
     active: bool,
     reflowed: bool,
+    /// The anchor held in place of the spot at the edge.
+    keep: Option<ElementId>,
     child: AnyElement,
     frame: Option<Rc<RefCell<Frame>>>,
 }
@@ -49,6 +51,15 @@ pub struct Run {
 struct Memory {
     width: Option<Pixels>,
     marks: Vec<Mark>,
+    kept: Option<Kept>,
+}
+
+/// Where the kept anchor was laid out: how far into the content its leading edge sat, leaving
+/// the scroll out, so a scroll made since that frame is kept rather than undone.
+#[derive(Clone)]
+struct Kept {
+    id: ElementId,
+    start: Pixels,
 }
 
 /// Where the edge fell in one anchor: which item, and how far into it as a share of its length.
@@ -95,6 +106,7 @@ impl Hold {
             scroll: scroll.clone(),
             active: true,
             reflowed: false,
+            keep: None,
             child: child.into_any_element(),
             frame: None,
         }
@@ -111,6 +123,15 @@ impl Hold {
     /// the region resized, such as text the caller wraps to the width it measured last frame.
     pub fn reflowed(mut self, reflowed: bool) -> Self {
         self.reflowed = reflowed;
+        self
+    }
+
+    /// Holds the `held` item `key` in place of the spot at the edge, for a region that keeps one
+    /// item in view, such as lyrics on the line being sung. Only what the reflow moves is taken
+    /// back, so a glide under way carries on. Without it, or while that item was not laid out the
+    /// frame before, the edge is held.
+    pub fn keep(mut self, key: Option<ElementId>) -> Self {
+        self.keep = key;
         self
     }
 }
@@ -242,7 +263,14 @@ impl gpui::Element for Hold {
                 .is_some_and(|width| self.reflowed || (width - bounds.size.width).abs() >= RESIZED);
             if resized
                 && self.active
-                && let Some(depth) = place(&frame.borrow(), &memory.marks, bounds, window)
+                && let Some(depth) = depth(
+                    &frame.borrow(),
+                    &memory,
+                    self.keep.as_ref(),
+                    bounds,
+                    &self.scroll,
+                    window,
+                )
             {
                 let offset = self.scroll.offset();
                 self.scroll.set_offset(match axis {
@@ -262,6 +290,10 @@ impl gpui::Element for Hold {
 
             memory.width = Some(bounds.size.width);
             memory.marks = std::mem::take(&mut frame.borrow_mut().marks);
+            memory.kept = self.keep.clone().and_then(|id| {
+                let start = laid_start(&frame.borrow(), &id, bounds, window)?;
+                Some(Kept { id, start })
+            });
             ((), memory)
         });
     }
@@ -385,6 +417,39 @@ fn place(
         };
         Some((start + top + length * mark.share).max(Pixels::ZERO))
     })
+}
+
+/// How far into the content the edge has to be scrolled to hold what the last frame noted, the
+/// kept anchor when it is still the one to keep and is laid out again, and the spot at the edge
+/// otherwise.
+fn depth(
+    frame: &Frame,
+    memory: &Memory,
+    keep: Option<&ElementId>,
+    bounds: Bounds<Pixels>,
+    scroll: &ScrollHandle,
+    window: &mut Window,
+) -> Option<Pixels> {
+    let kept = memory.kept.as_ref().filter(|kept| Some(&kept.id) == keep);
+    let kept = kept.and_then(|kept| {
+        let start = laid_start(frame, &kept.id, bounds, window)?;
+        let depth = -along(scroll.offset(), frame.axis);
+        Some((depth + start - kept.start).max(Pixels::ZERO))
+    });
+    kept.or_else(|| place(frame, &memory.marks, bounds, window))
+}
+
+/// How far into the content the anchor `id` is laid out this frame, leaving the scroll out, or
+/// `None` when it is not laid out under this hold.
+fn laid_start(
+    frame: &Frame,
+    id: &ElementId,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) -> Option<Pixels> {
+    let anchor = frame.anchors.iter().find(|anchor| &anchor.id == id)?;
+    let laid = window.layout_bounds(anchor.layout);
+    Some(along(laid.origin, frame.axis) - along(bounds.origin, frame.axis))
 }
 
 /// The innermost hold being laid out or prepainted, along `axis` when one is given.
