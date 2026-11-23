@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
+- The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
 
 ### Fixed
 
@@ -48,6 +49,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 - Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
+- TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
+- Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
+- Escape closes the search suggestions and leaves the search field in one press.
 
 ### Fixed
 

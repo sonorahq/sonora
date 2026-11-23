@@ -323,8 +323,8 @@ impl RenderOnce for HeroPlayButton {
         let [play, pause] = Self::labels();
         let reserve = [play.clone(), pause.clone()];
         let (label, icon) = match playing {
-            Some(true) => (pause, "icons/pause.svg"),
-            Some(false) | None => (play, "icons/play.svg"),
+            Some(true) => (pause, "icons/pause-filled.svg"),
+            Some(false) | None => (play, "icons/play-filled.svg"),
         };
         let disabled = !self.listing.can_start(cx);
         let listing = self.listing;
