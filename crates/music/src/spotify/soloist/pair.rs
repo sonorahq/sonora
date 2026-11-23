@@ -10,12 +10,10 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use tokio::process::Child;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 
-use super::daemon::{RUNNING, follow, launch, stop};
-use super::{binary, data, enable, home, keep_key, paired_in, pairing, recheck};
+use super::daemon::{RUNNING, launch};
+use super::{binary, clear, data, enable, home, keep_key, paired_in, pairing, recheck};
 
 /// How long the listener gets to pick the device before pairing gives up.
 const PATIENCE: Duration = Duration::from_secs(10 * 60);
@@ -27,9 +25,6 @@ const BUSY: Duration = Duration::from_secs(5);
 /// blocking work that outlives a pairing the listener gives up, so the lock that covers the
 /// pairing itself cannot keep them apart.
 static ADOPTING: Mutex<()> = Mutex::new(());
-
-/// What the program prints when Spotify turns its sign-in down, which the key decides.
-const REFUSED: &str = "login failed";
 
 /// What the program prints, with all its logs on, once it listens for the app that picks it.
 /// The port follows.
@@ -74,17 +69,27 @@ pub async fn pair(
     blocking(fresh).await??;
     let flags = ["--pair", "--verbose"].map(OsStr::new);
     let mut child = launch(&key, &pairing(), &flags).map_err(failed)?;
-    let mut lines = follow(&mut child, &key);
-    let watched = tokio::time::timeout(PATIENCE, watch(&mut child, &mut lines, listening)).await;
+    let mut listening = Some(listening);
+    let watched = tokio::time::timeout(
+        PATIENCE,
+        child.wait(|line| {
+            if let Some(port) = port_in(line)
+                && let Some(listening) = listening.take()
+            {
+                listening.send(port).ok();
+            }
+        }),
+    )
+    .await;
     let code = match watched {
-        Ok(Ok(code)) => code,
-        Ok(Err(trouble)) => {
-            stop(&mut child).await;
-            return Err(trouble);
-        }
-        Err(_) => {
-            stop(&mut child).await;
-            return Err(Trouble::Waited);
+        Ok(Ok(Some(status))) => status.code(),
+        other => {
+            child.stop().await;
+            return Err(match other {
+                Ok(Ok(_)) => Trouble::Key,
+                Ok(Err(error)) => failed(error),
+                Err(_) => Trouble::Waited,
+            });
         }
     };
     if code == Some(binary::EXPIRED) {
@@ -111,42 +116,6 @@ pub async fn pair(
     Ok(())
 }
 
-/// Follows the program until it exits, which answers with its exit code, or until it says the
-/// sign-in was refused. It keeps running after a refusal, so that line is the only sign. The
-/// port it listens on goes to `listening` as soon as the program names it.
-async fn watch(
-    child: &mut Child,
-    lines: &mut UnboundedReceiver<String>,
-    listening: oneshot::Sender<u16>,
-) -> Result<Option<i32>, Trouble> {
-    let mut open = true;
-    let mut listening = Some(listening);
-    loop {
-        tokio::select! {
-            line = lines.recv(), if open => match line {
-                Some(line) if line.contains(REFUSED) => return Err(Trouble::Key),
-                Some(line) => {
-                    if let Some(port) = port_in(&line)
-                        && let Some(listening) = listening.take()
-                    {
-                        listening.send(port).ok();
-                    }
-                }
-                None => open = false,
-            },
-            status = child.wait() => {
-                let status = status.map_err(failed)?;
-                while let Ok(line) = lines.try_recv() {
-                    if line.contains(REFUSED) {
-                        return Err(Trouble::Key);
-                    }
-                }
-                return Ok(status.code());
-            }
-        }
-    }
-}
-
 /// The port in the line that says where the program listens, or `None` for any other line.
 fn port_in(line: &str) -> Option<u16> {
     let (_, rest) = line.split_once(LISTENING)?;
@@ -159,7 +128,7 @@ fn port_in(line: &str) -> Option<u16> {
 fn fresh() -> Result<(), Trouble> {
     let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
     let folder = pairing();
-    clear(&folder)?;
+    clear(&folder).map_err(failed)?;
     std::fs::create_dir_all(&folder).map_err(failed)?;
     private(&folder).map_err(failed)
 }
@@ -170,7 +139,7 @@ fn fresh() -> Result<(), Trouble> {
 fn adopt(key: &str) -> Result<(), Trouble> {
     let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
     let (data, aside) = (data(), home().join("replaced"));
-    clear(&aside)?;
+    clear(&aside).map_err(failed)?;
     let had = match std::fs::rename(&data, &aside) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
@@ -185,15 +154,6 @@ fn adopt(key: &str) -> Result<(), Trouble> {
     std::fs::remove_dir_all(&aside).ok();
     // a setup the listener just went through is one they want on
     keep_key(key).and_then(|()| enable(true)).map_err(failed)
-}
-
-/// Removes a folder, which may not be there.
-fn clear(folder: &Path) -> Result<(), Trouble> {
-    match std::fs::remove_dir_all(folder) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(failed(error)),
-    }
 }
 
 #[cfg(unix)]

@@ -65,7 +65,7 @@ pub async fn own(session: &Session) -> UserProfile {
     }
 }
 
-/// Loads compact names and avatars in batches using the shared metadata cache.
+/// Loads compact names and avatars in metadata batches.
 pub async fn contributors(session: &Session, ids: HashSet<String>) -> HashMap<String, Contributor> {
     let uris: Vec<_> = ids
         .into_iter()

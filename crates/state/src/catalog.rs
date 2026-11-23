@@ -14,9 +14,7 @@ const ARTISTS: usize = 32;
 const ARTIST_PROFILES: usize = 64;
 const ALBUMS: usize = 48;
 const ALBUM_CATALOGUES: usize = 48;
-const PLAYLISTS: usize = 16;
 const SONGS: usize = 64;
-const GENRES: usize = 24;
 
 #[async_trait]
 trait CatalogBackend: Send + Sync {
@@ -195,9 +193,7 @@ pub(crate) struct CatalogSource {
     artist_profiles: CatalogCache<ArtistProfile>,
     albums: CatalogCache<AlbumDetail>,
     album_catalogues: CatalogCache<AlbumCatalogue>,
-    playlists: CatalogCache<PlaylistDetail>,
     songs: CatalogCache<SongPage>,
-    genres: CatalogCache<GenreDetail>,
 }
 
 impl CatalogSource {
@@ -213,9 +209,7 @@ impl CatalogSource {
             artist_profiles: CatalogCache::new(ARTIST_PROFILES),
             albums: CatalogCache::new(ALBUMS),
             album_catalogues: CatalogCache::new(ALBUM_CATALOGUES),
-            playlists: CatalogCache::new(PLAYLISTS),
             songs: CatalogCache::new(SONGS),
-            genres: CatalogCache::new(GENRES),
         }
     }
 
@@ -317,27 +311,20 @@ impl CatalogSource {
         self.album_catalogues.invalidate(id).await;
     }
 
-    pub(crate) fn peek_playlist(&self, id: &str) -> Option<Arc<PlaylistDetail>> {
-        self.playlists.peek(id)
-    }
-
     pub(crate) async fn playlist(&self, id: &str) -> Result<Arc<PlaylistDetail>> {
-        self.playlists.load(id, self.backend.playlist(id)).await
+        self.backend.playlist(id).await.map(Arc::new)
     }
 
-    /// Caches the complete playlist while passing interim batches to the page.
+    /// Reads the playlist while passing interim batches to the page.
     pub(crate) async fn playlist_with_preview(
         &self,
         id: &str,
         preview: mpsc::Sender<PlaylistPreview>,
     ) -> Result<Arc<PlaylistDetail>> {
-        self.playlists
-            .load(id, self.backend.playlist_with_preview(id, preview))
+        self.backend
+            .playlist_with_preview(id, preview)
             .await
-    }
-
-    pub(crate) async fn invalidate_playlist(&self, id: &str) {
-        self.playlists.invalidate(id).await;
+            .map(Arc::new)
     }
 
     pub(crate) async fn playlist_continuation(
@@ -347,23 +334,13 @@ impl CatalogSource {
         self.backend.playlist_continuation(continuation).await
     }
 
-    pub(crate) fn peek_genre(&self, id: &str) -> Option<Arc<GenreDetail>> {
-        self.genres.peek(id)
-    }
-
     pub(crate) async fn genre_with_preview(
         &self,
         id: &str,
         title: Option<&str>,
         preview: mpsc::Sender<GenreDetail>,
     ) -> Result<Arc<GenreDetail>> {
-        self.genres
-            .load(id, self.backend.genre(id, title, preview))
-            .await
-    }
-
-    pub(crate) async fn invalidate_genre(&self, id: &str) {
-        self.genres.invalidate(id).await;
+        self.backend.genre(id, title, preview).await.map(Arc::new)
     }
 
     pub(crate) fn peek_song(&self, id: &str) -> Option<Arc<SongPage>> {
@@ -718,19 +695,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn playlist_invalidation_is_scoped_to_one_id() {
-        let api = Arc::new(FakeBackend::new("remote"));
-        let catalog = CatalogSource::test(api.clone());
-        catalog.playlist("one").await.unwrap();
-        catalog.playlist("two").await.unwrap();
-        catalog.invalidate_playlist("one").await;
-        catalog.playlist("one").await.unwrap();
-        catalog.playlist("two").await.unwrap();
-        assert_eq!(api.called("playlist", "one"), 2);
-        assert_eq!(api.called("playlist", "two"), 1);
-    }
-
-    #[tokio::test]
     async fn replacing_a_source_cannot_return_the_old_sessions_values() {
         let old = CatalogSource::test(Arc::new(FakeBackend::new("old")));
         assert_eq!(old.artist("same").await.unwrap().name, "old:same");
@@ -739,7 +703,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_details_are_cache_hits() {
+    async fn empty_album_is_cached_and_playlist_and_genre_are_read_again() {
         let api = Arc::new(FakeBackend::new("remote"));
         let catalog = CatalogSource::test(api.clone());
         for _ in 0..2 {
@@ -756,7 +720,7 @@ mod tests {
             );
         }
         assert_eq!(api.called("album", "empty"), 1);
-        assert_eq!(api.called("playlist", "empty"), 1);
-        assert_eq!(api.called("genre", "empty"), 1);
+        assert_eq!(api.called("playlist", "empty"), 2);
+        assert_eq!(api.called("genre", "empty"), 2);
     }
 }

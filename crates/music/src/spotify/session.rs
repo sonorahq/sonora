@@ -5,7 +5,6 @@ use tokio::sync::OnceCell;
 
 use spotifyapis::auth::OAuth;
 
-use super::collection;
 use spotifyapis::access_point::AudioKeys;
 
 /// An OAuth-authenticated Spotify account shared by API and playback consumers.
@@ -20,7 +19,6 @@ struct Inner {
     session_id: String,
     connection_id: RwLock<String>,
     display_name: OnceCell<String>,
-    metadata: collection::Cache,
     rootlist_revision: SyncMutex<Option<Bytes>>,
 }
 
@@ -34,17 +32,12 @@ impl Session {
             session_id: format!("{:032x}", fastrand::u128(..)),
             connection_id: RwLock::default(),
             display_name: OnceCell::new(),
-            metadata: collection::Cache::default(),
             rootlist_revision: SyncMutex::default(),
         }))
     }
 
     pub(super) fn audio_keys(&self) -> &AudioKeys {
         &self.0.audio_keys
-    }
-
-    pub(super) fn metadata(&self) -> &collection::Cache {
-        &self.0.metadata
     }
 
     /// Records the revision of the complete playlist library, if every page agreed on it.

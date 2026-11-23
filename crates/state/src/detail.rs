@@ -564,7 +564,7 @@ impl Detail {
         };
         let cached = match kind {
             Collection::Album => catalog.peek_album(id).map(Loaded::Album),
-            Collection::Playlist => catalog.peek_playlist(id).map(Loaded::Playlist),
+            Collection::Playlist => None,
         };
         if let Some(cached) = cached {
             self.adopt(cached, cx);
@@ -615,9 +615,6 @@ impl Detail {
                         catalog.album(&id).await.map(Loaded::Album).map(Some)
                     }
                     Collection::Playlist => {
-                        if fresh {
-                            catalog.invalidate_playlist(&id).await;
-                        }
                         let detail = match preview {
                             Some(out) => catalog.playlist_with_preview(&id, out).await?,
                             None => catalog.playlist(&id).await?,

@@ -124,6 +124,18 @@ impl MusicApi for SpotifyClient {
             .context("track metadata is missing")
     }
 
+    async fn tracks_by_id(&self, ids: &[String]) -> Result<HashMap<String, Track>> {
+        let uris: Vec<_> = ids
+            .iter()
+            .map(|id| spotifyapis::id::track_uri(id))
+            .collect();
+        Ok(collection::metadata(&self.session, &uris)
+            .await?
+            .into_values()
+            .filter_map(|track| Some((track.id.clone()?, track)))
+            .collect())
+    }
+
     async fn saved_albums(&self) -> Result<Vec<Album>> {
         let items =
             collection::saved_items(&self.session, collection::COLLECTION, albums::ALBUM_PREFIX)

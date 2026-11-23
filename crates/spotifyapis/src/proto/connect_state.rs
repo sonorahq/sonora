@@ -651,7 +651,7 @@ pub struct HistoryItem {
     pub children: Vec<HistoryItem>,
 }
 
-#[derive(prost::Message)]
+#[derive(prost::Message, Deserialize)]
 pub struct TransferOptions {
     #[prost(bool, optional, tag = "1")]
     pub shuffling_context: Option<bool>,
@@ -791,6 +791,80 @@ impl Session {
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
         http::send(self, method, path, headers, body).await?;
         Ok(())
+    }
+}
+
+impl ProvidedTrack {
+    /// Encodes the occurrence as it is published in current, previous, and upcoming tracks.
+    pub fn for_queue(
+        id: &str,
+        uid: String,
+        context: &str,
+        queued: bool,
+        suggested: bool,
+        added_by: Option<&str>,
+    ) -> Self {
+        let mut metadata = HashMap::from([
+            ("context_uri".to_owned(), context.to_owned()),
+            ("entity_uri".to_owned(), context.to_owned()),
+        ]);
+        if queued {
+            metadata.insert("is_queued".into(), "true".into());
+        }
+        if let Some(adder) = added_by {
+            metadata.insert("added_by".into(), adder.into());
+        }
+        Self {
+            uri: crate::id::track_uri(id),
+            uid,
+            provider: match (queued, suggested) {
+                (true, _) => "queue",
+                (false, true) => "autoplay",
+                (false, false) => "context",
+            }
+            .into(),
+            metadata,
+            ..Default::default()
+        }
+    }
+
+    /// Returns the requested recording when Spotify reports a playable replacement.
+    pub fn track_id(&self) -> Option<&str> {
+        let reported = crate::id::track_id(&self.uri)?;
+        self.metadata
+            .get("requested_uri")
+            .and_then(|uri| crate::id::track_id(uri))
+            .filter(|id| id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+            .or(Some(reported))
+    }
+
+    /// Whether the occurrence was added explicitly to the queue.
+    pub fn is_queued(&self) -> bool {
+        self.provider == "queue"
+            || self
+                .metadata
+                .get("is_queued")
+                .is_some_and(|value| value == "true")
+    }
+
+    /// The account that added the track, when Spotify supplies it.
+    pub fn added_by(&self) -> Option<&str> {
+        ["added_by", "added_by_username", "adder", "queued_by"]
+            .iter()
+            .find_map(|key| self.metadata.get(*key))
+            .filter(|name| !name.is_empty())
+            .map(String::as_str)
+    }
+}
+
+impl ContextTrack {
+    /// Reads the catalogue ID from a context row, including rows that only carry the binary GID.
+    pub fn track_id(&self) -> Option<crate::id::CatalogueId<'_>> {
+        use crate::id::{CatalogueId, base62_bytes, track_id};
+        if let Some(id) = self.uri.as_deref().and_then(track_id) {
+            return Some(CatalogueId::Borrowed(id));
+        }
+        base62_bytes(self.gid.as_deref()?).map(CatalogueId::Encoded)
     }
 }
 

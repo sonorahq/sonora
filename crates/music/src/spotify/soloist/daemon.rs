@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::io::Write as _;
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, ensure};
@@ -37,8 +37,8 @@ pub(super) static RUNNING: Mutex<()> = Mutex::const_new(());
 /// Starts the program on the data folder `data` with `flags` after the ones every run takes. The
 /// key is stored in the folder first, which keeps it off the command line, where every process
 /// on the computer could read it. A build before 1.4.0 cannot store one and takes it no other
-/// way. The output is piped for `follow`.
-pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> {
+/// way. The daemon keeps its output piped for redaction.
+pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Daemon> {
     let path = binary::path();
     reap(data, &path);
     let mut command = Command::from(binary::command(&path));
@@ -58,7 +58,7 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     tie(&mut command);
-    let child = command
+    let mut child = command
         .spawn()
         .with_context(|| format!("cannot start {}", path.display()))?;
     if let Some(pid) = child.id()
@@ -66,7 +66,14 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
     {
         log::warn!("soloist: cannot record the program's pid: {error}");
     }
-    Ok(child)
+    let (out, lines) = unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        tokio::spawn(forward(stdout, key.to_owned(), out.clone()));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(forward(stderr, key.to_owned(), out));
+    }
+    Ok(Daemon { child, lines })
 }
 
 /// Has the program store `key` in the data folder `data`, where its runs on that folder read it.
@@ -267,19 +274,6 @@ pub async fn stopped() {
     drop(RUNNING.lock().await);
 }
 
-/// Everything the program prints from here on, a line at a time, with the key cut out. Each
-/// line is logged as it comes. The channel closes once the program has closed both its streams.
-pub(super) fn follow(child: &mut Child, key: &str) -> UnboundedReceiver<String> {
-    let (lines, read) = unbounded_channel();
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(forward(stdout, key.to_owned(), lines.clone()));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(forward(stderr, key.to_owned(), lines));
-    }
-    read
-}
-
 async fn forward(stream: impl AsyncRead + Unpin, key: String, lines: UnboundedSender<String>) {
     let mut read = BufReader::new(stream).lines();
     while let Ok(Some(line)) = read.next_line().await {
@@ -297,12 +291,50 @@ async fn forward(stream: impl AsyncRead + Unpin, key: String, lines: UnboundedSe
     }
 }
 
-/// Asks the program to shut down, which lets it close its sign-in store cleanly, and kills it
-/// if it has not gone after `GRACE`.
-pub(super) async fn stop(child: &mut Child) {
-    interrupt(child);
-    if tokio::time::timeout(GRACE, child.wait()).await.is_err() {
-        child.kill().await.ok();
+/// Owns the child and its redacted log stream until it exits or is stopped.
+pub(super) struct Daemon {
+    child: Child,
+    lines: UnboundedReceiver<String>,
+}
+
+impl Daemon {
+    /// Watches until exit. A reported login refusal returns no exit status.
+    pub(super) async fn wait(
+        &mut self,
+        mut on_line: impl FnMut(&str),
+    ) -> std::io::Result<Option<ExitStatus>> {
+        let mut inspect = |line: String| {
+            on_line(&line);
+            line.contains("login failed")
+        };
+        loop {
+            tokio::select! {
+                Some(line) = self.lines.recv() => {
+                    if inspect(line) { return Ok(None); }
+                }
+                status = self.child.wait() => {
+                    let status = status?;
+                    return match std::iter::from_fn(|| self.lines.try_recv().ok()).any(inspect) {
+                        true => Ok(None),
+                        false => Ok(Some(status)),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Gives the child time to close its sign-in store before killing it.
+    pub(super) async fn stop(&mut self) {
+        #[cfg(unix)]
+        interrupt(&self.child);
+        #[cfg(not(unix))]
+        self.child.start_kill().ok();
+        if tokio::time::timeout(GRACE, self.child.wait())
+            .await
+            .is_err()
+        {
+            self.child.kill().await.ok();
+        }
     }
 }
 
@@ -316,9 +348,4 @@ fn interrupt(child: &Child) {
     unsafe {
         libc::kill(pid, libc::SIGTERM);
     }
-}
-
-#[cfg(not(unix))]
-fn interrupt(child: &mut Child) {
-    child.start_kill().ok();
 }

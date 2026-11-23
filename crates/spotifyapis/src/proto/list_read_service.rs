@@ -331,6 +331,18 @@ impl ListProjection<'_> {
 }
 
 impl Session {
+    /// Reads a single list with the same field and pagination rules as a batch.
+    pub async fn get_list(
+        &self,
+        query: &ListQuery,
+        projection: ListProjection<'_>,
+    ) -> Result<(ListEntity, Bytes)> {
+        self.get_lists(std::slice::from_ref(query), projection)
+            .await?
+            .pop()
+            .context("Spotify omitted the list")?
+    }
+
     /// Reads list projections in input order, with independent results for each entry.
     pub async fn get_lists(
         &self,
@@ -368,7 +380,7 @@ impl Session {
             })
             .collect();
         let response: GetListsResponse =
-            http::read_rpc(self, GET_LISTS, GetListsRequest { requests }).await?;
+            http::read_rpc(self, GET_LISTS, &GetListsRequest { requests }).await?;
         anyhow::ensure!(
             response.responses.len() == slots.len(),
             "Spotify returned the wrong number of lists"

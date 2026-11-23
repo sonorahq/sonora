@@ -11,7 +11,7 @@ pub mod dealer;
 mod http;
 pub mod id;
 mod image_upload;
-mod player_command;
+pub mod player_command;
 pub mod proto;
 mod session;
 

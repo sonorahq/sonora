@@ -1,5 +1,7 @@
 //! Extended metadata requests, responses, and catalogue payloads.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use bytes::Bytes;
 
@@ -483,16 +485,16 @@ pub struct RelatedCreators {
 
 /// Selects a metadata extension to fetch for an entity.
 #[derive(prost::Message)]
-pub struct ExtensionQuery {
+struct ExtensionQuery {
     #[prost(enumeration = "ExtensionKind", tag = "1")]
     pub extension_kind: i32,
-    #[prost(string, tag = "2")]
-    pub etag: String,
+    // #[prost(string, tag = "2")]
+    // pub etag: String,
 }
 
 /// Metadata extensions requested for one Spotify URI.
 #[derive(prost::Message)]
-pub struct EntityRequest {
+struct EntityRequest {
     #[prost(string, tag = "1")]
     pub entity_uri: String,
     #[prost(message, repeated, tag = "2")]
@@ -501,7 +503,7 @@ pub struct EntityRequest {
 
 /// Request for metadata on multiple Spotify entities.
 #[derive(prost::Message)]
-pub struct BatchedEntityRequest {
+struct BatchedEntityRequest {
     // #[prost(message, optional, tag = "1")]
     // pub header: Option<BatchedEntityRequestHeader>,
     #[prost(message, repeated, tag = "2")]
@@ -510,7 +512,7 @@ pub struct BatchedEntityRequest {
 
 /// Results grouped by metadata extension kind.
 #[derive(prost::Message)]
-pub struct EntityExtensionDataArray {
+struct EntityExtensionDataArray {
     // #[prost(message, optional, tag = "1")]
     // pub header: Option<EntityExtensionDataArrayHeader>,
     #[prost(enumeration = "ExtensionKind", tag = "2")]
@@ -521,45 +523,45 @@ pub struct EntityExtensionDataArray {
 
 /// Response containing the groups returned for an extended metadata request.
 #[derive(prost::Message)]
-pub struct BatchedExtensionResponse {
+struct BatchedExtensionResponse {
     // #[prost(message, optional, tag = "1")]
     // pub header: Option<BatchedExtensionResponseHeader>,
     #[prost(message, repeated, tag = "2")]
     pub extended_metadata: Vec<EntityExtensionDataArray>,
 }
 
-/// One entity’s status and protobuf `Any` payload for the requested extension.
+/// One entity's payload for the requested extension.
 #[derive(prost::Message)]
-pub struct EntityExtensionData {
-    #[prost(message, optional, tag = "1")]
-    pub header: Option<EntityExtensionDataHeader>,
+struct EntityExtensionData {
+    // #[prost(message, optional, tag = "1")]
+    // pub header: Option<EntityExtensionDataHeader>,
     #[prost(string, tag = "2")]
-    pub entity_uri: String,
+    entity_uri: String,
     #[prost(message, optional, tag = "3")]
     extension_data: Option<Payload>,
 }
 
-/// Status reported for an individual metadata result.
-#[derive(prost::Message)]
-pub struct EntityExtensionDataHeader {
-    #[prost(int32, tag = "1")]
-    pub status_code: i32,
-    #[prost(string, tag = "2")]
-    pub etag: String,
-    #[prost(string, tag = "3")]
-    pub locale: String,
-    #[prost(int64, tag = "4")]
-    pub cache_ttl_in_seconds: i64,
-    // #[prost(int64, tag = "5")]
-    // pub offline_ttl_in_seconds: i64,
-}
+// /// Status reported for an individual metadata result.
+// #[derive(prost::Message)]
+// pub struct EntityExtensionDataHeader {
+//     #[prost(int32, tag = "1")]
+//     pub status_code: i32,
+//     #[prost(string, tag = "2")]
+//     pub etag: String,
+//     #[prost(string, tag = "3")]
+//     pub locale: String,
+//     #[prost(int64, tag = "4")]
+//     pub cache_ttl_in_seconds: i64,
+//     // #[prost(int64, tag = "5")]
+//     // pub offline_ttl_in_seconds: i64,
+// }
 
 /// A protobuf message that can be decoded from an extended metadata payload.
 pub trait MetadataMessage: prost::Message + Default {}
 
 impl<T: prost::Message + Default> MetadataMessage for T {}
 
-/// Encoded catalogue metadata that can be cached and decoded on demand.
+/// Encoded catalogue metadata that can be decoded on demand.
 #[derive(Clone)]
 pub struct MetadataPayload(Bytes);
 
@@ -576,14 +578,6 @@ impl MetadataPayload {
     /// Decodes the message that corresponds to the enclosing extension kind.
     pub fn decode<M: MetadataMessage>(&self) -> std::result::Result<M, prost::DecodeError> {
         M::decode(self.0.clone())
-    }
-}
-
-impl EntityExtensionData {
-    pub fn take_payload(&mut self) -> Option<MetadataPayload> {
-        self.extension_data
-            .take()
-            .map(|payload| MetadataPayload(payload.value))
     }
 }
 
@@ -712,12 +706,59 @@ pub struct SearchGenreMetadata {
     pub image_url: String,
 }
 
+/// Identifies an extension result by kind and Spotify URI.
+pub type MetadataKey = (ExtensionKind, String);
+
 impl Session {
-    /// Loads the requested catalogue extensions.
-    pub async fn extended_metadata(
+    /// Loads each requested URI and extension pair once and indexes its payload.
+    pub async fn extended_metadata<'a>(
         &self,
-        request: BatchedEntityRequest,
-    ) -> Result<BatchedExtensionResponse> {
-        http::read_rpc(self, ENDPOINT, request).await
+        queries: impl IntoIterator<Item = (&'a str, ExtensionKind)>,
+    ) -> Result<HashMap<MetadataKey, MetadataPayload>> {
+        let mut positions = HashMap::new();
+        let mut request = BatchedEntityRequest::default();
+        for (uri, kind) in queries {
+            let index = *positions.entry(uri).or_insert_with(|| {
+                request.entity_request.push(EntityRequest {
+                    entity_uri: uri.to_owned(),
+                    query: Vec::new(),
+                });
+                request.entity_request.len() - 1
+            });
+            let query = &mut request.entity_request[index].query;
+            if !query.iter().any(|item| item.extension_kind == kind as i32) {
+                query.push(ExtensionQuery {
+                    extension_kind: kind as i32,
+                });
+            }
+        }
+        if positions.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let response: BatchedExtensionResponse = http::read_rpc(self, ENDPOINT, &request).await?;
+        let mut indexed = HashMap::new();
+        for group in response.extended_metadata {
+            let Ok(kind) = ExtensionKind::try_from(group.extension_kind) else {
+                continue;
+            };
+            for entry in group.extension_data {
+                let Some(payload) = entry.extension_data else {
+                    continue;
+                };
+                let Some(&index) = positions.get(entry.entity_uri.as_str()) else {
+                    continue;
+                };
+                let query = &mut request.entity_request[index].query;
+                if let Some(slot) = query
+                    .iter()
+                    .position(|item| item.extension_kind == group.extension_kind)
+                {
+                    query.swap_remove(slot);
+                    indexed.insert((kind, entry.entity_uri), MetadataPayload(payload.value));
+                }
+            }
+        }
+        Ok(indexed)
     }
 }

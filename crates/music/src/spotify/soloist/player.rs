@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 
 use tokio::sync::oneshot;
 
-use super::daemon::{RUNNING, follow, launch};
+use super::daemon::{RUNNING, launch};
 use super::{binary, data, key, prefs, recheck};
 use crate::{PlaybackConfig, PlaybackEvent, PlaybackEvents};
 
@@ -50,24 +50,23 @@ pub(crate) fn start(config: &PlaybackConfig) -> (oneshot::Sender<()>, Box<dyn Pl
                                     break;
                                 }
                             };
-                            let mut lines = follow(&mut child, &key);
-                            let status = loop {
-                                tokio::select! {
-                                    status = child.wait() => break status,
-                                    _ = &mut stopped => {
-                                        super::daemon::stop(&mut child).await;
-                                        return;
+                            let code = tokio::select! {
+                                _ = &mut stopped => {
+                                    child.stop().await;
+                                    return;
+                                }
+                                status = child.wait(|_| {}) => match status {
+                                    Ok(Some(status)) => status.code(),
+                                    Ok(None) => {
+                                        child.stop().await;
+                                        break;
                                     }
-                                    Some(line) = lines.recv() => {
-                                        if line.contains("login failed") {
-                                            super::daemon::stop(&mut child).await;
-                                            failure.send(PlaybackEvent::Refused).ok();
-                                            return;
-                                        }
+                                    Err(error) => {
+                                        log::warn!("soloist: cannot wait for the daemon: {error}");
+                                        break;
                                     }
                                 }
                             };
-                            let code = status.ok().and_then(|status| status.code());
                             if !refresh || code != Some(binary::EXPIRED) {
                                 log::warn!("soloist: the daemon stopped with code {code:?}");
                                 break;

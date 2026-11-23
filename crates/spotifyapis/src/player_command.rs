@@ -64,3 +64,35 @@ impl Session {
         Ok(())
     }
 }
+
+/// Builds the same occurrence selector for ordinary play and targeted history jumps.
+pub fn play(
+    uri: &str,
+    url: &str,
+    target: Option<(&str, &str)>,
+    mut options: serde_json::Value,
+    origin: (&str, &str),
+) -> serde_json::Value {
+    if let Some((uri, uid)) = target {
+        let mut skip_to = serde_json::json!({ "track_uri": uri });
+        if !uid.is_empty() {
+            skip_to["track_uid"] = uid.into();
+        }
+        options["skip_to"] = skip_to;
+    }
+    serde_json::json!({
+        "endpoint": "play",
+        "context": { "uri": uri, "url": url, "metadata": {} },
+        "play_origin": { "feature_identifier": origin.0, "feature_version": origin.1 },
+        "options": options,
+        "logging_params": {},
+    })
+}
+
+/// Targets a specific upcoming occurrence rather than skipping to the next row.
+pub fn skip_next_to(target: &crate::proto::connect_state::ProvidedTrack) -> Value {
+    json!({
+        "endpoint": "skip_next",
+        "track": { "uri": target.uri, "uid": target.uid, "metadata": target.metadata },
+    })
+}

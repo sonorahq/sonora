@@ -1,26 +1,16 @@
 use anyhow::{Context as _, Result};
 
 use crate::spotify::{auth::sign_in_error, collection, session::Session};
-use spotifyapis::proto::connect_state::ContextTrack;
+use spotifyapis::proto::sequence_proxy::ResolvedSequence;
 
 const RADIO_TRACKS: usize = 50;
 
-/// Ordered context rows used to locate occurrences in Sonora's queue.
-pub(in crate::spotify) struct Resolved {
-    pub(in crate::spotify) tracks: Vec<ContextTrack>,
-    pub(in crate::spotify) complete: bool,
-}
-
-pub(in crate::spotify) async fn resolve(session: &Session, uri: &str) -> Result<Resolved> {
-    let resolved = session
+pub(in crate::spotify) async fn resolve(session: &Session, uri: &str) -> Result<ResolvedSequence> {
+    session
         .api()
         .resolve_sequence(uri, session.device_id())
         .await
-        .map_err(sign_in_error)?;
-    Ok(Resolved {
-        tracks: resolved.tracks,
-        complete: resolved.complete,
-    })
+        .map_err(sign_in_error)
 }
 
 /// Resolves and hydrates a track station in Spotify's playback order.

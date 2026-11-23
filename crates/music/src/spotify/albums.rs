@@ -31,7 +31,7 @@ pub(super) async fn hydrate_saved_albums(
         .collect())
 }
 
-/// Loads the album and its ordered track IDs together, then hydrates uncached tracks in batches.
+/// Loads the album and its ordered track IDs together, then hydrates tracks in batches.
 pub(super) async fn album(session: &Session, album_id: &str) -> Result<AlbumDetail> {
     let (album, uris) = read_album(session, album_id, |uri, message| {
         (
@@ -129,7 +129,7 @@ pub(super) fn album_from(uri: &str, album: &AlbumMessage) -> Album {
     }
 }
 
-/// Projects a single album using the shared metadata cache.
+/// Projects a single album in one metadata read.
 pub(super) async fn read_album<T>(
     session: &Session,
     album_id: &str,

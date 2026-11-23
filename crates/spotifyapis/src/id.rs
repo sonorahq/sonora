@@ -1,4 +1,37 @@
-//! Binary and base62 Spotify catalogue IDs.
+//! Spotify track URIs and binary and base62 catalogue IDs.
+
+pub const TRACK_PREFIX: &str = "spotify:track:";
+
+/// Returns the ID from a nonempty Spotify track URI.
+pub fn track_id(uri: &str) -> Option<&str> {
+    uri.strip_prefix(TRACK_PREFIX).filter(|id| !id.is_empty())
+}
+
+pub fn track_uri(id: &str) -> String {
+    format!("{TRACK_PREFIX}{id}")
+}
+
+/// A borrowed catalogue ID or the inline base-62 form of a binary GID.
+pub enum CatalogueId<'a> {
+    Borrowed(&'a str),
+    Encoded([u8; 22]),
+}
+
+impl CatalogueId<'_> {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(id) => id.as_bytes(),
+            Self::Encoded(id) => id,
+        }
+    }
+
+    pub fn into_owned(self) -> String {
+        match self {
+            Self::Borrowed(id) => id.to_owned(),
+            Self::Encoded(id) => String::from_utf8_lossy(&id).into_owned(),
+        }
+    }
+}
 
 /// Encodes a binary catalogue ID as Spotify’s 22-character text ID.
 pub fn base62(gid: &[u8]) -> Option<String> {

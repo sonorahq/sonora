@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use futures::{StreamExt as _, stream};
+use futures::{Stream, StreamExt as _, TryStreamExt as _, stream};
 use spotifyapis::id::{base62, raw_id};
 use spotifyapis::proto::extended_metadata::ImageSize;
 use spotifyapis::proto::extended_metadata::{
@@ -21,12 +20,11 @@ use crate::{
 };
 use spotifyapis::proto::collection::{CollectionItem, PageRequest, WriteRequest};
 use spotifyapis::proto::extended_metadata::{
-    AudioAttributes, BatchedEntityRequest, BatchedExtensionResponse, EntityRequest, ExtensionKind,
-    ExtensionQuery, Reputation, TrackDescriptors,
+    AudioAttributes, ExtensionKind, MetadataKey, Reputation, TrackDescriptors,
 };
 
 const LIKED_TRACKS: &str = "spotify:collection:tracks";
-pub(super) const TRACK_PREFIX: &str = "spotify:track:";
+pub(super) use spotifyapis::id::TRACK_PREFIX;
 const UNKNOWN: &str = "Unknown";
 pub(super) const BATCH: usize = 500;
 pub(super) const TRACK_DETAILS: &[ExtensionKind] = &[
@@ -35,9 +33,6 @@ pub(super) const TRACK_DETAILS: &[ExtensionKind] = &[
     ExtensionKind::OnPlatformReputation,
     ExtensionKind::AudioAttributesV2,
 ];
-const CACHE_ENTRIES: usize = 512;
-const CACHE_VALUE_BYTES: usize = 32 * 1024;
-const MAX_METADATA_AGE: Duration = Duration::from_secs(300);
 
 pub(crate) const COLLECTION: &str = "collection";
 pub(crate) const ARTISTS: &str = "artist";
@@ -47,21 +42,6 @@ const PAGE: i32 = 300;
 const COLLECTION_PAGE: i32 = 2_000;
 
 static UPDATE: AtomicU64 = AtomicU64::new(0);
-
-/// Recent metadata for this signed-in account, keyed by entity and extension.
-#[derive(Default)]
-pub(super) struct Cache(Mutex<HashMap<MetadataKey, CachedEntity>>);
-
-/// Keys one protobuf payload by its extension and Spotify URI.
-pub(super) type MetadataKey = (ExtensionKind, String);
-
-/// A protobuf payload and the time through which Spotify says it can be reused.
-#[derive(Clone)]
-struct CachedEntity {
-    value: MetadataPayload,
-    etag: String,
-    fresh_until: Instant,
-}
 
 /// Reads the mixed collection once, then hydrates each list independently.
 pub(super) fn saved_collection(session: Session) -> SavedCollectionPages {
@@ -245,18 +225,14 @@ async fn project_batch<T>(
         .map(|uri| (uri, kinds))
         .collect();
     let mut known = HashMap::with_capacity(requests.len());
-    for pair in requests.chunks(2 * batch) {
-        let (first, second) = pair.split_at(pair.len().min(batch));
-        let cache = session.metadata();
-        let (head, tail) =
-            tokio::try_join!(cache.read(session, first), cache.read(session, second))?;
-        for (requests, mut values) in [(first, head), (second, tail)] {
-            known.extend(
-                requests
-                    .iter()
-                    .filter_map(|&(uri, _)| Some((uri.to_owned(), map(&mut values, uri)?))),
-            );
-        }
+    let mut batches = std::pin::pin!(metadata_batches(session, &requests, batch));
+    while let Some(result) = batches.next().await {
+        let (requests, mut values) = result?;
+        known.extend(
+            requests
+                .iter()
+                .filter_map(|&(uri, _)| Some((uri.to_owned(), map(&mut values, uri)?))),
+        );
     }
     Ok(known)
 }
@@ -276,21 +252,44 @@ pub(super) async fn ordered_tracks(
         .collect())
 }
 
-/// Fetches different extensions together, reusing cached payloads for each entity and kind.
+/// Fetches different extensions together and indexes their payloads.
 pub(super) async fn extended_batch(
     session: &Session,
     requests: &[(&str, &[ExtensionKind])],
 ) -> Result<HashMap<MetadataKey, MetadataPayload>> {
-    let mut known = HashMap::new();
-    for pair in requests.chunks(2 * BATCH) {
-        let (first, second) = pair.split_at(pair.len().min(BATCH));
-        let cache = session.metadata();
-        let (head, tail) =
-            tokio::try_join!(cache.read(session, first), cache.read(session, second))?;
-        known.extend(head);
-        known.extend(tail);
-    }
-    Ok(known)
+    metadata_batches(session, requests, BATCH)
+        .try_fold(HashMap::new(), |mut known, (_, values)| async move {
+            known.extend(values);
+            Ok(known)
+        })
+        .await
+}
+
+pub(super) type MetadataBatch<'a> = (
+    &'a [(&'a str, &'a [ExtensionKind])],
+    HashMap<MetadataKey, MetadataPayload>,
+);
+
+/// Reads batches in order with two requests in flight and releases replies as callers consume them.
+pub(super) fn metadata_batches<'a>(
+    session: &'a Session,
+    requests: &'a [(&'a str, &'a [ExtensionKind])],
+    size: usize,
+) -> impl Stream<Item = Result<MetadataBatch<'a>>> + use<'a> {
+    stream::iter(requests.chunks(size))
+        .map(move |batch| async move {
+            let queries: Vec<_> = batch
+                .iter()
+                .flat_map(|&(uri, kinds)| kinds.iter().map(move |&kind| (uri, kind)))
+                .collect();
+            let response = session
+                .api()
+                .extended_metadata(queries)
+                .await
+                .map_err(sign_in_error)?;
+            Ok((batch, response))
+        })
+        .buffered(2)
 }
 
 /// Decodes one requested extension from a mixed metadata batch.
@@ -300,119 +299,6 @@ pub(super) fn take<T: MetadataMessage>(
     uri: &str,
 ) -> Option<T> {
     data.remove(&(kind, uri.to_owned()))?.decode().ok()
-}
-
-impl Cache {
-    /// Reuses fresh entries and sends stale ETags with the remaining queries.
-    async fn read(
-        &self,
-        session: &Session,
-        requests: &[(&str, &[ExtensionKind])],
-    ) -> Result<HashMap<MetadataKey, MetadataPayload>> {
-        if requests.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let now = Instant::now();
-        let mut request = BatchedEntityRequest::default();
-        let mut ready = HashMap::new();
-        let mut pending = HashMap::new();
-        {
-            let cache = self.0.lock().expect("Spotify metadata cache poisoned");
-            for &(uri, kinds) in requests {
-                let mut queries = Vec::new();
-                for &kind in kinds {
-                    let key = (kind, uri.to_owned());
-                    if ready.contains_key(&key) || pending.contains_key(&key) {
-                        continue;
-                    }
-                    let stale = match cache.get(&key) {
-                        Some(entry) if entry.fresh_until > now => {
-                            ready.insert(key, entry.value.clone());
-                            continue;
-                        }
-                        entry => entry.cloned(),
-                    };
-                    queries.push(ExtensionQuery {
-                        extension_kind: kind as i32,
-                        etag: stale
-                            .as_ref()
-                            .map(|entry| entry.etag.clone())
-                            .unwrap_or_default(),
-                    });
-                    pending.insert(key, stale);
-                }
-                if !queries.is_empty() {
-                    request.entity_request.push(EntityRequest {
-                        entity_uri: uri.to_owned(),
-                        query: queries,
-                    });
-                }
-            }
-        }
-
-        if !request.entity_request.is_empty() {
-            let response: BatchedExtensionResponse = session
-                .api()
-                .extended_metadata(request)
-                .await
-                .map_err(sign_in_error)?;
-            let mut cache = self.0.lock().expect("Spotify metadata cache poisoned");
-            for array in response.extended_metadata {
-                let Ok(kind) = ExtensionKind::try_from(array.extension_kind) else {
-                    continue;
-                };
-                for mut data in array.extension_data {
-                    let key = (kind, std::mem::take(&mut data.entity_uri));
-                    let Some(stale) = pending.remove(&key) else {
-                        continue;
-                    };
-                    let payload = data.take_payload();
-                    let mut header = data.header.unwrap_or_default();
-                    let value = if header.status_code == 304 {
-                        let Some(CachedEntity { value, etag, .. }) = stale else {
-                            continue;
-                        };
-                        if header.etag.is_empty() {
-                            header.etag = etag;
-                        }
-                        value
-                    } else if let Some(payload) = payload {
-                        payload
-                    } else {
-                        cache.remove(&key);
-                        continue;
-                    };
-                    let ttl = Duration::from_secs(header.cache_ttl_in_seconds.max(0) as u64)
-                        .min(MAX_METADATA_AGE);
-                    if (!ttl.is_zero() || !header.etag.is_empty())
-                        && value.as_bytes().len() <= CACHE_VALUE_BYTES
-                    {
-                        if cache.len() == CACHE_ENTRIES
-                            && !cache.contains_key(&key)
-                            && let Some(oldest) = cache
-                                .iter()
-                                .min_by_key(|(_, entry)| entry.fresh_until)
-                                .map(|(key, _)| key.clone())
-                        {
-                            cache.remove(&oldest);
-                        }
-                        cache.insert(
-                            key.clone(),
-                            CachedEntity {
-                                value: value.clone(),
-                                etag: std::mem::take(&mut header.etag),
-                                fresh_until: now + ttl,
-                            },
-                        );
-                    } else {
-                        cache.remove(&key);
-                    }
-                    ready.insert(key, value);
-                }
-            }
-        }
-        Ok(ready)
-    }
 }
 
 /// Maps a hydrated catalogue track to the shared model.

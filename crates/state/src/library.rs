@@ -3482,18 +3482,9 @@ impl Library {
             on_result(self, Err(()), cx);
             return false;
         };
-        let catalog = invalidated
-            .first()
-            .and_then(|id| self.session.read(cx).catalog(id));
         let io = self.io.clone();
         self.playlist_task = Some(cx.spawn(async move |this, cx| {
             let result = join(io.spawn(async move { mutation(client).await })).await;
-            // A change that failed part way may still have landed in part.
-            if let Some(catalog) = catalog {
-                for id in &invalidated {
-                    catalog.invalidate_playlist(id).await;
-                }
-            }
             this.update(cx, |this, cx| {
                 this.playlist_task = None;
                 match result {

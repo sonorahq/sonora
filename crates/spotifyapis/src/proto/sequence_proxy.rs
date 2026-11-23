@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use crate::{Session, http};
 
-use super::connect_state::ContextTrack;
+use super::connect_state::{ContextPage, ContextTrack};
 
 const MAX_PAGES: usize = 40;
 const RESOLVE_CONTEXT: &str =
@@ -172,6 +172,23 @@ pub struct ResolvedSequence {
     pub complete: bool,
 }
 
+impl ResolvedSequence {
+    /// Flattens pages embedded in Connect messages and detects an unresolved continuation.
+    pub fn from_context_pages(pages: Vec<ContextPage>) -> Self {
+        let complete = pages.last().is_none_or(|page| {
+            page.page_url
+                .as_deref()
+                .filter(|_| page.tracks.is_empty())
+                .or(page.next_page_url.as_deref())
+                .is_none_or(str::is_empty)
+        });
+        Self {
+            complete,
+            tracks: pages.into_iter().flat_map(|page| page.tracks).collect(),
+        }
+    }
+}
+
 impl Session {
     /// Resolves a playback context and follows its pages up to the safety limit.
     pub async fn resolve_sequence(&self, uri: &str, device_id: &str) -> Result<ResolvedSequence> {
@@ -179,7 +196,7 @@ impl Session {
             queries: vec![query(uri)],
             client: Some(sequence_client(device_id)),
         };
-        let mut response: ContextResponse = http::read_rpc(self, RESOLVE_CONTEXT, request).await?;
+        let mut response: ContextResponse = http::read_rpc(self, RESOLVE_CONTEXT, &request).await?;
         let result = response
             .results
             .remove(&0)
@@ -304,7 +321,7 @@ async fn resolve_pages(
     let mut response: PageResponse = if count == 0 {
         PageResponse::default()
     } else {
-        http::read_rpc(session, RESOLVE_PAGE, request).await?
+        http::read_rpc(session, RESOLVE_PAGE, &request).await?
     };
     Ok((0..count as u32).map(move |index| {
         let page = response

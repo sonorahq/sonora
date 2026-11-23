@@ -63,10 +63,10 @@ pub(crate) fn regional_url(scheme: &str, address: &str) -> Option<Url> {
 pub(crate) async fn read_rpc<T: prost::Message + Default>(
     session: &Session,
     path: &str,
-    request: impl prost::Message,
+    request: &impl prost::Message,
 ) -> Result<T> {
     let body =
-        retry_read(|| post_proto(session, path, PROTOBUF, header::HeaderMap::new(), &request))
+        retry_read(|| post_proto(session, path, PROTOBUF, header::HeaderMap::new(), request))
             .await?;
     decode(path, body)
 }

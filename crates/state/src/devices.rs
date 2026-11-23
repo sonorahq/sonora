@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use futures::{StreamExt as _, stream};
 use gpui::{App, Context, Entity, Task};
 use music::connect::{
     Collection, Command, Connect, Device, Elsewhere, Event, Invite, Jam, Mode, Naming, QueuedTrack,
@@ -883,12 +882,10 @@ impl Devices {
             .collect::<Vec<_>>();
         self.listing = Some(self.io.load(
             async move {
-                let read: Vec<_> = resolve_queue(&*client, &mut HashMap::new(), missing)
-                    .await
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|track| Some((track.id.clone()?, track)))
-                    .collect();
+                let read = client.tracks_by_id(&missing).await.unwrap_or_else(|error| {
+                    log::warn!("connect: cannot read queue tracks: {error:#}");
+                    HashMap::new()
+                });
                 let mut people = Vec::new();
                 for adder in strangers {
                     people.extend(person(&*client, adder).await);
@@ -1446,15 +1443,10 @@ async fn resolve_queue(
         .filter(|id| !known.contains_key(*id) && requested.insert(*id))
         .cloned()
         .collect();
-    let mut reads = stream::iter(missing)
-        .map(|id| async move { (id.clone(), client.track(&id).await) })
-        .buffer_unordered(QUEUE_READS);
-    while let Some((id, result)) = reads.next().await {
-        match result {
-            Ok(track) if track.id.as_ref() == Some(&id) => {
-                known.insert(id, track);
-            }
-            result => log::warn!("connect: cannot resolve queued track {id}: {result:?}"),
+    if !missing.is_empty() {
+        match client.tracks_by_id(&missing).await {
+            Ok(tracks) => known.extend(tracks),
+            Err(error) => log::warn!("connect: cannot read queue tracks: {error:#}"),
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()

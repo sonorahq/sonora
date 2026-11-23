@@ -247,6 +247,20 @@ pub trait MusicApi: Send + Sync {
     }
     async fn track(&self, track_id: &str) -> Result<Track>;
 
+    /// Resolves a group of track IDs, omitting unavailable rows.
+    async fn tracks_by_id(&self, ids: &[String]) -> Result<HashMap<String, Track>> {
+        use futures::StreamExt as _;
+        Ok(futures::stream::iter(ids.to_vec())
+            .map(|id| async move {
+                let track = self.track(&id).await.ok()?;
+                (track.id.as_ref() == Some(&id)).then_some((id, track))
+            })
+            .buffer_unordered(8)
+            .filter_map(std::future::ready)
+            .collect()
+            .await)
+    }
+
     /// Delete a track file from disk (only for local provider)
     async fn delete_track_file(&self, _track_id: &str) -> Result<()> {
         anyhow::bail!("this provider does not support file deletion")

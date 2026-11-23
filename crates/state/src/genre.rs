@@ -305,32 +305,21 @@ impl GenreDetails {
 
         self.clear();
         self.id = Some(id.to_owned());
-        let Some(catalog) = self.session.read(cx).catalog(id) else {
-            cx.notify();
-            return;
-        };
-        if let Some(detail) = catalog.peek_genre(id) {
-            self.adopt(id, detail, cx);
-            cx.notify();
-            return;
-        }
-        self.load(id.to_owned(), false, cx);
+        self.load(id.to_owned(), cx);
     }
 
-    /// Drops the page and fetches it again from the provider, past the catalog cache, so it
-    /// shows its loading state until the new sections land.
+    /// Drops the page and reads its sections again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.id.clone() else {
             return;
         };
         self.clear();
         self.id = Some(id.clone());
-        self.load(id, true, cx);
+        self.load(id, cx);
     }
 
-    /// Fetches the genre's sections. A `fresh` load drops the cached genre first, so the
-    /// provider is asked again.
-    fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
+    /// Fetches the genre's sections and applies its preview as soon as it arrives.
+    fn load(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(catalog) = self.session.read(cx).catalog(&id) else {
             cx.notify();
             return;
@@ -350,9 +339,6 @@ impl GenreDetails {
         let request = self.io.spawn({
             let id = id.clone();
             async move {
-                if fresh {
-                    catalog.invalidate_genre(&id).await;
-                }
                 catalog
                     .genre_with_preview(&id, title.as_deref(), preview)
                     .await

@@ -72,9 +72,9 @@ pub(crate) const QUALITIES: &[Offer] = &[
     },
 ];
 
-const UNKNOWN: u8 = 0;
+const UNREADY: u8 = 0;
 const READY: u8 = 1;
-const UNREADY: u8 = 2;
+const UNKNOWN: u8 = 2;
 
 /// What [`set_up`] last found, so asking again reads no files.
 static STANDING: AtomicU8 = AtomicU8::new(UNKNOWN);
@@ -93,29 +93,12 @@ pub fn supported() -> bool {
 /// Whether the setup is complete: the program is installed, an API key is stored and an
 /// account is paired. The first call reads the disk and later ones answer from memory.
 pub fn set_up() -> bool {
-    match STANDING.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => recheck(),
-    }
+    cached_flag(&STANDING, setup_complete)
 }
 
-/// Whether the listener has Soloist switched on, which it is unless they switched it off. The
-/// switch keeps the setup, so switching back on needs no pairing. The first call reads the disk.
+/// Whether Soloist is switched on. Turning it off keeps the existing pairing.
 pub fn enabled() -> bool {
-    match SWITCH.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => {
-            let on = !switched_off().is_file();
-            let standing = match on {
-                true => READY,
-                false => UNREADY,
-            };
-            SWITCH.store(standing, Ordering::Relaxed);
-            on
-        }
-    }
+    cached_flag(&SWITCH, || !switched_off().is_file())
 }
 
 /// Switches Soloist on or off without touching its setup. Blocking.
@@ -132,11 +115,7 @@ pub fn enable(on: bool) -> Result<()> {
             .and_then(|()| std::fs::write(&marker, []))
             .with_context(|| format!("cannot write {}", marker.display()))?,
     }
-    let standing = match on {
-        true => READY,
-        false => UNREADY,
-    };
-    SWITCH.store(standing, Ordering::Relaxed);
+    SWITCH.store(u8::from(on), Ordering::Relaxed);
     Ok(())
 }
 
@@ -150,24 +129,9 @@ pub fn ready_for(username: &str) -> bool {
     enabled() && set_up_for(username)
 }
 
-/// Whether Spotify denied this account an audio key the last time librespot asked for one,
-/// which is when Soloist is worth offering unasked. It is remembered across runs, since a
-/// denied account stays denied, and forgotten the first time librespot plays a track. The
-/// first call reads the disk and later ones answer from memory.
+/// Whether the last audio-key request was denied, which makes Soloist worth offering.
 pub fn wanted() -> bool {
-    match DENIED.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => {
-            let denied = denial().is_file();
-            let standing = match denied {
-                true => READY,
-                false => UNREADY,
-            };
-            DENIED.store(standing, Ordering::Relaxed);
-            denied
-        }
-    }
+    cached_flag(&DENIED, || denial().is_file())
 }
 
 /// Remembers that Spotify denied the account an audio key. Blocking the first time.
@@ -182,7 +146,7 @@ pub(crate) fn denied() {
     }
 }
 
-/// Forgets a denied key, now that librespot played a track. Blocking the first time.
+/// Forgets a denied key after native playback succeeds. Blocking the first time.
 pub(crate) fn granted() {
     if DENIED.swap(UNREADY, Ordering::Relaxed) == UNREADY {
         return;
@@ -217,16 +181,25 @@ fn clear(folder: &Path) -> Result<()> {
     }
 }
 
-/// Reads the disk for [`set_up`] and remembers the answer.
-fn recheck() -> bool {
-    let ready =
-        supported() && binary::path().is_file() && key().is_some() && paired_account().is_some();
-    let standing = match ready {
-        true => READY,
-        false => UNREADY,
-    };
-    STANDING.store(standing, Ordering::Relaxed);
-    ready
+/// Reads a persisted setting on first use and caches it until invalidated.
+fn cached_flag(flag: &AtomicU8, read: impl FnOnce() -> bool) -> bool {
+    match flag.load(Ordering::Relaxed) {
+        UNKNOWN => {
+            let value = read();
+            flag.store(u8::from(value), Ordering::Relaxed);
+            value
+        }
+        value => value == READY,
+    }
+}
+
+fn setup_complete() -> bool {
+    supported() && binary::path().is_file() && key().is_some() && paired_account().is_some()
+}
+
+/// Refreshes setup status after a change to the pairing or installed program.
+fn recheck() {
+    STANDING.store(u8::from(setup_complete()), Ordering::Relaxed);
 }
 
 /// The folder for what belongs to the account: the API key and the program's own sign-in.

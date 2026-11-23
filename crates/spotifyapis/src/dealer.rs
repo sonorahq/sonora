@@ -24,7 +24,7 @@ use tokio_tungstenite::{
 use crate::{
     Session,
     auth::AuthError,
-    proto::connect_state::{Context, ProvidedTrack},
+    proto::connect_state::{Context, ProvidedTrack, TransferOptions},
 };
 
 const PLAYER_COMMAND: &str = "hm://connect-state/v1/player/command";
@@ -427,7 +427,7 @@ pub struct PlayOptions {
     pub skip_to: Option<Skip>,
     pub seek_to: Option<u64>,
     pub initially_paused: Option<bool>,
-    pub player_options_override: Option<Overrides>,
+    pub player_options_override: Option<TransferOptions>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,9 +435,4 @@ pub struct Skip {
     pub track_uri: Option<String>,
     pub track_uid: Option<String>,
     pub track_index: Option<u32>,
-}
-
-#[derive(Deserialize)]
-pub struct Overrides {
-    pub shuffling_context: Option<bool>,
 }
