@@ -55,21 +55,9 @@ pub(crate) const QUALITIES: &[Offer] = &[
         },
         up_to: true,
     },
-    Offer {
-        quality: Quality::High,
-        encoding: Encoding::Vorbis { kbps: 320 },
-        up_to: false,
-    },
-    Offer {
-        quality: Quality::Normal,
-        encoding: Encoding::Vorbis { kbps: 160 },
-        up_to: false,
-    },
-    Offer {
-        quality: Quality::Low,
-        encoding: Encoding::Vorbis { kbps: 96 },
-        up_to: false,
-    },
+    super::playback::VORBIS_HIGH,
+    super::playback::VORBIS_NORMAL,
+    super::playback::VORBIS_LOW,
 ];
 
 const UNREADY: u8 = 0;
@@ -121,7 +109,7 @@ pub fn enable(on: bool) -> Result<()> {
 
 /// Whether the saved Soloist pairing belongs to this Spotify account.
 pub fn set_up_for(username: &str) -> bool {
-    set_up() && paired_account().as_deref() == Some(username)
+    set_up() && paired_account().is_some_and(|paired| same_account(&paired, username))
 }
 
 /// Whether the paired daemon can play for this Spotify account.
@@ -260,6 +248,12 @@ fn keep_key(key: &str) -> Result<()> {
 /// the program writes that name down, as `<username>-user`.
 fn paired_account() -> Option<String> {
     paired_in(&data())
+}
+
+/// Compares the stored percent-encoded username with the signed-in account.
+fn same_account(paired: &str, account: &str) -> bool {
+    let paired = percent_encoding::percent_decode_str(paired).decode_utf8_lossy();
+    paired.to_lowercase() == account.to_lowercase()
 }
 
 /// The account a data folder holds a paired sign-in for.

@@ -108,36 +108,22 @@ pub(crate) fn path() -> PathBuf {
 /// A command for `program` that opens no console window on Windows and, in the Nix package,
 /// goes through the store's loader.
 pub(crate) fn command(program: &Path) -> Command {
-    windowless(loaded(program))
-}
-
-/// Gives Soloist the Nix audio libraries and configuration through the packaged launcher.
-#[cfg(target_os = "linux")]
-fn loaded(program: &Path) -> Command {
-    let Some(launcher) = option_env!("SONORA_SOLOIST_LAUNCHER") else {
-        return Command::new(program);
-    };
-    let mut command = Command::new(launcher);
-    command.arg(program);
-    command
-}
-
-#[cfg(not(target_os = "linux"))]
-fn loaded(program: &Path) -> Command {
+    #[cfg(target_os = "linux")]
+    if let Some(launcher) = option_env!("SONORA_SOLOIST_LAUNCHER") {
+        let mut command = Command::new(launcher);
+        command.arg(program);
+        return command;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = Command::new(program);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(windows))]
     Command::new(program)
-}
-
-#[cfg(windows)]
-fn windowless(mut command: Command) -> Command {
-    use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-#[cfg(not(windows))]
-fn windowless(command: Command) -> Command {
-    command
 }
 
 /// The build that is installed, or `None` when nothing is or it does not run. Blocking: it

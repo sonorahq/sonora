@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use futures::future::try_join_all;
+use futures::future::join_all;
 
 use super::{auth, search};
 use crate::lyrics::{catalog, lrc};
@@ -54,19 +54,32 @@ impl LyricsProvider for SpotifyLyrics {
             search::lyric_tracks(&session, &format!("{} {}", query.title, query.artist)).await?;
         let candidates = catalog::candidates(SOURCE, query, tracks);
         let session = &session;
-        let hits = try_join_all(candidates.into_iter().map(|(id, mut hit)| async move {
-            Ok::<_, anyhow::Error>(
-                lyrics(session, &id)
-                    .await?
-                    .filter(|sheet| !sheet.is_empty())
-                    .map(|sheet| {
-                        hit.lyrics = sheet;
-                        hit
-                    }),
-            )
+        let results = join_all(candidates.into_iter().map(|(id, mut hit)| async move {
+            lyrics(session, &id).await.map(|sheet| {
+                sheet.filter(|sheet| !sheet.is_empty()).map(|sheet| {
+                    hit.lyrics = sheet;
+                    hit
+                })
+            })
         }))
-        .await?;
-        Ok(hits.into_iter().flatten().collect())
+        .await;
+        let mut hits = Vec::new();
+        let mut failure = None;
+        for result in results {
+            match result {
+                Ok(Some(hit)) => hits.push(hit),
+                Ok(None) => {}
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        if hits.is_empty()
+            && let Some(error) = failure
+        {
+            return Err(error);
+        }
+        Ok(hits)
     }
 }
 

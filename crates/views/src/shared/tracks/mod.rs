@@ -49,15 +49,19 @@ pub(crate) type PlaybackStatus = (Option<String>, Option<bool>, Option<Origin>);
 
 pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> PlaybackStatus {
     let playback = playback.read(cx);
+    let (track, playing) = track_playback(playback, cx);
+    (track, playing, playback.shown_origin(cx))
+}
+
+fn track_playback(playback: &Playback, cx: &App) -> (Option<String>, Option<bool>) {
     if let Some(remote) = playback.steered(cx) {
         return (
             remote.state.track.as_ref().map(|track| track.id.clone()),
             remote.state.track.as_ref().map(|_| remote.state.playing),
-            playback.shown_origin(cx),
         );
     }
     let track = playback.track().and_then(|track| track.id.clone());
-    (track, playback.control(), playback.origin(cx).cloned())
+    (track, playback.control())
 }
 pub(crate) trait Tracks: 'static {
     fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track>;
@@ -575,11 +579,10 @@ impl TrackSource {
         )
     }
 
-    /// The row's `Playback::control` when it holds the current track. A track listed twice
-    /// counts only at its first row.
+    /// Whether the current track is playing locally or remotely, for its first row only.
     pub(crate) fn now_playing(&self, row: usize, cx: &App) -> Option<bool> {
-        let playback = self.playback.read(cx);
-        let current = playback.track()?.id.as_deref()?;
+        let (current, playing) = track_playback(self.playback.read(cx), cx);
+        let current = current.as_deref()?;
         let tracks = self.provider.tracks(cx);
         if tracks.get(row)?.id.as_deref() != Some(current) {
             return None;
@@ -588,7 +591,7 @@ impl TrackSource {
             .iter()
             .position(|track| track.id.as_deref() == Some(current))?;
 
-        (sole == row).then(|| playback.control()).flatten()
+        playing.filter(|_| sole == row)
     }
 
     pub(crate) fn at(&self, row: usize, cx: &App) -> Option<Track> {

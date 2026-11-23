@@ -128,7 +128,10 @@ fn main() -> ExitCode {
         }
 
         let database = storage::Database::standard();
-        let spotify = Arc::new(music::spotify::SpotifyProvider::from_env());
+        let spotify = Arc::new(
+            music::spotify::SpotifyProvider::from_env()
+                .with_browser_confirmation(|| i18n::t!("login-browser-confirmed").to_string()),
+        );
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
             spotify.clone(),
             Arc::new(music::apple::AppleProvider::new()),

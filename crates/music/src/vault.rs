@@ -63,7 +63,6 @@ pub const MASTER: usize = 32;
 const VERSION: &[u8] = b"sonora vault 1";
 /// What one track may take of the whole vault at most, as a fraction of the limit.
 const SHARE: u64 = 4;
-/// The folder inside the vault that players keeping their own files share.
 /// How long a half-written entry left by a crash stays before a sweep removes it.
 const ABANDONED: Duration = Duration::from_secs(24 * 60 * 60);
 /// The hidden folder beside a provider's plain downloads holding one index file per track,
@@ -315,6 +314,11 @@ impl Vault {
     fn sweep(&self) {
         let limit = self.limit();
         abandoned(&self.pinned);
+        if let Err(error) = fs::remove_dir_all(self.root.join("players"))
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            log::warn!("vault: cannot remove the obsolete player cache: {error}");
+        }
         let own = evict(&self.root, limit);
         *self.used.lock().unwrap_or_else(|held| held.into_inner()) = Some(own);
     }

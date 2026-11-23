@@ -14,7 +14,9 @@ use prost::Message as ProtoMessage;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{
+    Receiver, Sender, UnboundedSender, channel, error::TrySendError, unbounded_channel,
+};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use tokio_tungstenite::{
@@ -35,6 +37,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_LAST: Duration = Duration::from_secs(60);
 const MAX_DECODED: u64 = 16 * 1024 * 1024;
+const EVENT_CAPACITY: usize = 16;
 
 /// The TLS WebSocket used for one Dealer connection.
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -63,7 +66,7 @@ pub struct Request {
 /// One socket worker and its ordered stream of events. Dropping it closes the connection.
 pub struct Dealer {
     task: JoinHandle<()>,
-    events: UnboundedReceiver<Event>,
+    events: Receiver<Event>,
 }
 
 /// A notification, command, or connection change from Spotify's Dealer.
@@ -117,7 +120,7 @@ enum Payload {
 
 impl Dealer {
     pub fn start(session: Arc<Session>) -> Self {
-        let (send, events) = unbounded_channel();
+        let (send, events) = channel(EVENT_CAPACITY);
         let task = tokio::spawn(run(session, send));
         Self { task, events }
     }
@@ -164,8 +167,12 @@ impl Message {
 
 impl Reply {
     pub fn send(self, success: bool) {
+        let _ = self.frames.send(self.frame(success));
+    }
+
+    fn frame(&self, success: bool) -> Frame {
         let body = json!({"type": "reply", "key": self.key, "payload": {"success": success}});
-        let _ = self.frames.send(Frame::Text(body.to_string().into()));
+        Frame::Text(body.to_string().into())
     }
 }
 
@@ -178,7 +185,7 @@ pub fn topic(uri: &str, prefix: &str) -> bool {
             .is_some_and(|tail| tail.starts_with('/'))
 }
 
-async fn run(session: Arc<Session>, events: UnboundedSender<Event>) {
+async fn run(session: Arc<Session>, events: Sender<Event>) {
     let mut delay = RETRY_FIRST;
     loop {
         let result = match connect(&session).await {
@@ -194,7 +201,8 @@ async fn run(session: Arc<Session>, events: UnboundedSender<Event>) {
                 return;
             }
         }
-        if events.send(Event::Disconnected).is_err() {
+        // The socket is closed. Enqueue the disconnect before starting a new registration.
+        if events.send(Event::Disconnected).await.is_err() {
             return;
         }
         tokio::select! {
@@ -225,7 +233,7 @@ enum Heartbeat {
 
 async fn receive(
     socket: &mut Socket,
-    events: &UnboundedSender<Event>,
+    events: &Sender<Event>,
     reconnect_delay: &mut Duration,
 ) -> Result<()> {
     let deadline = sleep(CONNECT_TIMEOUT);
@@ -277,8 +285,15 @@ async fn receive(
                         deadline.as_mut().reset(Instant::now() + PING_INTERVAL);
                     }
                     if heartbeat != Heartbeat::Announcement {
-                        if events.send(event).is_err() {
-                            return Ok(());
+                        match events.try_send(event) {
+                            Ok(()) => {}
+                            Err(TrySendError::Closed(_)) => return Ok(()),
+                            Err(TrySendError::Full(event)) => {
+                                if let Event::Command(_, reply) = event {
+                                    let _ = timeout(HEARTBEAT_TIMEOUT, socket.send(reply.frame(false))).await;
+                                }
+                                anyhow::bail!("Spotify Dealer event backlog exceeded {EVENT_CAPACITY}");
+                            }
                         }
                     } else if let Event::Command(_, reply) = event {
                         reply.send(false);

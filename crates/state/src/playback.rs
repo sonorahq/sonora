@@ -1307,6 +1307,7 @@ impl Playback {
             .as_ref()
             .is_some_and(|origin| self.start_remote_collection(origin, true, cx))
         {
+            self.sought = None;
             return;
         }
         self.queue
@@ -1948,6 +1949,9 @@ impl Playback {
 
     /// Lets the external player fetch and start the context without loading all its tracks here.
     fn start_remote_collection(&self, origin: &Origin, shuffled: bool, cx: &App) -> bool {
+        if music::is_local_id(&origin.id) {
+            return false;
+        }
         let Some(context @ (connect::Collection::Album(_) | connect::Collection::Playlist(_))) =
             collection_of(origin)
         else {

@@ -15,6 +15,7 @@ use crate::{
 pub struct Session {
     oauth: Arc<OAuth>,
     endpoints: OnceCell<Endpoints>,
+    market: OnceCell<String>,
 }
 
 impl Session {
@@ -22,6 +23,7 @@ impl Session {
         Self {
             oauth,
             endpoints: OnceCell::new(),
+            market: OnceCell::new(),
         }
     }
 
@@ -37,6 +39,23 @@ impl Session {
         self.oauth.has_current_grant()
     }
 
+    /// Obtains the account's market when a catalogue reply needs it to disambiguate results.
+    pub async fn account_market(&self) -> Result<&str> {
+        let market = self
+            .market
+            .get_or_try_init(|| async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    let (addresses, token) =
+                        tokio::try_join!(self.access_points(), self.access_token())?;
+                    crate::access_point::account_market(addresses, &token, self.username()).await
+                })
+                .await
+                .context("Spotify account market lookup timed out")?
+            })
+            .await?;
+        Ok(market)
+    }
+
     /// Gets a valid bearer for Spotify requests.
     pub(crate) async fn access_token(&self) -> Result<String> {
         self.oauth.token().await
@@ -49,12 +68,9 @@ impl Session {
 
     /// Picks a regional host or the global host supplied in the discovery response.
     pub(crate) async fn api_url(&self) -> Result<Url> {
-        let hosts = &self.endpoints().await?.spclient;
-        hosts
-            .regional
-            .iter()
-            .chain(&hosts.global)
-            .find_map(|address| http::regional_url("https", address))
+        self.endpoints()
+            .await?
+            .api_url()
             .context("Spotify discovery returned no API host")
     }
 
@@ -71,8 +87,24 @@ impl Session {
 
     async fn endpoints(&self) -> Result<&Endpoints> {
         self.endpoints
-            .get_or_try_init(http::discover)
+            .get_or_try_init(|| async {
+                let endpoints = http::discover().await?;
+                endpoints
+                    .api_url()
+                    .context("Spotify discovery returned no API host")?;
+                Ok::<_, anyhow::Error>(endpoints)
+            })
             .await
             .context("Spotify endpoint discovery failed")
+    }
+}
+
+impl Endpoints {
+    fn api_url(&self) -> Option<Url> {
+        self.spclient
+            .regional
+            .iter()
+            .chain(&self.spclient.global)
+            .find_map(|address| http::regional_url("https", address))
     }
 }

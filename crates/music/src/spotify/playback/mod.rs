@@ -20,24 +20,21 @@ use super::session::Session;
 
 /// The starting interval between Spotify downloads, adjusted as requests succeed or are refused.
 pub(crate) const DOWNLOAD_GAP: Duration = Duration::from_secs(2);
-/// Spotify’s Vorbis levels, best first: Ogg Vorbis at 320, 160 and 96 kbps.
-pub(crate) const QUALITIES: &[Offer] = &[
+/// Spotify's Vorbis levels, best first. Each is shared with Soloist.
+pub(crate) const QUALITIES: &[Offer] = &[VORBIS_HIGH, VORBIS_NORMAL, VORBIS_LOW];
+
+pub(super) const VORBIS_LOW: Offer = vorbis(Quality::Low, 96);
+pub(super) const VORBIS_NORMAL: Offer = vorbis(Quality::Normal, 160);
+pub(super) const VORBIS_HIGH: Offer = vorbis(Quality::High, 320);
+
+const fn vorbis(quality: Quality, kbps: u32) -> Offer {
     Offer {
-        quality: Quality::High,
-        encoding: Encoding::Vorbis { kbps: 320 },
+        quality,
+        encoding: Encoding::Vorbis { kbps },
         up_to: false,
-    },
-    Offer {
-        quality: Quality::Normal,
-        encoding: Encoding::Vorbis { kbps: 160 },
-        up_to: false,
-    },
-    Offer {
-        quality: Quality::Low,
-        encoding: Encoding::Vorbis { kbps: 96 },
-        up_to: false,
-    },
-];
+    }
+}
+
 /// Chooses Sonora audio playback or the paired Soloist player.
 pub struct Factory {
     session: Session,
@@ -58,7 +55,7 @@ impl PlaybackFactory for Factory {
             quality: config.quality,
         };
         if soloist::ready_for(self.session.username()) {
-            let (daemon, events) = soloist::start(&config);
+            let (daemon, events) = soloist::start(self.session.username(), &config);
             return (
                 Box::new(Official {
                     _daemon: daemon,

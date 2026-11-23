@@ -1120,22 +1120,20 @@ impl SearchView {
     fn result_hits<'a>(&self, combined: bool, cx: &'a App) -> &'a [Hit] {
         let search = self.search.read(cx);
         if combined {
-            search.hits()
+            search.hits().get(1..).unwrap_or_default()
         } else {
             search.column_hits()
         }
     }
 
-    /// Where each hit of the `only` kinds sits: its index among all hits and its place among
-    /// the hits of its kind. The first hit is the best match drawn above the lists, so the
-    /// lists leave it out.
+    /// Where each hit of the `only` kinds sits: its index in the list and its place among
+    /// the hits of its kind.
     fn seats(&self, only: &[Kind], cx: &App) -> Vec<(usize, usize)> {
         let mut taken = [0; Kind::ALL.len()];
 
         self.result_hits(only == Kind::ALL, cx)
             .iter()
             .enumerate()
-            .skip(usize::from(self.search.read(cx).best().is_some()))
             .filter_map(|(at, hit)| {
                 let kind = hit.kind();
                 let place = taken[seat(kind)];

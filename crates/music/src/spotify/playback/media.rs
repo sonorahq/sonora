@@ -326,9 +326,9 @@ impl Loaded {
             .and_then(|ms| u64::try_from(ms).ok())
             .map(Duration::from_millis);
         let encoding = match facts.format {
-            0 => Some(Encoding::Vorbis { kbps: 96 }),
-            1 => Some(Encoding::Vorbis { kbps: 160 }),
-            2 => Some(Encoding::Vorbis { kbps: 320 }),
+            0 => Some(super::VORBIS_LOW.encoding),
+            1 => Some(super::VORBIS_NORMAL.encoding),
+            2 => Some(super::VORBIS_HIGH.encoding),
             _ => None,
         };
         Self {

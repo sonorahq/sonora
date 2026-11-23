@@ -125,15 +125,7 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn tracks_by_id(&self, ids: &[String]) -> Result<HashMap<String, Track>> {
-        let uris: Vec<_> = ids
-            .iter()
-            .map(|id| spotifyapis::id::track_uri(id))
-            .collect();
-        Ok(collection::metadata(&self.session, &uris)
-            .await?
-            .into_values()
-            .filter_map(|track| Some((track.id.clone()?, track)))
-            .collect())
+        collection::available_tracks(&self.session, ids).await
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {

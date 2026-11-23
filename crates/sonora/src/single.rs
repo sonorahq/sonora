@@ -53,9 +53,9 @@ impl SocketOwner {
     }
 }
 
+#[cfg(unix)]
 impl Drop for SocketOwner {
     fn drop(&mut self) {
-        #[cfg(unix)]
         if let Some((path, owned)) = &self.file {
             use std::os::unix::fs::MetadataExt as _;
             if std::fs::symlink_metadata(path)

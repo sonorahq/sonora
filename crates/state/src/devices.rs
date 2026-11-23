@@ -332,10 +332,14 @@ impl Devices {
         };
         self.link.as_ref().filter(|link| link.queue_jump())?;
         let remote = self.steered()?;
+        let track = self.queue_entry(position)?;
+        if !forward && (track.queued || track.uid.is_empty() || remote.state.context.is_none()) {
+            return None;
+        }
         Some(crate::RemoteQueuePick {
             device: remote.device.id,
             context: remote.state.context.clone(),
-            track: self.queue_entry(position)?.clone(),
+            track: track.clone(),
             forward,
         })
     }
@@ -769,12 +773,13 @@ impl Devices {
             .and_then(|elsewhere| elsewhere.state.track.as_ref())
             .map(|track| &track.id);
         let moved = wanted != had;
-        let started = roster.elsewhere.as_ref().is_some_and(|e| e.state.playing)
-            && !self
-                .roster
-                .elsewhere
-                .as_ref()
-                .is_some_and(|e| e.state.playing);
+        let started =
+            roster.elsewhere.as_ref().is_some_and(|now| {
+                now.state.playing
+                    && !self.roster.elsewhere.as_ref().is_some_and(|before| {
+                        before.state.playing && before.device.id == now.device.id
+                    })
+            });
         self.roster = roster;
         if let Some((device, level)) = reported_volume {
             self.playback.update(cx, |playback, _| {

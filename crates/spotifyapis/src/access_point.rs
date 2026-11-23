@@ -37,10 +37,12 @@ const LOGIN_FAILED: u8 = 0xad;
 const REQUEST_KEY: u8 = 0x0c;
 const KEY: u8 = 0x0d;
 const KEY_FAILED: u8 = 0x0e;
+const COUNTRY: u8 = 0x1b;
 const PRODUCT: u8 = 0x50;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const KEY_TIMEOUT: Duration = Duration::from_secs(10);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const PRODUCT_WAIT: Duration = Duration::from_secs(5);
 const KEY_CACHE: usize = 128;
@@ -167,50 +169,27 @@ impl AccessPoint {
         username: &str,
         device: &str,
     ) -> Result<Self> {
-        let mut last = None;
-        for address in addresses {
-            let Some((host, port)) = address.rsplit_once(':') else {
-                continue;
-            };
-            let Ok(port) = port.parse::<u16>() else {
-                continue;
-            };
-            if !host.ends_with(".spotify.com")
-                || !host
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
-            {
-                continue;
-            }
-            match timeout(CONNECT_TIMEOUT, login(host, port, token, username, device)).await {
-                Ok(Ok(socket)) => {
-                    let (write, read) = mpsc::channel(32);
-                    let (account, mut latest) = watch::channel(None);
-                    let task = tokio::spawn(async move {
-                        if let Err(error) = serve(socket, read, account).await {
-                            log::debug!("spotify: access point closed: {error:#}");
-                        }
-                    });
-                    let point = Self(Arc::new(Inner {
-                        requests: write,
-                        account: latest.clone(),
-                        task,
-                    }));
-                    match timeout(PRODUCT_WAIT, latest.wait_for(|state| state.is_some())).await {
-                        Ok(Ok(account)) if *account == Some(false) => {
-                            return Err(AudioKeyError::Premium.into());
-                        }
-                        Ok(Err(_)) => return Err(AudioKeyError::Network.into()),
-                        _ => return Ok(point),
-                    }
-                }
-                Ok(Err(error)) if error.is::<AudioKeyError>() => return Err(error),
-                Ok(Err(error)) => last = Some(error),
-                Err(error) => last = Some(error.into()),
-            }
+        let (socket, canonical) = open_session(addresses, token, device).await?;
+        if !canonical.eq_ignore_ascii_case(username) {
+            return Err(AudioKeyError::Credentials.into());
         }
-        Err(last.unwrap_or_else(|| anyhow::anyhow!("Spotify returned no access point")))
-            .context(AudioKeyError::Network)
+        let (write, read) = mpsc::channel(32);
+        let (account, mut latest) = watch::channel(None);
+        let task = tokio::spawn(async move {
+            if let Err(error) = serve(socket, read, account).await {
+                log::debug!("spotify: access point closed: {error:#}");
+            }
+        });
+        let point = Self(Arc::new(Inner {
+            requests: write,
+            account: latest.clone(),
+            task,
+        }));
+        match timeout(PRODUCT_WAIT, latest.wait_for(|state| state.is_some())).await {
+            Ok(Ok(account)) if *account == Some(false) => Err(AudioKeyError::Premium.into()),
+            Ok(Err(_)) => Err(AudioKeyError::Network.into()),
+            _ => Ok(point),
+        }
     }
 
     fn is_closed(&self) -> bool {
@@ -245,7 +224,67 @@ impl Drop for Inner {
     }
 }
 
-async fn login(host: &str, port: u16, token: &str, username: &str, device: &str) -> Result<Socket> {
+/// Reads the canonical account ID from an authenticated access-point welcome.
+pub(crate) async fn account_username(token: &str) -> Result<String> {
+    let endpoints = crate::http::discover().await?;
+    let device = format!("{:032x}", fastrand::u128(..));
+    let (_, username) = open_session(&endpoints.accesspoint, token, &device).await?;
+    anyhow::ensure!(!username.is_empty(), "Spotify omitted the account username");
+    Ok(username)
+}
+
+/// Reads the market announced after an authenticated access-point login.
+pub(crate) async fn account_market(
+    addresses: &[String],
+    token: &str,
+    username: &str,
+) -> Result<String> {
+    let device = format!("{:032x}", fastrand::u128(..));
+    let (mut socket, canonical) = open_session(addresses, token, &device).await?;
+    anyhow::ensure!(
+        canonical.eq_ignore_ascii_case(username),
+        AudioKeyError::Credentials
+    );
+    while let Some(packet) = socket.next().await {
+        match packet? {
+            (COUNTRY, body) if body.len() == 2 && body.iter().all(u8::is_ascii_alphabetic) => {
+                return Ok(std::str::from_utf8(&body)?.to_ascii_uppercase());
+            }
+            (PING, _) => write_packet(&mut socket, (PONG, vec![0; 4])).await?,
+            _ => {}
+        }
+    }
+    anyhow::bail!("Spotify did not report the account market")
+}
+
+async fn open_session(addresses: &[String], token: &str, device: &str) -> Result<(Socket, String)> {
+    let mut last = None;
+    for address in addresses {
+        let Some((host, port)) = address.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(port) = port.parse::<u16>() else {
+            continue;
+        };
+        if !host.ends_with(".spotify.com")
+            || !host
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
+        {
+            continue;
+        }
+        match timeout(CONNECT_TIMEOUT, login(host, port, token, device)).await {
+            Ok(Ok(session)) => return Ok(session),
+            Ok(Err(error)) if error.is::<AudioKeyError>() => return Err(error),
+            Ok(Err(error)) => last = Some(error),
+            Err(error) => last = Some(error.into()),
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("Spotify returned no access point")))
+        .context(AudioKeyError::Network)
+}
+
+async fn login(host: &str, port: u16, token: &str, device: &str) -> Result<(Socket, String)> {
     let tcp = TcpStream::connect((host, port)).await?;
     tcp.set_nodelay(true)?;
     let mut socket = handshake(tcp).await?;
@@ -280,13 +319,7 @@ async fn login(host: &str, port: u16, token: &str, username: &str, device: &str)
         .await
         .context("Spotify closed the login connection")??;
     match command {
-        WELCOME => {
-            let welcome = APWelcome::decode(body)?;
-            if !welcome.canonical_username.eq_ignore_ascii_case(username) {
-                return Err(AudioKeyError::Credentials.into());
-            }
-            Ok(socket)
-        }
+        WELCOME => Ok((socket, APWelcome::decode(body)?.canonical_username)),
         LOGIN_FAILED => Err(failure(APLoginFailed::decode(body)?.error_code())),
         _ => anyhow::bail!("unexpected Spotify login response"),
     }
@@ -325,7 +358,7 @@ async fn serve(
                 let (command, body) = frame.context("Spotify closed the access point")??;
                 idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
                 match command {
-                    PING => socket.send((PONG, vec![0; 4])).await?,
+                    PING => write_packet(&mut socket, (PONG, vec![0; 4])).await?,
                     PRODUCT => {
                         if let Some(premium) = product(&body) {
                             account.send_replace(Some(premium));
@@ -376,7 +409,7 @@ async fn serve(
                 body.extend_from_slice(&track);
                 body.extend_from_slice(&next.to_be_bytes());
                 body.extend_from_slice(&[0; 2]);
-                socket.send((REQUEST_KEY, body)).await?;
+                write_packet(&mut socket, (REQUEST_KEY, body)).await?;
                 pending = Some((next, request, Instant::now() + KEY_TIMEOUT));
                 next = next.wrapping_add(1);
             }
@@ -392,6 +425,14 @@ async fn serve(
             () = &mut idle => anyhow::bail!("Spotify access point stopped responding"),
         }
     }
+}
+
+/// A stalled write invalidates the connection so a later key request can reconnect.
+async fn write_packet(socket: &mut Socket, packet: (u8, Vec<u8>)) -> Result<()> {
+    timeout(WRITE_TIMEOUT, socket.send(packet))
+        .await
+        .context("Spotify access-point write timed out")??;
+    Ok(())
 }
 
 fn product(bytes: &[u8]) -> Option<bool> {

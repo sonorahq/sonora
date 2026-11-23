@@ -267,6 +267,21 @@ pub struct Tagged {
     pub label: String,
 }
 
+impl Tagged {
+    /// Restores album artist and genre data from older index rows.
+    pub(super) fn restored(mut self) -> Self {
+        if self.track.album_artist.is_empty()
+            && let Some(artist) = &self.album_artist
+        {
+            self.track.album_artist.clone_from(artist);
+        }
+        if self.track.genres.is_empty() {
+            self.track.genres = std::mem::take(&mut self.track.tags);
+        }
+        self
+    }
+}
+
 struct FallbackProbe {
     duration: std::time::Duration,
     title: Option<String>,
@@ -958,6 +973,28 @@ mod tests {
     use super::*;
 
     use lofty::tag::{ItemValue, TagItem, TagType};
+
+    #[test]
+    fn an_old_index_row_restores_its_album_artist_and_genres() {
+        let row = serde_json::json!({
+            "track": {
+                "name": "Blue Monday",
+                "artists": "New Order, Arthur Baker",
+                "tags": ["Synth-pop"],
+            },
+            "album_artist": "New Order",
+            "album_artists": [],
+            "year": null,
+            "release": null,
+            "label": "",
+        });
+        let tagged: Tagged = serde_json::from_value(row).unwrap();
+        assert_eq!(tagged.track.album_artist, "");
+        let restored = tagged.restored().track;
+        assert_eq!(restored.album_artist, "New Order");
+        assert_eq!(restored.genres, ["Synth-pop"]);
+        assert!(restored.tags.is_empty());
+    }
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(name);

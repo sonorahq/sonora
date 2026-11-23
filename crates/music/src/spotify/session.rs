@@ -91,13 +91,12 @@ impl Session {
     }
 
     pub(super) fn set_connection_id(&self, id: &str) {
-        id.clone_into(
-            &mut self
-                .0
-                .connection_id
-                .write()
-                .expect("Spotify Dealer identity lock poisoned"),
-        );
+        let mut connection = self
+            .0
+            .connection_id
+            .write()
+            .expect("Spotify Dealer identity lock poisoned");
+        id.clone_into(&mut connection);
     }
 
     pub(super) fn api(&self) -> &Arc<spotifyapis::Session> {

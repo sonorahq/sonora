@@ -329,6 +329,16 @@ impl Detail {
         self.kind == Some(Collection::Playlist) && self.loading && !self.tracks.is_empty()
     }
 
+    /// Whether all playlist rows are available for edits that rely on the full list.
+    pub fn playlist_tracks_complete(&self) -> bool {
+        self.kind == Some(Collection::Playlist)
+            && self.loaded
+            && !self.loading
+            && !self.loading_more
+            && self.continuation.is_none()
+            && self.error.is_none()
+    }
+
     /// Appends provider pages in sequence while keeping the first page immediately usable.
     fn load_more(&mut self, cx: &mut Context<Self>) {
         if self.loading_more {
@@ -392,11 +402,7 @@ impl Detail {
         }
         let capabilities = self.session.read(cx).capabilities_of(Shelf::of(id));
         let offline = Network::lost(cx) && !music::is_local_id(id);
-        let whole = self.loaded
-            && !self.loading
-            && !self.loading_more
-            && self.continuation.is_none()
-            && !offline;
+        let whole = self.playlist_tracks_complete() && !offline;
         Reorder::of(self.playlist.as_ref(), capabilities, whole)
     }
 
@@ -450,6 +456,10 @@ impl Detail {
             Toasts::show(Outcome::Info, "toast-playlist-ruled", cx);
             return;
         }
+        if !self.playlist_tracks_complete() {
+            Toasts::show(Outcome::Info, "toast-playlist-load-before-removing", cx);
+            return;
+        }
         let named: HashSet<&str> = track_ids.iter().map(String::as_str).collect();
         let mut rows: Vec<String> = self
             .tracks
@@ -478,6 +488,10 @@ impl Detail {
         let (Some(kind), Some(id)) = (self.kind, self.id.clone()) else {
             return;
         };
+        if kind == Collection::Playlist && self.loaded && self.error.is_some() {
+            self.load(kind, id, true, cx);
+            return;
+        }
         match kind {
             Collection::Album => self.open_album(&id, cx),
             Collection::Playlist => self.open_playlist(&id, cx),
@@ -583,6 +597,11 @@ impl Detail {
             cx.notify();
             return;
         };
+        self.task = None;
+        if let Some(request) = self.request.take() {
+            request.abort();
+        }
+        self.loading_more = false;
         self.reload_after_order = self.library.read(cx).reordering(&id);
 
         self.loading = true;
@@ -648,7 +667,10 @@ impl Detail {
                     }
                     Err(reason) => match kept(kind, &id, cx) {
                         Some(kept) => this.adopt(kept, cx),
-                        None => this.error = Some(reason),
+                        None => {
+                            this.error = Some(reason);
+                            this.load_more(cx);
+                        }
                     },
                 }
                 cx.notify();

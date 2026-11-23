@@ -17,6 +17,9 @@ const DISCOVERY: &str =
     "https://apresolve.spotify.com/v2?type=accesspoint&type=dealer&type=spclient";
 pub(crate) const PROTOBUF: &str = "application/x-protobuf";
 const API_TIMEOUT: Duration = Duration::from_secs(20);
+// Catalogue reads can batch hundreds of entities and several extensions per entity.
+const MAX_API_BODY: usize = 32 * 1024 * 1024;
+const MAX_DECODED_BODY: usize = 128 * 1024 * 1024;
 
 /// Shares HTTPS connections for Spotify Accounts and the regional API.
 static HTTP: OnceCell<Client> = OnceCell::const_new();
@@ -104,25 +107,28 @@ pub(crate) async fn get<T: prost::Message + Default>(
 
 /// Repeats a read once after a transport failure or a transient server error.
 async fn retry_read<T, F: Future<Output = Result<T>>>(mut read: impl FnMut() -> F) -> Result<T> {
-    match read().await {
-        Err(error)
-            if error.downcast_ref::<reqwest::Error>().is_some_and(|error| {
-                match error.status() {
-                    Some(status) => matches!(
-                        status,
-                        StatusCode::REQUEST_TIMEOUT
-                            | StatusCode::INTERNAL_SERVER_ERROR
-                            | StatusCode::BAD_GATEWAY
-                            | StatusCode::SERVICE_UNAVAILABLE
-                            | StatusCode::GATEWAY_TIMEOUT
-                    ),
-                    None => error.is_timeout() || error.is_request() || error.is_body(),
-                }
-            }) =>
-        {
-            read().await
-        }
-        result => result,
+    let result = read().await;
+    if result.as_ref().is_err_and(|error| {
+        error
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(retryable)
+    }) {
+        return read().await;
+    }
+    result
+}
+
+fn retryable(error: &reqwest::Error) -> bool {
+    match error.status() {
+        Some(status) => matches!(
+            status,
+            StatusCode::REQUEST_TIMEOUT
+                | StatusCode::INTERNAL_SERVER_ERROR
+                | StatusCode::BAD_GATEWAY
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::GATEWAY_TIMEOUT
+        ),
+        None => error.is_timeout() || error.is_request() || error.is_body(),
     }
 }
 
@@ -214,7 +220,7 @@ async fn request_at(
 }
 
 async fn response_bytes(response: Response) -> Result<Bytes> {
-    let response = response.error_for_status()?;
+    let mut response = response.error_for_status()?;
     anyhow::ensure!(
         response.status().is_success(),
         "Spotify returned {}",
@@ -224,13 +230,32 @@ async fn response_bytes(response: Response) -> Result<Bytes> {
         .headers()
         .get(header::CONTENT_ENCODING)
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"gzip"));
-    let body = response.bytes().await?;
+    anyhow::ensure!(
+        response
+            .content_length()
+            .is_none_or(|length| length <= MAX_API_BODY as u64),
+        "Spotify API response exceeds {MAX_API_BODY} bytes"
+    );
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            chunk.len() <= MAX_API_BODY - body.len(),
+            "Spotify API response exceeds {MAX_API_BODY} bytes"
+        );
+        body.extend_from_slice(&chunk);
+    }
     if gzip {
         let mut decoded = Vec::new();
-        MultiGzDecoder::new(body.as_ref()).read_to_end(&mut decoded)?;
+        MultiGzDecoder::new(body.as_slice())
+            .take(MAX_DECODED_BODY as u64 + 1)
+            .read_to_end(&mut decoded)?;
+        anyhow::ensure!(
+            decoded.len() <= MAX_DECODED_BODY,
+            "Decoded Spotify API response exceeds {MAX_DECODED_BODY} bytes"
+        );
         return Ok(decoded.into());
     }
-    Ok(body)
+    Ok(body.into())
 }
 
 fn api_client() -> reqwest::ClientBuilder {

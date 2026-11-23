@@ -91,6 +91,7 @@ pub struct Track {
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
     /// ISO release date with the precision the provider supplied.
+    #[serde(default, deserialize_with = "ReleaseDate::deserialize_optional")]
     pub release_date: Option<ReleaseDate>,
     pub playcount: Option<u64>,
     pub popularity: u32,
@@ -208,6 +209,7 @@ pub struct Album {
     pub release_type: ReleaseType,
     pub year: i32,
     pub track_count: u32,
+    #[serde(default, deserialize_with = "ReleaseDate::deserialize_optional")]
     pub release_date: Option<ReleaseDate>,
     pub label: String,
     pub copyrights: Vec<String>,

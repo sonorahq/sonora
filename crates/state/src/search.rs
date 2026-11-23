@@ -282,9 +282,15 @@ impl Search {
         &self.hits
     }
 
-    /// Gives wide-layout columns their early results while the combined list stays stable.
+    /// Gives wide-layout columns their early results, excluding a leading hit already shown above.
     pub fn column_hits(&self) -> &[Hit] {
-        self.preview_hits.as_deref().unwrap_or(&self.hits)
+        let hits = self.preview_hits.as_deref().unwrap_or(&self.hits);
+        if let Some((first, rest)) = hits.split_first()
+            && self.best().is_some_and(|best| same_hit(first, best))
+        {
+            return rest;
+        }
+        hits
     }
 
     pub fn of(&self, kind: Kind) -> impl Iterator<Item = &Hit> {
@@ -441,9 +447,9 @@ impl Search {
                         SearchPart::Playlists(rows) => pending.playlists = rows,
                     }
                     let mut hits = this.ranked(pending, cx);
-                    if let Some(best) = this.best() {
-                        hits.retain(|hit| !same_hit(hit, best));
-                        hits.insert(0, best.clone());
+                    if let Some(linked) = &this.linked {
+                        hits.retain(|hit| !same_hit(hit, linked));
+                        hits.insert(0, linked.clone());
                     }
                     this.preview_hits = Some(hits);
                     cx.notify();
@@ -536,7 +542,6 @@ impl Search {
     }
 
     fn rank(&mut self, cx: &mut Context<Self>) {
-        self.preview_hits = None;
         let query = self.matching.trim();
         if query.is_empty() {
             self.hits.clear();

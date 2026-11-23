@@ -206,8 +206,7 @@ pub(super) async fn playlist(
         .attributes
         .take()
         .context("Spotify omitted the playlist summary")?;
-    let mut playlist = wire::playlist_summary(playlist_id.to_owned(), attrs, session.username());
-    playlist.revision = known_revision(revision);
+    let mut playlist = summary(session, playlist_id, attrs, revision);
     let tracks = hydrate_tracks(session, &content, Some(&mut playlist), preview).await?;
 
     Ok(PlaylistDetail {
@@ -228,6 +227,12 @@ const SUMMARY_FIELDS: &[AttributeKind] = &[
     AttributeKind::Format,
     AttributeKind::FormatListAttributes,
 ];
+
+fn summary(session: &Session, id: &str, attrs: Attributes, revision: Bytes) -> Playlist {
+    let mut playlist = wire::playlist_summary(id.to_owned(), attrs, session.username());
+    playlist.revision = known_revision(revision);
+    playlist
+}
 
 fn known_revision(revision: Bytes) -> Option<Vec<u8>> {
     (!revision.is_empty()).then(|| revision.to_vec())
@@ -291,7 +296,6 @@ pub(super) async fn library(session: &Session) -> Result<Vec<Playlist>> {
 
 /// Reads current playlist summaries without fetching their entries.
 pub(super) async fn summaries(session: &Session, mut ids: Vec<String>) -> Vec<Playlist> {
-    let username = session.username();
     ids.sort_unstable();
     ids.dedup();
     let projection = ListProjection {
@@ -321,9 +325,7 @@ pub(super) async fn summaries(session: &Session, mut ids: Vec<String>) -> Vec<Pl
                 let attrs = entity
                     .attributes
                     .context("Spotify omitted the playlist summary")?;
-                let mut playlist = wire::playlist_summary(id.clone(), attrs, username);
-                playlist.revision = known_revision(revision);
-                Ok(playlist)
+                Ok(summary(session, id, attrs, revision))
             }) {
                 Ok(playlist) => playlists.push(playlist),
                 Err(error) => {
@@ -502,11 +504,9 @@ async fn track_lists<'a>(
     mut requests: impl ExactSizeIterator<Item = (&'a str, usize)>,
     preview_limit: Option<usize>,
 ) -> Vec<Result<crate::PlaylistMembership>> {
-    let page = preview_limit.map(|limit| limit.clamp(16, 256) as i32);
-    let batch_size = if page.is_some() {
-        BATCH
-    } else {
-        MEMBERSHIP_BATCH
+    let (page, batch_size) = match preview_limit {
+        Some(limit) => (Some(limit.clamp(16, 256) as i32), BATCH),
+        None => (None, MEMBERSHIP_BATCH),
     };
     let mut results = Vec::with_capacity(requests.len());
     while requests.len() != 0 {
@@ -515,23 +515,19 @@ async fn track_lists<'a>(
             .take(batch_size)
             .map(|(id, wanted)| (ListQuery::playlist(id, page), wanted));
         let (queries, counts): (Vec<_>, Vec<_>) = queries.unzip();
-        let rows = items(session, &queries).await;
-        let tracks = |row: Snapshot| {
-            let uris = row
-                .items
-                .into_iter()
-                .filter(|uri| uri.starts_with(TRACK_PREFIX))
-                .take(preview_limit.unwrap_or(usize::MAX))
-                .collect::<Vec<_>>();
-            (uris, row.revision)
-        };
-        let rows: Vec<_> = rows.into_iter().map(|row| row.map(tracks)).collect();
+        let mut rows = items(session, &queries).await;
+        for row in rows.iter_mut().filter_map(|row| row.as_mut().ok()) {
+            row.items.retain(|uri| uri.starts_with(TRACK_PREFIX));
+            if let Some(limit) = preview_limit {
+                row.items.truncate(limit);
+            }
+        }
         let candidates = rows
             .iter()
             .zip(&counts)
             .filter(|(_, count)| **count > 0)
             .filter_map(|(row, _)| row.as_ref().ok())
-            .flat_map(|(uris, _)| uris)
+            .flat_map(|row| &row.items)
             .cloned()
             .collect::<Vec<_>>();
         let known = collection::track_covers(session, &candidates).await;
@@ -539,7 +535,10 @@ async fn track_lists<'a>(
             log::warn!("playlists: cannot read covers: {error:#}");
         }
         results.extend(rows.into_iter().zip(counts).map(|(row, wanted)| {
-            let (uris, revision) = row?;
+            let Snapshot {
+                items: uris,
+                revision,
+            } = row?;
             let covers = match &known {
                 Ok(known) => crate::distinct_cover_urls(
                     uris.iter().filter_map(|uri| known.get(uri)?.as_deref()),

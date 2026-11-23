@@ -345,6 +345,14 @@ pub(super) async fn cards(
                 own_name.clone_into(&mut playlist.owner);
             }
         }
+        super::profiles::playlist_owners(
+            session,
+            cards.values_mut().filter_map(|item| match item {
+                GenreItem::Playlist(playlist) if playlist.owner.is_empty() => Some(playlist),
+                _ => None,
+            }),
+        )
+        .await;
     }
     Ok(cards)
 }
@@ -386,27 +394,40 @@ async fn home(session: &Session, publish: impl FnOnce(&HomeFeed)) -> Result<Opti
         publish(&feed);
         Ok::<_, anyhow::Error>((feed, cards))
     };
-    let ((mut feed, mut known), made) = tokio::try_join!(main, async {
-        Ok(page_sections(session, MADE_FOR_YOU, Some(ITEMS_PER_SHELF)).await)
-    })?;
-    let Ok(BrowsePage {
-        sections,
-        playlists,
-        ..
-    }) = made
-    else {
-        return Ok(None);
+    let (main, made) = tokio::join!(
+        main,
+        page_sections(session, MADE_FOR_YOU, Some(ITEMS_PER_SHELF))
+    );
+    let (mut feed, mut known, main_error) = match main {
+        Ok((feed, known)) => (feed, known, None),
+        Err(error) => (HomeFeed::default(), HashMap::new(), Some(error)),
     };
-    let missing = sections
-        .iter()
-        .flat_map(|(_, uris)| uris)
-        .map(String::as_str)
-        .filter(|uri| !known.contains_key(*uri))
-        .collect();
-    known.extend(cards(session, missing, playlists, true).await?);
+    let supplement = async {
+        let BrowsePage {
+            sections,
+            playlists,
+            ..
+        } = made?;
+        let missing = sections
+            .iter()
+            .flat_map(|(_, uris)| uris)
+            .map(String::as_str)
+            .filter(|uri| !known.contains_key(*uri))
+            .collect();
+        known.extend(cards(session, missing, playlists, true).await?);
+        Ok::<_, anyhow::Error>(shelf_cards(sections, &known))
+    }
+    .await;
     let count = feed.sections.len();
-    appended(&mut feed, shelf_cards(sections, &known));
-    Ok((feed.sections.len() != count).then_some(feed))
+    match supplement {
+        Ok(sections) => appended(&mut feed, sections),
+        Err(error) => log::debug!("spotify: cannot add Made For You to Home: {error:#}"),
+    }
+    if feed.sections.len() > count {
+        Ok(Some(feed))
+    } else {
+        main_error.map_or(Ok(None), Err)
+    }
 }
 
 /// Reads Casita shelf and shortcut references in Spotify's order.

@@ -114,7 +114,11 @@ pub(super) fn contributor(uri: &str, profile: IdentityProfile) -> Contributor {
 }
 
 /// Resolves the displayed owner from the same profiles used for contributor credits.
-pub(super) async fn playlist_owners(session: &Session, playlists: &mut [Playlist]) {
+pub(super) async fn playlist_owners<'a>(
+    session: &Session,
+    playlists: impl IntoIterator<Item = &'a mut Playlist>,
+) {
+    let playlists: Vec<_> = playlists.into_iter().collect();
     let own_name = session.display_name();
     let ids = playlists
         .iter()
@@ -127,6 +131,8 @@ pub(super) async fn playlist_owners(session: &Session, playlists: &mut [Playlist
             name.clone_into(&mut playlist.owner);
         } else if let Some(owner) = known.get(&playlist.owner_id) {
             playlist.owner.clone_from(&owner.name);
+        } else if playlist.owner.is_empty() {
+            playlist.owner.clone_from(&playlist.owner_id);
         }
     }
 }

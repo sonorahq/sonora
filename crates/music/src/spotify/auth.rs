@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex as SyncMutex;
 
 use anyhow::{Context as _, Result, anyhow};
 use ring::rand::{SecureRandom as _, SystemRandom};
@@ -23,24 +24,33 @@ pub struct AuthConfig {
 /// Shares a restored Spotify session across the provider and lyrics lookups.
 pub(super) struct Account {
     pub(super) config: AuthConfig,
-    session: Mutex<Option<Session>>,
+    restoring: Mutex<()>,
+    cached: SyncMutex<Cached>,
+}
+
+#[derive(Default)]
+struct Cached {
+    session: Option<Session>,
+    sign_outs: u64,
 }
 
 impl Account {
     pub(super) fn new(config: AuthConfig) -> Self {
         Self {
             config,
-            session: Mutex::new(None),
+            restoring: Mutex::new(()),
+            cached: SyncMutex::default(),
         }
     }
 
-    pub(super) async fn login(&self, prompt: PromptSink) -> Result<Session> {
+    pub(super) async fn login(&self, prompt: PromptSink, success_message: &str) -> Result<Session> {
         let path = self.config.credential_path()?;
         let device = device_id(&self.config.cache_dir)?;
         let oauth = OAuth::login(
             path,
             &self.config.client_id,
             &self.config.redirect_uri,
+            success_message,
             |url| {
                 prompt(SignInPrompt::Url(url.to_owned()));
                 open::that_in_background(url);
@@ -48,32 +58,43 @@ impl Account {
         )
         .await
         .map_err(sign_in_error)?;
-        let mut held = self.session.lock().await;
+        let mut cached = self.cached.lock().unwrap();
         if !oauth.has_current_grant() {
             return Err(SignInFailure(SignInProblem::Cancelled).into());
         }
         let session = Session::new(oauth, device);
-        *held = Some(session.clone());
+        cached.session = Some(session.clone());
         Ok(session)
     }
 
     pub(super) async fn session(&self) -> Result<Option<Session>> {
-        let mut held = self.session.lock().await;
-        if let Some(session) = held.as_ref()
-            && session.api().has_current_grant()
-        {
-            return Ok(Some(session.clone()));
+        let _restore = self.restoring.lock().await;
+        let before = {
+            let mut cached = self.cached.lock().unwrap();
+            if let Some(session) = &cached.session
+                && session.api().has_current_grant()
+            {
+                return Ok(Some(session.clone()));
+            }
+            cached.session = None;
+            cached.sign_outs
+        };
+        let restored = restore(&self.config).await;
+        let mut cached = self.cached.lock().unwrap();
+        // Only publish this restore if no sign-out happened while it was validating.
+        if cached.sign_outs == before && cached.session.is_none() {
+            cached.session = restored?.filter(|session| session.api().has_current_grant());
         }
-        *held = None;
-        *held = restore(&self.config).await?;
-        Ok(held.clone())
+        Ok(cached.session.clone())
     }
 
     pub(super) fn forget(&self) {
+        let mut cached = self.cached.lock().unwrap();
+        cached.sign_outs += 1;
+        cached.session = None;
         OAuth::forget(&self.config.oauth_file());
-        if let Ok(mut held) = self.session.try_lock() {
-            *held = None;
-        }
+        credentials::remove(&self.config.cache_dir.join(credentials::FILE));
+        credentials::remove(&credentials::root().join("spotify").join(credentials::FILE));
     }
 }
 

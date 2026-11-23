@@ -16,10 +16,10 @@ impl Worker {
     /// moves the host's playback here the way it does for any transfer.
     pub(super) async fn join(&mut self, link: &str) {
         if self.mode != Mode::Publish || !self.dealer_ready() {
-            return log::warn!("connect: cannot join a jam while not listed as a device");
+            return self.jam_failed("cannot join a jam while not listed as a device");
         }
         let Some(token) = jam_token(link).await else {
-            return log::warn!("connect: no jam token in the link");
+            return self.jam_failed("no jam token in the link");
         };
         let connection = self.session.connection_id().to_owned();
         let result = self
@@ -117,7 +117,7 @@ impl Worker {
     /// The link to invite others with comes back in the `Event::Jam`.
     pub(super) async fn start_jam(&mut self) {
         if self.mode != Mode::Publish || !self.dealer_ready() {
-            return log::warn!("connect: cannot start a jam while not listed as a device");
+            return self.jam_failed("cannot start a jam while not listed as a device");
         }
         let connection = self.session.connection_id().to_owned();
         let result = self
@@ -126,6 +126,11 @@ impl Worker {
             .start_jam(self.session.device_id(), &connection)
             .await;
         self.enter_jam(result);
+    }
+
+    fn jam_failed(&self, problem: &str) {
+        log::warn!("connect: {problem}");
+        self.out.send(Event::JamFailed).ok();
     }
 
     /// Applies a start or join response, leaving empty responses for Dealer to complete.
@@ -144,11 +149,13 @@ impl Worker {
     /// only hand it on. A session that cannot be read is left as it is, since it may be owned.
     pub(super) async fn leave(&mut self) {
         if self.mode != Mode::Publish {
+            self.out.send(Event::LeaveFailed).ok();
             return;
         }
         if let Err(error) = self.ensure_jam().await {
             log::warn!("connect: cannot read the jam to leave it: {error}");
             self.out.send(Event::LeaveFailed).ok();
+            self.begin_jam_read();
             return;
         }
         if matches!(self.jam, Some(None)) {
@@ -180,6 +187,7 @@ impl Worker {
                 log::warn!("connect: cannot leave the jam: {error}");
                 self.jam = None;
                 self.out.send(Event::LeaveFailed).ok();
+                self.begin_jam_read();
             }
         }
     }
@@ -230,7 +238,7 @@ impl Worker {
     /// Handles the JSON notifications that Dealer sends for Jam.
     pub(super) fn jam_update(&mut self, message: Message) {
         let update: anyhow::Result<SessionUpdate> = message.decode_json();
-        let Ok(mut update) = update else {
+        let Ok(update) = update else {
             return log::warn!("connect: unreadable jam update");
         };
         let ended = matches!(
@@ -241,17 +249,24 @@ impl Worker {
         );
         let session = update
             .session
-            .take()
             .filter(|session| !session.session_id.is_empty());
         if ended {
             let current = self.jam.as_ref().and_then(Option::as_ref);
-            if !matches!((&session, current), (Some(ended), Some(current)) if ended.session_id != current.id)
+            if session
+                .as_ref()
+                .zip(current)
+                .is_none_or(|(ended, current)| ended.session_id == current.id)
             {
                 self.set_jam(None);
             }
         } else if let Some(session) = session {
             self.set_jam(Some(read_social(session, self.session.username())));
         }
+    }
+
+    pub(super) fn reset_jam(&mut self) {
+        self.jam = None;
+        self.jam_read = None;
     }
 
     /// Records the latest Jam snapshot for actions that need its ID or owner.

@@ -32,6 +32,7 @@ pub use lyrics::SpotifyLyrics;
 
 pub struct SpotifyProvider {
     account: Arc<auth::Account>,
+    browser_confirmation: fn() -> String,
 }
 
 impl SpotifyProvider {
@@ -43,11 +44,18 @@ impl SpotifyProvider {
     pub fn new(config: AuthConfig) -> Self {
         Self {
             account: Arc::new(auth::Account::new(config)),
+            browser_confirmation: String::new,
         }
     }
 
     pub fn from_env() -> Self {
         Self::new(AuthConfig::from_env())
+    }
+
+    /// Supplies the browser confirmation in the application's current language.
+    pub fn with_browser_confirmation(mut self, message: fn() -> String) -> Self {
+        self.browser_confirmation = message;
+        self
     }
 
     /// Looks up lyrics with the same Spotify session as playback and browsing.
@@ -137,7 +145,8 @@ impl MusicProvider for SpotifyProvider {
         prompt: crate::PromptSink,
         _input: crate::InputSource,
     ) -> Result<ProviderSession> {
-        let session = self.account.login(prompt).await?;
+        let message = (self.browser_confirmation)();
+        let session = self.account.login(prompt, &message).await?;
         self.session(session).await
     }
 

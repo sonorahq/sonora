@@ -892,7 +892,7 @@ impl Downloads {
             true => AT_ONCE,
             false => 1,
         };
-        while self.running.len() < at_once {
+        while self.running.len() < at_once && (gap.is_zero() || self.abandoned.is_empty()) {
             let Some(id) = self.queue.pop_front() else {
                 return;
             };
@@ -964,6 +964,7 @@ impl Downloads {
             if fetched.is_ok() && !self.tracks.contains_key(&id) {
                 self.playback.read(cx).discard(&id);
             }
+            self.pump(cx);
             return;
         }
         if self.running.get(&id).is_none_or(|run| run.serial != serial) {
@@ -1344,7 +1345,13 @@ impl Store {
                     "playlist" => Collection::Playlist,
                     _ => return None,
                 };
-                let set = serde_json::from_str::<Set>(&value).ok()?;
+                let set = serde_json::from_str::<Set>(&value)
+                    .inspect_err(|error| {
+                        log::warn!(
+                            "downloads: cannot restore {provider} download set {id}: {error}"
+                        );
+                    })
+                    .ok()?;
                 Some((kind, id, set))
             })
             .collect();

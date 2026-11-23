@@ -2783,6 +2783,7 @@ impl Library {
         dropped_count: u32,
         cx: &mut Context<Self>,
     ) {
+        self.reading.remove(playlist_id);
         self.amend_playlist(
             playlist_id,
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
@@ -3336,16 +3337,18 @@ impl Library {
         if wanted.is_empty() {
             return;
         }
-        let requests: Vec<_> = wanted
-            .iter()
+        let keys = wanted.clone();
+        let wanted: Vec<_> = wanted
+            .into_iter()
             .map(|id| {
-                (
-                    id.clone(),
-                    self.mosaic_stamp(id).map_or(0, |_| mosaic::TILES),
-                )
+                let stamp = self.mosaic_stamp(&id);
+                (id, stamp)
             })
             .collect();
-        let keys = wanted.clone();
+        let requests: Vec<_> = wanted
+            .iter()
+            .map(|(id, stamp)| (id.clone(), stamp.map_or(0, |_| mosaic::TILES)))
+            .collect();
         let task = Rc::new_cyclic(|batch| {
             let batch = batch.clone();
             self.io.load(
@@ -3361,7 +3364,7 @@ impl Library {
                             Vec::new()
                         })
                         .into_iter();
-                    for id in wanted {
+                    for (id, requested_stamp) in wanted {
                         let result = listed.next();
                         if !this
                             .reading
@@ -3374,7 +3377,8 @@ impl Library {
                         match result {
                             Some(Ok(membership)) => {
                                 if !this.mosaics.contains_key(&id)
-                                    && let Some(stamp) = this.mosaic_stamp(&id)
+                                    && let Some(stamp) = requested_stamp
+                                    && this.mosaic_stamp(&id) == Some(stamp)
                                 {
                                     this.paint_mosaic(id.clone(), stamp, membership.covers, cx);
                                 }
@@ -3714,8 +3718,12 @@ impl Library {
         held.stale.insert(LibraryPart::Playlists);
         self.relisting = Some(self.io.load(
             async move {
-                if selected && let Some(snapshots) = client.playlist_snapshots(ids).await {
-                    return Ok((true, snapshots));
+                if selected && let Some(snapshots) = client.playlist_snapshots(ids.clone()).await {
+                    let returned: HashSet<_> =
+                        snapshots.iter().map(|row| row.id.as_str()).collect();
+                    if ids.iter().all(|id| returned.contains(id.as_str())) {
+                        return Ok((true, snapshots));
+                    }
                 }
                 client.playlists().await.map(|playlists| (false, playlists))
             },
@@ -4035,8 +4043,7 @@ impl Library {
         if arrived {
             self.keep(shelf, Kind::Listed, part, cx);
         }
-        // A streaming playlist's contents are never read again once known, so one whose count
-        // moved, or that is gone, drops them here and the read below fetches them afresh.
+        // A changed revision, or a changed count when revisions are unavailable, reloads membership.
         if let Some(before) = before {
             let fresh: HashMap<_, _> = self.shelves[shelf.slot()]
                 .state
@@ -4047,10 +4054,10 @@ impl Library {
             self.contents.retain(|id, membership| {
                 Shelf::of(id) != shelf
                     || fresh.get(id.as_str()).is_some_and(|row| {
-                        before.get(id) == Some(&row.track_count)
-                            || row.revision.as_ref().is_some_and(|revision| {
-                                membership.revision.as_ref() == Some(revision)
-                            })
+                        match row.revision.as_ref().zip(membership.revision.as_ref()) {
+                            Some((new, old)) if !new.is_empty() && !old.is_empty() => new == old,
+                            _ => before.get(id) == Some(&row.track_count),
+                        }
                     })
             });
         }

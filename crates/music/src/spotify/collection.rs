@@ -142,9 +142,27 @@ pub(super) async fn hydrate_saved_tracks(
 }
 
 pub(crate) async fn metadata(session: &Session, uris: &[String]) -> Result<HashMap<String, Track>> {
-    project_batch(session, uris, TRACK_DETAILS, BATCH, take_track)
+    project_batch(session, uris, TRACK_DETAILS, BATCH, false, take_track)
         .await
         .context("cannot read track metadata")
+}
+
+/// Hydrates independent track IDs, retaining tracks from every successful batch.
+pub(super) async fn available_tracks(
+    session: &Session,
+    ids: &[String],
+) -> Result<HashMap<String, Track>> {
+    let uris: Vec<_> = ids
+        .iter()
+        .map(|id| spotifyapis::id::track_uri(id))
+        .collect();
+    Ok(
+        project_batch(session, &uris, TRACK_DETAILS, BATCH, true, take_track)
+            .await?
+            .into_values()
+            .filter_map(|track| Some((track.id.clone()?, track)))
+            .collect(),
+    )
 }
 
 /// Reads artwork without building full tracks. A present entry also confirms track metadata.
@@ -205,6 +223,7 @@ pub(super) async fn project<M: MetadataMessage, T>(
         uris,
         std::slice::from_ref(&kind),
         batch,
+        false,
         |data, uri| map(uri, take(data, kind, uri)?),
     )
     .await
@@ -215,6 +234,7 @@ async fn project_batch<T>(
     uris: &[String],
     kinds: &[ExtensionKind],
     batch: usize,
+    allow_partial: bool,
     mut map: impl FnMut(&mut HashMap<MetadataKey, MetadataPayload>, &str) -> Option<T>,
 ) -> Result<HashMap<String, T>> {
     let mut seen = HashSet::new();
@@ -227,7 +247,14 @@ async fn project_batch<T>(
     let mut known = HashMap::with_capacity(requests.len());
     let mut batches = std::pin::pin!(metadata_batches(session, &requests, batch));
     while let Some(result) = batches.next().await {
-        let (requests, mut values) = result?;
+        let (requests, mut values) = match result {
+            Ok(batch) => batch,
+            Err(error) if allow_partial => {
+                log::warn!("spotify: cannot read a track metadata batch: {error:#}");
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         known.extend(
             requests
                 .iter()
@@ -243,7 +270,7 @@ pub(super) async fn ordered_tracks(
     uris: &[String],
     kinds: &[ExtensionKind],
 ) -> Result<Vec<Track>> {
-    let known = project_batch(session, uris, kinds, BATCH, take_track)
+    let known = project_batch(session, uris, kinds, BATCH, false, take_track)
         .await
         .context("cannot read track metadata")?;
     Ok(uris
@@ -468,19 +495,17 @@ pub(crate) async fn saved_items(
 ) -> Result<Vec<CollectionItem>> {
     let username = session.username();
     let mut found = Vec::new();
-    let mut token = String::new();
-
+    let mut request = PageRequest {
+        username: username.to_owned(),
+        set: set.to_owned(),
+        token: String::new(),
+        limit: if set == COLLECTION {
+            COLLECTION_PAGE
+        } else {
+            PAGE
+        },
+    };
     loop {
-        let request = PageRequest {
-            username: username.to_owned(),
-            set: set.to_owned(),
-            token,
-            limit: if set == COLLECTION {
-                COLLECTION_PAGE
-            } else {
-                PAGE
-            },
-        };
         let page = session
             .api()
             .collection_page(&request)
@@ -494,13 +519,11 @@ pub(crate) async fn saved_items(
                 .filter(|item| !item.is_removed && item.uri.starts_with(prefix)),
         );
 
-        token = page.next;
-        if token.is_empty() {
-            break;
+        if page.next.is_empty() {
+            return Ok(found);
         }
+        request.token = page.next;
     }
-
-    Ok(found)
 }
 
 /// Builds Spotify's pin URI for an item the sidebar can open.

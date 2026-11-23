@@ -13,7 +13,7 @@ use crate::{
     Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SUGGESTIONS,
     SavedArtist, Track,
 };
-use spotifyapis::proto::extended_metadata::ExtensionKind;
+use spotifyapis::proto::extended_metadata::{ExtensionKind, MetadataKey, MetadataPayload};
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
@@ -49,7 +49,7 @@ pub async fn artist(session: &Session, artist_id: &str) -> Result<Artist> {
         .into_iter()
         .take(OVERVIEW_RELEASES)
         .collect::<Vec<_>>();
-    let ranked = ranked_tracks(&artist);
+    let ranked = ranked_tracks(session, &artist).await;
     let (top_tracks, albums) = overview_cards(session, &ranked, &releases).await?;
     Ok(Artist {
         name: profile.name,
@@ -96,40 +96,59 @@ pub async fn catalogue(
         if uris.len() > albums::ALBUM_BATCH
             && let Some(preview) = preview.take()
         {
-            let _ = preview.try_send(ArtistCatalogue {
-                albums: catalogue_albums(&releases, &known),
-                appears_on: catalogue_albums(&appearances, &known),
-                top_tracks: Vec::new(),
-            });
+            let _ = preview.try_send(catalogue_from(&releases, &appearances, &known, Vec::new()));
         }
     }
-    Ok(ArtistCatalogue {
-        albums: catalogue_albums(&releases, &known),
-        appears_on: catalogue_albums(&appearances, &known),
+    Ok(catalogue_from(&releases, &appearances, &known, top_tracks))
+}
+
+fn catalogue_from(
+    releases: &[String],
+    appearances: &[String],
+    known: &HashMap<String, Album>,
+    top_tracks: Vec<Track>,
+) -> ArtistCatalogue {
+    let sorted = |uris: &[String]| {
+        newest_first(
+            uris.iter().filter_map(|uri| known.get(uri).cloned()),
+            |album| album,
+        )
+    };
+    ArtistCatalogue {
+        albums: sorted(releases),
+        appears_on: sorted(appearances),
         top_tracks,
-    })
+    }
 }
 
 /// Keeps Spotify's ranked tracks first, then adds the artist's playable discography.
 pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
     let artist = metadata(session, artist_id).await?;
-    let mut ranked = ranked_tracks(&artist);
+    let mut ranked = ranked_tracks(session, &artist).await;
     let uris = release_uris(&artist);
-    let mut known = albums::project(session, &uris, |uri, album| {
+    let mut known = match albums::project(session, &uris, |uri, album| {
         (
             albums::album_from(uri, album),
             albums::track_uris(album).collect::<Vec<_>>(),
         )
     })
-    .await?;
-    let mut releases = newest_first(
-        uris.iter().filter_map(|uri| known.remove(uri)),
-        |(album, _)| album,
-    );
-    releases.sort_by_key(|(album, _)| match album.release_type {
-        ReleaseType::Album | ReleaseType::Ep => 0,
-        ReleaseType::Single => 1,
-        _ => 2,
+    .await
+    {
+        Ok(releases) => releases,
+        Err(error) if !ranked.is_empty() => {
+            log::warn!("artists: cannot read releases for {artist_id}: {error:#}");
+            Default::default()
+        }
+        Err(error) => return Err(error),
+    };
+    let mut releases: Vec<_> = uris.iter().filter_map(|uri| known.remove(uri)).collect();
+    releases.sort_by_key(|(album, _)| {
+        let group = match album.release_type {
+            ReleaseType::Album | ReleaseType::Ep => 0,
+            ReleaseType::Single => 1,
+            _ => 2,
+        };
+        (group, std::cmp::Reverse(album.release_date))
     });
 
     let mut seen: HashSet<_> = ranked.iter().cloned().collect();
@@ -160,8 +179,8 @@ pub async fn profile(session: &Session, artist_id: &str) -> Result<ArtistProfile
     Ok(profile_from(&metadata(session, artist_id).await?))
 }
 
-/// Uses the ArtistV4 ranking when its usable groups agree.
-fn ranked_tracks(artist: &ArtistMessage) -> Vec<String> {
+/// ArtistV4 normally returns a ranking scoped to the request's market.
+async fn ranked_tracks(session: &Session, artist: &ArtistMessage) -> Vec<String> {
     let mut rankings = artist.top_tracks.iter().filter_map(|group| {
         let mut seen = HashSet::new();
         let tracks: Vec<_> = group
@@ -171,15 +190,34 @@ fn ranked_tracks(artist: &ArtistMessage) -> Vec<String> {
             .map(|id| format!("spotify:track:{id}"))
             .filter(|uri| seen.insert(uri.clone()))
             .collect();
-        (!tracks.is_empty()).then_some(tracks)
+        (!tracks.is_empty()).then_some((group.country(), tracks))
     });
-    if let Some(first) = rankings.next()
-        && rankings.all(|tracks| tracks == first)
-    {
-        return first;
+    let Some(first) = rankings.next() else {
+        return Vec::new();
+    };
+    let others: Vec<_> = rankings.collect();
+    if others.iter().all(|(_, tracks)| *tracks == first.1) {
+        return first.1;
     }
 
-    Vec::new()
+    let market = session
+        .api()
+        .account_market()
+        .await
+        .inspect_err(|error| {
+            log::debug!("spotify: cannot read the market for artist rankings: {error:#}")
+        })
+        .ok();
+    let mut fallback = Vec::new();
+    for (country, tracks) in std::iter::once(first).chain(others) {
+        if market.is_some_and(|market| country.eq_ignore_ascii_case(market)) {
+            return tracks;
+        }
+        if country.is_empty() && fallback.is_empty() {
+            fallback = tracks;
+        }
+    }
+    fallback
 }
 
 /// Hydrates tracks, play counts, and album cards in one request per batch.
@@ -202,14 +240,18 @@ async fn overview_cards(
         .iter()
         .filter_map(|uri| collection::take_track(&mut data, uri))
         .collect();
-    let albums = newest_first(
-        releases.iter().filter_map(|uri| {
-            let album = take(&mut data, ExtensionKind::AlbumV4, uri)?;
-            Some(albums::album_from(uri, &album))
-        }),
-        |album| album,
-    );
+    let albums = newest_first(release_cards(releases, &mut data), |album| album);
     Ok((ranked, albums))
+}
+
+fn release_cards<'a>(
+    uris: &'a [String],
+    data: &'a mut HashMap<MetadataKey, MetadataPayload>,
+) -> impl Iterator<Item = Album> + 'a {
+    uris.iter().filter_map(move |uri| {
+        let album = take(data, ExtensionKind::AlbumV4, uri)?;
+        Some(albums::album_from(uri, &album))
+    })
 }
 
 fn audience_count(value: Option<i64>) -> Option<u64> {
@@ -264,13 +306,7 @@ pub(super) async fn album_catalogue(
         )
         .collect();
     let mut data = collection::extended_batch(session, &requests).await?;
-    let also_like = related
-        .iter()
-        .filter_map(|uri| {
-            let album = take(&mut data, ExtensionKind::AlbumV4, uri)?;
-            Some(albums::album_from(uri, &album))
-        })
-        .collect();
+    let also_like = release_cards(&related, &mut data).collect();
     let similar = artist_uris
         .into_iter()
         .filter_map(|uri| {
@@ -279,13 +315,6 @@ pub(super) async fn album_catalogue(
         })
         .collect();
     Ok(AlbumCatalogue { also_like, similar })
-}
-
-fn catalogue_albums(uris: &[String], known: &HashMap<String, Album>) -> Vec<Album> {
-    newest_first(
-        uris.iter().filter_map(|uri| known.get(uri).cloned()),
-        |album| album,
-    )
 }
 
 /// Keeps one edition per title and release type, in newest-first order.
@@ -372,7 +401,6 @@ pub(super) async fn cards(
 pub(super) fn artist_card(uri: &str, message: &ArtistMessage) -> Option<SavedArtist> {
     let id = uri.strip_prefix(ARTIST_PREFIX)?;
     let cover = portraits(message)
-        .into_iter()
         .min_by_key(|image| wire::image_width(image))
         .and_then(|image| wire::image_url(image.file_id()));
     let name = match message.name() {
@@ -388,12 +416,9 @@ pub(super) fn artist_card(uri: &str, message: &ArtistMessage) -> Option<SavedArt
 }
 
 fn profile_from(artist: &ArtistMessage) -> ArtistProfile {
-    let portraits = portraits(artist);
-
     ArtistProfile {
         name: artist.name().to_owned(),
-        cover_large: portraits
-            .iter()
+        cover_large: portraits(artist)
             .max_by_key(|image| wire::image_width(image))
             .and_then(|image| wire::image_url(image.file_id())),
         biography: artist.biography.iter().find_map(|bio| {
@@ -470,21 +495,13 @@ fn group_uris<'a>(
         .map(|id| format!("{ALBUM_PREFIX}{id}"))
 }
 
-fn portraits(artist: &ArtistMessage) -> Vec<&Image> {
-    let mut portraits: Vec<_> = artist
+fn portraits(artist: &ArtistMessage) -> impl Iterator<Item = &Image> {
+    artist
         .portrait_group
-        .as_ref()
-        .into_iter()
-        .flat_map(|group| group.image.iter())
+        .iter()
+        .flat_map(|group| &group.image)
+        .chain(&artist.portrait)
         .filter(|image| image.file_id.is_some())
-        .collect();
-    portraits.extend(
-        artist
-            .portrait
-            .iter()
-            .filter(|image| image.file_id.is_some()),
-    );
-    portraits
 }
 
 #[cfg(test)]

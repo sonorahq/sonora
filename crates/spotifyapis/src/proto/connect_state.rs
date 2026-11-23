@@ -714,15 +714,15 @@ impl Session {
             "/inactive?notify=false",
             Bytes::new(),
         )
-        .await?;
-        Ok(())
+        .await
+        .map(drop)
     }
 
     /// Unregisters a device from Spotify Connect.
     pub async fn unregister_device(&self, device: &str) -> Result<()> {
         self.device_state(device, "", Method::DELETE, "", Bytes::new())
-            .await?;
-        Ok(())
+            .await
+            .map(drop)
     }
 
     /// Sets the volume of another Spotify Connect device.
@@ -843,7 +843,7 @@ impl ProvidedTrack {
         self.metadata
             .get("requested_uri")
             .and_then(|uri| crate::id::track_id(uri))
-            .filter(|id| id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+            .filter(|id| crate::id::raw_id(id).is_some())
             .or(Some(reported))
     }
 
@@ -860,8 +860,7 @@ impl ProvidedTrack {
     pub fn added_by(&self) -> Option<&str> {
         ["added_by", "added_by_username", "adder", "queued_by"]
             .iter()
-            .find_map(|key| self.metadata.get(*key))
-            .filter(|name| !name.is_empty())
+            .find_map(|key| self.metadata.get(*key).filter(|name| !name.is_empty()))
             .map(String::as_str)
     }
 }
@@ -869,8 +868,13 @@ impl ProvidedTrack {
 impl ContextTrack {
     /// Reads the catalogue ID from a context row, including rows that only carry the binary GID.
     pub fn track_id(&self) -> Option<crate::id::CatalogueId<'_>> {
-        use crate::id::{CatalogueId, base62_bytes, track_id};
-        if let Some(id) = self.uri.as_deref().and_then(track_id) {
+        use crate::id::{CatalogueId, base62_bytes, raw_id, track_id};
+        if let Some(id) = self
+            .uri
+            .as_deref()
+            .and_then(track_id)
+            .filter(|id| raw_id(id).is_some())
+        {
             return Some(CatalogueId::Borrowed(id));
         }
         base62_bytes(self.gid.as_deref()?).map(CatalogueId::Encoded)

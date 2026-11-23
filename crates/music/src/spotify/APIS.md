@@ -14,8 +14,8 @@ Relative HTTP paths use Spotify’s regional API host. Search and Lyrics send `a
 | Connect player commands | `POST /connect-state/v1/player/command/from/{from}/to/{to}` | Sends playback and queue commands as gzipped JSON. Forward queue jumps name the target in `skip_next`. History jumps use `play` with the selected track and its context when available. |
 | Connect transfer | `POST /connect-state/v1/connect/transfer/from/{from}/to/{to}` | Moves playback between devices. |
 
-Starting a history track can rebuild the queue from its context. A live test
-kept the same context. Preservation of custom queue entries is unverified.
+History jumps require a collection and an occurrence ID. Manually queued
+history entries lack a collection that can address their occurrence.
 
 Soloist is a separate Connect device. Sonora sends it the same playback
 commands it sends to other devices and reads the queue Spotify reports.

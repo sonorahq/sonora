@@ -5,6 +5,7 @@ members-picked = Queued the song playing now
 # login
 login-restoring = Checking your saved session…
 login-authorizing = Waiting for authorization in your browser…
+login-browser-confirmed = Sign-in complete. You can return to Sonora.
 login-signed-in = Signed in as { $name }
 login-failed-title = Sign-in failed
 login-window-title = Sign in to { $provider }

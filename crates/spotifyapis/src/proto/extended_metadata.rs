@@ -58,8 +58,8 @@ pub struct Artist {
 /// Artist tracks in Spotify's ranking order for a market.
 #[derive(prost::Message)]
 pub struct TopTracks {
-    // #[prost(string, optional, tag = "1")]
-    // pub country: Option<String>,
+    #[prost(string, optional, tag = "1")]
+    pub country: Option<String>,
     #[prost(message, repeated, tag = "2")]
     pub tracks: Vec<TrackReference>,
 }

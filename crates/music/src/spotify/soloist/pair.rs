@@ -13,7 +13,9 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use super::daemon::{RUNNING, launch};
-use super::{binary, clear, data, enable, home, keep_key, paired_in, pairing, recheck};
+use super::{
+    binary, clear, data, enable, home, keep_key, paired_in, pairing, recheck, same_account,
+};
 
 /// How long the listener gets to pick the device before pairing gives up.
 const PATIENCE: Duration = Duration::from_secs(10 * 60);
@@ -165,13 +167,6 @@ fn private(folder: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn private(_folder: &Path) -> std::io::Result<()> {
     Ok(())
-}
-
-/// Whether the name the program stored is the signed-in account. The program writes the
-/// username percent-encoded and in lower case.
-fn same_account(paired: &str, account: &str) -> bool {
-    let paired = percent_encoding::percent_decode_str(paired).decode_utf8_lossy();
-    paired.to_lowercase() == account.to_lowercase()
 }
 
 async fn blocking<T: Send + 'static>(

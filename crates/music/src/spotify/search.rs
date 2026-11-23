@@ -146,7 +146,6 @@ fn album(hit: Entity) -> Option<Album> {
         AlbumType::Audiobook | AlbumType::Podcast => return None,
     };
     let release_date = crate::ReleaseDate::parse(&album.user_country_release_iso_time)
-        .or_else(|| crate::ReleaseDate::from_parts(album.release_year, 0, 0))
         .or_else(|| {
             let stamp = album.release_time?;
             let date = jiff::Timestamp::new(stamp.seconds, stamp.nanos)
@@ -158,7 +157,8 @@ fn album(hit: Entity) -> Option<Album> {
                 date.month().into(),
                 date.day().into(),
             )
-        });
+        })
+        .or_else(|| crate::ReleaseDate::from_parts(album.release_year, 0, 0));
     let cover = wire::playlist_image(&hit.image_uri);
     let cover_large = cover
         .as_deref()

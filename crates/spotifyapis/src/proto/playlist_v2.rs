@@ -411,14 +411,9 @@ impl Session {
         changes: &ListChanges,
         connection_id: &str,
     ) -> Result<CreateListReply> {
-        let bytes = http::post_proto(
-            self,
-            PLAYLIST_ENDPOINT,
-            http::PROTOBUF,
-            dealer_headers(connection_id)?,
-            changes,
-        )
-        .await?;
+        let bytes = self
+            .playlist_write(PLAYLIST_ENDPOINT, connection_id, changes)
+            .await?;
         Ok(CreateListReply::decode(bytes)?)
     }
 
@@ -430,15 +425,9 @@ impl Session {
         connection_id: &str,
     ) -> Result<()> {
         let path = format!("{}/{}/changes", PLAYLIST_ENDPOINT, component(id));
-        http::post_proto(
-            self,
-            &path,
-            http::PROTOBUF,
-            dealer_headers(connection_id)?,
-            changes,
-        )
-        .await?;
-        Ok(())
+        self.playlist_write(&path, connection_id, changes)
+            .await
+            .map(drop)
     }
 
     /// Applies changes to the signed-in account's playlist library.
@@ -448,15 +437,9 @@ impl Session {
             USER_ENDPOINT,
             component(self.username())
         );
-        http::post_proto(
-            self,
-            &path,
-            http::PROTOBUF,
-            dealer_headers(connection_id)?,
-            changes,
-        )
-        .await?;
-        Ok(())
+        self.playlist_write(&path, connection_id, changes)
+            .await
+            .map(drop)
     }
 
     /// Registers a cover already uploaded to Spotify.
@@ -467,15 +450,24 @@ impl Session {
         connection_id: &str,
     ) -> Result<RegisterPlaylistImageResponse> {
         let path = format!("{}/{}/register-image", PLAYLIST_ENDPOINT, component(id));
-        let bytes = http::post_proto(
+        let bytes = self.playlist_write(&path, connection_id, request).await?;
+        Ok(RegisterPlaylistImageResponse::decode(bytes)?)
+    }
+
+    async fn playlist_write(
+        &self,
+        path: &str,
+        connection: &str,
+        request: &impl prost::Message,
+    ) -> Result<Bytes> {
+        http::post_proto(
             self,
-            &path,
+            path,
             http::PROTOBUF,
-            dealer_headers(connection_id)?,
+            dealer_headers(connection)?,
             request,
         )
-        .await?;
-        Ok(RegisterPlaylistImageResponse::decode(bytes)?)
+        .await
     }
 }
 

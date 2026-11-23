@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 const EXPIRY_MARGIN: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(20);
 const CALLBACK_LIMIT: u64 = 8192;
 
 const SCOPES: &[&str] = &[
@@ -75,11 +76,16 @@ pub fn release(redirect_uri: &str) {
     let _ = std::io::Write::write_all(&mut stream, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
 }
 
-fn socket_address(uri: &Url) -> Option<String> {
+fn socket_address(uri: &Url) -> Option<std::net::SocketAddr> {
+    use std::net::IpAddr;
+
     if uri.scheme() != "http" {
         return None;
     }
-    Some(format!("{}:{}", uri.host()?, uri.port_or_known_default()?))
+    let host = uri.host_str()?;
+    let ip: IpAddr = host.trim_matches(['[', ']']).parse().ok()?;
+    ip.is_loopback()
+        .then_some(std::net::SocketAddr::new(ip, uri.port_or_known_default()?))
 }
 
 /// Exchanges a browser callback with a matching OAuth state for an access token.
@@ -87,7 +93,7 @@ async fn authorize(
     client_id: &str,
     redirect_uri: &str,
     show_url: impl FnOnce(&str),
-) -> Result<TokenResponse> {
+) -> Result<(Result<TokenResponse>, tokio::net::TcpStream)> {
     let redirect = Url::parse(redirect_uri)?;
     let mut url = Url::parse("https://accounts.spotify.com/authorize")?;
     let state = random_secret()?;
@@ -102,8 +108,9 @@ async fn authorize(
         ("code_challenge_method", "S256"),
         ("code_challenge", &challenge),
     ]);
-    let address = socket_address(&redirect)
-        .with_context(|| format!("redirect URI has no socket address: {redirect_uri}"))?;
+    let address = socket_address(&redirect).with_context(|| {
+        format!("redirect URI must use an HTTP literal loopback IP: {redirect_uri}")
+    })?;
     let listener = TcpListener::bind(&address)
         .await
         .with_context(|| format!("cannot listen for Spotify login at {address}"))?;
@@ -149,16 +156,7 @@ async fn authorize(
             }
             Err(problem) => Err(problem.into()),
         };
-        let (status, body) = match token.is_ok() {
-            true => ("200 OK", "Sign-in complete. You can return to the app."),
-            false => ("400 Bad Request", ""),
-        };
-        let response = format!(
-            "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = stream.get_mut().write_all(response.as_bytes()).await;
-        return token;
+        return Ok((token, stream.into_inner()));
     }
 }
 
@@ -222,15 +220,6 @@ struct TokenResponse {
     username: Option<String>,
 }
 
-impl TokenResponse {
-    fn username(&self) -> Result<&str> {
-        self.username
-            .as_deref()
-            .filter(|username| !username.is_empty())
-            .context("Spotify omitted the account username")
-    }
-}
-
 /// A refresh grant belongs to the OAuth client that originally obtained it.
 #[derive(Deserialize, Serialize)]
 struct Stored {
@@ -251,7 +240,14 @@ pub struct OAuth {
     client_id: String,
     username: String,
     token: Arc<Mutex<Option<Token>>>,
-    modified: SyncMutex<SystemTime>,
+    grant: SyncMutex<Grant>,
+}
+
+/// The current refresh token and the version of its backing file.
+struct Grant {
+    modified: SystemTime,
+    refresh_token: String,
+    pending: Option<String>,
 }
 
 impl OAuth {
@@ -278,27 +274,66 @@ impl OAuth {
         path: PathBuf,
         client_id: &str,
         redirect_uri: &str,
+        success_message: &str,
         show_url: impl FnOnce(&str),
     ) -> Result<Arc<Self>> {
-        let response = authorize(client_id, redirect_uri, show_url).await?;
+        let (exchange, mut browser) = authorize(client_id, redirect_uri, show_url).await?;
+        let result = match exchange {
+            Ok(response) => Self::save_login(path, client_id, response).await,
+            Err(error) => Err(error),
+        };
+        let (status, body) = if result.is_ok() {
+            ("200 OK", success_message)
+        } else {
+            ("400 Bad Request", "")
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = tokio::time::timeout(REQUEST_TIMEOUT, browser.write_all(response.as_bytes())).await;
+        result
+    }
+
+    async fn save_login(
+        path: PathBuf,
+        client_id: &str,
+        mut response: TokenResponse,
+    ) -> Result<Arc<Self>> {
         let refresh_token = response
             .refresh_token
-            .as_deref()
+            .take()
             .filter(|token| !token.is_empty())
             .context("Spotify omitted the refresh token")?;
+        let username = response.username.take().filter(|name| !name.is_empty());
+        let token = Token::from(response);
+        let username = match username {
+            Some(username) => username,
+            None => tokio::time::timeout(
+                TOKEN_TIMEOUT,
+                crate::access_point::account_username(&token.access_token),
+            )
+            .await
+            .context("Spotify account identity lookup timed out")?
+            .context("cannot establish the Spotify account identity")?,
+        };
         let stored = Stored {
             client_id: client_id.to_owned(),
-            username: response.username()?.to_owned(),
-            refresh_token: refresh_token.to_owned(),
+            username,
+            refresh_token,
         };
         let _file = lock_file()?;
         write(&path, &stored)?;
-        Self::new(path, stored, Some(Token::from(response)))
+        Self::new(path, stored, Some(token))
     }
 
     fn new(path: PathBuf, grant: Stored, token: Option<Token>) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
-            modified: SyncMutex::new(modified(&path)?),
+            grant: SyncMutex::new(Grant {
+                modified: modified(&path)?,
+                refresh_token: grant.refresh_token,
+                pending: None,
+            }),
             path,
             client_id: grant.client_id,
             username: grant.username,
@@ -331,11 +366,21 @@ impl OAuth {
 
     /// Detects sign-out and external changes while accepting our own token rotations.
     pub fn has_current_grant(&self) -> bool {
-        let Ok(_file) = lock_file() else {
-            return false;
-        };
-        modified(&self.path)
-            .is_ok_and(|current| self.modified.lock().is_ok_and(|stored| *stored == current))
+        self.with_grant(|_| Ok(())).is_ok()
+    }
+
+    /// Uses the in-memory grant only while its backing file still belongs to this session.
+    fn with_grant<T>(&self, use_grant: impl FnOnce(&mut Grant) -> Result<T>) -> Result<T> {
+        let _file = lock_file()?;
+        let mut grant = self
+            .grant
+            .lock()
+            .map_err(|_| anyhow!("Spotify grant lock poisoned"))?;
+        anyhow::ensure!(
+            modified(&self.path).map_err(|_| AuthError::Credentials)? == grant.modified,
+            AuthError::Credentials
+        );
+        use_grant(&mut grant)
     }
 
     /// Validates the grant with Spotify before the app treats the account as signed in.
@@ -350,23 +395,28 @@ impl OAuth {
     }
 
     async fn token_using(
-        &self,
+        self: &Arc<Self>,
         refresh: impl Future<Output = Result<Token>> + Send + 'static,
     ) -> Result<String> {
         let mut cached = self.token.clone().lock_owned().await;
-        if let Some(token) = cached
-            .as_ref()
-            .filter(|token| token.expires_at > Instant::now())
-        {
-            return Ok(token.access_token.clone());
+        if let Some(access_token) = self.with_grant(|_| {
+            Ok(cached
+                .as_ref()
+                .filter(|token| token.expires_at > Instant::now())
+                .map(|token| token.access_token.clone()))
+        })? {
+            return Ok(access_token);
         }
 
         // Spotify can rotate the grant after the caller drops its request future.
+        let auth = self.clone();
         tokio::spawn(async move {
             let token = refresh.await?;
-            let access_token = token.access_token.clone();
-            *cached = Some(token);
-            Ok(access_token)
+            auth.with_grant(|_| {
+                let access_token = token.access_token.clone();
+                *cached = Some(token);
+                Ok(access_token)
+            })
         })
         .await
         .context("Spotify token renewal task failed")?
@@ -374,50 +424,66 @@ impl OAuth {
 
     async fn refresh(&self) -> Result<Token> {
         let _refresh = REFRESH.lock().await;
-        let mut stored = read(&self.path)?;
-        anyhow::ensure!(
-            stored.client_id == self.client_id && stored.username == self.username,
-            "Spotify sign-in changed"
-        );
+        let refresh_token = self.with_grant(|grant| {
+            Ok(grant
+                .pending
+                .as_ref()
+                .unwrap_or(&grant.refresh_token)
+                .clone())
+        })?;
         let response = exchange([
             ("grant_type", "refresh_token"),
             ("client_id", &self.client_id),
-            ("refresh_token", &stored.refresh_token),
+            ("refresh_token", &refresh_token),
         ])
         .await?;
-        if response
-            .username
-            .as_deref()
-            .is_some_and(|username| username != self.username)
-        {
-            return Err(AuthError::Credentials.into());
-        }
-        if let Some(next) = response
-            .refresh_token
-            .as_deref()
-            .filter(|next| !next.is_empty() && *next != stored.refresh_token)
-        {
-            self.persist_rotated_grant(&mut stored, next)?;
-        }
+        anyhow::ensure!(
+            response
+                .username
+                .as_deref()
+                .is_none_or(|username| username == self.username),
+            AuthError::Credentials
+        );
+        self.keep_grant(
+            response
+                .refresh_token
+                .as_deref()
+                .filter(|token| !token.is_empty()),
+        )?;
         Ok(Token::from(response))
     }
 
-    fn persist_rotated_grant(&self, stored: &mut Stored, refresh_token: &str) -> Result<()> {
-        let _file = lock_file()?;
-        let current = read(&self.path)?;
-        anyhow::ensure!(
-            current.client_id == stored.client_id
-                && current.username == stored.username
-                && current.refresh_token == stored.refresh_token,
-            "Spotify sign-in changed during token renewal"
-        );
-        refresh_token.clone_into(&mut stored.refresh_token);
-        write(&self.path, stored)?;
-        *self
-            .modified
-            .lock()
-            .map_err(|_| anyhow!("Spotify grant timestamp lock poisoned"))? = modified(&self.path)?;
-        Ok(())
+    /// Keeps a rotation even if the filesystem is temporarily unavailable.
+    fn keep_grant(&self, next: Option<&str>) -> Result<()> {
+        self.with_grant(|grant| {
+            let Some(next) = next.or(grant.pending.as_deref()) else {
+                return Ok(());
+            };
+            if next == grant.refresh_token {
+                grant.pending = None;
+                return Ok(());
+            }
+            let mut stored = saved(&self.path)?.context(AuthError::Credentials)?;
+            anyhow::ensure!(
+                stored.client_id == self.client_id
+                    && stored.username == self.username
+                    && stored.refresh_token == grant.refresh_token,
+                AuthError::Credentials
+            );
+            next.clone_into(&mut stored.refresh_token);
+            match write(&self.path, &stored) {
+                Ok(()) => {
+                    grant.modified = modified(&self.path)?;
+                    grant.refresh_token = stored.refresh_token;
+                    grant.pending = None;
+                }
+                Err(error) => {
+                    grant.pending = Some(stored.refresh_token);
+                    log::warn!("spotify: cannot save renewed grant: {error:#}");
+                }
+            }
+            Ok(())
+        })
     }
 }
 
@@ -434,10 +500,15 @@ impl From<TokenResponse> for Token {
 
 /// Exchanges an authorization code or renews a refresh grant at Spotify Accounts.
 async fn exchange<const N: usize>(form: [(&str, &str); N]) -> Result<TokenResponse> {
-    let response = http::request(|client| client.post(TOKEN_URL).form(&form.as_slice()))
-        .await
-        .map_err(|error| error.without_url())
-        .context(AuthError::Network)?;
+    let response = http::request(|client| {
+        client
+            .post(TOKEN_URL)
+            .timeout(TOKEN_TIMEOUT)
+            .form(&form.as_slice())
+    })
+    .await
+    .map_err(|error| error.without_url())
+    .context(AuthError::Network)?;
     if response.status() == StatusCode::BAD_REQUEST {
         #[derive(Deserialize)]
         struct Rejection {
@@ -470,11 +541,6 @@ fn modified(path: &Path) -> Result<SystemTime> {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .context("cannot read the Spotify refresh grant timestamp")
-}
-
-fn read(path: &Path) -> Result<Stored> {
-    let body = std::fs::read(path).context("cannot read the Spotify refresh grant")?;
-    serde_json::from_slice(&body).context("cannot decode the Spotify refresh grant")
 }
 
 fn saved(path: &Path) -> Result<Option<Stored>> {
@@ -520,7 +586,7 @@ mod tests {
     async fn cancellation_keeps_the_rotated_grant_and_shares_the_new_token() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("grant.json");
-        let mut grant = Stored {
+        let grant = Stored {
             client_id: "client".into(),
             username: "listener".into(),
             refresh_token: "old".into(),
@@ -536,7 +602,7 @@ mod tests {
                 auth.token_using(async move {
                     let _ = started.send(());
                     response.await?;
-                    writer.persist_rotated_grant(&mut grant, "new")?;
+                    writer.keep_grant(Some("new"))?;
                     Ok(Token {
                         access_token: "bearer".into(),
                         expires_at: Instant::now() + Duration::from_secs(60),
@@ -555,7 +621,7 @@ mod tests {
                     .await?,
                 "bearer"
             );
-            assert_eq!(read(&path)?.refresh_token, "new");
+            assert_eq!(saved(&path)?.unwrap().refresh_token, "new");
             assert!(auth.has_current_grant());
             Ok::<_, anyhow::Error>(())
         })

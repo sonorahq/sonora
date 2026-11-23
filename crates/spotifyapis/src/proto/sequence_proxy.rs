@@ -175,13 +175,11 @@ pub struct ResolvedSequence {
 impl ResolvedSequence {
     /// Flattens pages embedded in Connect messages and detects an unresolved continuation.
     pub fn from_context_pages(pages: Vec<ContextPage>) -> Self {
-        let complete = pages.last().is_none_or(|page| {
-            page.page_url
-                .as_deref()
-                .filter(|_| page.tracks.is_empty())
-                .or(page.next_page_url.as_deref())
-                .is_none_or(str::is_empty)
-        });
+        let complete = pages.iter().all(|page| {
+            !page.tracks.is_empty() || page.page_url.as_deref().is_none_or(str::is_empty)
+        }) && pages
+            .last()
+            .is_none_or(|page| page.next_page_url.as_deref().is_none_or(str::is_empty));
         Self {
             complete,
             tracks: pages.into_iter().flat_map(|page| page.tracks).collect(),

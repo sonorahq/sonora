@@ -7,10 +7,9 @@ use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, ensure};
-use tokio::io::{AsyncBufReadExt as _, AsyncRead, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use super::{DEVICE, binary, cache};
 
@@ -66,14 +65,12 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Daemon>
     {
         log::warn!("soloist: cannot record the program's pid: {error}");
     }
-    let (out, lines) = unbounded_channel();
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(forward(stdout, key.to_owned(), out.clone()));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(forward(stderr, key.to_owned(), out));
-    }
-    Ok(Daemon { child, lines })
+    Ok(Daemon {
+        stdout: child.stdout.take().map(|pipe| BufReader::new(pipe).lines()),
+        stderr: child.stderr.take().map(|pipe| BufReader::new(pipe).lines()),
+        child,
+        key: key.to_owned(),
+    })
 }
 
 /// Has the program store `key` in the data folder `data`, where its runs on that folder read it.
@@ -274,27 +271,12 @@ pub async fn stopped() {
     drop(RUNNING.lock().await);
 }
 
-async fn forward(stream: impl AsyncRead + Unpin, key: String, lines: UnboundedSender<String>) {
-    let mut read = BufReader::new(stream).lines();
-    while let Ok(Some(line)) = read.next_line().await {
-        let line = line.replace(&key, "<key>");
-        // with all its logs on the program prints its internals, the account among them
-        match line.contains(INTERNAL) {
-            true => log::trace!("soloist: {line}"),
-            false => log::debug!("soloist: {line}"),
-        }
-        if lines.send(line).is_err() {
-            // keep reading, or the program would block on a full pipe
-            while let Ok(Some(_)) = read.next_line().await {}
-            return;
-        }
-    }
-}
-
-/// Owns the child and its redacted log stream until it exits or is stopped.
+/// Owns the child and both pipes. A final refusal is read before reporting the exit.
 pub(super) struct Daemon {
     child: Child,
-    lines: UnboundedReceiver<String>,
+    stdout: Option<Lines<BufReader<ChildStdout>>>,
+    stderr: Option<Lines<BufReader<ChildStderr>>>,
+    key: String,
 }
 
 impl Daemon {
@@ -303,24 +285,25 @@ impl Daemon {
         &mut self,
         mut on_line: impl FnMut(&str),
     ) -> std::io::Result<Option<ExitStatus>> {
-        let mut inspect = |line: String| {
-            on_line(&line);
-            line.contains("login failed")
-        };
-        loop {
-            tokio::select! {
-                Some(line) = self.lines.recv() => {
-                    if inspect(line) { return Ok(None); }
+        while self.stdout.is_some() || self.stderr.is_some() {
+            let line = tokio::select! {
+                line = next_line(&mut self.stdout) => line,
+                line = next_line(&mut self.stderr) => line,
+            };
+            if let Some(line) = line {
+                let line = line.replace(&self.key, "<key>");
+                if line.contains(INTERNAL) {
+                    log::trace!("soloist: {line}");
+                } else {
+                    log::debug!("soloist: {line}");
                 }
-                status = self.child.wait() => {
-                    let status = status?;
-                    return match std::iter::from_fn(|| self.lines.try_recv().ok()).any(inspect) {
-                        true => Ok(None),
-                        false => Ok(Some(status)),
-                    };
+                on_line(&line);
+                if line.contains("login failed") {
+                    return Ok(None);
                 }
             }
         }
+        self.child.wait().await.map(Some)
     }
 
     /// Gives the child time to close its sign-in store before killing it.
@@ -329,13 +312,29 @@ impl Daemon {
         interrupt(&self.child);
         #[cfg(not(unix))]
         self.child.start_kill().ok();
-        if tokio::time::timeout(GRACE, self.child.wait())
-            .await
-            .is_err()
-        {
+        let drained = tokio::time::timeout(GRACE, async {
+            while self.wait(|_| {}).await?.is_none() {}
+            Ok::<_, std::io::Error>(())
+        })
+        .await;
+        if !matches!(drained, Ok(Ok(()))) {
             self.child.kill().await.ok();
         }
     }
+}
+
+/// Reads a pipe until EOF and disables its branch once it is drained.
+async fn next_line<R: tokio::io::AsyncBufRead + Unpin>(
+    pipe: &mut Option<Lines<R>>,
+) -> Option<String> {
+    let Some(lines) = pipe else {
+        return std::future::pending().await;
+    };
+    let line = lines.next_line().await.ok().flatten();
+    if line.is_none() {
+        *pipe = None;
+    }
+    line
 }
 
 #[cfg(unix)]

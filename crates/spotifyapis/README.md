@@ -46,7 +46,7 @@ Use one [`Session`](src/session.rs) per signed-in account. The crate shares HTTP
 
 Use `Session::connect_device(from, to, connection_id)` to address a Connect device. The returned handle supports playback controls, queue commands, volume, and transfer. A queue jump takes the occurrence selected by the caller. [Connect controls](src/player_command.rs)
 
-For projected list reads, pass a set of list, entry, or referenced-list fields to `Session::get_lists`. It preserves query order and returns a separate result for each list, so one failed lookup does not discard the others. [List projections](src/proto/list_read_service.rs)
+For projected list reads, pass list, entry, or referenced-list fields to `Session::get_lists`. Results follow query order. Individual list errors leave the other results available. A transport error or invalid response count fails the whole batch. [List projections](src/proto/list_read_service.rs)
 
 ## Using the audio APIs
 
