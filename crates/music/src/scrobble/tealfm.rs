@@ -42,9 +42,10 @@ const END_SLACK: Duration = Duration::from_secs(3);
 #[derive(Default)]
 pub struct TealFm {
     tokens: Mutex<Option<Tokens>>,
-    /// The start of the newest play whose status was written. Status writes hold it for their
-    /// whole request, so they land one at a time and an older play never overwrites a newer one.
-    status: tokio::sync::Mutex<Option<SystemTime>>,
+    /// The [`Play::order`] of the newest play whose status was written. Status writes hold it for
+    /// their whole request, so they land one at a time and an older play never overwrites a newer
+    /// one.
+    status: tokio::sync::Mutex<Option<u64>>,
 }
 
 impl TealFm {
@@ -178,10 +179,10 @@ impl Service for TealFm {
 
     async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
         let mut newest = self.status.lock().await;
-        if newest.is_some_and(|newest| play.at < newest) {
+        if newest.is_some_and(|newest| play.order < newest) {
             return Ok(());
         }
-        *newest = Some(play.at);
+        *newest = Some(play.order);
 
         let now = SystemTime::now();
         let lasts = match play.duration.is_zero() {

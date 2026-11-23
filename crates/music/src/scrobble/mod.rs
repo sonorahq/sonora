@@ -38,6 +38,9 @@ pub struct Play {
     pub album: Option<String>,
     pub duration: Duration,
     pub at: SystemTime,
+    /// Counts up with each new play since launch, and a resumed play keeps its number. It orders
+    /// plays where `at` cannot, since the wall clock may be set back.
+    pub order: u64,
 }
 
 impl Play {
