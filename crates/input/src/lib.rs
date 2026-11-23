@@ -4,9 +4,10 @@ use gpui::{KeyBinding, actions};
 use ui::{
     Activate, Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd,
     DeleteWord, Deselect, Dismiss, End, FORM_CONTEXT, Home, INPUT_CONTEXT, Left, MENU_CONTEXT,
-    MoveRowDown, MoveRowUp, NextField, Paste, PreviousField, Remove, Right, SelectAll, SelectEnd,
-    SelectHome, SelectLeft, SelectNext, SelectPrevious, SelectRight, SelectWordLeft,
-    SelectWordRight, ShowCharacterPalette, Space, Submit, TABLE_CONTEXT, WordLeft, WordRight,
+    MoveRowDown, MoveRowUp, NextField, Paste, PreviousField, REORDER_CONTEXT, Remove, Right,
+    SelectAll, SelectEnd, SelectHome, SelectLeft, SelectNext, SelectPrevious, SelectRight,
+    SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space, Submit, TABLE_CONTEXT, WordLeft,
+    WordRight,
 };
 
 mod shortcuts;
@@ -87,6 +88,7 @@ fn shared() -> Vec<KeyBinding> {
     let editing = Some(INPUT_CONTEXT);
     let away_from_text = format!("{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT}");
     let table = Some(TABLE_CONTEXT);
+    let reorder = Some(REORDER_CONTEXT);
     let form = Some(FORM_CONTEXT);
     let menu = Some(MENU_CONTEXT);
     let search = Some(SEARCH_CONTEXT);
@@ -106,6 +108,10 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("escape", Deselect, table),
         KeyBinding::new("alt-up", MoveRowUp, table),
         KeyBinding::new("alt-down", MoveRowDown, table),
+        KeyBinding::new("down", SelectNext, reorder),
+        KeyBinding::new("up", SelectPrevious, reorder),
+        KeyBinding::new("alt-up", MoveRowUp, reorder),
+        KeyBinding::new("alt-down", MoveRowDown, reorder),
         KeyBinding::new("down", SelectNext, Some(&browsing)),
         KeyBinding::new("up", SelectPrevious, Some(&browsing)),
         KeyBinding::new("shift-down", SelectNext, Some(&browsing)),

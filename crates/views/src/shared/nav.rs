@@ -1,8 +1,12 @@
 use gpui::prelude::*;
-use gpui::{Context, ElementId, Hsla, Pixels, Point, Window};
+use gpui::{Bounds, Context, ElementId, Hsla, Pixels, Point, Window, px};
 use router::NavEntry;
 use state::AppSettings;
 use ui::{Button, Ghost};
+
+/// How far past its own edge a row answers a drag, which covers the space between two rows
+/// and stays inside the half of the next row that names the same gap.
+const REACH: Pixels = px(8.);
 
 /// The rows the sidebar lists above its pinned section, in the order they take until the
 /// listener drags one elsewhere. The pinned section always closes the list, so it is not here.
@@ -123,10 +127,54 @@ pub(crate) fn place_entry(
     cx: &mut Context<AppSettings>,
 ) {
     let order = moved(nav_order(settings), entry, before);
-    settings.set_nav_order(
-        order.iter().map(|entry| entry.id().to_owned()).collect(),
-        cx,
-    );
+    save_order(&order, settings, cx);
+}
+
+/// Moves `entry` one place up or down among every movable row, hidden ones included, which is
+/// what a key press does where a drag would. Does nothing at either end of the list.
+pub(crate) fn shift_entry(
+    entry: NavEntry,
+    delta: isize,
+    settings: &mut AppSettings,
+    cx: &mut Context<AppSettings>,
+) {
+    let mut order = nav_order(settings);
+    let Some(from) = order.iter().position(|known| *known == entry) else {
+        return;
+    };
+    let Some(to) = from
+        .checked_add_signed(delta)
+        .filter(|to| *to < order.len())
+    else {
+        return;
+    };
+    order.swap(from, to);
+    save_order(&order, settings, cx);
+}
+
+/// Whether a drag at `position` is for the row at `place` among `count`, drawn in `bounds`:
+/// the cursor is over the row or in the space between it and a neighbour. Two rows reached at
+/// once name the same gap, so the target never goes stale between rows. Nothing is reached past
+/// either end of the list, where the list itself clears the target.
+pub(crate) fn reaches(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    place: usize,
+    count: usize,
+) -> bool {
+    let above = match place > 0 {
+        true => REACH,
+        false => Pixels::ZERO,
+    };
+    let below = match place + 1 < count {
+        true => REACH,
+        false => Pixels::ZERO,
+    };
+
+    position.x >= bounds.left()
+        && position.x <= bounds.right()
+        && position.y >= bounds.top() - above
+        && position.y <= bounds.bottom() + below
 }
 
 /// The gap a row dragged over the row at `index` would leave, unless that gap is where the
@@ -136,6 +184,13 @@ pub(crate) fn useful_gap(gap: usize, dragged: NavEntry, shown: &[NavEntry]) -> O
         Some(from) if gap == from || gap == from + 1 => None,
         _ => Some(gap),
     }
+}
+
+fn save_order(order: &[NavEntry], settings: &mut AppSettings, cx: &mut Context<AppSettings>) {
+    settings.set_nav_order(
+        order.iter().map(|entry| entry.id().to_owned()).collect(),
+        cx,
+    );
 }
 
 /// The saved ids as rows, skipping any that are gone or repeated, with rows the save does not

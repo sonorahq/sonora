@@ -2,25 +2,29 @@ use std::rc::Rc;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, DragMoveEvent, SharedString, Window, div};
+use gpui::{AnyElement, App, Context, DragMoveEvent, FocusHandle, SharedString, Window, div};
 use i18n::{Language, t};
 use router::{NavEntry, Screen};
 use ui::{
-    ActiveTheme as _, Edge, MenuItem, OptionCard, Pace, Picker, Rounding, Saver, Stillness, Switch,
-    Text, drop_gap, drop_marker, grip,
+    ActiveTheme as _, Edge, MenuItem, MoveRowDown, MoveRowUp, OptionCard, Pace, Picker,
+    REORDER_CONTEXT, Rounding, Saver, SelectNext, SelectPrevious, Stillness, Switch, Text,
+    drop_gap, drop_marker, grip,
 };
 
 use super::appearance::corner;
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, LANGUAGES, SettingsView, Slot};
 use crate::shared::nav::{
-    DraggedNav, entry_shown, nav_order, place_entry, set_entry_shown, useful_gap,
+    DraggedNav, entry_shown, nav_order, place_entry, set_entry_shown, shift_entry, useful_gap,
 };
 use crate::shared::popups::matches_query;
 
 const STARTUP: &str = "startup";
 const PROVIDER: &str = "provider";
 const ENTRIES: &str = "entries";
+/// The keys that move a focused row of the entries list, as assistive technology reads them.
+/// They mirror the `REORDER_CONTEXT` bindings.
+const MOVE_KEYS: &str = "Alt+ArrowUp Alt+ArrowDown";
 
 impl SettingsView {
     pub(super) fn general_groups(&self, cx: &App) -> Vec<Group> {
@@ -145,18 +149,18 @@ impl SettingsView {
     }
 
     /// Every sidebar row in one list, in the order the sidebar shows them, each with its own
-    /// switch. The movable rows can be dragged anywhere among them, hidden ones included, and
-    /// the pinned section closes the list since it always closes the sidebar.
+    /// switch. The movable rows can be dragged anywhere among them, hidden ones included, or
+    /// moved from the keyboard once one holds the focus, and the pinned section closes the list
+    /// since it always closes the sidebar.
     pub(super) fn entries_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let order: Rc<[NavEntry]> = nav_order(self.settings.read(cx)).into();
-        let count = order.len();
-        let total = count + 1;
+        let total = order.len() + 1;
         let mut entries: Vec<AnyElement> = order
             .iter()
             .enumerate()
             .map(|(place, entry)| self.entry(place, *entry, order.clone(), total, cx))
             .collect();
-        entries.push(self.pins_entry((count, total), cx));
+        entries.push(self.pins_entry(order.clone(), cx));
 
         let list = div()
             .id(ENTRIES)
@@ -205,8 +209,40 @@ impl SettingsView {
         }))
     }
 
+    /// The key focus of a movable row, `None` for the pinned section, which never moves.
+    fn entry_focus(&self, entry: NavEntry) -> Option<&FocusHandle> {
+        self.entry_focus
+            .iter()
+            .find(|(known, _)| *known == entry)
+            .map(|(_, focus)| focus)
+    }
+
+    /// Moves `entry` one place up or down from the keyboard. The focus is kept by row, so it
+    /// stays on the row that moved.
+    fn move_entry(&mut self, entry: NavEntry, delta: isize, cx: &mut Context<Self>) {
+        self.settings
+            .update(cx, |settings, cx| shift_entry(entry, delta, settings, cx));
+        cx.notify();
+    }
+
+    /// Hands the key focus from `entry` to the movable row above or below it, and keeps it
+    /// where it is at either end of the list.
+    fn step_entry(&self, entry: NavEntry, delta: isize, window: &mut Window, cx: &mut App) {
+        let order = nav_order(self.settings.read(cx));
+        let neighbour = order
+            .iter()
+            .position(|known| *known == entry)
+            .and_then(|from| from.checked_add_signed(delta))
+            .and_then(|to| order.get(to))
+            .and_then(|entry| self.entry_focus(*entry));
+        if let Some(focus) = neighbour {
+            window.focus(focus, cx);
+        }
+    }
+
     /// One movable row at `place` in `order`: the grip it is dragged by, its name, muted while
     /// it is hidden, and its switch. The whole row drags, the grip only shows that it does.
+    /// A click or a screen reader gives it the key focus, which the move keys then act on.
     fn entry(
         &self,
         place: usize,
@@ -231,11 +267,28 @@ impl SettingsView {
             .aria_label(name.clone())
             .aria_position_in_set(place + 1)
             .aria_size_of_set(total)
+            .aria_keyshortcuts(MOVE_KEYS)
+            .key_context(REORDER_CONTEXT)
+            .when_some(self.entry_focus(entry), |row, focus| row.track_focus(focus))
+            .on_action(cx.listener(move |this, _: &MoveRowUp, _, cx| {
+                this.move_entry(entry, -1, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &MoveRowDown, _, cx| {
+                this.move_entry(entry, 1, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &SelectPrevious, window, cx| {
+                this.step_entry(entry, -1, window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &SelectNext, window, cx| {
+                this.step_entry(entry, 1, window, cx);
+            }))
             .relative()
             .h(theme.metrics.list_row)
             .flex()
             .items_center()
             .gap_3()
+            .rounded(theme.radius)
+            .focus(|style| style.bg(theme.secondary_hover))
             .cursor_grab()
             .child(grip(cx))
             .child(
@@ -269,13 +322,16 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// The pinned section's row, placed by its index and the list's length. It always closes
-    /// the sidebar, so it has no grip and does not move.
-    fn pins_entry(&self, (index, total): (usize, usize), cx: &mut Context<Self>) -> AnyElement {
+    /// The pinned section's row, placed after the movable rows of `order`. It always closes
+    /// the sidebar, so it has no grip and does not move, and a row dragged over it aims at the
+    /// end of the movable ones.
+    fn pins_entry(&self, order: Rc<[NavEntry]>, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let entry = NavEntry::Pins;
         let name = i18n::lookup(entry.key(), None);
         let shown = entry_shown(entry, self.settings.read(cx));
+        let index = order.len();
+        let total = index + 1;
 
         div()
             .id(SharedString::from(format!("entry-{}", entry.id())))
@@ -298,6 +354,20 @@ impl SettingsView {
                     .child(name),
             )
             .child(self.entry_switch(entry, cx))
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<DraggedNav>, _, cx| {
+                    // No movable row answers here, so the gap one of them left would stay
+                    // and a drop would land there instead of where the cursor is.
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let gap = useful_gap(order.len(), event.drag(cx).entry, &order);
+                    if this.nav_drop_gap != gap {
+                        this.nav_drop_gap = gap;
+                        cx.notify();
+                    }
+                }),
+            )
             .into_any_element()
     }
 

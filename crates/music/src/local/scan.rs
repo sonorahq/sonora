@@ -322,9 +322,7 @@ fn name_portraits(looks: &[Look], readings: &[Reading]) -> HashMap<String, Strin
         if !artists.contains(&artist) {
             continue;
         }
-        portraits
-            .entry(artist.clone())
-            .or_insert_with(|| portrait.clone());
+        portraits.entry(artist).or_insert_with(|| portrait.clone());
     }
     portraits
 }

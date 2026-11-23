@@ -22,7 +22,7 @@ use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shel
 
 use crate::shared::menus::{ItemMenu, item_menu};
 use crate::shared::nav::{
-    DraggedNav, entry_shown, nav_icon, nav_order, nav_row, place_entry, useful_gap,
+    DraggedNav, entry_shown, nav_icon, nav_order, nav_row, place_entry, reaches, useful_gap,
 };
 use crate::shared::pins::leaving;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
@@ -301,6 +301,8 @@ impl SidebarLeft {
             .collect();
         let list = div()
             .id("sidebar-entries")
+            .role(Role::List)
+            .aria_label(i18n::lookup("settings-entries", None))
             .flex()
             .flex_col()
             .gap_1()
@@ -688,9 +690,10 @@ impl SidebarLeft {
             })
             .on_drag_move(
                 cx.listener(move |this, event: &DragMoveEvent<DraggedNav>, _, cx| {
-                    // Only the row under the cursor answers, and the list clears the gap once
-                    // the cursor leaves it.
-                    if !event.bounds.contains(&event.event.position) {
+                    // Only a row the cursor is over or beside answers, so the space between
+                    // two rows aims at the gap there, and the list clears the gap once the
+                    // cursor leaves it.
+                    if !reaches(event.bounds, event.event.position, place, count) {
                         return;
                     }
                     let gap = drop_gap(event.bounds, event.event.position, place)
@@ -702,7 +705,14 @@ impl SidebarLeft {
                 }),
             );
 
+        // The button names the page, and the row around it says where it stands in the list,
+        // which is what changes when the listener reorders it.
         div()
+            .id(SharedString::from(format!("sidebar-entry-{}", entry.id())))
+            .role(Role::ListItem)
+            .aria_label(i18n::lookup(key, None))
+            .aria_position_in_set(place + 1)
+            .aria_size_of_set(count)
             .relative()
             .flex()
             .flex_col()

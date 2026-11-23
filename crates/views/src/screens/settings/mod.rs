@@ -10,7 +10,7 @@ use gpui::{
 };
 use i18n::{Language, t};
 use music::SignInPrompt;
-use router::{Destination, SettingsPage, SettingsTab, navigate};
+use router::{Destination, NavEntry, SettingsPage, SettingsTab, navigate};
 use state::{
     AppSettings, Drm, Equalizer, Io, Outputs, Playback, Scan, Scrobbling, Session, SessionState,
     Sleep, Soloist, Sonora, Updates,
@@ -21,6 +21,7 @@ use ui::{
 };
 
 use crate::chrome::{Chrome, OutputPicker};
+use crate::shared::nav::MOVABLE;
 use crate::shared::popups::{Credentials, SearchPopup};
 use crate::shared::text;
 
@@ -261,6 +262,9 @@ pub struct SettingsView {
     /// Where a sidebar row dragged over the entries list would land, as a gap between the
     /// movable rows. `None` while the drop would leave the order as it is.
     nav_drop_gap: Option<usize>,
+    /// The key focus of each movable row of the entries list, kept by row rather than by
+    /// place so the focus follows a row the keyboard moves.
+    entry_focus: [(NavEntry, FocusHandle); MOVABLE.len()],
     scrollbar: Entity<Scrollbar>,
     /// The page that opened a drill-in and where its tab was scrolled, so the way back to that
     /// page or to the drill-in's parent lands there again.
@@ -480,6 +484,7 @@ impl SettingsView {
             reveal: None,
             lyrics_drop_gap: None,
             nav_drop_gap: None,
+            entry_focus: MOVABLE.map(|entry| (entry, cx.focus_handle())),
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             drilled_from: None,
             layout_revision: 0,

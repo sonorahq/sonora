@@ -13,6 +13,10 @@ const ART: Pixels = px(20.);
 const MARKER: Pixels = px(2.);
 const SLACK: Pixels = px(10.);
 
+/// The key context of a focused row in a list reordered by dragging, where the arrow keys walk
+/// the rows and `MoveRowUp` and `MoveRowDown` move the one in focus.
+pub const REORDER_CONTEXT: &str = "Reorder";
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Edge {
     Above,

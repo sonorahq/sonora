@@ -3373,7 +3373,7 @@ impl Library {
                 })
                 .ok();
             });
-            self.reading.insert(id.clone(), task);
+            self.reading.insert(id, task);
         }
     }
 
