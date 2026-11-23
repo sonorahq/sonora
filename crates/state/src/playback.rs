@@ -3460,7 +3460,7 @@ impl Playback {
                 self.state = PlaybackState::Loading;
                 log::warn!("playback: the provider went stale, waiting for a reconnect");
             }
-            BackendEvent::Unavailable { .. } => {
+            BackendEvent::Unavailable { timed_out, .. } => {
                 let failed = self.track.take();
                 let target = failed.as_ref().and_then(song_target);
                 let name = failed
@@ -3479,20 +3479,34 @@ impl Playback {
                 match exhausted {
                     true => {
                         log::warn!("playback: {FAILURE_LIMIT} tracks failed in a row, stopping");
-                        match self.module_suspect(cx) {
-                            true => {
+                        match timed_out || !self.module_suspect(cx) {
+                            true => Toasts::show(
+                                Outcome::Failed,
+                                match timed_out {
+                                    true => "toast-playback-timed-out",
+                                    false => "toast-playback-stopped",
+                                },
+                                cx,
+                            ),
+                            false => {
                                 let toast = Toast::new(Outcome::Failed, "toast-widevine-failed")
                                     .note("toast-widevine-borrowed")
                                     .open("nav-settings", Target::PlaybackSettings)
                                     .lasting();
                                 Toasts::post(toast, cx);
                             }
-                            false => Toasts::show(Outcome::Failed, "toast-playback-stopped", cx),
                         }
                     }
-                    false => {
-                        Toasts::linked(Outcome::Failed, "toast-track-unplayable", name, target, cx)
-                    }
+                    false => Toasts::linked(
+                        Outcome::Failed,
+                        match timed_out {
+                            true => "toast-track-timed-out",
+                            false => "toast-track-unplayable",
+                        },
+                        name,
+                        target,
+                        cx,
+                    ),
                 }
                 cx.emit(PlaybackEvent::EndedPlayback);
                 match (exhausted || self.intent == Intent::Pause, self.repeat) {

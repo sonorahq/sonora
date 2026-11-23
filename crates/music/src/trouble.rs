@@ -31,6 +31,17 @@ const LOST: &[&str] = &[
     "offline",
 ];
 
+/// The fragments a failure carries when the host never answered in time. Windows says neither
+/// "timed out" nor its code in words, so its own phrasing and error number are here too.
+const SLOW: &[&str] = &[
+    "timed out",
+    "timeout",
+    "deadline has elapsed",
+    "did not properly respond",
+    "os error 110",
+    "os error 10060",
+];
+
 /// The fragments a failure carries when the provider is shedding load or rate limiting the
 /// account. Apple's own wrapper says its gateway is busy, and the HTTP stacks spell 429 and 503
 /// out by their reason phrases.
@@ -53,6 +64,14 @@ const BLOCKED: &str = "refuses requests from this network";
 pub fn offline(reason: &str) -> bool {
     let reason = reason.to_lowercase();
     LOST.iter().any(|fragment| reason.contains(fragment))
+}
+
+/// Whether a failure reads as a host that never answered in time, which is the one kind of lost
+/// connection a listener can do something about by checking their network or DNS. Like
+/// `offline`, it matches the flattened reason's text.
+pub fn timed_out(reason: &str) -> bool {
+    let reason = reason.to_lowercase();
+    SLOW.iter().any(|fragment| reason.contains(fragment))
 }
 
 /// Whether a failure reads as the provider asking the app to slow down, which a retry after a

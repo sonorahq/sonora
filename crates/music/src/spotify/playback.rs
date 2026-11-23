@@ -689,9 +689,10 @@ fn translate(event: PlayerEvent) -> Option<PlaybackEvent> {
             track_id: uri,
             ..
         } => Some(PlaybackEvent::Throttled { id: track_id(uri) }),
-        PlayerEvent::Unavailable { track_id: uri, .. } => {
-            Some(PlaybackEvent::Unavailable { id: track_id(uri) })
-        }
+        PlayerEvent::Unavailable { track_id: uri, .. } => Some(PlaybackEvent::Unavailable {
+            id: track_id(uri),
+            timed_out: false,
+        }),
         _ => None,
     }
 }

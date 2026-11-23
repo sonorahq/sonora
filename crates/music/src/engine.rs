@@ -731,7 +731,10 @@ async fn engine_loop<F: Fetch>(
                             let refusal = match (fetch.gated(&error), fetch.blocked(&error)) {
                                 (true, _) => PlaybackEvent::Gated,
                                 (false, true) => PlaybackEvent::Blocked,
-                                (false, false) => PlaybackEvent::Unavailable { id: Some(id) },
+                                (false, false) => PlaybackEvent::Unavailable {
+                                    id: Some(id),
+                                    timed_out: crate::trouble::timed_out(&format!("{error:#}")),
+                                },
                             };
                             events.send(refusal).ok();
                         }
@@ -1227,7 +1230,10 @@ fn audio_loop<F: Fetch>(
                         true => cue.arm(),
                         false => {
                             events
-                                .send(PlaybackEvent::Unavailable { id: Some(id) })
+                                .send(PlaybackEvent::Unavailable {
+                                    id: Some(id),
+                                    timed_out: false,
+                                })
                                 .ok();
                         }
                     }
@@ -1290,6 +1296,7 @@ fn audio_loop<F: Fetch>(
                         events
                             .send(PlaybackEvent::Unavailable {
                                 id: Some(join.ended),
+                                timed_out: false,
                             })
                             .ok();
                         continue;
@@ -1321,7 +1328,10 @@ fn audio_loop<F: Fetch>(
                                 None => {
                                     log::warn!("playback: cannot seek {id}");
                                     events
-                                        .send(PlaybackEvent::Unavailable { id: Some(id) })
+                                        .send(PlaybackEvent::Unavailable {
+                                            id: Some(id),
+                                            timed_out: false,
+                                        })
                                         .ok();
                                     continue;
                                 }
