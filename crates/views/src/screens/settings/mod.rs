@@ -259,8 +259,9 @@ pub struct SettingsView {
     /// enabled sources. `None` while the drop would leave the order as it is.
     lyrics_drop_gap: Option<usize>,
     scrollbar: Entity<Scrollbar>,
-    /// Where the tab was scrolled when it opened a drill-in, so the way back lands there again.
-    drilled_from: Option<(SettingsTab, Pixels)>,
+    /// The page that opened a drill-in and where its tab was scrolled, so the way back to that
+    /// page or to the drill-in's parent lands there again.
+    drilled_from: Option<(SettingsPage, Pixels)>,
     /// Invalidates off-screen heights when data changes, without rebuilding them for each
     /// playback tick, animation frame or scroll update.
     layout_revision: u64,
@@ -519,7 +520,10 @@ impl SettingsView {
             let back = self
                 .drilled_from
                 .take()
-                .filter(|(tab, _)| self.page.parent().is_some() && *tab == page.tab())
+                .filter(|(from, _)| {
+                    self.page.parent().is_some()
+                        && (page == *from || self.page.parent() == Some(page))
+                })
                 .map(|(_, at)| at);
             let drilling = page.parent().is_some()
                 && self.page.parent().is_none()
@@ -527,7 +531,7 @@ impl SettingsView {
                 && !self.searching();
             if drilling {
                 let at = self.scrollbar.read(cx).scroll().offset().y;
-                self.drilled_from = Some((page.tab(), at));
+                self.drilled_from = Some((self.page, at));
             }
             self.scrollbar.update(cx, |bar, _| {
                 bar.place(Pixels::ZERO);
