@@ -162,7 +162,6 @@ impl Glide {
             drift.velocity = Point::default();
             drift.beat = None;
             drift.eased = None;
-            drift.placed = Some(drift.shown);
             drift.shown
         };
         scroll.set_offset(landed);

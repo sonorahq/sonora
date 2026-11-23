@@ -263,7 +263,14 @@ impl gpui::Element for Hold {
                 .is_some_and(|width| self.reflowed || (width - bounds.size.width).abs() >= RESIZED);
             if resized
                 && self.active
-                && let Some(depth) = depth(&frame.borrow(), &memory, bounds, &self.scroll, window)
+                && let Some(depth) = depth(
+                    &frame.borrow(),
+                    &memory,
+                    self.keep.as_ref(),
+                    bounds,
+                    &self.scroll,
+                    window,
+                )
             {
                 let offset = self.scroll.offset();
                 self.scroll.set_offset(match axis {
@@ -413,15 +420,18 @@ fn place(
 }
 
 /// How far into the content the edge has to be scrolled to hold what the last frame noted, the
-/// kept anchor when it is laid out again and the spot at the edge otherwise.
+/// kept anchor when it is still the one to keep and is laid out again, and the spot at the edge
+/// otherwise.
 fn depth(
     frame: &Frame,
     memory: &Memory,
+    keep: Option<&ElementId>,
     bounds: Bounds<Pixels>,
     scroll: &ScrollHandle,
     window: &mut Window,
 ) -> Option<Pixels> {
-    let kept = memory.kept.as_ref().and_then(|kept| {
+    let kept = memory.kept.as_ref().filter(|kept| Some(&kept.id) == keep);
+    let kept = kept.and_then(|kept| {
         let start = laid_start(frame, &kept.id, bounds, window)?;
         let depth = -along(scroll.offset(), frame.axis);
         Some((depth + start - kept.start).max(Pixels::ZERO))
