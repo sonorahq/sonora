@@ -381,7 +381,6 @@ update-detail = Máš { $running }. Přečti si, co se změnilo, nebo aktualizuj
 update-detail-notes = Máš { $running }. Přečti, co se změnilo, a pak Sonoru aktualizuj stejným způsobem, jakým byla nainstalována.
 update-notes = Co je nového
 update-now = Aktualizovat
-update-working = Aktualizace se stahuje…
 update-failed = Aktualizaci se nepodařilo nainstalovat. Zkus to znovu ze stránky s vydáními.
 update-never = Nekontrolovat aktualizace
 notice-never = Už nezobrazovat

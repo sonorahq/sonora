@@ -1,6 +1,6 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, HighlightStyle, InteractiveText,
+    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, HighlightStyle, Hsla, InteractiveText,
     Interactivity, Pixels, SharedString, Stateful, StyleRefinement, StyledText, UnderlineStyle,
     Window, div, px, svg,
 };
@@ -9,6 +9,7 @@ use crate::arrow_ring::ArrowRing;
 use crate::button::Button;
 use crate::metrics::Text;
 use crate::modal::corners;
+use crate::motion::mix;
 use crate::spinner::Spinner;
 use crate::theme::ActiveTheme as _;
 
@@ -17,6 +18,9 @@ const ICON: Pixels = px(16.);
 const BORDER: Pixels = px(1.);
 /// How thick the line under a name that opens something is.
 const LINK_UNDERLINE: Pixels = px(1.);
+/// How far the message lifts from the muted text colour towards the full one. The message reads
+/// quieter than a title, the way Sonner draws it, and the name in it stands out in full.
+const MESSAGE_LIFT: f32 = 0.2;
 
 type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 /// Opens what a toast names.
@@ -36,6 +40,7 @@ pub struct Toast {
     strong: Option<SharedString>,
     detail: Option<SharedString>,
     icon: Option<SharedString>,
+    tint: Option<Hsla>,
     loading: bool,
     progress: Option<f32>,
     single_line: bool,
@@ -61,6 +66,7 @@ impl Toast {
             strong: None,
             detail: None,
             icon: None,
+            tint: None,
             loading: false,
             progress: None,
             single_line: false,
@@ -88,6 +94,12 @@ impl Toast {
 
     pub fn icon(mut self, path: impl Into<SharedString>) -> Self {
         self.icon = Some(path.into());
+        self
+    }
+
+    /// The colour of the icon, such as red for a failure. Without one it takes the text colour.
+    pub fn tint(mut self, color: Hsla) -> Self {
+        self.tint = Some(color);
         self
     }
 
@@ -195,6 +207,7 @@ impl RenderOnce for Toast {
             strong,
             detail,
             icon,
+            tint,
             loading,
             progress,
             single_line,
@@ -233,7 +246,7 @@ impl RenderOnce for Toast {
             (None, true, _) => Some(
                 Spinner::new((id.clone(), "spinner"))
                     .size(ICON)
-                    .text_color(theme.popover_foreground)
+                    .text_color(theme.muted_foreground)
                     .into_any_element(),
             ),
             (None, false, Some(icon)) => Some(
@@ -241,7 +254,7 @@ impl RenderOnce for Toast {
                     .path(icons::path(icon))
                     .size(ICON)
                     .flex_none()
-                    .text_color(theme.popover_foreground)
+                    .text_color(tint.unwrap_or(theme.popover_foreground))
                     .into_any_element(),
             ),
             (None, false, None) => None,
@@ -256,13 +269,27 @@ impl RenderOnce for Toast {
             .child(
                 div()
                     .min_w_0()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.popover_foreground)
+                    .text_color(mix(
+                        theme.muted_foreground,
+                        theme.popover_foreground,
+                        MESSAGE_LIFT,
+                    ))
                     .when(single_line, |message| message.truncate())
-                    .child(with_name_emphasised(&id, message, strong, open)),
+                    .child(with_name_emphasised(
+                        &id,
+                        message,
+                        strong,
+                        theme.popover_foreground,
+                        open,
+                    )),
             )
             .when_some(detail, |text, detail| {
-                text.child(div().text_color(theme.muted_foreground).child(detail))
+                text.child(
+                    div()
+                        .text_size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground)
+                        .child(detail),
+                )
             });
 
         let body = div()
@@ -319,6 +346,7 @@ impl RenderOnce for Toast {
                     .ghost()
                     .small()
                     .icon("icons/x.svg")
+                    .tint(theme.muted_foreground)
                     .tooltip("common-dismiss")
                     .when(!inert, |button| {
                         button.on_click(move |event, window, cx| dismiss(event, window, cx))
@@ -356,12 +384,13 @@ impl RenderOnce for Toast {
     }
 }
 
-/// The message as one run of text that wraps where it needs to, with the name in it bold, and
-/// underlined and clickable when it opens something.
+/// The message as one run of text that wraps where it needs to, with the name in it bold and in
+/// `color`, and underlined and clickable when it opens something.
 fn with_name_emphasised(
     id: &ElementId,
     message: SharedString,
     strong: Option<SharedString>,
+    color: Hsla,
     open: Option<Open>,
 ) -> AnyElement {
     let named = strong
@@ -371,7 +400,8 @@ fn with_name_emphasised(
         return message.into_any_element();
     };
     let emphasis = HighlightStyle {
-        font_weight: Some(FontWeight::BOLD),
+        font_weight: Some(FontWeight::SEMIBOLD),
+        color: Some(color),
         underline: open.is_some().then_some(UnderlineStyle {
             thickness: LINK_UNDERLINE,
             ..UnderlineStyle::default()

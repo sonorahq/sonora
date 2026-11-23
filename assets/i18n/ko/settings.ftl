@@ -517,7 +517,6 @@ update-detail = 현재 { $running } 버전을 사용 중입니다. 변경 사항
 update-detail-notes = 현재 { $running } 버전을 사용 중입니다. 변경 사항을 확인한 후 설치한 방식대로 Sonora를 업데이트하세요.
 update-notes = 새로운 기능
 update-now = 업데이트
-update-working = 업데이트 다운로드 중…
 update-failed = 업데이트를 설치하지 못했습니다. 릴리스 페이지에서 다시 시도하세요.
 update-ready = Sonora { $version } 준비됨
 update-ready-detail = 현재 { $running } 버전을 사용 중입니다. 새 버전은 다음에 Sonora를 시작할 때 설치되며, 지금 다시 시작하여 즉시 전환할 수도 있습니다.

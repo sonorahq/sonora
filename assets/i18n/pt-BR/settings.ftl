@@ -513,7 +513,6 @@ update-detail = Você está na versão { $running }. Veja o que mudou ou atualiz
 update-detail-notes = Você está na versão { $running }. Veja o que mudou e atualize o Sonora da forma como você o instalou.
 update-notes = O que há de novo
 update-now = Atualizar
-update-working = Baixando a atualização…
 update-failed = Não foi possível instalar a atualização. Tente novamente pela página de lançamentos.
 update-ready = O Sonora { $version } está pronto
 update-ready-detail = Você está usando a versão { $running }. A nova versão será instalada na próxima vez que o Sonora iniciar. Para usá-la agora, reinicie o aplicativo.

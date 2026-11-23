@@ -13,11 +13,11 @@ use music::SignInPrompt;
 use router::{Destination, SettingsPage, SettingsTab, navigate};
 use state::{
     AppSettings, Drm, Equalizer, Io, Outputs, Playback, Scan, Scrobbling, Session, SessionState,
-    Sleep, Soloist, Sonora,
+    Sleep, Soloist, Sonora, Updates,
 };
 use ui::{
     Activate, ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar,
-    ScrubberState, SelectNext, SelectPrevious, Vacancy, snapped,
+    ScrubberState, SelectNext, SelectPrevious, Spin, Vacancy, snapped,
 };
 
 use crate::chrome::{Chrome, OutputPicker};
@@ -328,6 +328,9 @@ pub struct SettingsView {
     recording: Option<&'static str>,
     /// Catches every key pressed while a shortcut records, before it does anything else.
     recorder: Option<Subscription>,
+    updates: Entity<Updates>,
+    /// Turns the icon of the button that checks for updates while the check runs.
+    update_spin: RefCell<Spin>,
 }
 
 impl SettingsView {
@@ -342,6 +345,9 @@ impl SettingsView {
         let equalizer = Sonora::global(cx).equalizer.clone();
         let outputs = Sonora::global(cx).outputs.clone();
         let soloist = Sonora::global(cx).soloist.clone();
+        let updates = Sonora::global(cx).updates.clone();
+        cx.observe(&updates, |this, _, cx| this.remeasure(cx))
+            .detach();
         cx.observe(&drm, |this, _, cx| this.remeasure(cx)).detach();
         cx.observe(&soloist, |this, _, cx| this.remeasure(cx))
             .detach();
@@ -455,6 +461,8 @@ impl SettingsView {
         let selected_library = session.read(cx).library();
         Self {
             session,
+            updates,
+            update_spin: RefCell::default(),
             _storage: storage,
             playback,
             drm,
@@ -1062,7 +1070,7 @@ impl SettingsView {
             Slot::KeybindsReset => (t!("keybinds-reset-all"), SharedString::default()),
             Slot::Version => (t!("settings-version"), t!("settings-version-detail")),
             Slot::Updates => (
-                t!("settings-check-updates"),
+                t!("settings-auto-check"),
                 t!("settings-check-updates-detail"),
             ),
             Slot::AutoUpdate => (
@@ -1186,7 +1194,7 @@ impl SettingsView {
             Slot::ScrobbleProvider => self.scrobble_provider_row(cx),
             Slot::Keybind(index) => self.keybind_row(index, cx),
             Slot::KeybindsReset => self.keybinds_reset_row(cx),
-            Slot::Version => self.version_row(),
+            Slot::Version => self.version_row(window, cx),
             Slot::Updates => self.updates_row(cx),
             Slot::AutoUpdate => self.auto_update_row(cx),
             Slot::Channel => self.channel_row(cx),

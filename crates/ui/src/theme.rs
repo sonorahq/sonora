@@ -235,6 +235,10 @@ pub struct ThemeOverrides {
     pub table_hover: Option<String>,
     pub table_active: Option<String>,
     pub table_active_border: Option<String>,
+    pub status_error: Option<String>,
+    pub status_success: Option<String>,
+    pub status_warning: Option<String>,
+    pub status_info: Option<String>,
     pub radius: Option<f32>,
     pub font_size: Option<f32>,
 }
@@ -283,6 +287,10 @@ impl ThemeOverrides {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         self.radius = overlay.radius.or(self.radius);
         self.font_size = overlay.font_size.or(self.font_size);
@@ -324,6 +332,10 @@ impl ThemeOverrides {
                 | "table_hover"
                 | "table_active"
                 | "table_active_border"
+                | "status_error"
+                | "status_success"
+                | "status_warning"
+                | "status_info"
         )
     }
 
@@ -370,6 +382,10 @@ impl ThemeOverrides {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         None
     }
@@ -426,6 +442,13 @@ pub struct Theme {
     pub table_hover: Hsla,
     pub table_active: Hsla,
     pub table_active_border: Hsla,
+    /// The hues of a status mark drawn on a popover, such as the icon of a toast that failed,
+    /// succeeded, warns or informs. They are bright enough to read as an icon, unlike `danger`,
+    /// which fills a button.
+    pub status_error: Hsla,
+    pub status_success: Hsla,
+    pub status_warning: Hsla,
+    pub status_info: Hsla,
     pub radius: Pixels,
     pub font_size: Pixels,
     pub metrics: Metrics,
@@ -484,6 +507,10 @@ impl Theme {
             table_hover: rgba(0x50505033).into(),
             table_active: rgba(0x1e40af33).into(),
             table_active_border: rgb(0x1d4ed8).into(),
+            status_error: rgb(0xff6369).into(),
+            status_success: rgb(0x4ade80).into(),
+            status_warning: rgb(0xfbbf24).into(),
+            status_info: rgb(0x60a5fa).into(),
             radius: px(6.),
             font_size: px(14.),
             metrics: Metrics::default(),
@@ -527,6 +554,10 @@ impl Theme {
             table_hover: rgba(0xcdcdcd33).into(),
             table_active: rgba(0x2563eb1f).into(),
             table_active_border: rgb(0x2563eb).into(),
+            status_error: rgb(0xdc2626).into(),
+            status_success: rgb(0x16a34a).into(),
+            status_warning: rgb(0xd97706).into(),
+            status_info: rgb(0x2563eb).into(),
             radius: px(6.),
             font_size: px(14.),
             metrics: Metrics::default(),
@@ -734,6 +765,10 @@ impl Theme {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         theme
     }
@@ -777,6 +812,10 @@ impl Theme {
         apply_color!(table_hover);
         apply_color!(table_active);
         apply_color!(table_active_border);
+        apply_color!(status_error);
+        apply_color!(status_success);
+        apply_color!(status_warning);
+        apply_color!(status_info);
 
         if let Some(radius) = overrides.radius {
             self.radius = px(radius.clamp(0., 24.));
