@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{fmt, io};
 
@@ -86,7 +85,6 @@ pub struct AudioKeys {
     session: Arc<Session>,
     device_id: String,
     connection: Mutex<Option<AccessPoint>>,
-    throttled: AtomicBool,
 }
 
 impl AudioKeys {
@@ -96,7 +94,6 @@ impl AudioKeys {
             session,
             device_id,
             connection: Mutex::default(),
-            throttled: AtomicBool::default(),
         }
     }
 
@@ -116,20 +113,7 @@ impl AudioKeys {
                 held.insert(point).clone()
             }
         };
-        let key = point.audio_key(track, file).await;
-        if key.is_ok() {
-            self.throttled.store(false, Ordering::Relaxed);
-        } else if key.as_ref().is_err_and(|error| {
-            error.downcast_ref::<AudioKeyError>() == Some(&AudioKeyError::Throttled)
-        }) {
-            self.throttled.store(true, Ordering::Relaxed);
-        }
-        key
-    }
-
-    /// Whether Spotify throttled a key request since the last successful one.
-    pub fn throttled(&self) -> bool {
-        self.throttled.load(Ordering::Relaxed)
+        point.audio_key(track, file).await
     }
 }
 

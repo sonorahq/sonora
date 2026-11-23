@@ -20,9 +20,8 @@ const AT_ONCE: usize = 2;
 /// refusal in a row doubles it, up to `LONGEST_REST`.
 const FIRST_REST: Duration = Duration::from_secs(15);
 const LONGEST_REST: Duration = Duration::from_secs(60);
-/// How many downloads in a row have to work before the pause between them halves.
-const EASE_AFTER: u32 = 5;
-/// How often the progress of running downloads is redrawn.
+/// Successful downloads before trying a shorter interval.
+const SPEED_UP_AFTER: u8 = 8;
 /// How many finished downloads the pace is read from.
 const PACE_WINDOW: usize = 12;
 /// How long after its last download the pace still counts, since a rest in between would
@@ -213,11 +212,9 @@ pub struct Downloads {
     /// How many downloads in a row the provider refused for asking too much, which sets how
     /// long the queue rests.
     refusals: u32,
-    /// The pause between downloads a provider that refuses bursts is held to. It starts at
-    /// nothing, opens up with each refusal and closes again over a run of downloads that work.
-    gap: Duration,
-    /// Downloads that worked since the gap last changed.
-    streak: u32,
+    /// The current interval and successes since the last pacing change.
+    pace: Option<Duration>,
+    successes: u8,
     /// When the latest downloads finished, for the pace the list of running ones reports.
     finished_at: VecDeque<Instant>,
     /// Starts the queue again once it has rested.
@@ -293,8 +290,8 @@ impl Downloads {
             ticker: None,
             resting: None,
             refusals: 0,
-            gap: Duration::ZERO,
-            streak: 0,
+            pace: None,
+            successes: 0,
             finished_at: VecDeque::new(),
             wake: None,
             failed: HashSet::new(),
@@ -888,8 +885,10 @@ impl Downloads {
             return self.wake_at(until, cx);
         }
         // A provider that refuses bursts gets its downloads one at a time.
-        let bursts = self.session.read(cx).capabilities().download_gap;
-        let at_once = match bursts.is_zero() {
+        let gap = self
+            .pace
+            .unwrap_or_else(|| self.session.read(cx).capabilities().download_gap);
+        let at_once = match gap.is_zero() {
             true => AT_ONCE,
             false => 1,
         };
@@ -924,8 +923,8 @@ impl Downloads {
                     task,
                 },
             );
-            if !self.gap.is_zero() {
-                self.resting = Some(Instant::now() + self.gap);
+            if !gap.is_zero() {
+                self.resting = Some(Instant::now() + gap);
             }
             self.tick(cx);
             cx.notify();
@@ -971,14 +970,22 @@ impl Downloads {
             return;
         }
         self.running.remove(&id);
+        let initial_gap = self.session.read(cx).capabilities().download_gap;
         match fetched {
             Ok(()) => {
                 self.refusals = 0;
+                if !initial_gap.is_zero() {
+                    self.successes += 1;
+                    if self.successes == SPEED_UP_AFTER {
+                        let gap = self.pace.unwrap_or(initial_gap);
+                        self.pace = Some((gap * 3 / 4).max(initial_gap / 2));
+                        self.successes = 0;
+                    }
+                }
                 self.finished_at.push_back(Instant::now());
                 if self.finished_at.len() > PACE_WINDOW {
                     self.finished_at.pop_front();
                 }
-                self.ease(cx);
                 if let Some(entry) = self.tracks.get_mut(&id)
                     && let Some(provider) = self.provider
                 {
@@ -991,15 +998,14 @@ impl Downloads {
             Err(error) if error.downcast_ref::<music::Throttled>().is_some() => {
                 self.refusals = self.refusals.saturating_add(1);
                 let wait = rest(self.refusals);
-                let bursts = self.session.read(cx).capabilities().download_gap;
-                // The pause stays at the provider's own, since the long rest is what lets its
-                // limit clear. Widening the pause as well left a quick burst crawling for good.
-                self.gap = bursts;
-                self.streak = 0;
+                self.successes = 0;
+                if !initial_gap.is_zero() {
+                    let gap = self.pace.unwrap_or(initial_gap);
+                    self.pace = Some((gap * 2).clamp(initial_gap, initial_gap * 4));
+                }
                 log::warn!(
-                    "downloads: the provider is refusing {id} for now, resting {}s, then {}s apart",
-                    wait.as_secs(),
-                    self.gap.as_secs()
+                    "downloads: the provider is throttling {id}, retrying after a {}s rest",
+                    wait.as_secs()
                 );
                 self.resting = Some(Instant::now() + wait);
                 // The track goes to the back of the line, so one the provider keeps refusing
@@ -1009,6 +1015,7 @@ impl Downloads {
                 }
             }
             Err(error) => {
+                self.successes = 0;
                 let reason = format!("{error:#}");
                 log::warn!("downloads: cannot download {id}: {reason}");
                 crate::noted(&error, cx);
@@ -1022,25 +1029,6 @@ impl Downloads {
         }
         self.pump(cx);
         cx.notify();
-    }
-
-    /// Narrows the pause between downloads after a run of them worked, down to none once it is
-    /// below a quarter of the one the provider starts from.
-    fn ease(&mut self, cx: &mut Context<Self>) {
-        if self.gap.is_zero() {
-            return;
-        }
-        self.streak += 1;
-        if self.streak < EASE_AFTER {
-            return;
-        }
-        self.streak = 0;
-        let bursts = self.session.read(cx).capabilities().download_gap;
-        self.gap /= 2;
-        if self.gap < bursts / 4 {
-            self.gap = Duration::ZERO;
-        }
-        log::debug!("downloads: now {}s apart", self.gap.as_secs_f32());
     }
 
     /// Starts the queue again at `at`, unless something already will.
@@ -1234,8 +1222,8 @@ impl Downloads {
         self.ticker = None;
         self.resting = None;
         self.refusals = 0;
-        self.gap = Duration::ZERO;
-        self.streak = 0;
+        self.pace = None;
+        self.successes = 0;
         self.wake = None;
         self.failed.clear();
         self.stalled.clear();

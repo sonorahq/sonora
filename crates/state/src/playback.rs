@@ -2420,7 +2420,17 @@ impl Playback {
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Previous, cx) {
+        if self.steer(
+            |remote| {
+                let state = &remote.state;
+                if state.track.is_some() && state.live_position() > RESTART_WINDOW {
+                    Command::Seek(Duration::ZERO)
+                } else {
+                    Command::Previous
+                }
+            },
+            cx,
+        ) {
             return;
         }
         if self.restarts(cx) {

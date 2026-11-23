@@ -5,7 +5,7 @@ pub(super) use media::OfflineFactory;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use futures::future::BoxFuture;
 use tokio::sync::oneshot;
 
@@ -18,10 +18,8 @@ use crate::{engine, soloist};
 
 use super::session::Session;
 
-/// The pause between Spotify downloads once Spotify has refused one. It refuses audio keys asked
-/// for in a burst, the same keys playback needs, so after a refusal downloads ask about as often as
-/// listening does.
-pub(crate) const DOWNLOAD_GAP: Duration = Duration::from_secs(4);
+/// The starting interval between Spotify downloads, adjusted as requests succeed or are refused.
+pub(crate) const DOWNLOAD_GAP: Duration = Duration::from_secs(2);
 /// Spotify’s Vorbis levels, best first: Ogg Vorbis at 320, 160 and 96 kbps.
 pub(crate) const QUALITIES: &[Offer] = &[
     Offer {
@@ -125,11 +123,7 @@ impl MusicPlayer for Official {
         };
         let id = track_id.to_owned();
         let quality = self.audio.quality;
-        let (done, answer) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = done.send(media::download(&session, &shelf, &id, quality, progress).await);
-        });
-        Box::pin(async move { answer.await.context("the spotify session stopped")? })
+        Box::pin(async move { media::download(&session, &shelf, &id, quality, progress).await })
     }
 
     fn downloaded(&self, track_id: &str) -> bool {

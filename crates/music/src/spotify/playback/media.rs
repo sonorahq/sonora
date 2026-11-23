@@ -448,13 +448,7 @@ pub(super) async fn download(
     }
 
     let mut media = resolve_media(session, id, quality).await?;
-    if session.audio_keys().throttled()
-        && let Err(error) = media.fetch_key(session).await
-        && (error.downcast_ref::<AudioKeyError>() == Some(&AudioKeyError::Denied)
-            || error.is::<crate::Throttled>())
-    {
-        return Err(error);
-    }
+    media.fetch_key(session).await?;
     let (mut response, _) = open_file(session, &media.facts.file_id).await?;
     let total = response
         .total()
@@ -468,9 +462,6 @@ pub(super) async fn download(
         bytes.len() > VORBIS_HEADER_LEN as usize && bytes.len() as u64 == total,
         "Spotify download is incomplete"
     );
-    if media.facts.key.is_none() {
-        media.fetch_key(session).await?;
-    }
     let facts = serde_json::to_vec(&media.facts)?;
     let shelf = shelf.clone();
     let id = id.to_owned();

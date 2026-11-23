@@ -953,6 +953,7 @@ pub trait Player: Send + Sync {
 
     /// Fetches all of a track into the downloads without playing it. The future answers once it
     /// is kept, or why it could not be. A player that cannot download says so at once.
+    /// The caller may build the future outside Tokio and poll it on the I/O runtime.
     /// `progress` follows how much of it has arrived.
     fn download(
         &self,
@@ -1117,9 +1118,8 @@ pub struct Capabilities {
     /// The stream levels the service serves, best first. Empty when there is nothing to choose
     /// between, so the setting stays hidden.
     pub qualities: &'static [Offer],
-    /// For a service that refuses a burst of downloads, the pause between them once it has refused
-    /// one. Such a service downloads one track at a time, with no pause until it first refuses.
-    /// Zero lets downloads run side by side.
+    /// The initial interval between starting downloads, adjusted according to provider responses.
+    /// A nonzero interval limits downloads to one at a time.
     pub download_gap: Duration,
     /// Set when the library's Songs page comes in the order its songs were added but carries
     /// no date for each, saying which end is newest. The page then sorts by Date added through
