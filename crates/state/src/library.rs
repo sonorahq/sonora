@@ -1270,6 +1270,8 @@ pub struct Library {
     /// Reads the streaming playlists again after one changed elsewhere, without the rest of
     /// the shelf.
     relisting: Option<Task<()>>,
+    // An empty set requests the full playlist list.
+    pending_relist: Option<HashSet<String>>,
     pin_targets_task: Option<Task<()>>,
     pin_task: Option<Task<()>>,
     pin_targets: Option<Vec<music::PinTarget>>,
@@ -1322,6 +1324,8 @@ impl Library {
                 this.smart_opening += 1;
                 this.smart_editing = None;
                 this.pin_task = None;
+                this.relisting = None;
+                this.pending_relist = None;
                 if !session.read(cx).authenticated() {
                     this.pin_targets_task = None;
                     this.pin_targets = None;
@@ -1330,7 +1334,6 @@ impl Library {
                     return;
                 }
                 this.playlist_task = None;
-                this.relisting = None;
                 this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -1365,6 +1368,7 @@ impl Library {
                 this.mosaics.clear();
                 this.playlist_task = None;
                 this.relisting = None;
+                this.pending_relist = None;
                 this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -1409,6 +1413,7 @@ impl Library {
             io,
             playlist_task: None,
             relisting: None,
+            pending_relist: None,
             pin_targets_task: None,
             pin_task: None,
             pin_targets: None,
@@ -3597,12 +3602,13 @@ impl Library {
     }
 
     /// Drops what is cached for the playlists another client changed, so their pages read
-    /// again. A change to the library's own lists reloads the streaming shelf, while a change
-    /// inside a playlist only reads the playlist list again for its name, cover and count.
+    /// again. Root-list changes refresh playlists and pins. Changes inside individual playlists
+    /// refresh their summary rows.
     pub(crate) fn changed_elsewhere(
         &mut self,
         playlists: HashSet<String>,
-        listed: bool,
+        library_changed: bool,
+        list_changed: bool,
         cx: &mut Context<Self>,
     ) {
         for id in &playlists {
@@ -3610,29 +3616,43 @@ impl Library {
             self.contents.remove(id);
             cx.emit(LibraryEvent::PlaylistChanged(id.clone()));
         }
-        match listed {
-            true => self.refresh(Shelf::Streaming, cx),
-            false => {
-                // a change that only names a playlist may still have moved the pins
-                self.sync_pin_targets(cx);
-                self.relist(playlists, cx);
-            }
+        if library_changed {
+            self.refresh(Shelf::Streaming, cx);
+            return;
         }
+        self.sync_pin_targets(cx);
+        self.relist(
+            if list_changed {
+                HashSet::new()
+            } else {
+                playlists
+            },
+            cx,
+        );
     }
 
-    /// Reads the streaming shelf's playlists again and leaves its other parts as they are. A
-    /// shelf still loading brings its playlists anyway, so nothing more is asked of it.
+    /// Reads the streaming shelf's playlists and coalesces notifications that arrive during a read.
     fn relist(&mut self, changed: HashSet<String>, cx: &mut Context<Self>) {
         let Some(client) = self.session.read(cx).client_of(Shelf::Streaming) else {
             return;
         };
-        // An overlapping notification may supersede a pending partial read. Reload the
-        // full list in that case so the first set of changes is also picked up.
-        let selected = !changed.is_empty() && self.relisting.is_none();
-        let held = self.held_mut(Shelf::Streaming);
-        if !matches!(held.state, LibraryState::Ready(_))
-            || held.awaited.contains(&LibraryPart::Playlists)
+        if self.relisting.is_some()
+            || self
+                .held(Shelf::Streaming)
+                .awaited
+                .contains(&LibraryPart::Playlists)
         {
+            match self.pending_relist.as_mut() {
+                Some(pending) if changed.is_empty() => pending.clear(),
+                Some(pending) if !pending.is_empty() => pending.extend(changed),
+                Some(_) => {}
+                None => self.pending_relist = Some(changed),
+            }
+            return;
+        }
+        let selected = !changed.is_empty();
+        let held = self.held_mut(Shelf::Streaming);
+        if !matches!(held.state, LibraryState::Ready(_)) {
             return;
         }
         let ids: Vec<_> = held
@@ -3668,6 +3688,9 @@ impl Library {
                             .stale
                             .remove(&LibraryPart::Playlists);
                     }
+                }
+                if let Some(changed) = this.pending_relist.take() {
+                    this.relist(changed, cx);
                 }
             },
             cx,
@@ -3744,6 +3767,7 @@ impl Library {
         // a full load lands the playlists too, and two of them would list each one twice
         if shelf == Shelf::Streaming {
             self.relisting = None;
+            self.pending_relist = None;
         }
         let session = self.session.read(cx);
         let Some(client) = session.client_of(shelf) else {
@@ -3951,6 +3975,9 @@ impl Library {
         let before =
             (arrived && part == LibraryPart::Playlists && !shelf.local()).then(|| counts(self));
         let held = self.held_mut(shelf);
+        let listed = shelf == Shelf::Streaming
+            && part == LibraryPart::Playlists
+            && held.awaited.contains(&part);
         held.expected.remove(&part);
         if arrived {
             shed(&mut held.state, &mut held.stale, part);
@@ -3976,6 +4003,9 @@ impl Library {
             if shelf == Shelf::Streaming {
                 self.build_mosaics(cx);
             }
+        }
+        if listed && let Some(changed) = self.pending_relist.take() {
+            self.relist(changed, cx);
         }
         cx.notify();
     }

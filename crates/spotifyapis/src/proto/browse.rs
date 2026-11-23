@@ -1,6 +1,11 @@
 //! Browsita landing page messages.
 
-pub(crate) const ENDPOINT: &str = "/browsita/v1/browse";
+use anyhow::Result;
+use reqwest::header::HeaderMap;
+
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/browsita/v1/browse";
 
 #[derive(prost::Message)]
 pub struct Browse {
@@ -86,4 +91,11 @@ pub struct BrowseItem {
     pub entity_uri: String,
     #[prost(string, tag = "2")]
     pub target_uri: String,
+}
+
+impl Session {
+    /// Reads the Browse landing feed.
+    pub async fn browse(&self) -> Result<Browse> {
+        http::get(self, ENDPOINT, HeaderMap::new()).await
+    }
 }

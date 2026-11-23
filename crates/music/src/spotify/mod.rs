@@ -54,9 +54,10 @@ impl SpotifyProvider {
         SpotifyLyrics::with_account(self.account.clone())
     }
 
-    async fn session(&self, client: SpotifyClient) -> Result<ProviderSession> {
+    async fn session(&self, session: session::Session) -> Result<ProviderSession> {
+        let client = SpotifyClient::new(session.clone());
         let profile = client.profile().await?;
-        let playback = Arc::new(Factory::new(client.session().clone()));
+        let playback = Arc::new(Factory::new(session));
         Ok(ProviderSession {
             profile,
             api: Arc::new(client),
@@ -87,7 +88,7 @@ impl MusicProvider for SpotifyProvider {
     }
 
     fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
-        Some(Box::pin(spotifyapis::http::reachable()))
+        Some(Box::pin(spotifyapis::reachable()))
     }
 
     fn public_art(&self) -> bool {
@@ -126,7 +127,7 @@ impl MusicProvider for SpotifyProvider {
         let Some(session) = self.account.session().await? else {
             return Ok(None);
         };
-        self.session(SpotifyClient::new(session)).await.map(Some)
+        self.session(session).await.map(Some)
     }
 
     async fn sign_in(
@@ -136,7 +137,7 @@ impl MusicProvider for SpotifyProvider {
         _input: crate::InputSource,
     ) -> Result<ProviderSession> {
         let session = self.account.login(prompt).await?;
-        self.session(SpotifyClient::new(session)).await
+        self.session(session).await
     }
 
     /// Forgets the account and the Soloist pairing with it, since that pairing is this

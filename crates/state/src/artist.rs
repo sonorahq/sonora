@@ -247,13 +247,27 @@ impl ArtistDetail {
 
         self.filling = true;
         let id = id.to_owned();
+        let (preview, mut batches) = tokio::sync::mpsc::channel(1);
         let request = self.io.spawn({
             let id = id.clone();
             let known = artist.top_tracks.clone();
-            async move { catalog.artist_catalogue(&id, &known).await }
+            async move { catalog.artist_catalogue(&id, &known, preview).await }
         });
         self.filling_request = Some(request.abort_handle());
         self.fill = Some(cx.spawn(async move |this, cx| {
+            while let Some(batch) = batches.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        if this.id.as_deref() == Some(id.as_str()) {
+                            this.absorb(&batch);
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             let filled = join(request).await;
 
             this.update(cx, |this, cx| {

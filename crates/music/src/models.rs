@@ -313,6 +313,14 @@ pub struct GenreSection {
     pub items: Vec<GenreItem>,
 }
 
+/// One completed category from a provider search.
+pub enum SearchPart {
+    Tracks(Vec<Track>),
+    Albums(Vec<Album>),
+    Artists(Vec<SavedArtist>),
+    Playlists(Vec<Playlist>),
+}
+
 /// What one search found for every kind it looks for. Each kind keeps its own outcome, so a
 /// part the provider refused leaves the others standing.
 #[derive(Debug)]

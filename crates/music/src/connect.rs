@@ -90,6 +90,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Whether two snapshots refer to the same current occurrence and queue.
+    pub fn same_queue(&self, other: &Self) -> bool {
+        self.track == other.track
+            && self.previous == other.previous
+            && self.upcoming == other.upcoming
+    }
+
     pub fn tracks(&self) -> impl Iterator<Item = &QueuedTrack> {
         self.track
             .iter()
@@ -149,6 +156,8 @@ pub enum Command {
     Pause,
     Next,
     Previous,
+    /// Plays a local queue occurrence identified by its stable UID.
+    SelectQueue(String),
     Seek(Duration),
     /// From 0 to 1.
     Volume(f32),
@@ -251,6 +260,8 @@ pub enum Event {
     Roster(Roster),
     /// Saved collections or the account's playlist list changed in another client.
     LibraryChanged,
+    /// Playlists were added, removed, or reordered in the account library.
+    PlaylistListChanged,
     /// A playlist's contents or attributes changed in another client.
     PlaylistChanged(String),
     /// One of the account's apps liked a track, or took the like back. `track` is a provider

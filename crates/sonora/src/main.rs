@@ -87,11 +87,11 @@ fn main() -> ExitCode {
 
     let (sender, mut links) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
     let (asked, mut commands) = tokio::sync::mpsc::unbounded_channel::<single::Asked>();
-    match single::claim(&args, sender.clone(), asked) {
-        single::Instance::First => {}
+    let _socket = match single::claim(&args, sender.clone(), asked) {
+        single::Instance::First(socket) => socket,
         single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
-    }
+    };
     // Only the instance that owns the socket may replace Sonora, never a hand-off to one that runs.
     if state::start_staged(!args.is_empty()) {
         return ExitCode::SUCCESS;

@@ -1,6 +1,15 @@
 //! Spotify's color-lyrics v3 protobuf response.
 
-pub(crate) const ENDPOINT: &str = "/color-lyrics/v3/track";
+use anyhow::Result;
+use reqwest::{
+    StatusCode,
+    header::{self, HeaderValue},
+};
+
+use super::{component, linux_headers};
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/color-lyrics/v3/track";
 
 /// The optional lyric sheet returned for a track.
 #[derive(prost::Message)]
@@ -86,4 +95,28 @@ pub struct SyncData {
     pub end_time_ms: i64,
     #[prost(int64, tag = "3")]
     pub num_chars: i64,
+}
+
+impl Session {
+    /// Reads timed lyrics, with an empty answer for tracks Spotify has no lyrics for.
+    pub async fn lyrics(&self, track_id: &str) -> Result<Option<Answer>> {
+        let path = format!("{}/{}", ENDPOINT, component(track_id));
+        let mut headers = linux_headers();
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static(concat!("spotifyapis/", env!("CARGO_PKG_VERSION"))),
+        );
+        match http::get(self, &path, headers).await {
+            Ok(answer) => Ok(Some(answer)),
+            Err(error)
+                if matches!(
+                    http::status(&error),
+                    Some(StatusCode::NOT_FOUND | StatusCode::GONE)
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }

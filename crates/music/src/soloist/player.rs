@@ -612,6 +612,7 @@ impl Brain {
             }
             None => {
                 log::debug!("soloist: starting the track's collection");
+                self.listed.clear();
                 self.send("play", json!({ "uri": context }));
             }
         }
@@ -627,6 +628,7 @@ impl Brain {
         };
         let listed = track.entering
             && track.accepted
+            && self.listed == self.heard.uri
             && track.context.as_deref() == Some(self.heard.context.as_str());
         if !listed {
             return;
@@ -836,6 +838,7 @@ impl Brain {
                     self.learn_length(&item);
                     self.heard.uri = item.uri;
                     self.observe(true);
+                    self.arrive();
                 }
             }
             Event::PositionSync { position } => {
@@ -843,9 +846,8 @@ impl Brain {
                 self.follow_position();
             }
             Event::ContextChanged { context } => {
-                if let Some(context) = context.filter(|context| !context.uri.is_empty()) {
-                    self.heard.context = context.uri;
-                }
+                self.heard.context = context.map_or_else(String::new, |context| context.uri);
+                self.arrive();
             }
             Event::QueueChanged { previous, upcoming } => {
                 let uris = |keep: fn(&wire::Queued) -> bool| {
@@ -921,7 +923,10 @@ impl Brain {
         self.heard.position = Duration::ZERO;
         self.send("get_state", json!({}));
         if entering {
-            self.send("get_queue", json!({ "limit": QUEUE_LIMIT }));
+            self.arrive();
+            if self.track.as_ref().is_some_and(|track| track.entering) {
+                self.send("get_queue", json!({ "limit": QUEUE_LIMIT }));
+            }
         }
     }
 
@@ -948,6 +953,7 @@ impl Brain {
         if placed {
             self.follow_position();
         }
+        self.arrive();
     }
 
     /// Keeps the length the daemon gives for a track, and reports it the first time it is the

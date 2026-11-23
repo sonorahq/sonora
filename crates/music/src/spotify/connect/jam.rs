@@ -72,7 +72,7 @@ impl Worker {
         {
             Ok(Some(read)) => Ok(Some(read_social(read, session.username()))),
             Ok(None) => Err(anyhow::anyhow!("the jam answer cannot be read")),
-            Err(error) if spotifyapis::http::status(&error) == Some(StatusCode::NOT_FOUND) => {
+            Err(error) if spotifyapis::http_status(&error) == Some(StatusCode::NOT_FOUND) => {
                 Ok(None)
             }
             Err(error) => Err(error),
@@ -227,14 +227,14 @@ impl Worker {
         }
     }
 
-    /// Handles Jam notifications, which Dealer can send as JSON even after a protobuf REST call.
+    /// Handles the JSON notifications that Dealer sends for Jam.
     pub(super) fn jam_update(&mut self, message: Message) {
-        let update: anyhow::Result<SessionUpdate> = message.decode();
+        let update: anyhow::Result<SessionUpdate> = message.decode_json();
         let Ok(mut update) = update else {
             return log::warn!("connect: unreadable jam update");
         };
         let ended = matches!(
-            update.reason(),
+            update.reason,
             SessionUpdateReason::SessionDeleted
                 | SessionUpdateReason::YouLeft
                 | SessionUpdateReason::YouWereKicked

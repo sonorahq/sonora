@@ -1,5 +1,6 @@
 //! Shared HTTP clients and protobuf requests.
 
+use std::future::Future;
 use std::io::Read as _;
 use std::time::Duration;
 
@@ -58,13 +59,15 @@ pub(crate) fn regional_url(scheme: &str, address: &str) -> Option<Url> {
     .then_some(url)
 }
 
-/// Posts a protobuf request and decodes the response using the same wire format.
-pub(crate) async fn rpc<T: prost::Message + Default>(
+/// Calls a read-only protobuf RPC, which may be retried on a transient failure.
+pub(crate) async fn read_rpc<T: prost::Message + Default>(
     session: &Session,
     path: &str,
     request: impl prost::Message,
 ) -> Result<T> {
-    let body = post_proto(session, path, PROTOBUF, header::HeaderMap::new(), &request).await?;
+    let body =
+        retry_read(|| post_proto(session, path, PROTOBUF, header::HeaderMap::new(), &request))
+            .await?;
     decode(path, body)
 }
 
@@ -94,8 +97,33 @@ pub(crate) async fn get<T: prost::Message + Default>(
     path: &str,
     headers: header::HeaderMap,
 ) -> Result<T> {
-    let body = send(session, Method::GET, path, headers, Bytes::new()).await?;
+    let body =
+        retry_read(|| send(session, Method::GET, path, headers.clone(), Bytes::new())).await?;
     decode(path, body)
+}
+
+/// Repeats a read once after a transport failure or a transient server error.
+async fn retry_read<T, F: Future<Output = Result<T>>>(mut read: impl FnMut() -> F) -> Result<T> {
+    match read().await {
+        Err(error)
+            if error.downcast_ref::<reqwest::Error>().is_some_and(|error| {
+                match error.status() {
+                    Some(status) => matches!(
+                        status,
+                        StatusCode::REQUEST_TIMEOUT
+                            | StatusCode::INTERNAL_SERVER_ERROR
+                            | StatusCode::BAD_GATEWAY
+                            | StatusCode::SERVICE_UNAVAILABLE
+                            | StatusCode::GATEWAY_TIMEOUT
+                    ),
+                    None => error.is_timeout() || error.is_request() || error.is_body(),
+                }
+            }) =>
+        {
+            read().await
+        }
+        result => result,
+    }
 }
 
 fn decode<T: prost::Message + Default>(path: &str, body: Bytes) -> Result<T> {

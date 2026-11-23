@@ -3,11 +3,10 @@ use std::time::Duration;
 use anyhow::Result;
 
 use super::{auth::sign_in_error, collection, session::Session, wire};
-use crate::{Album, ArtistRef, CoverSize, Found, Playlist, ReleaseType, SavedArtist, Track};
-use spotifyapis::{
-    SearchKind,
-    proto::search::{AlbumType, Entity},
+use crate::{
+    Album, ArtistRef, CoverSize, Found, Playlist, ReleaseType, SavedArtist, SearchPart, Track,
 };
+use spotifyapis::proto::search::{AlbumType, Entity, SearchKind};
 
 const LIMIT: usize = 20;
 
@@ -107,12 +106,27 @@ pub(super) async fn playlists(session: &Session, term: &str) -> Result<Vec<Playl
 }
 
 /// Searches each catalogue type concurrently so each section has its own result limit.
-pub(super) async fn all(session: &Session, term: &str) -> Found {
+pub(super) async fn with_preview(
+    session: &Session,
+    term: &str,
+    preview: &tokio::sync::mpsc::Sender<SearchPart>,
+) -> Found {
+    async fn publish<T: Clone>(
+        work: impl Future<Output = Result<Vec<T>>>,
+        preview: &tokio::sync::mpsc::Sender<SearchPart>,
+        wrap: impl FnOnce(Vec<T>) -> SearchPart,
+    ) -> Result<Vec<T>> {
+        let rows = work.await?;
+        if !preview.is_closed() {
+            let _ = preview.try_send(wrap(rows.clone()));
+        }
+        Ok(rows)
+    }
     let (tracks, albums, artists, playlists) = tokio::join!(
-        tracks(session, term),
-        albums(session, term),
-        artists(session, term),
-        playlists(session, term),
+        publish(Box::pin(tracks(session, term)), preview, SearchPart::Tracks),
+        publish(albums(session, term), preview, SearchPart::Albums),
+        publish(artists(session, term), preview, SearchPart::Artists),
+        publish(playlists(session, term), preview, SearchPart::Playlists),
     );
     Found {
         tracks,

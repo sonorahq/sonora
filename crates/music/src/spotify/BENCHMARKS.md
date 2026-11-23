@@ -8,76 +8,52 @@ Values read upstream → rewrite, with 🟩 for reductions of at least 25% and �
 
 | Metric | Upstream | Rewrite | Change |
 | --- | ---: | ---: | ---: |
-| Release executable | 115.55 MB | 112.03 MB | −3.0% |
-| Desktop download | 39.10 MB | 12.71 MB | −67.5% 🟩 |
-| Desktop upload | 633.7 KB | 233.6 KB | −63.1% 🟩 |
-| Provider HTTP calls | 192 | 76 | −60.4% 🟩 |
-| Provider time | 14.94 s | 6.21 s | −58.4% 🟩 |
-| Provider download | 10,068.3 KiB | 2,734.5 KiB | −72.8% 🟩 |
-| Provider upload | 276.0 KiB | 240.4 KiB | −12.9% |
+| Release executable | 115.55 MB | 112.13 MB | −3.0% |
+| Desktop download | 39.10 MB | 12.88 MB | −67.1% 🟩 |
+| Desktop upload | 633.7 KB | 232.8 KB | −63.3% 🟩 |
+| Provider HTTP calls | 103 | 58 | −43.7% 🟩 |
+| Provider time | 11.01 s | 4.73 s | −57.0% 🟩 |
+| Provider download | 7,634.8 KiB | 1,064.8 KiB | −86.1% 🟩 |
+| Provider upload | 120.6 KiB | 88.6 KiB | −26.5% 🟩 |
 
 ## Desktop browsing
 
-Upstream `4a783900` at 2026-11-23T01:04:43+00:00 → rewrite `726ba368` with local source changes (`b8e97c9a`) at 2026-11-23T11:55:44+00:00
+Upstream `4a783900` at 2026-11-23T01:04:43+00:00 → rewrite `e35cfa91` with local source changes (`808ead4c`) at 2026-11-23T13:34:26+00:00
 
 One 64-second browsing pass per build with a fresh cache, including artwork and background traffic.
 
 | Stage | First change (s) | Settled (s) | Download (KiB) | Upload (KiB) |
 | --- | ---: | ---: | ---: | ---: |
-| Home startup | 1.01 → 0.69 🟩 | 3.22 → 1.67 🟩 | 19,786.3 → 2,372.3 🟩 | 503.8 → 166.7 🟩 |
-| Home scroll | 1.26 → 1.26 | 1.50 → 1.51 | 6,599.0 → 2,391.1 🟩 | 28.1 → 13.0 🟩 |
-| Browse landing | 0.04 → 0.04 | 0.54 → 0.53 | 2,569.9 → 1,526.4 🟩 | 10.8 → 6.8 🟩 |
-| Search typing | 1.59 → 1.59 | — → 2.58 | 1,132.9 → 528.4 🟩 | 11.8 → 9.1 |
-| Search results | 0.04 → 0.04 | 1.52 → 0.79 🟩 | 934.7 → 616.1 🟩 | 12.8 → 7.3 🟩 |
-| Playlist | 0.25 → 0.26 | 0.25 → 0.26 | 250.3 → 213.0 | 8.9 → 6.5 🟩 |
-| Album | 0.25 → 0.26 | 0.25 → 0.26 | 2,068.6 → 643.1 🟩 | 14.3 → 4.8 🟩 |
-| Artist | 0.25 → 0.25 | 0.75 → 0.50 🟩 | 2,025.3 → 1,414.8 🟩 | 16.2 → 7.7 🟩 |
-| Song | 0.25 → 0.25 | 0.25 → 0.25 | 144.9 → 35.5 🟩 | 2.0 → 1.2 🟩 |
-| Profile | 0.24 → 0.27 | 0.49 → 0.52 | 1,506.9 → 1,488.1 | 7.0 → 3.8 🟩 |
-| Library playlists | 0.37 → 0.39 | 0.37 → 0.39 | 1,166.2 → 1,181.5 🟥 | 3.1 → 1.2 🟩 |
+| Home startup | 1.01 → 0.68 🟩 | 3.22 → 1.67 🟩 | 19,786.3 → 2,588.3 🟩 | 503.8 → 170.6 🟩 |
+| Home scroll | 1.26 → 1.26 | 1.50 → 1.50 | 6,599.0 → 2,636.8 🟩 | 28.1 → 9.5 🟩 |
+| Browse landing | 0.04 → 0.04 | 0.54 → 0.79 🟥 | 2,569.9 → 1,526.3 🟩 | 10.8 → 6.3 🟩 |
+| Search typing | 1.59 → 1.59 | — → 2.59 | 1,132.9 → 529.1 🟩 | 11.8 → 9.1 |
+| Search results | 0.04 → 0.04 | 1.52 → 0.78 🟩 | 934.7 → 664.7 🟩 | 12.8 → 7.1 🟩 |
+| Playlist | 0.25 → 0.26 | 0.25 → 0.26 | 250.3 → 212.5 | 8.9 → 6.4 🟩 |
+| Album | 0.25 → 0.25 | 0.25 → 0.25 | 2,068.6 → 642.6 🟩 | 14.3 → 4.9 🟩 |
+| Artist | 0.25 → 0.27 | 0.75 → 0.27 🟩 | 2,025.3 → 1,453.7 🟩 | 16.2 → 7.8 🟩 |
+| Song | 0.25 → 0.27 | 0.25 → 0.27 | 144.9 → 35.6 🟩 | 2.0 → 1.2 🟩 |
+| Profile | 0.24 → 0.26 | 0.49 → 0.75 🟥 | 1,506.9 → 1,488.2 | 7.0 → 3.8 🟩 |
+| Library playlists | 0.37 → 0.39 | 0.37 → 0.39 | 1,166.2 → 803.0 🟩 | 3.1 → 0.7 🟩 |
 
 ## Spotify API
 
-Upstream `4a783900` at 2026-11-23T10:47:39+00:00 → rewrite `726ba368` with local source changes (`b8e97c9a`) at 2026-11-23T11:52:10+00:00
+Upstream `4a783900` at 2026-11-23T10:47:39+00:00 → rewrite `e35cfa91` with local source changes (`f3117294`) at 2026-11-23T13:23:51+00:00
 
-Totals cover the 34 of 34 read-only operations that succeeded on both builds, excluding artwork.
+Totals cover 28 matched reads. Time sums provider calls and excludes rendering.
 
-| Operation | HTTP calls | Time (ms) | Download (KiB) | Upload (KiB) | Items |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Restore sign-in | 1 → 1 | 417 → 164 🟩 | 11.1 → 5.1 🟩 | 1.2 → 0.8 🟩 | 1 → 1 |
-| Own profile | 3 → 2 🟩 | 435 → 213 🟩 | 14.6 → 9.6 🟩 | 3.4 → 1.7 🟩 | 1 → 1 |
-| Home | 5 → 6 🟥 | 1,264 → 423 🟩 | 4,985.2 → 121.0 🟩 | 4.9 → 12.3 🟥 | 113 → 217 |
-| Search (all four types) | 5 → 5 | 967 → 351 🟩 | 405.6 → 14.6 🟩 | 4.7 → 3.5 🟩 | 80 → 80 |
-| Playlist detail | 3 → 2 🟩 | 263 → 124 🟩 | 61.7 → 47.8 | 4.2 → 4.4 🟥 | 60 → 60 |
-| Album detail | 1 → 2 🟥 | 239 → 103 🟩 | 22.2 → 12.2 🟩 | 0.8 → 2.1 🟥 | 18 → 18 |
-| Artist overview | 2 → 2 | 419 → 101 🟩 | 100.8 → 19.9 🟩 | 1.8 → 2.7 🟥 | 33 → 34 |
-| Browse landing | 1 → 2 🟥 | 191 → 571 🟥 | 30.4 → 3.0 🟩 | 0.8 → 2.1 🟥 | 72 → 25 |
-| Browse category (Pop) | 1 → 3 🟥 | 253 → 344 🟥 | 92.0 → 118.6 🟥 | 1.0 → 3.7 🟥 | 90 → 90 |
-| Made For You | 1 → 3 🟥 | 372 → 679 🟥 | 84.1 → 10.2 🟩 | 0.9 → 2.4 🟥 | 62 → 62 |
-| Song metadata and play count | 2 → 1 🟩 | 268 → 38 🟩 | 76.9 → 1.8 🟩 | 1.3 → 0.6 🟩 | 1 → 1 |
-| Artist catalogue | 4 → 1 🟩 | 327 → 58 🟩 | 158.3 → 30.2 🟩 | 10.2 → 3.2 🟩 | 57 → 57 |
-| Artist track list | 6 → 1 🟩 | 1,054 → 149 🟩 | 566.9 → 198.3 🟩 | 28.3 → 24.1 | 186 → 186 |
-| Artist profile | 1 → 1 | 63 → 35 🟩 | 8.8 → 5.6 🟩 | 0.6 → 0.6 | 1 → 1 |
-| Artist images | 1 → 1 | 86 → 45 🟩 | 59.2 → 37.8 🟩 | 0.7 → 0.6 🟩 | 2 → 2 |
-| Related albums and artists | 3 → 2 🟩 | 295 → 168 🟩 | 215.2 → 244.2 🟥 | 12.4 → 2.0 🟩 | 10 → 20 |
-| Album track list | 1 → 2 🟥 | 161 → 98 🟩 | 22.2 → 12.1 🟩 | 0.8 → 2.1 🟥 | 18 → 18 |
-| Playlist track list | 2 → 2 | 149 → 123 | 60.9 → 47.8 | 3.7 → 4.4 🟥 | 60 → 60 |
-| Library playlists | 31 → 2 🟩 | 374 → 177 🟩 | 40.8 → 9.2 🟩 | 14.8 → 1.2 🟩 | 26 → 26 |
-| Playlist cover candidates | 2 → 1 🟩 | 137 → 54 🟩 | 22.3 → 0.7 🟩 | 1.8 → 0.6 🟩 | 4 → 4 |
-| Playlist membership | 2 → 1 🟩 | 142 → 52 🟩 | 60.3 → 1.4 🟩 | 3.7 → 0.6 🟩 | 60 → 60 |
-| Owned playlist summary | 31 → 1 🟩 | 297 → 53 🟩 | 48.2 → 0.6 🟩 | 14.7 → 0.5 🟩 | 1 → 1 |
-| Owned playlist summary revisit | 31 → 1 🟩 | 285 → 50 🟩 | 48.3 → 0.6 🟩 | 14.7 → 0.5 🟩 | 1 → 1 |
-| Saved albums | 10 → 3 🟩 | 627 → 149 🟩 | 125.0 → 54.5 🟩 | 6.8 → 2.4 🟩 | 17 → 17 |
-| Saved artists | 10 → 1 🟩 | 604 → 42 🟩 | 110.2 → 0.1 🟩 | 6.1 → 0.5 🟩 | 0 → 0 |
-| Liked Songs | 14 → 7 🟩 | 2,409 → 477 🟩 | 2,129.0 → 1,559.5 🟩 | 114.8 → 139.3 🟥 | 2,391 → 2,391 |
-| Library pins | 1 → 2 🟥 | 252 → 88 🟩 | 39.3 → 1.5 🟩 | 0.9 → 1.4 🟥 | 28 → 7 |
-| Public user profile | 1 → 1 | 153 → 190 🟥 | 13.2 → 2.7 🟩 | 0.5 → 0.5 🟥 | 46 → 46 |
-| Own public user page | 1 → 1 | 56 → 57 🟥 | 0.6 → 0.3 🟩 | 0.6 → 0.5 | 0 → 0 |
-| Track radio | 3 → 2 🟩 | 462 → 133 🟩 | 50.7 → 35.6 🟩 | 3.8 → 4.0 🟥 | 50 → 50 |
-| Current Jam | 1 → 1 | 49 → 43 | 0.1 → 0.1 | 0.5 → 0.5 | 0 → 0 |
-| Lyrics by Spotify ID | 4 → 3 🟩 | 671 → 147 🟩 | 33.7 → 3.4 🟩 | 4.5 → 0.9 🟩 | 1 → 1 |
-| Lyrics by title and artist | 5 → 4 | 465 → 261 🟩 | 48.6 → 4.8 🟩 | 4.3 → 1.9 🟩 | 3 → 2 |
-| Home revisit | 2 → 6 🟥 | 732 → 450 🟩 | 322.2 → 119.7 🟩 | 1.9 → 12.3 🟥 | 94 → 218 |
+| Workflow | HTTP calls | Time (ms) | Download (KiB) | Upload (KiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Session and profiles | 6 → 5 | 1,061 → 594 🟩 | 39.4 → 17.5 🟩 | 5.6 → 3.5 🟩 |
+| Home and Browse | 10 → 18 🟥 | 2,812 → 1,987 🟩 | 5,513.9 → 382.5 🟩 | 9.5 → 29.9 🟥 |
+| Search | 5 → 5 | 967 → 318 🟩 | 405.6 → 15.0 🟩 | 4.7 → 3.4 🟩 |
+| Playlists and library | 49 → 9 🟩 | 1,772 → 564 🟩 | 334.7 → 60.9 🟩 | 31.5 → 8.6 🟩 |
+| Album and artist pages | 18 → 10 🟩 | 2,483 → 653 🟩 | 1,131.3 → 543.0 🟩 | 54.8 → 35.1 🟩 |
+| Song details and radio | 5 → 3 🟩 | 730 → 167 🟩 | 127.6 → 37.4 🟩 | 5.1 → 4.5 |
+| Lyrics | 9 → 7 | 1,136 → 418 🟩 | 82.2 → 8.2 🟩 | 8.8 → 2.8 🟩 |
+| Current Jam | 1 → 1 | 49 → 33 🟩 | 0.1 → 0.1 🟥 | 0.5 → 0.8 🟥 |
+
+First provider result on the rewrite was 406 ms for Home and 232 ms for Liked Songs.
 
 ## Reproduce
 
@@ -89,5 +65,7 @@ python3 crates/music/src/spotify/benchmark/run.py target/spotify-api-run \
 ```
 
 Choose `--side before`, `after`, or `both` and `--workload api`, `desktop`, or `both`. Point `--before-account` at the folder containing `credentials.json` for upstream and `--after-account` at the folder containing `spotify-oauth.json` for the rewrite. Use the same machine and Spotify account for both builds.
+
+Add `--working-tree` to measure local changes to the rewrite.
 
 Find the report in `results/benchmark.md` under the output directory. Use `--report` to save it somewhere else too. Keep the output directory private.

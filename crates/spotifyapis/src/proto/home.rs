@@ -1,6 +1,12 @@
 //! Casita Home feed messages.
 
-pub(crate) const ENDPOINT: &str = "/casita/v1/home/default";
+use anyhow::Result;
+use reqwest::header::HeaderMap;
+
+use super::component;
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/casita/v1/home/default";
 
 /// A resolved feed with its sections in display order.
 #[derive(prost::Message)]
@@ -232,4 +238,16 @@ pub struct Item {
     pub uri: String,
     // #[prost(string, repeated, tag = "2")]
     // pub highlighted_sub_items: Vec<String>,
+}
+
+impl Session {
+    /// Loads personalized shelves for a timezone.
+    pub async fn home(&self, timezone: &str) -> Result<ResolvedHome> {
+        http::get(
+            self,
+            &format!("{}?timezone={}", ENDPOINT, component(timezone)),
+            HeaderMap::new(),
+        )
+        .await
+    }
 }

@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tokio-util.workspace = true
+shannon.workspace = true
+num-bigint.workspace = true
 anyhow.workspace = true
 percent-encoding.workspace = true
 fastrand.workspace = true
@@ -18,6 +21,7 @@ prost-types.workspace = true
 prost.workspace = true
 reqwest.workspace = true
 ring.workspace = true
+roxmltree.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true

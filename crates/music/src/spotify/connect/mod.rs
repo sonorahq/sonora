@@ -18,28 +18,20 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use bytes::Bytes;
 use http::StatusCode;
 
-use crate::spotify::{auth::sign_in_error, collection as catalog, session::Session, wire};
+use crate::spotify::{auth::sign_in_error, session::Session, wire};
 use futures::future::BoxFuture;
-use prost::Message as _;
 use sha1::{Digest as _, Sha1};
-use spotifyapis::dealer::{
-    self, Command as Wire, Dealer, Message, PayloadValue, PlayCommand, Reply, Request,
-};
-use spotifyapis::proto::collection::UPDATE_TOPIC as COLLECTION_TOPIC;
+use spotifyapis::dealer::{self, Command as Wire, Dealer, Message, PlayCommand, Reply, Request};
+use spotifyapis::proto::collection::{CollectionUpdate, UPDATE_TOPIC as COLLECTION_TOPIC};
 use spotifyapis::proto::connect::{
     CLUSTER_TOPIC, Capabilities, Cluster, ClusterUpdate, ContextIndex, ContextPlayerOptions,
     Device as WireDevice, DeviceInfo, DeviceType, PlayerState, ProvidedTrack, PutStateReason,
     PutStateRequest, SetVolumeCommand, SetVolumeRequest, Suppressions, VOLUME_TOPIC,
 };
 use spotifyapis::proto::connect::{ContextPage, ContextTrack, TransferState};
-use spotifyapis::proto::playlist::{
-    PLAYLIST_TOPIC, PlaylistModificationInfo, RootlistModificationInfo, USER_TOPIC,
-};
+use spotifyapis::proto::playlist::{PLAYLIST_TOPIC, PlaylistModificationInfo, USER_TOPIC};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
@@ -149,6 +141,7 @@ struct ClusterPlayback {
     device: String,
     player: Option<PlayerState>,
     soloist_options: Option<(bool, Repeat)>,
+    soloist_queue: Option<Arc<Snapshot>>,
     queue: Option<TransferQueue>,
 }
 
@@ -240,6 +233,7 @@ impl Worker {
                     }
                 }
             }
+            self.sync_soloist_queue().await;
         }
         self.disconnected();
     }
@@ -407,20 +401,20 @@ impl Worker {
                 self.report_cluster(cluster);
             }
         } else if dealer::topic(uri, VOLUME_TOPIC) {
-            self.volume(message.decode_protobuf()?);
+            self.volume(&message.decode_protobuf()?);
         } else if dealer::topic(uri, COLLECTION_TOPIC) {
-            if let PayloadValue::Raw(bytes) = message.payload {
-                for event in collection_changes(bytes)? {
+            if message.has_protobuf() {
+                for event in collection_changes(message.decode_protobuf()?) {
                     self.out.send(event).ok();
                 }
             }
         } else if self.mode == Mode::Publish && dealer::topic(uri, JAM_TOPIC) {
             self.jam_update(message);
         } else if dealer::topic(uri, PLAYLIST_TOPIC) {
-            let PayloadValue::Raw(bytes) = message.payload else {
+            if !message.has_protobuf() {
                 return Ok(());
-            };
-            let change = PlaylistModificationInfo::decode(bytes)?;
+            }
+            let change: PlaylistModificationInfo = message.decode_protobuf()?;
             let uri = change.uri();
             if let Some(id) = uri.strip_prefix("spotify:playlist:") {
                 self.out.send(Event::PlaylistChanged(id.to_owned())).ok();
@@ -431,30 +425,13 @@ impl Worker {
                 &format!("hm://playlist/v2/user/{}/rootlist", self.session.username()),
             )
         {
-            if let PayloadValue::Raw(bytes) = message.payload
-                && let Ok(notice) = RootlistModificationInfo::decode(bytes.clone())
+            if message
+                .rootlist_revision(self.session.username())
+                .is_some_and(|revision| self.session.has_rootlist_revision(&revision))
             {
-                let revision = if notice.new_revision.starts_with(b"spotify:") {
-                    // Some notifications put the root-list URI before the revision.
-                    PlaylistModificationInfo::decode(bytes)
-                        .ok()
-                        .and_then(|update| {
-                            let root = format!("spotify:user:{}:rootlist", self.session.username());
-                            (update.uri() == root)
-                                .then_some(update.new_revision)
-                                .flatten()
-                        })
-                } else {
-                    Some(notice.new_revision)
-                };
-                if revision
-                    .as_deref()
-                    .is_some_and(|revision| self.session.has_rootlist_revision(revision))
-                {
-                    return Ok(());
-                }
+                return Ok(());
             }
-            self.out.send(Event::LibraryChanged).ok();
+            self.out.send(Event::PlaylistListChanged).ok();
         }
         Ok(())
     }
@@ -668,7 +645,7 @@ impl Worker {
                 Some(cluster)
             }
             Err(error)
-                if spotifyapis::http::status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) =>
+                if spotifyapis::http_status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) =>
             {
                 self.backoff = (self.backoff * 2).clamp(BACKOFF_FIRST, BACKOFF_LAST);
                 let until = Instant::now() + self.backoff;
@@ -827,7 +804,9 @@ impl Worker {
             self.playback.soloist_options = None;
         }
         self.playback.device = cluster.active_device_id;
-        self.playback.player = cluster.player_state.filter(|_| roster.elsewhere.is_some());
+        self.playback.player = cluster
+            .player_state
+            .filter(|_| owns_soloist || roster.elsewhere.is_some());
         if let Some(remote) = &roster.elsewhere
             && self.playback.player.is_some()
         {
@@ -837,6 +816,69 @@ impl Worker {
             });
         }
         self.out.send(Event::Roster(roster)).ok();
+    }
+
+    /// Sends Sonora's queue to the active Soloist without publishing another device's state.
+    async fn sync_soloist_queue(&mut self) {
+        let device = &self.playback.device;
+        if self.mode != Mode::Observe
+            || self.soloist_device.as_ref() != Some(device)
+            || !self.session.soloist_playback().load(Ordering::Relaxed)
+        {
+            self.playback.soloist_queue = None;
+            return;
+        }
+        let (Some(now), Some(player)) = (&self.now, &self.playback.player) else {
+            return;
+        };
+        if player.track.as_ref().and_then(provided_id)
+            != now.track.as_ref().map(|track| track.id.as_str())
+            || now.track.is_none()
+            || self
+                .playback
+                .soloist_queue
+                .as_ref()
+                .is_some_and(|sent| now.same_queue(sent))
+        {
+            return;
+        }
+        let matches = |local: &[QueuedTrack], remote: &[ProvidedTrack]| {
+            local
+                .iter()
+                .map(|track| (track.id.as_str(), track.queued))
+                .eq(remote
+                    .iter()
+                    .filter_map(|track| Some((provided_id(track)?, is_queued(track)))))
+        };
+        if matches(&now.previous, &player.prev_tracks)
+            && matches(&now.upcoming, &player.next_tracks)
+        {
+            return;
+        }
+        let entries = |tracks: &[QueuedTrack]| {
+            tracks
+                .iter()
+                .map(|track| {
+                    let entry = provided(track, &player.context_uri, track.uid.clone());
+                    serde_json::json!({
+                        "uri": entry.uri,
+                        "uid": entry.uid,
+                        "provider": entry.provider,
+                        "metadata": entry.metadata,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let command = serde_json::json!({
+            "endpoint": "set_queue",
+            "prev_tracks": entries(&now.previous),
+            "next_tracks": entries(&now.upcoming),
+            "queue_revision": player.queue_revision,
+        });
+        self.playback.soloist_queue = Some(now.clone());
+        if let Err(error) = player_command(&self.session, device, command).await {
+            log::warn!("connect: cannot sync the Soloist queue: {error}");
+        }
     }
 
     /// Imports changes after Soloist takes playback without replacing Sonora's starting options.
@@ -865,7 +907,7 @@ impl Worker {
         }
     }
 
-    /// Sends a targeted skip using the occurrence and metadata from the current device's queue.
+    /// Jumps to an occurrence in the current device's queue with one player command.
     async fn jump(&mut self, device: &str, track: &QueuedTrack, forward: bool) {
         let Some(player) = self
             .playback
@@ -892,10 +934,14 @@ impl Worker {
             return;
         }
         let target = &entries[index];
-        let command = serde_json::json!({
-            "endpoint": if forward { "skip_next" } else { "skip_prev" },
-            "track": { "uri": target.uri, "uid": target.uid, "metadata": target.metadata },
-        });
+        let command = if forward {
+            serde_json::json!({
+                "endpoint": "skip_next",
+                "track": { "uri": target.uri, "uid": target.uid, "metadata": target.metadata },
+            })
+        } else {
+            history_play_command(player, target)
+        };
         if let Err(error) = player_command(&self.session, device, command).await {
             log::warn!("connect: cannot jump in the remote queue: {error}");
         }
@@ -1016,7 +1062,7 @@ impl Worker {
         }
     }
 
-    fn volume(&mut self, command: SetVolumeCommand) {
+    fn volume(&self, command: &SetVolumeCommand) {
         let level = command.volume.clamp(0, u16::MAX as i32) as f32 / u16::MAX as f32;
         self.out.send(Event::Command(Command::Volume(level))).ok();
     }
@@ -1078,20 +1124,42 @@ impl Worker {
         });
     }
 
+    /// Maps Spotify's published occurrence back to Sonora's local queue identity.
+    fn select_queue(&self, target: &ProvidedTrack, forward: bool) -> Option<Command> {
+        let now = self.now.as_ref()?;
+        let state = self.player_state(unix_millis());
+        let (listed, local) = if forward {
+            (&state.next_tracks, &now.upcoming)
+        } else {
+            (&state.prev_tracks, &now.previous)
+        };
+        let target = Occurrence::from_wire(target);
+        let index = target.resolve(listed.iter().map(Occurrence::from_wire), None, true)?;
+        if target
+            .resolve(state.track.iter().map(Occurrence::from_wire), None, true)
+            .is_some()
+        {
+            return None;
+        }
+        let uid = &local.get(index)?.uid;
+        (!uid.is_empty()).then(|| Command::SelectQueue(uid.clone()))
+    }
+
     /// What a command from Spotify asks of the app, or `None` for one this device does not
     /// know.
     fn translate(&mut self, command: Wire) -> Option<Vec<Command>> {
         Some(match command {
             Wire::Transfer { data } => {
-                let data = STANDARD.decode(data).ok()?;
-                let state = TransferState::decode(Bytes::from(data)).ok()?;
+                let state = TransferState::from_command_data(&data).ok()?;
                 vec![Command::Start(self.transferred(state))]
             }
             Wire::Play(_) | Wire::Unknown => return None,
             Wire::Pause => vec![Command::Pause],
             Wire::Resume => vec![Command::Play],
-            Wire::SkipNext => vec![Command::Next],
-            Wire::SkipPrev => vec![Command::Previous],
+            Wire::SkipNext { track: Some(track) } => vec![self.select_queue(&track, true)?],
+            Wire::SkipPrev { track: Some(track) } => vec![self.select_queue(&track, false)?],
+            Wire::SkipNext { track: None } => vec![Command::Next],
+            Wire::SkipPrev { track: None } => vec![Command::Previous],
             Wire::SeekTo { value } => vec![Command::Seek(Duration::from_millis(value))],
             Wire::SetShufflingContext { value } => vec![Command::Shuffle(value)],
             Wire::SetRepeatingContext { value } => {
@@ -1135,7 +1203,7 @@ impl Worker {
                 // The history an edit carries is left alone: a phone sends its own or none at
                 // all, and no app can edit it, so taking it would only wipe what played here.
                 if let Some(now) = self.now.as_mut() {
-                    Arc::make_mut(now).upcoming = upcoming.clone();
+                    Arc::make_mut(now).upcoming.clone_from(&upcoming);
                 }
                 vec![Command::SetQueue { upcoming }]
             }
@@ -1368,17 +1436,66 @@ fn play_command(start: &Start, username: &str) -> Option<serde_json::Value> {
         Some(collection) => collection_uri(collection, username),
         None => track.clone()?,
     };
-    Some(serde_json::json!({
-        "endpoint": "play",
-        "context": { "uri": context, "url": format!("context://{context}"), "metadata": {} },
-        "play_origin": { "feature_identifier": "sonora", "feature_version": SEMVER },
-        "options": {
+    Some(context_play(
+        &context,
+        &format!("context://{context}"),
+        serde_json::json!({
             "skip_to": track.map(|uri| serde_json::json!({ "track_uri": uri })),
             "seek_to": start.position.as_millis() as u64,
             "initially_paused": !start.playing,
-        },
+        }),
+    ))
+}
+
+/// Starts a history entry explicitly because Previous can restart the current song.
+fn history_play_command(player: &PlayerState, target: &ProvidedTrack) -> serde_json::Value {
+    let context = if is_queued(target) {
+        None
+    } else {
+        target
+            .metadata
+            .get("context_uri")
+            .map(String::as_str)
+            .filter(|uri| !uri.is_empty() && *uri != UNKNOWN_CONTEXT)
+            .or_else(|| {
+                let uri = player.context_uri.as_str();
+                (!uri.is_empty() && uri != UNKNOWN_CONTEXT && !uri.starts_with(TRACK_PREFIX))
+                    .then_some(uri)
+            })
+    };
+    let skip_to = match context {
+        Some(_) if !target.uid.is_empty() => {
+            serde_json::json!({ "track_uri": target.uri, "track_uid": target.uid })
+        }
+        _ => serde_json::json!({ "track_uri": target.uri }),
+    };
+    let context = context.unwrap_or(&target.uri);
+    let url = if context == player.context_uri && !player.context_url.is_empty() {
+        player.context_url.clone()
+    } else {
+        format!("context://{context}")
+    };
+    let mut options = serde_json::json!({
+        "skip_to": skip_to, "seek_to": 0, "initially_paused": false,
+    });
+    if let Some(current) = &player.options {
+        options["player_options_override"] = serde_json::json!({
+            "shuffling_context": current.shuffling_context,
+            "repeating_context": current.repeating_context,
+            "repeating_track": current.repeating_track,
+        });
+    }
+    context_play(context, &url, options)
+}
+
+fn context_play(uri: &str, url: &str, options: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "endpoint": "play",
+        "context": { "uri": uri, "url": url, "metadata": {} },
+        "play_origin": { "feature_identifier": "sonora", "feature_version": SEMVER },
+        "options": options,
         "logging_params": {},
-    }))
+    })
 }
 
 /// The repeat mode a player state's two flags name, when it says either.
@@ -1693,7 +1810,7 @@ fn context_id(track: &ContextTrack) -> Option<CatalogueId<'_>> {
         return Some(CatalogueId::Borrowed(id));
     }
     let gid = track.gid.as_ref()?;
-    catalog::base62_bytes(gid).map(CatalogueId::Encoded)
+    spotifyapis::id::base62_bytes(gid).map(CatalogueId::Encoded)
 }
 
 /// Retains Spotify's occurrence UID when reconstructing a local queue from context rows.
@@ -1877,18 +1994,14 @@ fn millis(time: SystemTime) -> u64 {
 }
 
 /// Track deltas and invalidations for other saved collections reported by Dealer.
-fn collection_changes(bytes: Bytes) -> Result<impl Iterator<Item = Event>, prost::DecodeError> {
-    use spotifyapis::proto::collection::CollectionUpdate;
-    Ok(CollectionUpdate::decode(bytes)?
-        .items
-        .into_iter()
-        .filter_map(|item| match item.kind {
-            0 => catalog::base62(item.gid.as_ref()?).map(|id| Event::Liked {
-                track: id,
-                liked: !item.removed,
-            }),
-            _ => Some(Event::LibraryChanged),
-        }))
+fn collection_changes(update: CollectionUpdate) -> impl Iterator<Item = Event> {
+    update.items.into_iter().filter_map(|item| match item.kind {
+        0 => spotifyapis::id::base62(item.gid.as_ref()?).map(|id| Event::Liked {
+            track: id,
+            liked: !item.removed,
+        }),
+        _ => Some(Event::LibraryChanged),
+    })
 }
 
 #[cfg(test)]
@@ -1896,36 +2009,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn context_occurrences_in_partial_and_complete_pages() {
-        let track = |id: &str, uid: &str| ContextTrack {
-            uri: Some(format!("spotify:track:{id}")),
-            uid: Some(uid.to_owned()),
+    fn remote_queue_resolves_an_occurrence_before_the_last_page() {
+        let tracks = [("a", "first"), ("a", "second"), ("b", "last")]
+            .map(|(id, uid)| ContextTrack {
+                uri: Some(format!("spotify:track:{id}")),
+                uid: Some(uid.into()),
+                ..Default::default()
+            })
+            .into();
+        let mut rows = sequence::Resolved::from_pages(vec![ContextPage {
+            tracks,
+            next_page_url: Some("next".into()),
             ..Default::default()
-        };
-        let pages = vec![ContextPage {
-            tracks: vec![
-                track("a", "first"),
-                track("a", "second"),
-                track("b", "last"),
-            ],
-            next_page_url: Some("next".to_owned()),
-            ..Default::default()
-        }];
-        let id = |id| Occurrence {
+        }]);
+        let track = |id| Occurrence {
             id: Some(CatalogueId::Borrowed(id)),
             uid: None,
         };
-        let mut rows = sequence::Resolved::from_pages(pages);
-        assert_eq!(rows.position(id("a"), None), None);
-        assert_eq!(rows.position(id("a"), Some(1)), Some(1));
         let index = rows.position(Occurrence::from_context(&rows.tracks[1]), None);
         assert_eq!(index, Some(1));
         assert_eq!(
-            rows.following(index).map(|t| t.uid).collect::<Vec<_>>(),
-            ["last"]
+            rows.following(index).map(|track| track.uid).next(),
+            Some("last".into())
         );
-        assert_eq!(rows.position(id("b"), None), None);
+        assert_eq!(rows.position(track("a"), None), None);
+        assert_eq!(rows.position(track("b"), None), None);
         rows.complete = true;
-        assert_eq!(rows.position(id("b"), None), Some(2));
+        assert_eq!(rows.position(track("b"), None), Some(2));
     }
 }

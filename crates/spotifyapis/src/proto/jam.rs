@@ -1,15 +1,20 @@
 //! Social Connect session messages and Dealer updates.
 
+use anyhow::Result;
+use bytes::Bytes;
+use prost::Message as _;
+use reqwest::Method;
 use serde::{Deserialize, Deserializer};
 
-use super::null_default;
+use super::{component, dealer_headers, null_default};
+use crate::{Session, http};
 
 pub const JAM_TOPIC: &str = "social-connect/v2/session_update";
-pub(crate) const JAM_JOIN: &str = "/social-connect/v2/sessions/join";
-pub(crate) const JAM_CURRENT: &str = "/social-connect/v2/sessions/current";
-pub(crate) const JAM_START: &str = "/social-connect/v2/sessions/current_or_new";
-pub(crate) const JAM_INFO: &str = "/social-connect/v2/sessions/info";
-pub(crate) const JAM_ACTIONS: &str = "/social-connect/v3/sessions";
+const JAM_JOIN: &str = "/social-connect/v2/sessions/join";
+const JAM_CURRENT: &str = "/social-connect/v2/sessions/current";
+const JAM_START: &str = "/social-connect/v2/sessions/current_or_new";
+const JAM_INFO: &str = "/social-connect/v2/sessions/info";
+const JAM_ACTIONS: &str = "/social-connect/v3/sessions";
 
 #[derive(prost::Message, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -93,17 +98,17 @@ pub struct SessionMember {
     pub is_current_user: bool,
 }
 
-#[derive(prost::Message, Deserialize)]
+/// Dealer's JSON notification for a change to a Jam.
+#[derive(Default, Deserialize)]
 #[serde(default)]
 pub struct SessionUpdate {
-    #[prost(message, optional, tag = "1")]
+    // #[prost(message, optional, tag = "1")]
     pub session: Option<SocialSession>,
-    #[prost(enumeration = "SessionUpdateReason", tag = "2")]
+    // #[prost(enumeration = "SessionUpdateReason", tag = "2")]
     #[serde(deserialize_with = "update_reason")]
-    pub reason: i32,
-    #[prost(message, repeated, tag = "3")]
-    #[serde(skip)]
-    pub updated_session_members: Vec<SessionMember>,
+    pub reason: SessionUpdateReason,
+    // #[prost(message, repeated, tag = "3")]
+    // pub updated_session_members: Vec<SessionMember>,
 }
 
 #[derive(Debug, prost::Enumeration, Deserialize)]
@@ -122,7 +127,7 @@ pub enum SessionUpdateReason {
     UserKicked = 10,
 }
 
-fn update_reason<'de, D: Deserializer<'de>>(input: D) -> Result<i32, D::Error> {
+fn update_reason<'de, D: Deserializer<'de>>(input: D) -> Result<SessionUpdateReason, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Reason {
@@ -131,8 +136,142 @@ fn update_reason<'de, D: Deserializer<'de>>(input: D) -> Result<i32, D::Error> {
         Other(serde::de::IgnoredAny),
     }
     Ok(match Option::deserialize(input)? {
-        Some(Reason::Number(value)) => value,
-        Some(Reason::Name(value)) => value as i32,
-        _ => 0,
+        Some(Reason::Number(value)) => SessionUpdateReason::try_from(value).unwrap_or_default(),
+        Some(Reason::Name(value)) => value,
+        _ => SessionUpdateReason::Unknown,
     })
+}
+
+impl Session {
+    /// Reads the current Jam.
+    pub async fn current_jam(&self, connection: &str) -> Result<Option<SocialSession>> {
+        self.read_jam(Method::GET, JAM_CURRENT, connection).await
+    }
+
+    /// Looks up an invite without joining.
+    pub async fn jam_invite(&self, token: &str, connection: &str) -> Result<Option<SocialSession>> {
+        self.read_jam(
+            Method::GET,
+            &format!("{}/{}", JAM_INFO, component(token)),
+            connection,
+        )
+        .await
+    }
+
+    /// Starts or resumes a Jam.
+    pub async fn start_jam(&self, device: &str, connection: &str) -> Result<Option<SocialSession>> {
+        let path = format!(
+            "{}?activate=true&local_device_id={}&type=REMOTE",
+            JAM_START,
+            component(device)
+        );
+        self.read_jam(Method::GET, &path, connection).await
+    }
+
+    /// Joins the named Jam as a remote participant.
+    pub async fn join_jam(
+        &self,
+        token: &str,
+        device: &str,
+        connection: &str,
+    ) -> Result<Option<SocialSession>> {
+        let path = format!(
+            "{}/{}?playback_control=listen_and_control&join_type=deeplinking&local_device_id={}",
+            JAM_JOIN,
+            component(token),
+            component(device)
+        );
+        self.read_jam(Method::POST, &path, connection).await
+    }
+
+    /// Ends a hosted Jam or leaves it as a guest.
+    pub async fn leave_jam(
+        &self,
+        id: &str,
+        owner: bool,
+        device: &str,
+        connection: &str,
+    ) -> Result<()> {
+        let (method, suffix) = if owner {
+            (Method::DELETE, "")
+        } else {
+            (Method::POST, "/leave")
+        };
+        let path = format!(
+            "{}/{}{suffix}?local_device_id={}",
+            JAM_ACTIONS,
+            component(id),
+            component(device)
+        );
+        self.jam_request(method, &path, connection).await?;
+        Ok(())
+    }
+
+    /// Removes a participant from a hosted Jam.
+    pub async fn kick_jam_member(
+        &self,
+        id: &str,
+        member: &str,
+        device: &str,
+        connection: &str,
+    ) -> Result<()> {
+        let path = format!(
+            "{}/{}/member/{}/kick?local_device_id={}",
+            JAM_ACTIONS,
+            component(id),
+            component(member),
+            component(device)
+        );
+        self.jam_request(Method::POST, &path, connection).await?;
+        Ok(())
+    }
+
+    async fn read_jam(
+        &self,
+        method: Method,
+        path: &str,
+        connection: &str,
+    ) -> Result<Option<SocialSession>> {
+        let body = self.jam_request(method, path, connection).await?;
+        let session = SocialSession::decode(body)?;
+        Ok((!session.session_id.is_empty()).then_some(session))
+    }
+
+    async fn jam_request(&self, method: Method, path: &str, connection: &str) -> Result<Bytes> {
+        let separator = if path.contains('?') { '&' } else { '?' };
+        let mut headers = dealer_headers(connection)?;
+        headers.extend(http::proto_headers(http::PROTOBUF));
+        if let Some(id) = headers.get("x-spotify-connection-id").cloned() {
+            headers.insert("spotify-connection-id", id);
+        }
+        http::send(
+            self,
+            method,
+            &format!("{path}{separator}alt=protobuf"),
+            headers,
+            Bytes::new(),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dealer_jam_reasons_accept_observed_json_forms() {
+        for (input, expected) in [
+            (
+                r#"{"reason":"SESSION_DELETED","session":null}"#,
+                SessionUpdateReason::SessionDeleted,
+            ),
+            (r#"{"reason":6}"#, SessionUpdateReason::YouWereKicked),
+            (r#"{"reason":"FUTURE_VALUE"}"#, SessionUpdateReason::Unknown),
+        ] {
+            let update: SessionUpdate = serde_json::from_str(input).unwrap();
+            assert_eq!(update.reason as i32, expected as i32);
+            assert!(update.session.is_none());
+        }
+    }
 }

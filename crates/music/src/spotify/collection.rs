@@ -5,12 +5,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use bytes::Bytes;
-use prost::Message;
+use futures::{StreamExt as _, stream};
+use spotifyapis::id::{base62, raw_id};
 use spotifyapis::proto::metadata::ImageSize;
 use spotifyapis::proto::metadata::{
     Album as AlbumMessage, Artist as ArtistMessage, Track as TrackMessage,
 };
+use spotifyapis::proto::metadata::{MetadataMessage, MetadataPayload};
 use tokio::sync::mpsc;
 
 use super::albums::{ALBUM_PREFIX, hydrate_saved_albums};
@@ -25,7 +26,7 @@ use spotifyapis::proto::metadata::{
 };
 
 const LIKED_TRACKS: &str = "spotify:collection:tracks";
-const TRACK_PREFIX: &str = "spotify:track:";
+pub(super) const TRACK_PREFIX: &str = "spotify:track:";
 const UNKNOWN: &str = "Unknown";
 pub(super) const BATCH: usize = 500;
 pub(super) const TRACK_DETAILS: &[ExtensionKind] = &[
@@ -57,14 +58,9 @@ pub(super) type MetadataKey = (ExtensionKind, String);
 /// A protobuf payload and the time through which Spotify says it can be reused.
 #[derive(Clone)]
 struct CachedEntity {
-    value: Bytes,
+    value: MetadataPayload,
     etag: String,
     fresh_until: Instant,
-}
-
-pub async fn saved_tracks(session: &Session) -> Result<Vec<Track>> {
-    let items = saved_items(session, COLLECTION, TRACK_PREFIX).await?;
-    hydrate_saved_tracks(session, items).await
 }
 
 /// Reads the mixed collection once, then hydrates each list independently.
@@ -86,15 +82,18 @@ pub(super) fn saved_collection(session: Session) -> SavedCollectionPages {
         };
         let mut tracks = Vec::new();
         let mut albums = Vec::new();
-        for item in items {
-            if item.uri.starts_with(TRACK_PREFIX) {
-                tracks.push(item);
-            } else if item.uri.starts_with(ALBUM_PREFIX) {
-                albums.push(item);
+        {
+            let mut seen = HashSet::new();
+            for item in items {
+                if item.uri.starts_with(TRACK_PREFIX) && seen.insert(item.uri.clone()) {
+                    tracks.push(item);
+                } else if item.uri.starts_with(ALBUM_PREFIX) {
+                    albums.push(item);
+                }
             }
         }
         tokio::join!(
-            send_saved_page(tracks_out, hydrate_saved_tracks(&session, tracks)),
+            send_saved_tracks(&session, tracks_out, &tracks),
             send_saved_page(albums_out, hydrate_saved_albums(&session, albums)),
         );
     });
@@ -115,26 +114,51 @@ async fn send_saved_page<T>(
     }
 }
 
+/// Streams hydrated tracks in collection order with two catalogue reads in flight.
+async fn send_saved_tracks(
+    session: &Session,
+    out: mpsc::Sender<Result<Page<Track>>>,
+    tracks: &[CollectionItem],
+) {
+    let requests: Vec<_> = tracks
+        .chunks(BATCH)
+        .map(|batch| hydrate_saved_tracks(session, batch))
+        .collect();
+    let batches = stream::iter(requests).buffered(2);
+    tokio::pin!(batches);
+    loop {
+        let next = tokio::select! {
+            () = out.closed() => return,
+            next = batches.next() => next,
+        };
+        let Some(result) = next else { return };
+        let failed = result.is_err();
+        if out
+            .send(result.map(|items| Page { total: None, items }))
+            .await
+            .is_err()
+            || failed
+        {
+            return;
+        }
+    }
+}
+
 /// Hydrates saved tracks in collection order and applies their saved dates.
-async fn hydrate_saved_tracks(session: &Session, items: Vec<CollectionItem>) -> Result<Vec<Track>> {
+pub(super) async fn hydrate_saved_tracks(
+    session: &Session,
+    items: &[CollectionItem],
+) -> Result<Vec<Track>> {
     let uris: Vec<_> = items.iter().map(|item| item.uri.clone()).collect();
     let mut known = metadata(session, &uris).await?;
     Ok(items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
             let mut track = known.remove(&item.uri)?;
             track.added_at = item.added_at.map(i64::from);
             Some(track)
         })
         .collect())
-}
-
-pub async fn track(session: &Session, track_id: &str) -> Result<Track> {
-    let uri = format!("{TRACK_PREFIX}{track_id}");
-    metadata(session, std::slice::from_ref(&uri))
-        .await?
-        .remove(&uri)
-        .context("track metadata is missing")
 }
 
 pub(crate) async fn metadata(session: &Session, uris: &[String]) -> Result<HashMap<String, Track>> {
@@ -159,7 +183,10 @@ pub(super) async fn track_covers(
 }
 
 /// Projects a track with any descriptors and play count returned in its batch.
-pub(super) fn take_track(data: &mut HashMap<MetadataKey, Bytes>, uri: &str) -> Option<Track> {
+pub(super) fn take_track(
+    data: &mut HashMap<MetadataKey, MetadataPayload>,
+    uri: &str,
+) -> Option<Track> {
     let mut track = track_from(uri, &take(data, ExtensionKind::TrackV4, uri)?);
     if let Some(descriptors) = take::<TrackDescriptors>(data, ExtensionKind::TrackDescriptor, uri) {
         for descriptor in descriptors.descriptors {
@@ -186,7 +213,7 @@ pub(super) fn take_track(data: &mut HashMap<MetadataKey, Bytes>, uri: &str) -> O
 }
 
 /// Projects single-extension batches in URI order without retaining raw responses.
-pub(super) async fn project<M: Message + Default, T>(
+pub(super) async fn project<M: MetadataMessage, T>(
     session: &Session,
     uris: &[String],
     kind: ExtensionKind,
@@ -208,7 +235,7 @@ async fn project_batch<T>(
     uris: &[String],
     kinds: &[ExtensionKind],
     batch: usize,
-    mut map: impl FnMut(&mut HashMap<MetadataKey, Bytes>, &str) -> Option<T>,
+    mut map: impl FnMut(&mut HashMap<MetadataKey, MetadataPayload>, &str) -> Option<T>,
 ) -> Result<HashMap<String, T>> {
     let mut seen = HashSet::new();
     let requests: Vec<_> = uris
@@ -253,7 +280,7 @@ pub(super) async fn ordered_tracks(
 pub(super) async fn extended_batch(
     session: &Session,
     requests: &[(&str, &[ExtensionKind])],
-) -> Result<HashMap<MetadataKey, Bytes>> {
+) -> Result<HashMap<MetadataKey, MetadataPayload>> {
     let mut known = HashMap::new();
     for pair in requests.chunks(2 * BATCH) {
         let (first, second) = pair.split_at(pair.len().min(BATCH));
@@ -267,12 +294,12 @@ pub(super) async fn extended_batch(
 }
 
 /// Decodes one requested extension from a mixed metadata batch.
-pub(super) fn take<T: Message + Default>(
-    data: &mut HashMap<MetadataKey, Bytes>,
+pub(super) fn take<T: MetadataMessage>(
+    data: &mut HashMap<MetadataKey, MetadataPayload>,
     kind: ExtensionKind,
     uri: &str,
 ) -> Option<T> {
-    T::decode(data.remove(&(kind, uri.to_owned()))?).ok()
+    data.remove(&(kind, uri.to_owned()))?.decode().ok()
 }
 
 impl Cache {
@@ -281,7 +308,7 @@ impl Cache {
         &self,
         session: &Session,
         requests: &[(&str, &[ExtensionKind])],
-    ) -> Result<HashMap<MetadataKey, Bytes>> {
+    ) -> Result<HashMap<MetadataKey, MetadataPayload>> {
         if requests.is_empty() {
             return Ok(HashMap::new());
         }
@@ -339,7 +366,8 @@ impl Cache {
                     let Some(stale) = pending.remove(&key) else {
                         continue;
                     };
-                    let header = data.header.get_or_insert_default();
+                    let payload = data.take_payload();
+                    let mut header = data.header.unwrap_or_default();
                     let value = if header.status_code == 304 {
                         let Some(CachedEntity { value, etag, .. }) = stale else {
                             continue;
@@ -348,8 +376,8 @@ impl Cache {
                             header.etag = etag;
                         }
                         value
-                    } else if let Some(payload) = data.extension_data {
-                        payload.value
+                    } else if let Some(payload) = payload {
+                        payload
                     } else {
                         cache.remove(&key);
                         continue;
@@ -357,7 +385,7 @@ impl Cache {
                     let ttl = Duration::from_secs(header.cache_ttl_in_seconds.max(0) as u64)
                         .min(MAX_METADATA_AGE);
                     if (!ttl.is_zero() || !header.etag.is_empty())
-                        && value.len() <= CACHE_VALUE_BYTES
+                        && value.as_bytes().len() <= CACHE_VALUE_BYTES
                     {
                         if cache.len() == CACHE_ENTRIES
                             && !cache.contains_key(&key)
@@ -479,39 +507,6 @@ pub(crate) fn artists_from(artists: &[ArtistMessage]) -> (String, Vec<ArtistRef>
         false => wire::join_names(refs.iter().map(|artist| artist.name.as_str())),
     };
     (names, refs)
-}
-
-pub(crate) fn base62(gid: &[u8]) -> Option<String> {
-    String::from_utf8(base62_bytes(gid)?.to_vec()).ok()
-}
-
-/// Encodes a 16-byte catalogue ID for callers that only need to compare its text.
-pub(super) fn base62_bytes(gid: &[u8]) -> Option<[u8; 22]> {
-    const DIGITS: &[u8; 62] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let mut value = u128::from_be_bytes(gid.try_into().ok()?);
-    let mut encoded = [b'0'; 22];
-    for digit in encoded.iter_mut().rev() {
-        *digit = DIGITS[(value % 62) as usize];
-        value /= 62;
-    }
-    Some(encoded)
-}
-
-/// Decodes the 22-character Spotify ID into the 16 bytes used by the access point.
-pub(super) fn raw_id(id: &str) -> Option<[u8; 16]> {
-    if id.len() != 22 {
-        return None;
-    }
-    let value = id.bytes().try_fold(0_u128, |value, byte| {
-        let digit = match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'z' => byte - b'a' + 10,
-            b'A'..=b'Z' => byte - b'A' + 36,
-            _ => return None,
-        };
-        value.checked_mul(62)?.checked_add(u128::from(digit))
-    })?;
-    Some(value.to_be_bytes())
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
@@ -679,30 +674,4 @@ pub(super) async fn pins(session: &Session) -> Result<Vec<PinTarget>> {
             }
         })
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decodes_collection_items_and_preserves_absent_timestamps() {
-        // Two nested items, followed by a continuation token.
-        let page = spotifyapis::proto::collection::PageResponse::decode(
-            &b"\x0a\x06\x0a\x01a\x10\xac\x02\x0a\x05\x0a\x01b\x18\x01\x12\x04next"[..],
-        )
-        .unwrap();
-        assert_eq!(page.next, "next");
-        let [saved, removed] = page.items.as_slice() else {
-            panic!("expected two items")
-        };
-        assert_eq!(
-            (saved.uri.as_str(), saved.added_at, saved.is_removed),
-            ("a", Some(300), false)
-        );
-        assert_eq!(
-            (removed.uri.as_str(), removed.added_at, removed.is_removed),
-            ("b", None, true)
-        );
-    }
 }

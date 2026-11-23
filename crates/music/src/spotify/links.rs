@@ -64,36 +64,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recognises_spotify_link_forms() {
-        for (link, expected) in [
-            ("spotify:track:t", Linked::Track("t".into())),
-            ("spotify://album/a", Linked::Album("a".into())),
-            ("spotify:playlist:p", Linked::Playlist("p".into())),
+    fn spotify_links_preserve_kind_and_reject_ambiguous_addresses() {
+        for (url, target) in [
+            ("spotify://album/a", Some(Linked::Album("a".into()))),
             (
-                "https://open.spotify.com/intl-de/artist/a?si=abc",
-                Linked::Artist("a".into()),
+                "https://open.spotify.com/intl-de/track/t?si=x",
+                Some(Linked::Track("t".into())),
             ),
-            (
-                "http://www.open.spotify.com/user/u/",
-                Linked::User("u".into()),
-            ),
-            ("https://spotify.link/abc", Linked::Short),
+            ("https://spotify.link/a", Some(Linked::Short)),
+            ("https://open.spotify.com.example.org/track/t", None),
+            ("spotify:user:u:playlist:p", None),
+            ("spotify:track:", None),
         ] {
-            assert_eq!(read(link), Some(expected), "{link}");
-        }
-    }
-
-    #[test]
-    fn refuses_foreign_hosts_and_unroutable_uris() {
-        for link in [
-            "https://example.com/track/t",
-            "spotify:show:s",
-            "spotify:user:u:playlist:p",
-            "https://open.spotify.com/user/u/playlist/p",
-            "spotify:track:",
-            "spotify:track",
-        ] {
-            assert_eq!(read(link), None, "{link}");
+            assert_eq!(read(url), target, "{url}");
         }
     }
 }

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context as _, Result, ensure};
-use prost::Message as _;
 
 use super::{albums, artists, auth::sign_in_error, collection, playlists, session::Session, wire};
 use crate::{Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist};
@@ -285,18 +284,22 @@ pub(super) async fn cards(
         .collect();
     for ((kind, uri), raw) in metadata {
         let item = match kind {
-            ExtensionKind::AlbumV4 => AlbumMessage::decode(raw)
+            ExtensionKind::AlbumV4 => raw
+                .decode::<AlbumMessage>()
                 .ok()
                 .map(|album| GenreItem::Album(albums::album_from(&uri, &album))),
-            ExtensionKind::ArtistV4 => ArtistMessage::decode(raw)
+            ExtensionKind::ArtistV4 => raw
+                .decode::<ArtistMessage>()
                 .ok()
                 .and_then(|artist| artists::artist_card(&uri, &artist))
                 .map(GenreItem::Artist),
-            ExtensionKind::SearchGenreMetadata => SearchGenreMetadata::decode(raw)
+            ExtensionKind::SearchGenreMetadata => raw
+                .decode::<SearchGenreMetadata>()
                 .ok()
                 .and_then(|data| genre_card(&uri, data))
                 .map(GenreItem::Genre),
-            ExtensionKind::TrackV4 => spotifyapis::proto::metadata::Track::decode(raw)
+            ExtensionKind::TrackV4 => raw
+                .decode::<spotifyapis::proto::metadata::Track>()
                 .ok()
                 .map(|track| GenreItem::Track(collection::track_from(&uri, &track))),
             _ => None,

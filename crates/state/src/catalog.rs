@@ -26,6 +26,15 @@ trait CatalogBackend: Send + Sync {
         Ok(ArtistCatalogue::default())
     }
 
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        _preview: mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.artist_catalogue(id, known).await
+    }
+
     async fn artist_profile(&self, id: &str) -> Result<ArtistProfile>;
     async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>>;
     async fn track(&self, id: &str) -> Result<Track>;
@@ -65,6 +74,16 @@ impl CatalogBackend for ApiBackend {
     }
     async fn artist_catalogue(&self, id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
         self.0.artist_catalogue(id, known).await
+    }
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        preview: mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.0
+            .artist_catalogue_with_preview(id, known, preview)
+            .await
     }
     async fn artist_profile(&self, id: &str) -> Result<ArtistProfile> {
         self.0.artist_profile(id).await
@@ -220,9 +239,14 @@ impl CatalogSource {
         &self,
         id: &str,
         known: &[Track],
+        preview: mpsc::Sender<ArtistCatalogue>,
     ) -> Result<Arc<ArtistCatalogue>> {
         self.catalogues
-            .load(id, self.backend.artist_catalogue(id, known))
+            .load(
+                id,
+                self.backend
+                    .artist_catalogue_with_preview(id, known, preview),
+            )
             .await
     }
 

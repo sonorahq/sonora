@@ -10,9 +10,6 @@ license.workspace = true
 widevine = ["widevine/cdm"]
 
 [dependencies]
-num-bigint.workspace = true
-shannon.workspace = true
-tokio-util.workspace = true
 aes.workspace = true
 ctr.workspace = true
 anyhow.workspace = true
@@ -40,7 +37,6 @@ md-5.workspace = true
 open.workspace = true
 opensubsonic.workspace = true
 percent-encoding.workspace = true
-prost.workspace = true
 spotifyapis.workspace = true
 reqwest.workspace = true
 ring.workspace = true

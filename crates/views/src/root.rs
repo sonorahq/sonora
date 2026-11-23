@@ -274,7 +274,9 @@ impl Root {
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
-        let queries = cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
+        let queries = cx.new(|cx| {
+            Search::new(session.clone(), library.clone(), io.clone(), cx).with_column_previews()
+        });
         let suggestions =
             cx.new(|cx| Search::new(session.clone(), library.clone(), io.clone(), cx));
         // The quick search asks on its own, so typing in it leaves the search screen as it was.

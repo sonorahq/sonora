@@ -412,8 +412,8 @@ pub fn init(
         let playback = playback.clone();
         let devices = devices.clone();
         move |_, _: &SoloistSwitched, cx| {
-            devices.update(cx, |devices, cx| devices.apply(cx));
             playback.update(cx, |playback, cx| playback.switch_engine(cx));
+            devices.update(cx, |devices, cx| devices.apply(cx));
         }
     })
     .detach();

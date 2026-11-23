@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use cli::commands::{Request, Watch};
 use cli::wire::{self, Failure, Reply};
-use interprocess::local_socket::traits::{ListenerExt as _, Stream as _};
+use interprocess::local_socket::traits::{Listener as _, ListenerExt as _, Stream as _};
 use interprocess::local_socket::{ListenerOptions, Name, Stream};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
@@ -30,9 +30,43 @@ pub enum Asked {
 }
 
 pub enum Instance {
-    First,
+    First(SocketOwner),
     Running,
     Failed,
+}
+
+/// Removes our filesystem socket when the main process exits normally.
+pub struct SocketOwner {
+    #[cfg(unix)]
+    file: Option<(std::path::PathBuf, std::fs::Metadata)>,
+}
+
+impl SocketOwner {
+    fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            file: socket_path().ok().and_then(|path| {
+                let metadata = std::fs::symlink_metadata(&path).ok()?;
+                Some((path, metadata))
+            }),
+        }
+    }
+}
+
+impl Drop for SocketOwner {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some((path, owned)) = &self.file {
+            use std::os::unix::fs::MetadataExt as _;
+            if std::fs::symlink_metadata(path)
+                .is_ok_and(|current| current.dev() == owned.dev() && current.ino() == owned.ino())
+                && let Err(error) = std::fs::remove_file(path)
+                && error.kind() != ErrorKind::NotFound
+            {
+                log::debug!("single: cannot remove the instance socket: {error}");
+            }
+        }
+    }
 }
 
 /// `args` is every non-flag command-line argument of this launch: a lone `spotify:`/web link, or
@@ -51,7 +85,7 @@ pub fn claim(
         }
     };
 
-    let listener = match options(name.clone()).create_sync() {
+    let mut listener = match options(name.clone()).create_sync() {
         Ok(listener) => listener,
 
         Err(error) => {
@@ -67,7 +101,7 @@ pub fn claim(
                 return Instance::Failed;
             }
 
-            log::warn!("single: socket is occupied but unreachable; attempting recovery");
+            log::debug!("single: recovering an unreachable instance socket");
 
             match options(name.clone())
                 .try_overwrite(true)
@@ -83,6 +117,8 @@ pub fn claim(
         }
     };
 
+    let owner = SocketOwner::new();
+    listener.do_not_reclaim_name_on_drop();
     thread::spawn(move || {
         for connection in listener.incoming() {
             if sender.is_closed() {
@@ -96,7 +132,7 @@ pub fn claim(
         }
     });
 
-    Instance::First
+    Instance::First(owner)
 }
 
 /// The running Sonora's instance socket, for a command line that talks to it. One whose answer
@@ -184,7 +220,7 @@ fn hand_over(name: Name<'_>, args: &[String]) -> bool {
     let mut stream = match Stream::connect(name) {
         Ok(stream) => stream,
         Err(error) => {
-            log::warn!("single: cannot reach the running instance: {error:#}");
+            log::debug!("single: cannot reach the running instance: {error:#}");
             return false;
         }
     };
@@ -197,7 +233,12 @@ fn hand_over(name: Name<'_>, args: &[String]) -> bool {
 fn name() -> io::Result<Name<'static>> {
     use interprocess::local_socket::{GenericFilePath, ToFsName as _};
 
-    private_dir()?.join(SOCKET).to_fs_name::<GenericFilePath>()
+    socket_path()?.to_fs_name::<GenericFilePath>()
+}
+
+#[cfg(unix)]
+fn socket_path() -> io::Result<std::path::PathBuf> {
+    Ok(private_dir()?.join(SOCKET))
 }
 
 /// The instance socket as a named pipe, which `reachable` closes to other accounts.

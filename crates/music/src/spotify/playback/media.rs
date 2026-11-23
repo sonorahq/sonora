@@ -10,7 +10,6 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::access_point::KeyDenied;
 use crate::spotify::{auth::sign_in_error, collection, session::Session, wire};
 use aes::cipher::StreamCipherSeek as _;
 use aes::cipher::{KeyIvInit as _, StreamCipher as _};
@@ -18,14 +17,12 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use bytes::Bytes;
 use http::HeaderMap;
-use prost::Message as _;
-use reqwest::Url;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
-use spotifyapis::proto::metadata::ExtensionKind;
+use spotifyapis::access_point::AudioKeyError;
 use spotifyapis::proto::metadata::Track as TrackMessage;
+use spotifyapis::proto::metadata::{ExtensionKind, MetadataPayload};
 
 use crate::Quality;
 use crate::engine::{self, Fetch, Loudness};
@@ -223,7 +220,7 @@ impl Fetch for Audio {
     }
 
     fn refused(&self, error: &anyhow::Error) -> bool {
-        if error.is::<KeyDenied>() {
+        if error.downcast_ref::<AudioKeyError>() == Some(&AudioKeyError::Denied) {
             crate::soloist::denied();
             return true;
         }
@@ -320,7 +317,11 @@ impl Loaded {
         let duration = STANDARD
             .decode(&facts.metadata)
             .ok()
-            .and_then(|raw| TrackMessage::decode(raw.as_slice()).ok())
+            .and_then(|raw| {
+                MetadataPayload::from_bytes(raw.into())
+                    .decode::<TrackMessage>()
+                    .ok()
+            })
             .and_then(|track| track.duration_ms)
             .and_then(|ms| u64::try_from(ms).ok())
             .map(Duration::from_millis);
@@ -449,7 +450,8 @@ pub(super) async fn download(
     let mut media = resolve_media(session, id, quality).await?;
     if session.audio_keys().throttled()
         && let Err(error) = media.fetch_key(session).await
-        && (error.is::<KeyDenied>() || error.is::<crate::Throttled>())
+        && (error.downcast_ref::<AudioKeyError>() == Some(&AudioKeyError::Denied)
+            || error.is::<crate::Throttled>())
     {
         return Err(error);
     }
@@ -491,8 +493,9 @@ impl ResolvedMedia {
         self.facts.key = Some(
             session
                 .audio_keys()
-                .get(session, self.track, self.file)
-                .await?,
+                .get(self.track, self.file)
+                .await
+                .map_err(sign_in_error)?,
         );
         Ok(())
     }
@@ -512,7 +515,7 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
             let alternatives: Vec<_> = track
                 .alternative
                 .iter()
-                .filter_map(|track| collection::base62(track.gid()))
+                .filter_map(|track| spotifyapis::id::base62(track.gid()))
                 .map(|id| format!("spotify:track:{id}"))
                 .collect();
             metadata(session, &alternatives)
@@ -532,7 +535,7 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
         track,
         file,
         facts: Facts {
-            metadata: STANDARD.encode(wire),
+            metadata: STANDARD.encode(wire.as_bytes()),
             format,
             file_id,
             key: None,
@@ -542,12 +545,17 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
 
 /// Resolves the file's signed CDN urls and opens it at the first that answers, and says where.
 async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Address)> {
-    let http = spotifyapis::http::media_client()?;
+    let http = spotifyapis::media_client()?;
     let renewal: Arc<dyn ranged::Renew> = Arc::new(Renewal {
         session: session.clone(),
         file_id: file_id.to_owned(),
     });
-    for url in cdn_urls(session, file_id).await? {
+    for url in session
+        .api()
+        .audio_urls(file_id)
+        .await
+        .map_err(sign_in_error)?
+    {
         let address = Address::new("spotify", http.clone(), url)
             .capped(MAX_RANGE)
             .renewed(renewal.clone());
@@ -563,24 +571,11 @@ async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Addres
     anyhow::bail!("cannot open Spotify audio on its CDN")
 }
 
-/// The https urls Spotify's CDN serves a file at, in the order Spotify gave them.
-async fn cdn_urls(session: &Session, file_id: &str) -> Result<Vec<String>> {
-    let resolved = session
-        .api()
-        .resolve_audio(file_id)
-        .await
-        .map_err(sign_in_error)?;
-    anyhow::ensure!(resolved.result == 0, "Spotify did not grant a CDN download");
-    let secure = |address: &String| {
-        Url::parse(address).is_ok_and(|url| {
-            url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
-        })
-    };
-    Ok(resolved.cdnurl.into_iter().filter(secure).collect())
-}
-
 /// Batches track metadata for the requested track and, when needed, its market alternatives.
-async fn metadata(session: &Session, uris: &[String]) -> Result<Vec<(TrackMessage, Bytes)>> {
+async fn metadata(
+    session: &Session,
+    uris: &[String],
+) -> Result<Vec<(TrackMessage, MetadataPayload)>> {
     let kind = ExtensionKind::TrackV4;
     let requests: Vec<_> = uris
         .iter()
@@ -591,7 +586,7 @@ async fn metadata(session: &Session, uris: &[String]) -> Result<Vec<(TrackMessag
         .iter()
         .filter_map(|uri| {
             let raw = known.remove(&(kind, uri.clone()))?;
-            Some((TrackMessage::decode(raw.clone()).ok()?, raw))
+            Some((raw.decode().ok()?, raw))
         })
         .collect())
 }
@@ -644,8 +639,30 @@ impl Body for Unlocked {
 #[async_trait]
 impl ranged::Renew for Renewal {
     async fn url(&self) -> Result<(String, HeaderMap)> {
-        let urls = cdn_urls(&self.session, &self.file_id).await?;
+        let urls = self
+            .session
+            .api()
+            .audio_urls(&self.file_id)
+            .await
+            .map_err(sign_in_error)?;
         let url = urls.into_iter().next().context("Spotify gave no CDN url")?;
         Ok((url, HeaderMap::new()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seek_ahead_decrypts_at_the_same_file_offset() {
+        let key = [0x34; 16];
+        let bytes = [0x56; 64];
+        let mut whole = Vec::new();
+        Unlocked::at(&key, 0).feed(&bytes, &mut whole);
+
+        let mut ranged = Vec::new();
+        Unlocked::at(&key, 19).feed(&bytes[19..], &mut ranged);
+        assert_eq!(ranged, whole[19..]);
     }
 }

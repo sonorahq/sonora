@@ -705,7 +705,7 @@ async fn control(client: &JellyfinClient, session: &str, command: Command) -> Re
         Command::Start(start) => {
             return play_on(client, session, &start.state, start.state.position).await;
         }
-        Command::SetQueue { .. } => return Ok(()),
+        Command::SelectQueue(_) | Command::SetQueue { .. } => return Ok(()),
     };
     client
         .request(Method::POST, &path, body)

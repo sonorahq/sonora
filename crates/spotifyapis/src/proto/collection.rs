@@ -1,11 +1,17 @@
 //! Collection v2 paging and mutation messages.
 
+use anyhow::Result;
 use bytes::Bytes;
+use prost::Message as _;
+use reqwest::header::HeaderMap;
+
+use super::dealer_headers;
+use crate::{Session, http};
 
 pub const UPDATE_TOPIC: &str = "hm://collection/collection";
-pub(crate) const PAGING: &str = "/collection/v2/paging";
-pub(crate) const WRITE: &str = "/collection/v2/write";
-pub(crate) const CONTENT: &str = "application/vnd.collection-v2.spotify.proto";
+const PAGING: &str = "/collection/v2/paging";
+const WRITE: &str = "/collection/v2/write";
+const CONTENT: &str = "application/vnd.collection-v2.spotify.proto";
 
 #[derive(prost::Message)]
 pub struct CollectionItem {
@@ -69,4 +75,51 @@ pub struct ChangedItem {
     pub gid: Option<Bytes>,
     #[prost(bool, tag = "6")]
     pub removed: bool,
+}
+
+impl Session {
+    /// Reads a page of saved collection items.
+    pub async fn collection_page(&self, request: &PageRequest) -> Result<PageResponse> {
+        let bytes = http::post_proto(self, PAGING, CONTENT, HeaderMap::new(), request).await?;
+        Ok(PageResponse::decode(bytes)?)
+    }
+
+    /// Applies updates to the saved collection or pins.
+    pub async fn update_collection(
+        &self,
+        request: &WriteRequest,
+        connection_id: &str,
+    ) -> Result<()> {
+        http::post_proto(
+            self,
+            WRITE,
+            CONTENT,
+            dealer_headers(connection_id)?,
+            request,
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_page_reads_saved_dates_removals_and_cursor() {
+        use prost::Message as _;
+        let page = PageResponse::decode(
+            &b"\x0a\x06\x0a\x01a\x10\xac\x02\x0a\x05\x0a\x01b\x18\x01\x12\x04next"[..],
+        )
+        .unwrap();
+        assert_eq!(page.next, "next");
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| (item.uri.as_str(), item.added_at, item.is_removed))
+                .collect::<Vec<_>>(),
+            [("a", Some(300), false), ("b", None, true)]
+        );
+    }
 }

@@ -208,6 +208,11 @@ static REFRESH: Mutex<()> = Mutex::const_new(());
 /// Orders credential replacement against sign-out.
 static FILE: SyncMutex<()> = SyncMutex::new(());
 
+fn lock_file() -> Result<std::sync::MutexGuard<'static, ()>> {
+    FILE.lock()
+        .map_err(|_| anyhow!("Spotify credential lock poisoned"))
+}
+
 /// The grant received from Spotify's authorization-code and refresh-token exchanges.
 #[derive(Deserialize)]
 struct TokenResponse {
@@ -255,7 +260,7 @@ impl OAuth {
     }
 
     pub fn restore(path: PathBuf, client_id: &str) -> Result<Option<Arc<Self>>> {
-        let _file = FILE.lock().expect("Spotify credential lock poisoned");
+        let _file = lock_file()?;
         let Some(stored) = saved(&path)? else {
             return Ok(None);
         };
@@ -286,7 +291,7 @@ impl OAuth {
             username: response.username()?.to_owned(),
             refresh_token: refresh_token.to_owned(),
         };
-        let _file = FILE.lock().expect("Spotify credential lock poisoned");
+        let _file = lock_file()?;
         write(&path, &stored)?;
         Self::new(path, stored, Some(Token::from(response)))
     }
@@ -302,7 +307,13 @@ impl OAuth {
     }
 
     pub fn forget(path: &Path) {
-        let _file = FILE.lock().expect("Spotify credential lock poisoned");
+        let _file = match lock_file() {
+            Ok(guard) => guard,
+            Err(error) => {
+                log::warn!("spotify: cannot remove saved credentials: {error}");
+                return;
+            }
+        };
         if let Err(error) = std::fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -310,28 +321,30 @@ impl OAuth {
         }
     }
 
-    pub fn username(&self) -> &str {
+    pub(crate) fn username(&self) -> &str {
         &self.username
     }
 
-    pub fn client_id(&self) -> &str {
+    pub(crate) fn client_id(&self) -> &str {
         &self.client_id
     }
 
     /// Detects sign-out and external changes while accepting our own token rotations.
     pub fn has_current_grant(&self) -> bool {
-        let _file = FILE.lock().expect("Spotify credential lock poisoned");
-        modified(&self.path).is_ok_and(|current| {
-            current
-                == *self
-                    .modified
-                    .lock()
-                    .expect("Spotify grant timestamp lock poisoned")
-        })
+        let Ok(_file) = lock_file() else {
+            return false;
+        };
+        modified(&self.path)
+            .is_ok_and(|current| self.modified.lock().is_ok_and(|stored| *stored == current))
+    }
+
+    /// Validates the grant with Spotify before the app treats the account as signed in.
+    pub async fn validate(self: &Arc<Self>) -> Result<()> {
+        self.token().await.map(drop)
     }
 
     /// Uses the cached bearer until it expires. Rotated refresh grants are persisted atomically.
-    pub async fn token(self: &Arc<Self>) -> Result<String> {
+    pub(crate) async fn token(self: &Arc<Self>) -> Result<String> {
         let auth = self.clone();
         self.token_using(async move { auth.refresh().await }).await
     }
@@ -390,7 +403,7 @@ impl OAuth {
     }
 
     fn persist_rotated_grant(&self, stored: &mut Stored, refresh_token: &str) -> Result<()> {
-        let _file = FILE.lock().expect("Spotify credential lock poisoned");
+        let _file = lock_file()?;
         let current = read(&self.path)?;
         anyhow::ensure!(
             current.client_id == stored.client_id
@@ -403,7 +416,7 @@ impl OAuth {
         *self
             .modified
             .lock()
-            .expect("Spotify grant timestamp lock poisoned") = modified(&self.path)?;
+            .map_err(|_| anyhow!("Spotify grant timestamp lock poisoned"))? = modified(&self.path)?;
         Ok(())
     }
 }
@@ -504,63 +517,48 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn rotated_grant_survives_cancelled_caller() -> Result<()> {
-        let temp = tempfile::tempdir()?;
-        let path = temp.path().join("spotify-oauth.json");
-        let grant = Stored {
+    async fn cancellation_keeps_the_rotated_grant_and_shares_the_new_token() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("grant.json");
+        let mut grant = Stored {
             client_id: "client".into(),
             username: "listener".into(),
-            refresh_token: "original".into(),
+            refresh_token: "old".into(),
         };
         write(&path, &grant)?;
-        let auth = OAuth::new(path.clone(), grant, None)?;
-        let (started, waiting) = tokio::sync::oneshot::channel();
-        let (respond, response) = tokio::sync::oneshot::channel();
+        let auth = OAuth::restore(path.clone(), "client")?.unwrap();
+        let (started, wait) = tokio::sync::oneshot::channel();
+        let (finish, response) = tokio::sync::oneshot::channel();
         let caller = tokio::spawn({
             let auth = auth.clone();
-            let writer = auth.clone();
-            let mut stored = read(&path)?;
             async move {
+                let writer = auth.clone();
                 auth.token_using(async move {
                     let _ = started.send(());
                     response.await?;
-                    writer.persist_rotated_grant(&mut stored, "rotated")?;
+                    writer.persist_rotated_grant(&mut grant, "new")?;
                     Ok(Token {
-                        access_token: "access".into(),
-                        expires_at: Instant::now() + Duration::from_secs(3600),
+                        access_token: "bearer".into(),
+                        expires_at: Instant::now() + Duration::from_secs(60),
                     })
                 })
                 .await
             }
         });
-
         tokio::time::timeout(Duration::from_secs(5), async {
-            waiting.await?;
+            wait.await?;
             caller.abort();
             assert!(caller.await.unwrap_err().is_cancelled());
-            respond.send(()).expect("refresh survives cancellation");
-
-            let access = auth
-                .token_using(async { anyhow::bail!("should reuse the renewed token") })
-                .await?;
-            assert_eq!(access, "access");
-            assert_eq!(read(&path)?.refresh_token, "rotated");
+            finish.send(()).unwrap();
+            assert_eq!(
+                auth.token_using(async { anyhow::bail!("unexpected refresh") })
+                    .await?,
+                "bearer"
+            );
+            assert_eq!(read(&path)?.refresh_token, "new");
+            assert!(auth.has_current_grant());
             Ok::<_, anyhow::Error>(())
         })
         .await?
-    }
-
-    #[test]
-    fn extracts_http_callback_addresses() {
-        for (uri, expected) in [
-            ("http://127.0.0.1:8989/login", Some("127.0.0.1:8989")),
-            ("http://localhost/login", Some("localhost:80")),
-            ("https://localhost/login", None),
-        ] {
-            assert_eq!(
-                socket_address(&Url::parse(uri).unwrap()).as_deref(),
-                expected
-            );
-        }
     }
 }

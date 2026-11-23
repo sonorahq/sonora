@@ -2,20 +2,23 @@
 
 use std::collections::HashMap;
 
+use anyhow::{Context as _, Result};
 use bytes::Bytes;
 
-pub(crate) const GET_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/GetLists";
+use crate::{Session, http};
+
+const GET_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/GetLists";
 
 /// Batch of playlist and root-list reads sent to `GetLists`.
 #[derive(prost::Message)]
-pub struct GetListsRequest {
+struct GetListsRequest {
     #[prost(message, repeated, tag = "1")]
     pub requests: Vec<GetListRequest>,
 }
 
 /// Identifies one list and selects the fields to return.
 #[derive(prost::Message)]
-pub struct GetListRequest {
+struct GetListRequest {
     #[prost(message, required, tag = "1")]
     pub identifier: ListIdentifier,
     #[prost(message, required, tag = "2")]
@@ -24,7 +27,7 @@ pub struct GetListRequest {
 
 /// Spotify URI of a playlist or a user’s root list.
 #[derive(prost::Message)]
-pub struct ListIdentifier {
+struct ListIdentifier {
     #[prost(string, tag = "1")]
     pub uri: String,
     #[prost(bytes = "bytes", tag = "2")]
@@ -33,7 +36,7 @@ pub struct ListIdentifier {
 
 /// Options for reading one list, including the response field selection.
 #[derive(prost::Message)]
-pub struct RequestOptions {
+struct RequestOptions {
     #[prost(message, required, tag = "4")]
     pub requested_fields: RequestedFields,
     #[prost(message, optional, tag = "6")]
@@ -42,7 +45,7 @@ pub struct RequestOptions {
 
 /// A bounded window into an ordered list.
 #[derive(prost::Message)]
-pub struct Pagination {
+struct Pagination {
     #[prost(int32, tag = "1")]
     pub length: i32,
     // #[prost(int32, tag = "3")]
@@ -51,21 +54,21 @@ pub struct Pagination {
 
 /// Top-level selection of fields in the list response.
 #[derive(prost::Message)]
-pub struct RequestedFields {
+struct RequestedFields {
     #[prost(message, required, tag = "2")]
     pub list_response: ListResponseRequestedFields,
 }
 
 /// Selects the fields to return from the response’s list entity.
 #[derive(prost::Message)]
-pub struct ListResponseRequestedFields {
+struct ListResponseRequestedFields {
     #[prost(message, required, tag = "1")]
     pub entity: ListEntityRequestedFields,
 }
 
 /// Selects list-level, entry, and referenced-list attributes.
 #[derive(prost::Message)]
-pub struct ListEntityRequestedFields {
+struct ListEntityRequestedFields {
     #[prost(message, optional, tag = "1")]
     pub attributes: Option<AttributesRequestedFields>,
     #[prost(message, optional, tag = "2")]
@@ -76,29 +79,49 @@ pub struct ListEntityRequestedFields {
 
 /// Selects the attributes returned for each list entry.
 #[derive(prost::Message)]
-pub struct ItemRequestedFields {
+struct ItemRequestedFields {
     #[prost(message, optional, tag = "2")]
     pub attributes: Option<AttributesRequestedFields>,
 }
 
 /// Set of attribute IDs to include in a response.
 #[derive(prost::Message)]
-pub struct AttributesRequestedFields {
+struct AttributesRequestedFields {
     #[prost(enumeration = "AttributeKind", repeated, tag = "1")]
     pub requested_field: Vec<i32>,
 }
 
 /// Per-list results in the order they were requested.
 #[derive(prost::Message)]
-pub struct GetListsResponse {
+struct GetListsResponse {
     // Decode each embedded message separately so malformed entries cannot hide good rows.
     #[prost(bytes = "bytes", repeated, tag = "1")]
-    pub responses: Vec<Bytes>,
+    responses: Vec<Bytes>,
+}
+
+impl GetListsResponse {
+    /// Decodes one result independently of the other entries in its batch.
+    fn list(&self, index: usize) -> Result<(ListEntity, Bytes)> {
+        use prost::Message as _;
+        let bytes = self
+            .responses
+            .get(index)
+            .context("missing Spotify list result")?;
+        let result = GetListResponse::decode(bytes.clone())?;
+        let info = result.info.unwrap_or_default();
+        if let Some(error) = info.request_error {
+            anyhow::bail!("Spotify could not read the playlist: {}", error.message);
+        }
+        let entity = result
+            .entity
+            .context("Spotify omitted the playlist items")?;
+        Ok((entity, info.revision))
+    }
 }
 
 /// One requested list and its revision or error information.
 #[derive(prost::Message)]
-pub struct GetListResponse {
+struct GetListResponse {
     #[prost(message, optional, tag = "1")]
     pub entity: Option<ListEntity>,
     #[prost(message, optional, tag = "2")]
@@ -117,7 +140,7 @@ pub struct ListEntity {
 }
 
 #[derive(prost::Message)]
-pub struct MetaItemsRequestedFields {
+struct MetaItemsRequestedFields {
     #[prost(message, optional, tag = "1")]
     pub attributes: Option<AttributesRequestedFields>,
 }
@@ -223,7 +246,7 @@ pub struct ProjectedPictureSize {
 
 /// Revision and possible error for an individual list read.
 #[derive(prost::Message)]
-pub struct ResponseInfo {
+struct ResponseInfo {
     #[prost(message, optional, tag = "1")]
     pub request_error: Option<RequestError>,
     #[prost(bytes = "bytes", tag = "7")]
@@ -232,13 +255,13 @@ pub struct ResponseInfo {
 
 /// Spotify’s error message for a failed list read.
 #[derive(prost::Message)]
-pub struct RequestError {
+struct RequestError {
     #[prost(string, tag = "6")]
     pub message: String,
 }
 
 /// Attribute IDs that can be requested from `GetLists`.
-#[derive(Debug, PartialEq, Eq, prost::Enumeration)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 pub enum AttributeKind {
     Unspecified = 0,
     Uri = 1,
@@ -247,4 +270,102 @@ pub enum AttributeKind {
     PictureFileId = 20,
     PictureSizes = 21,
     FormatListAttributes = 24,
+}
+
+/// A list URI and an optional entry limit from the start of the list.
+pub struct ListQuery {
+    pub uri: String,
+    pub page: Option<i32>,
+}
+
+impl ListQuery {
+    pub fn playlist(id: &str, page: Option<i32>) -> Self {
+        Self {
+            uri: format!("spotify:playlist:{id}"),
+            page,
+        }
+    }
+}
+
+/// Attributes to return for the list, its entries, and the lists those entries reference.
+#[derive(Clone, Copy, Default)]
+pub struct ListProjection<'a> {
+    pub list: &'a [AttributeKind],
+    pub items: &'a [AttributeKind],
+    pub referenced: &'a [AttributeKind],
+}
+
+impl ListProjection<'_> {
+    fn fields(self) -> RequestedFields {
+        fn attributes(kinds: &[AttributeKind]) -> Option<AttributesRequestedFields> {
+            (!kinds.is_empty()).then(|| AttributesRequestedFields {
+                requested_field: kinds.iter().map(|kind| *kind as i32).collect(),
+            })
+        }
+        RequestedFields {
+            list_response: ListResponseRequestedFields {
+                entity: ListEntityRequestedFields {
+                    attributes: attributes(self.list),
+                    items: attributes(self.items).map(|attributes| ItemRequestedFields {
+                        attributes: Some(attributes),
+                    }),
+                    meta_items: attributes(self.referenced).map(|attributes| {
+                        MetaItemsRequestedFields {
+                            attributes: Some(attributes),
+                        }
+                    }),
+                },
+            },
+        }
+    }
+}
+
+impl Session {
+    /// Reads list projections in input order, with independent results for each entry.
+    pub async fn get_lists(
+        &self,
+        queries: &[ListQuery],
+        projection: ListProjection<'_>,
+    ) -> Result<Vec<Result<(ListEntity, Bytes)>>> {
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Duplicate list projections can fail the entire request.
+        let mut slots = HashMap::new();
+        let mut requests = Vec::new();
+        let order: Vec<_> = queries
+            .iter()
+            .map(|query| {
+                *slots.entry((&query.uri, query.page)).or_insert_with(|| {
+                    let index = requests.len();
+                    requests.push(GetListRequest {
+                        identifier: ListIdentifier {
+                            uri: query.uri.clone(),
+                            revision: Bytes::new(),
+                        },
+                        options: RequestOptions {
+                            requested_fields: projection.fields(),
+                            pagination: query.page.map(|length| Pagination { length }),
+                        },
+                    });
+                    index
+                })
+            })
+            .collect();
+        let response: GetListsResponse =
+            http::read_rpc(self, GET_LISTS, GetListsRequest { requests }).await?;
+        anyhow::ensure!(
+            response.responses.len() == slots.len(),
+            "Spotify returned the wrong number of lists"
+        );
+        Ok(queries
+            .iter()
+            .zip(order)
+            .map(|(query, index)| {
+                response
+                    .list(index)
+                    .with_context(|| format!("cannot read {}", query.uri))
+            })
+            .collect())
+    }
 }

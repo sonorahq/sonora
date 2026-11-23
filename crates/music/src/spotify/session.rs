@@ -7,7 +7,7 @@ use tokio::sync::OnceCell;
 use spotifyapis::auth::OAuth;
 
 use super::collection;
-use super::playback::AudioKeys;
+use spotifyapis::access_point::AudioKeys;
 
 /// An OAuth-authenticated Spotify account shared by API and playback consumers.
 #[derive(Clone)]
@@ -28,9 +28,10 @@ struct Inner {
 
 impl Session {
     pub(super) fn new(oauth: Arc<OAuth>, device_id: String) -> Self {
+        let api = Arc::new(spotifyapis::Session::new(oauth));
         Self(Arc::new(Inner {
-            api: Arc::new(spotifyapis::Session::new(oauth)),
-            audio_keys: AudioKeys::default(),
+            audio_keys: AudioKeys::new(api.clone(), device_id.clone()),
+            api,
             device_id,
             session_id: format!("{:032x}", fastrand::u128(..)),
             connection_id: RwLock::default(),

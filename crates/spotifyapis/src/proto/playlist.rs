@@ -1,11 +1,18 @@
 //! Playlist snapshots, permissions, picture registration, and revision-bound mutations.
 
+use anyhow::Result;
 use bytes::Bytes;
+use prost::Message as _;
+use reqwest::header::{self, HeaderMap, HeaderValue};
 
+use super::{component, dealer_headers};
+use crate::{Session, http};
+
+const IMAGE_UPLOAD: &str = "https://image-upload.spotify.com/v4/playlist";
 pub const PLAYLIST_TOPIC: &str = "hm://playlist/v2/playlist";
 pub const USER_TOPIC: &str = "hm://playlist/user";
-pub(crate) const PLAYLIST_ENDPOINT: &str = "/playlist/v2/playlist";
-pub(crate) const USER_ENDPOINT: &str = "/playlist/v2/user";
+const PLAYLIST_ENDPOINT: &str = "/playlist/v2/playlist";
+const USER_ENDPOINT: &str = "/playlist/v2/user";
 
 /// Identifies the JPEG staged by Spotify's image upload service.
 #[derive(prost::Message)]
@@ -406,7 +413,7 @@ pub struct PlaylistModificationInfo {
 }
 
 #[derive(prost::Message)]
-pub struct RootlistModificationInfo {
+struct RootlistModificationInfo {
     #[prost(bytes = "bytes", tag = "1")]
     pub new_revision: Bytes,
     // #[prost(bytes = "bytes", tag = "2")]
@@ -479,4 +486,127 @@ pub struct Capabilities {
     // pub can_revert_history: Option<bool>,
     // #[prost(bool, optional, tag = "23")]
     // pub can_view_prompt: Option<bool>,
+}
+
+impl Session {
+    /// Reads a playlist snapshot or just its summary.
+    pub async fn playlist(&self, id: &str, summary: bool) -> Result<SelectedListContent> {
+        let query = if summary { "?from=0&length=0" } else { "" };
+        let path = format!("{}/{}{query}", PLAYLIST_ENDPOINT, component(id));
+        http::get(self, &path, HeaderMap::new()).await
+    }
+
+    /// Reads a page of the signed-in account's playlist library.
+    pub async fn rootlist_page(&self, from: usize, length: usize) -> Result<SelectedListContent> {
+        let path = format!(
+            "{}/{}/rootlist?decorate=revision,attributes,length,owner,capabilities,status_code&from={from}&length={length}",
+            USER_ENDPOINT,
+            component(self.username())
+        );
+        http::get(self, &path, HeaderMap::new()).await
+    }
+
+    /// Creates a playlist from the supplied changes.
+    pub async fn create_playlist(
+        &self,
+        changes: &ListChanges,
+        connection_id: &str,
+    ) -> Result<CreateListReply> {
+        let bytes = http::post_proto(
+            self,
+            PLAYLIST_ENDPOINT,
+            http::PROTOBUF,
+            dealer_headers(connection_id)?,
+            changes,
+        )
+        .await?;
+        Ok(CreateListReply::decode(bytes)?)
+    }
+
+    /// Applies changes to an existing playlist.
+    pub async fn edit_playlist(
+        &self,
+        id: &str,
+        changes: &ListChanges,
+        connection_id: &str,
+    ) -> Result<()> {
+        let path = format!("{}/{}/changes", PLAYLIST_ENDPOINT, component(id));
+        http::post_proto(
+            self,
+            &path,
+            http::PROTOBUF,
+            dealer_headers(connection_id)?,
+            changes,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Applies changes to the signed-in account's playlist library.
+    pub async fn edit_rootlist(&self, changes: &ListChanges, connection_id: &str) -> Result<()> {
+        let path = format!(
+            "{}/{}/rootlist/changes",
+            USER_ENDPOINT,
+            component(self.username())
+        );
+        http::post_proto(
+            self,
+            &path,
+            http::PROTOBUF,
+            dealer_headers(connection_id)?,
+            changes,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Registers a cover already uploaded to Spotify.
+    pub async fn register_playlist_image(
+        &self,
+        id: &str,
+        request: &RegisterPlaylistImageRequest,
+        connection_id: &str,
+    ) -> Result<RegisterPlaylistImageResponse> {
+        let path = format!("{}/{}/register-image", PLAYLIST_ENDPOINT, component(id));
+        let bytes = http::post_proto(
+            self,
+            &path,
+            http::PROTOBUF,
+            dealer_headers(connection_id)?,
+            request,
+        )
+        .await?;
+        Ok(RegisterPlaylistImageResponse::decode(bytes)?)
+    }
+
+    /// Uploads a JPEG and returns the token for playlist cover registration.
+    pub async fn upload_playlist_image(&self, jpeg: Bytes) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Uploaded {
+            upload_token: String,
+        }
+        let headers = HeaderMap::from_iter([
+            (header::ACCEPT, HeaderValue::from_static("application/json")),
+            (header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg")),
+        ]);
+        let bytes = http::post_service(self, IMAGE_UPLOAD, headers, jpeg).await?;
+        Ok(serde_json::from_slice::<Uploaded>(&bytes)?.upload_token)
+    }
+}
+
+/// Reads the revision from either form of Dealer root-list notification.
+impl crate::dealer::Message {
+    pub fn rootlist_revision(self, username: &str) -> Option<Bytes> {
+        let bytes = self.into_protobuf()?;
+        let notice = RootlistModificationInfo::decode(bytes.clone()).ok()?;
+        if !notice.new_revision.starts_with(b"spotify:") {
+            return Some(notice.new_revision);
+        }
+        let update = PlaylistModificationInfo::decode(bytes).ok()?;
+        let root = format!("spotify:user:{username}:rootlist");
+        (update.uri() == root)
+            .then_some(update.new_revision)
+            .flatten()
+    }
 }

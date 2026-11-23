@@ -57,6 +57,7 @@ use jiff::fmt::temporal::DateTimeParser;
 
 pub use audio::Meter;
 pub use equalizer::Equalizer;
+pub use models::SearchPart;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
@@ -188,6 +189,16 @@ pub trait MusicApi: Send + Sync {
         _known: &[Track],
     ) -> Result<ArtistCatalogue> {
         Ok(ArtistCatalogue::default())
+    }
+
+    /// Optionally publishes a usable part of the catalogue before the full result.
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        _preview: tokio::sync::mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.artist_catalogue(id, known).await
     }
 
     /// The artist's songs for playback, with popular tracks first when available.
@@ -551,6 +562,15 @@ pub trait MusicApi: Send + Sync {
             playlists,
             artists,
         }
+    }
+
+    /// Optionally delivers successful categories while the combined search is in flight.
+    async fn search_with_preview(
+        &self,
+        query: &str,
+        _preview: tokio::sync::mpsc::Sender<SearchPart>,
+    ) -> Found {
+        self.search_all(query).await
     }
 
     async fn home(&self) -> Result<HomeFeed> {

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow};
 use ring::rand::{SecureRandom as _, SystemRandom};
+use spotifyapis::access_point::AudioKeyError;
 use spotifyapis::auth::{self, AuthError, OAuth};
 use tokio::sync::Mutex;
 
@@ -130,12 +131,24 @@ pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
     else {
         return Ok(None);
     };
-    oauth.token().await.map_err(sign_in_error)?;
+    oauth.validate().await.map_err(sign_in_error)?;
     Ok(Some(Session::new(oauth, device_id(&config.cache_dir)?)))
 }
 
 /// Maps Spotify OAuth failures to the app's existing sign-in outcomes.
 pub(super) fn sign_in_error(error: anyhow::Error) -> anyhow::Error {
+    if let Some(problem) = error.downcast_ref::<AudioKeyError>() {
+        let problem = match problem {
+            AudioKeyError::Throttled => return error.context(crate::Throttled),
+            AudioKeyError::Denied => return error,
+            AudioKeyError::Premium => SignInProblem::Premium,
+            AudioKeyError::Region => SignInProblem::Region,
+            AudioKeyError::Credentials => SignInProblem::Credentials,
+            AudioKeyError::Refused => SignInProblem::Refused,
+            AudioKeyError::Network => SignInProblem::Network,
+        };
+        return error.context(SignInFailure(problem));
+    }
     let problem = match error.downcast_ref::<AuthError>() {
         Some(AuthError::Cancelled) => SignInProblem::Cancelled,
         Some(AuthError::Credentials) => SignInProblem::Credentials,

@@ -41,13 +41,8 @@ pub(super) fn append_hex(output: &mut String, bytes: &[u8]) {
 }
 
 /// Joins credit names directly into the result string.
-pub(super) fn join_names<'a>(mut names: impl Iterator<Item = &'a str> + Clone) -> String {
-    let Some(first) = names.next() else {
-        return String::new();
-    };
-    let remaining: usize = names.clone().map(|name| name.len() + 2).sum();
-    let mut joined = String::with_capacity(first.len() + remaining);
-    joined.push_str(first);
+pub(super) fn join_names<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
+    let mut joined = names.next().unwrap_or_default().to_owned();
     for name in names {
         joined.push_str(", ");
         joined.push_str(name);

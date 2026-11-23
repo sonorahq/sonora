@@ -1,6 +1,11 @@
 //! User profile views and the public playlist cards they carry.
 
-pub(crate) const ENDPOINT: &str = "/user-profile-view/v3/profile";
+use anyhow::Result;
+
+use super::component;
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/user-profile-view/v3/profile";
 
 /// Profile, audience counts, and public playlists from one profile-view request.
 #[derive(prost::Message)]
@@ -84,4 +89,16 @@ pub struct PublicPlaylist {
     pub owner_uri: String,
     // #[prost(bool, tag = "7")]
     // pub is_following: bool,
+}
+
+impl Session {
+    /// Reads one profile and its public playlists.
+    pub async fn profile(&self, username: &str, playlist_limit: u32) -> Result<Profile> {
+        let path = format!(
+            "{}/{}?playlist_limit={playlist_limit}&artist_limit=0",
+            ENDPOINT,
+            component(username)
+        );
+        http::get(self, &path, http::proto_headers(http::PROTOBUF)).await
+    }
 }

@@ -3134,7 +3134,7 @@ impl Playback {
     }
 
     /// Whether the current track plays through the local engine.
-    fn local_active(&self) -> bool {
+    pub(crate) fn local_active(&self) -> bool {
         self.track
             .as_ref()
             .and_then(|track| track.id.as_deref())
@@ -3144,18 +3144,8 @@ impl Playback {
     /// Rebuilds the streaming engine after a setting it was configured with changed, resuming
     /// where it was unless a local track is playing.
     fn restart_engine(&mut self, cx: &mut Context<Self>) {
-        let playback = match self.engine.is_some() {
-            true => self.session.read(cx).playback(),
-            false => None,
-        };
-        let Some(playback) = playback else {
-            return cx.notify();
-        };
-
-        match self.local_active() {
-            true => self.start_engine(playback, cx),
-            false => self.rebind(playback, cx),
-        }
+        self.restart_output(false, None, cx);
+        cx.notify();
     }
 
     /// Rebuilds the streaming engine after the provider changed which engine it plays through,
@@ -3217,11 +3207,13 @@ impl Playback {
             PlaybackState::Failed(_) => None,
         };
         // the engine holds a paused track where it stood as it starts, as it does a restored one
-        if current.is_some() && playing == Some(false) {
-            self.resume_at = Some(at);
+        if current.is_some() {
+            self.load = None;
+            self.preloaded = None;
+            self.resume_at = (playing == Some(false)).then_some(at);
         }
 
-        log::info!("playback: restarting after the audio output changed");
+        log::info!("playback: restarting the audio engine");
         match local {
             true => {
                 self.local_task = None;

@@ -74,6 +74,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Spotify Jams stay visible when ending or leaving fails, sidebar pins include items outside the main library view, and deleting a playlist no longer reports a false failure.
 - Album pages keep the current cover visible while a higher-resolution image loads.
 - Spotify’s Liked Songs card on Home shows the signed-in account’s display name.
+- Switching between built-in Spotify playback and Soloist keeps Sonora’s queue and the current song’s position.
 
 ### Fixed
 

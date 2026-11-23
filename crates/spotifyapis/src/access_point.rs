@@ -22,8 +22,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use crate::{SignInFailure, SignInProblem, Throttled, spotify::session::Session};
-use spotifyapis::proto::access_point::{
+use crate::Session;
+use crate::proto::access_point::{
     APLoginFailed, APResponseMessage, APWelcome, AuthenticationType, BuildInfo, ClientHello,
     ClientProof, ClientResponseEncrypted, CpuFamily, Cryptosuite, ErrorCode, LoginCredentials,
     LoginCryptoDiffieHellmanHello, LoginCryptoDiffieHellmanResponse, LoginCryptoHelloUnion,
@@ -79,59 +79,56 @@ const PRIME: &[u8] = &[
     0xf4, 0x4c, 0x42, 0xe9, 0xa6, 0x3a, 0x36, 0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 ];
 
-/// Encodes and verifies complete access-point frames without losing data on a cancelled read.
 type MediaKey = ([u8; 16], [u8; 20]);
 
 /// Lazily opens the account's audio-key connection and records key throttling.
-#[derive(Default)]
-pub(in crate::spotify) struct AudioKeys {
+pub struct AudioKeys {
+    session: Arc<Session>,
+    device_id: String,
     connection: Mutex<Option<AccessPoint>>,
     throttled: AtomicBool,
 }
 
 impl AudioKeys {
+    /// Binds a lazy audio-key connection to one account and device.
+    pub fn new(session: Arc<Session>, device_id: String) -> Self {
+        Self {
+            session,
+            device_id,
+            connection: Mutex::default(),
+            throttled: AtomicBool::default(),
+        }
+    }
+
     /// Opens the access point on the first native key request and reconnects after closure.
-    pub(super) async fn get(
-        &self,
-        session: &Session,
-        track: [u8; 16],
-        file: [u8; 20],
-    ) -> Result<[u8; 16]> {
+    pub async fn get(&self, track: [u8; 16], file: [u8; 20]) -> Result<[u8; 16]> {
         let point = {
             let mut held = self.connection.lock().await;
             if let Some(point) = held.as_ref().filter(|point| !point.is_closed()) {
                 point.clone()
             } else {
-                let api = session.api();
-                let (addresses, token) = tokio::try_join!(api.access_points(), async {
-                    api.access_token()
-                        .await
-                        .map_err(crate::spotify::auth::sign_in_error)
-                })?;
-                let point = AccessPoint::connect(
-                    addresses,
-                    &token,
-                    session.username(),
-                    session.device_id(),
-                )
-                .await?;
+                let session = &self.session;
+                let (addresses, token) =
+                    tokio::try_join!(session.access_points(), session.access_token())?;
+                let point =
+                    AccessPoint::connect(addresses, &token, session.username(), &self.device_id)
+                        .await?;
                 held.insert(point).clone()
             }
         };
         let key = point.audio_key(track, file).await;
         if key.is_ok() {
             self.throttled.store(false, Ordering::Relaxed);
-        } else if key
-            .as_ref()
-            .is_err_and(|error| error.is::<crate::Throttled>())
-        {
+        } else if key.as_ref().is_err_and(|error| {
+            error.downcast_ref::<AudioKeyError>() == Some(&AudioKeyError::Throttled)
+        }) {
             self.throttled.store(true, Ordering::Relaxed);
         }
         key
     }
 
-    /// Indicates that offline downloads should ask for the key before fetching the file.
-    pub(super) fn throttled(&self) -> bool {
+    /// Whether Spotify throttled a key request since the last successful one.
+    pub fn throttled(&self) -> bool {
         self.throttled.load(Ordering::Relaxed)
     }
 }
@@ -151,17 +148,33 @@ struct Request {
     reply: oneshot::Sender<Result<[u8; 16]>>,
 }
 
-/// The authenticated account was denied an audio key.
-#[derive(Debug)]
-pub(super) struct KeyDenied;
+/// Spotify's rejection of an access-point login or audio-key request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioKeyError {
+    Denied,
+    Throttled,
+    Premium,
+    Region,
+    Credentials,
+    Refused,
+    Network,
+}
 
-impl fmt::Display for KeyDenied {
+impl fmt::Display for AudioKeyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Spotify denied the audio key")
+        f.write_str(match self {
+            Self::Denied => "Spotify denied the audio key",
+            Self::Throttled => "Spotify throttled the audio-key request",
+            Self::Premium => "Spotify requires a premium account",
+            Self::Region => "Spotify restricted access in this region",
+            Self::Credentials => "Spotify rejected the access-point credentials",
+            Self::Refused => "Spotify refused the access-point login",
+            Self::Network => "cannot connect to a Spotify access point",
+        })
     }
 }
 
-impl std::error::Error for KeyDenied {}
+impl std::error::Error for AudioKeyError {}
 
 impl AccessPoint {
     async fn connect(
@@ -201,19 +214,19 @@ impl AccessPoint {
                     }));
                     match timeout(PRODUCT_WAIT, latest.wait_for(|state| state.is_some())).await {
                         Ok(Ok(account)) if *account == Some(false) => {
-                            return Err(SignInFailure(SignInProblem::Premium).into());
+                            return Err(AudioKeyError::Premium.into());
                         }
-                        Ok(Err(_)) => return Err(SignInFailure(SignInProblem::Network).into()),
+                        Ok(Err(_)) => return Err(AudioKeyError::Network.into()),
                         _ => return Ok(point),
                     }
                 }
-                Ok(Err(error)) if error.is::<SignInFailure>() => return Err(error),
+                Ok(Err(error)) if error.is::<AudioKeyError>() => return Err(error),
                 Ok(Err(error)) => last = Some(error),
                 Err(error) => last = Some(error.into()),
             }
         }
         Err(last.unwrap_or_else(|| anyhow::anyhow!("Spotify returned no access point")))
-            .context(SignInFailure(SignInProblem::Network))
+            .context(AudioKeyError::Network)
     }
 
     fn is_closed(&self) -> bool {
@@ -223,7 +236,7 @@ impl AccessPoint {
     /// Requests the key from the signed-in access point without sending it to the CDN.
     async fn audio_key(&self, track: [u8; 16], file: [u8; 20]) -> Result<[u8; 16]> {
         if *self.0.account.borrow() == Some(false) {
-            return Err(KeyDenied.into());
+            return Err(AudioKeyError::Denied.into());
         }
         let (send, reply) = oneshot::channel();
         timeout(KEY_TIMEOUT, async {
@@ -286,7 +299,7 @@ async fn login(host: &str, port: u16, token: &str, username: &str, device: &str)
         WELCOME => {
             let welcome = APWelcome::decode(body)?;
             if !welcome.canonical_username.eq_ignore_ascii_case(username) {
-                return Err(SignInFailure(SignInProblem::Credentials).into());
+                return Err(AudioKeyError::Credentials.into());
             }
             Ok(socket)
         }
@@ -300,14 +313,14 @@ fn failure(code: ErrorCode) -> anyhow::Error {
         ErrorCode::TryAnotherAP => {
             return anyhow::anyhow!("Spotify requested another access point");
         }
-        ErrorCode::TravelRestriction => SignInProblem::Region,
-        ErrorCode::PremiumAccountRequired => SignInProblem::Premium,
+        ErrorCode::TravelRestriction => AudioKeyError::Region,
+        ErrorCode::PremiumAccountRequired => AudioKeyError::Premium,
         ErrorCode::BadCredentials | ErrorCode::CouldNotValidateCredentials => {
-            SignInProblem::Credentials
+            AudioKeyError::Credentials
         }
-        _ => SignInProblem::Refused,
+        _ => AudioKeyError::Refused,
     };
-    SignInFailure(problem).into()
+    problem.into()
 }
 
 async fn serve(
@@ -346,8 +359,8 @@ async fn serve(
                         let result = match command {
                             KEY => body.get(4..20).and_then(|key| <[u8; 16]>::try_from(key).ok())
                                 .context("Spotify returned an invalid audio key"),
-                            _ if body.get(4..6) == Some([0, 1].as_slice()) => Err(KeyDenied.into()),
-                            _ => Err(Throttled.into()),
+                            _ if body.get(4..6) == Some([0, 1].as_slice()) => Err(AudioKeyError::Denied.into()),
+                            _ => Err(AudioKeyError::Throttled.into()),
                         };
                         if let Ok(key) = &result {
                             if cache.len() >= KEY_CACHE {
@@ -366,7 +379,7 @@ async fn serve(
                     continue;
                 }
                 if *account.borrow() == Some(false) {
-                    let _ = request.reply.send(Err(KeyDenied.into()));
+                    let _ = request.reply.send(Err(AudioKeyError::Denied.into()));
                     continue;
                 }
                 if let Some(key) = cache.get(&request.media) {
@@ -447,7 +460,7 @@ async fn handshake(mut tcp: TcpStream) -> Result<Socket> {
         client_nonce: nonce.to_vec(),
         padding: Some(vec![0x1e]),
     };
-    let mut transcript = framed(&[0, 4], &hello.encode_to_vec());
+    let mut transcript = framed(&[0, 4], &hello.encode_to_vec())?;
     tcp.write_all(&transcript).await?;
     let length = tcp.read_u32().await?;
     let size = usize::try_from(length)?
@@ -504,7 +517,8 @@ async fn handshake(mut tcp: TcpStream) -> Result<Socket> {
         pow_response: (),
         crypto_response: (),
     };
-    tcp.write_all(&framed(&[], &answer.encode_to_vec())).await?;
+    tcp.write_all(&framed(&[], &answer.encode_to_vec())?)
+        .await?;
     Ok(Framed::new(
         tcp,
         Codec {
@@ -572,12 +586,14 @@ impl Decoder for Codec {
     }
 }
 
-fn framed(prefix: &[u8], payload: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(prefix.len() + 4 + payload.len());
+fn framed(prefix: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
+    let length = prefix.len() + 4 + payload.len();
+    let header = u32::try_from(length)?.to_be_bytes();
+    let mut result = Vec::with_capacity(length);
     result.extend_from_slice(prefix);
-    result.extend_from_slice(&((prefix.len() + 4 + payload.len()) as u32).to_be_bytes());
+    result.extend_from_slice(&header);
     result.extend_from_slice(payload);
-    result
+    Ok(result)
 }
 
 fn platform() -> Platform {

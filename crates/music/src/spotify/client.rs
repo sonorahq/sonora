@@ -4,11 +4,12 @@ use std::sync::Arc;
 use crate::connect::Connect;
 use crate::spotify::session::Session;
 use crate::{MediaKind, MusicApi, escape};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
 use crate::spotify::{
-    albums, artists, collection, connect::sequence, playlists, profiles, search, wire,
+    albums, artists, auth::sign_in_error, collection, connect::sequence, playlists, profiles,
+    search, wire,
 };
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
@@ -25,10 +26,6 @@ impl SpotifyClient {
     pub fn new(session: Session) -> Self {
         let connect = Arc::new(crate::spotify::connect::open(session.clone()));
         Self { session, connect }
-    }
-
-    pub fn session(&self) -> &Session {
-        &self.session
     }
 }
 
@@ -68,7 +65,16 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn artist_catalogue(&self, artist_id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
-        artists::catalogue(&self.session, artist_id, known.to_vec()).await
+        artists::catalogue(&self.session, artist_id, known.to_vec(), None).await
+    }
+
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        preview: tokio::sync::mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        artists::catalogue(&self.session, id, known.to_vec(), Some(preview)).await
     }
 
     async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
@@ -84,7 +90,13 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
-        collection::saved_tracks(&self.session).await
+        let items = collection::saved_items(
+            &self.session,
+            collection::COLLECTION,
+            collection::TRACK_PREFIX,
+        )
+        .await?;
+        collection::hydrate_saved_tracks(&self.session, &items).await
     }
 
     async fn saved_collection_paged(&self) -> Option<crate::SavedCollectionPages> {
@@ -102,11 +114,18 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
-        collection::track(&self.session, track_id).await
+        let uri = format!("{}{track_id}", collection::TRACK_PREFIX);
+        collection::metadata(&self.session, std::slice::from_ref(&uri))
+            .await?
+            .remove(&uri)
+            .context("track metadata is missing")
     }
 
     async fn saved_albums(&self) -> Result<Vec<Album>> {
-        albums::saved_albums(&self.session).await
+        let items =
+            collection::saved_items(&self.session, collection::COLLECTION, albums::ALBUM_PREFIX)
+                .await?;
+        albums::hydrate_saved_albums(&self.session, items).await
     }
 
     async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
@@ -138,11 +157,17 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn song_album(&self, album_id: &str) -> Result<Option<Album>> {
-        albums::card(&self.session, album_id).await.map(Some)
+        albums::read_album(&self.session, album_id, albums::album_from)
+            .await
+            .map(Some)
     }
 
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
-        albums::album_tracks(&self.session, album_id).await
+        let uris = albums::read_album(&self.session, album_id, |_, album| {
+            albums::track_uris(album).collect::<Vec<_>>()
+        })
+        .await?;
+        collection::ordered_tracks(&self.session, &uris, collection::TRACK_DETAILS).await
     }
 
     async fn album_catalogue(
@@ -215,8 +240,12 @@ impl MusicApi for SpotifyClient {
         search::tracks(&self.session, query).await
     }
 
-    async fn search_all(&self, query: &str) -> crate::Found {
-        search::all(&self.session, query).await
+    async fn search_with_preview(
+        &self,
+        query: &str,
+        preview: tokio::sync::mpsc::Sender<crate::SearchPart>,
+    ) -> crate::Found {
+        search::with_preview(&self.session, query, &preview).await
     }
 
     async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
@@ -335,7 +364,13 @@ impl MusicApi for SpotifyClient {
         let mut seen = HashSet::new();
         let mut revision = None;
         loop {
-            let rootlist = playlists::rootlist_page(&self.session, offset, 300).await?;
+            let rootlist = self
+                .session
+                .api()
+                .rootlist_page(offset, 300)
+                .await
+                .map_err(sign_in_error)
+                .context("cannot read the rootlist")?;
             let Some(contents) = &rootlist.contents else {
                 revision = None;
                 break;

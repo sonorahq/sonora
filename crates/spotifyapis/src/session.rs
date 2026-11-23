@@ -38,12 +38,12 @@ impl Session {
     }
 
     /// Gets a valid bearer for Spotify requests.
-    pub async fn access_token(&self) -> Result<String> {
+    pub(crate) async fn access_token(&self) -> Result<String> {
         self.oauth.token().await
     }
 
     /// Discovered access-point addresses for native Spotify audio connections.
-    pub async fn access_points(&self) -> Result<&[String]> {
+    pub(crate) async fn access_points(&self) -> Result<&[String]> {
         Ok(&self.endpoints().await?.accesspoint)
     }
 

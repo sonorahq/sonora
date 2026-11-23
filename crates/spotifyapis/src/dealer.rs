@@ -42,11 +42,11 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// A decoded Dealer push, before routing to Connect or the library.
 pub struct Message {
     pub uri: String,
-    pub payload: PayloadValue,
+    payload: PayloadValue,
 }
 
 /// The wire representation of a push's single payload.
-pub enum PayloadValue {
+enum PayloadValue {
     Empty,
     Raw(Bytes),
     Json(Value),
@@ -134,18 +134,30 @@ impl Drop for Dealer {
 }
 
 impl Message {
-    /// Decodes a topic that Spotify sends as either protobuf or JSON.
-    pub fn decode<M: ProtoMessage + Default + serde::de::DeserializeOwned>(self) -> Result<M> {
-        if let PayloadValue::Json(value) = self.payload {
-            return Ok(serde_json::from_value(value)?);
+    /// Decodes the JSON payload used by Jam notifications.
+    pub fn decode_json<M: serde::de::DeserializeOwned>(self) -> Result<M> {
+        let PayloadValue::Json(value) = self.payload else {
+            anyhow::bail!("expected a JSON Dealer payload");
+        };
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Whether Dealer carried a binary message.
+    pub fn has_protobuf(&self) -> bool {
+        matches!(&self.payload, PayloadValue::Raw(_))
+    }
+
+    pub(crate) fn into_protobuf(self) -> Option<Bytes> {
+        match self.payload {
+            PayloadValue::Raw(bytes) => Some(bytes),
+            _ => None,
         }
-        self.decode_protobuf()
     }
 
     pub fn decode_protobuf<M: ProtoMessage + Default>(self) -> Result<M> {
-        let PayloadValue::Raw(bytes) = self.payload else {
-            anyhow::bail!("expected a protobuf Dealer payload");
-        };
+        let bytes = self
+            .into_protobuf()
+            .context("expected a protobuf Dealer payload")?;
         Ok(M::decode(bytes)?)
     }
 }
@@ -368,8 +380,12 @@ pub enum Command {
     Play(Box<PlayCommand>),
     Pause,
     Resume,
-    SkipNext,
-    SkipPrev,
+    SkipNext {
+        track: Option<Box<ProvidedTrack>>,
+    },
+    SkipPrev {
+        track: Option<Box<ProvidedTrack>>,
+    },
     SeekTo {
         value: u64,
     },

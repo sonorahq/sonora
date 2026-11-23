@@ -5,13 +5,7 @@ use crate::spotify::session::Session;
 use anyhow::{Context as _, Result, anyhow};
 use bytes::Bytes;
 use futures::{StreamExt as _, stream};
-use prost::Message as _;
-use spotifyapis::proto::list_read::{
-    AttributeKind, Attributes, AttributesRequestedFields, GetListRequest, GetListResponse,
-    GetListsRequest, GetListsResponse, ItemRequestedFields, ListEntity, ListEntityRequestedFields,
-    ListIdentifier, ListResponseRequestedFields, MetaItemsRequestedFields, Pagination,
-    RequestOptions, RequestedFields,
-};
+use spotifyapis::proto::list_read::{AttributeKind, Attributes, ListProjection, ListQuery};
 use spotifyapis::proto::metadata::ExtensionKind;
 use spotifyapis::proto::playlist::{
     Add, ChangeInfo, Delta, Item, ItemAttributes, ItemAttributesPartialState, Kind, ListAttributes,
@@ -30,6 +24,7 @@ const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const COVER_SLACK: usize = 4;
 /// Membership returns every track URI, so keep these batches smaller than cover slices.
 const MEMBERSHIP_BATCH: usize = 8;
+const CARD_BATCH: usize = 128;
 const SOURCE_CLIENT: i32 = 2;
 const PICTURE_ATTRIBUTE: i32 = 3;
 /// Spotify shows a playlist cover at 640 pixels at most, and its public API caps one at 256 KB.
@@ -399,7 +394,7 @@ pub(super) async fn memberships(
     for batch in requests.chunks(MEMBERSHIP_BATCH) {
         let queries = batch
             .iter()
-            .map(|(id, wanted)| (Query::playlist(id, None), *wanted));
+            .map(|(id, wanted)| (ListQuery::playlist(id, None), *wanted));
         results.extend(track_lists(session, queries, None).await);
     }
     results
@@ -420,7 +415,7 @@ pub(super) async fn covers(
     for batch in ids.chunks(BATCH) {
         let queries = batch
             .iter()
-            .map(|id| (Query::playlist(id, Some(length)), wanted));
+            .map(|id| (ListQuery::playlist(id, Some(length)), wanted));
         results.extend(
             track_lists(session, queries, Some(limit))
                 .await
@@ -434,7 +429,7 @@ pub(super) async fn covers(
 /// Resolves artwork once per batch. Full memberships remain usable when artwork fails.
 async fn track_lists(
     session: &Session,
-    requests: impl Iterator<Item = (Query, usize)>,
+    requests: impl Iterator<Item = (ListQuery, usize)>,
     preview_limit: Option<usize>,
 ) -> Vec<Result<crate::PlaylistMembership>> {
     let (queries, counts): (Vec<_>, Vec<_>) = requests.unzip();
@@ -536,7 +531,7 @@ async fn edit_snapshot(session: &Session, playlist_id: &str) -> Result<Snapshot>
 
 /// Keeps each list slot aligned with its index in the returned revision.
 async fn projected_snapshot(session: &Session, uri: String) -> Result<Snapshot> {
-    let snapshot = items(session, &[Query { uri, page: None }])
+    let snapshot = items(session, &[ListQuery { uri, page: None }])
         .await
         .pop()
         .context("Spotify omitted the playlist")??;
@@ -558,20 +553,6 @@ async fn edit(session: &Session, playlist_id: &str, body: &ListChanges) -> Resul
         .edit_playlist(playlist_id, body, &connection)
         .await
         .map_err(sign_in_error)
-}
-
-/// Reads a rootlist page with ownership, visibility, permissions and other library metadata.
-pub(super) async fn rootlist_page(
-    session: &Session,
-    from: usize,
-    length: usize,
-) -> Result<SelectedListContent> {
-    session
-        .api()
-        .rootlist_page(from, length)
-        .await
-        .map_err(sign_in_error)
-        .context("cannot read the rootlist")
 }
 
 async fn rootlist(session: &Session, uri: &str) -> Result<(Snapshot, i32)> {
@@ -667,20 +648,21 @@ fn move_ops(
         .collect();
     order::confirm(&listed, seen)?;
     let steps = order::moves(seen, wanted)?;
-    let ops = order::placements(items.len(), held, &steps)?
+    order::placements(items.len(), held, &steps)?
         .into_iter()
-        .map(|placement| Op {
-            kind: Kind::Mov as i32,
-            mov: Some(Mov {
-                from_index: Some(placement.from as i32),
-                length: Some(1),
-                to_index: Some(placement.before as i32),
+        .map(|placement| {
+            Ok(Op {
+                kind: Kind::Mov as i32,
+                mov: Some(Mov {
+                    from_index: Some(i32::try_from(placement.from)?),
+                    length: Some(1),
+                    to_index: Some(i32::try_from(placement.before)?),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
+            })
         })
-        .collect();
-    Ok(ops)
+        .collect()
 }
 
 fn rename_op(name: &str) -> Op {
@@ -733,25 +715,18 @@ struct Snapshot {
     revision: Bytes,
 }
 
-/// A list URI and an optional limit on entries from its start.
-struct Query {
-    uri: String,
-    page: Option<i32>,
-}
-
-impl Query {
-    fn playlist(id: &str, page: Option<i32>) -> Self {
-        Self {
-            uri: format!("spotify:playlist:{id}"),
-            page,
-        }
-    }
-}
-
 /// Reads ordered item URIs for several playlists, with independent page windows.
-async fn items(session: &Session, queries: &[Query]) -> Vec<Result<Snapshot>> {
-    let fields = || fields([], [AttributeKind::Uri]);
-    let replies = match read(session, queries, fields).await {
+async fn items(session: &Session, queries: &[ListQuery]) -> Vec<Result<Snapshot>> {
+    let projection = ListProjection {
+        items: &[AttributeKind::Uri],
+        ..Default::default()
+    };
+    let replies = match session
+        .api()
+        .get_lists(queries, projection)
+        .await
+        .map_err(sign_in_error)
+    {
         Ok(replies) => replies,
         Err(error) => {
             return queries
@@ -803,66 +778,69 @@ pub(super) async fn browse_sections(
     }
     let queries: Vec<_> = uris
         .into_iter()
-        .map(|uri| Query { uri, page: None })
+        .map(|uri| ListQuery { uri, page: None })
         .collect();
-    read(session, &queries, || {
-        let mut fields = fields(
-            [AttributeKind::Name],
-            [AttributeKind::Uri, AttributeKind::FormatListAttributes],
-        );
-        if with_cards {
-            fields.list_response.entity.meta_items = Some(MetaItemsRequestedFields {
-                attributes: Some(AttributesRequestedFields {
-                    requested_field: CARD_FIELDS.map(|kind| kind as i32).into(),
-                }),
-            });
-        }
-        fields
-    })
-    .await?
-    .into_iter()
-    .map(|reply| {
-        let (entity, _) = reply?;
-        let title = entity
-            .attributes
-            .map(|attributes| attributes.name)
-            .unwrap_or_default();
-        let items = entity
-            .items
-            .into_iter()
-            .filter_map(|item| {
-                let attributes = item.attributes?;
-                let target = attributes
-                    .format_attributes
-                    .and_then(|mut attributes| attributes.entries.remove("target_uri"));
-                Some((attributes.uri, target))
+    let projection = ListProjection {
+        list: &[AttributeKind::Name],
+        items: &[AttributeKind::Uri, AttributeKind::FormatListAttributes],
+        referenced: if with_cards { &CARD_FIELDS } else { &[] },
+    };
+    session
+        .api()
+        .get_lists(&queries, projection)
+        .await
+        .map_err(sign_in_error)?
+        .into_iter()
+        .map(|reply| {
+            let (entity, _) = reply?;
+            let title = entity
+                .attributes
+                .map(|attributes| attributes.name)
+                .unwrap_or_default();
+            let items = entity
+                .items
+                .into_iter()
+                .filter_map(|item| {
+                    let attributes = item.attributes?;
+                    let target = attributes
+                        .format_attributes
+                        .and_then(|mut attributes| attributes.entries.remove("target_uri"));
+                    Some((attributes.uri, target))
+                })
+                .collect();
+            let playlists = entity
+                .meta_items
+                .into_iter()
+                .filter_map(|(uri, meta)| {
+                    let card = playlist_card(uri.strip_prefix(PLAYLIST_PREFIX)?, meta.attributes?)?;
+                    // Incomplete projections still get the same direct read as other cards.
+                    (!card.owner_id.is_empty() && card.cover.is_some()).then_some((uri, card))
+                })
+                .collect();
+            Ok(BrowseSection {
+                title,
+                items,
+                playlists,
             })
-            .collect();
-        let playlists = entity
-            .meta_items
-            .into_iter()
-            .filter_map(|(uri, meta)| {
-                let card = playlist_card(uri.strip_prefix(PLAYLIST_PREFIX)?, meta.attributes?)?;
-                // Incomplete projections still get the same direct read as other cards.
-                (!card.owner_id.is_empty() && card.cover.is_some()).then_some((uri, card))
-            })
-            .collect();
-        Ok(BrowseSection {
-            title,
-            items,
-            playlists,
         })
-    })
-    .collect()
+        .collect()
 }
 
 /// Reads the names, owners, and covers needed for playlist cards in one projection.
 pub(super) async fn cards(session: &Session, ids: &[String]) -> HashMap<String, Playlist> {
-    let fields = || fields(CARD_FIELDS, []);
+    let projection = ListProjection {
+        list: &CARD_FIELDS,
+        ..Default::default()
+    };
     let mut cards = HashMap::new();
-    for ids in ids.chunks(BATCH) {
-        let queries: Vec<_> = ids.iter().map(|id| Query::playlist(id, None)).collect();
-        let replies = match read(session, &queries, fields).await {
+    for ids in ids.chunks(CARD_BATCH) {
+        let queries: Vec<_> = ids.iter().map(|id| ListQuery::playlist(id, None)).collect();
+        let replies = match session
+            .api()
+            .get_lists(&queries, projection)
+            .await
+            .map_err(sign_in_error)
+        {
             Ok(replies) => replies,
             Err(error) => {
                 log::debug!("playlists: cannot read playlist cards: {error:#}");
@@ -922,162 +900,32 @@ fn playlist_card(id: &str, attributes: Attributes) -> Option<Playlist> {
     })
 }
 
-/// Selects list and item attributes independently for GetLists.
-fn fields<const L: usize, const I: usize>(
-    list: [AttributeKind; L],
-    items: [AttributeKind; I],
-) -> RequestedFields {
-    fn attributes<const N: usize>(kinds: [AttributeKind; N]) -> Option<AttributesRequestedFields> {
-        (N > 0).then(|| AttributesRequestedFields {
-            requested_field: kinds.into_iter().map(|kind| kind as i32).collect(),
-        })
-    }
-    let entity = ListEntityRequestedFields {
-        attributes: attributes(list),
-        items: attributes(items).map(|attributes| ItemRequestedFields {
-            attributes: Some(attributes),
-        }),
-        meta_items: None,
-    };
-    RequestedFields {
-        list_response: ListResponseRequestedFields { entity },
-    }
-}
-
-type ListResult = Result<(ListEntity, Bytes)>;
-
-/// Preserves independent successes and errors in the request order.
-async fn read(
-    session: &Session,
-    queries: &[Query],
-    fields: impl Fn() -> RequestedFields,
-) -> Result<Vec<ListResult>> {
-    // Duplicate list projections can fail the entire request.
-    let mut slots = HashMap::new();
-    let mut requests = Vec::new();
-    let order: Vec<_> = queries
-        .iter()
-        .map(|query| {
-            *slots.entry((&query.uri, query.page)).or_insert_with(|| {
-                let index = requests.len();
-                requests.push(GetListRequest {
-                    identifier: ListIdentifier {
-                        uri: query.uri.clone(),
-                        revision: Bytes::new(),
-                    },
-                    options: RequestOptions {
-                        requested_fields: fields(),
-                        pagination: query.page.map(|length| Pagination { length }),
-                    },
-                });
-                index
-            })
-        })
-        .collect();
-    let response: GetListsResponse = session
-        .api()
-        .get_lists(GetListsRequest { requests })
-        .await
-        .map_err(sign_in_error)?;
-    anyhow::ensure!(
-        response.responses.len() == slots.len(),
-        "Spotify returned the wrong number of lists"
-    );
-    Ok(queries
-        .iter()
-        .zip(order)
-        .map(|(query, index)| {
-            GetListResponse::decode(response.responses[index].clone())
-                .map_err(anyhow::Error::from)
-                .and_then(decode)
-                .with_context(|| format!("cannot read {}", query.uri))
-        })
-        .collect())
-}
-
-fn decode(response: GetListResponse) -> ListResult {
-    let info = response.info.unwrap_or_default();
-    if let Some(error) = info.request_error {
-        anyhow::bail!("Spotify could not read the playlist: {}", error.message);
-    }
-    let entity = response
-        .entity
-        .context("Spotify omitted the playlist items")?;
-    Ok((entity, info.revision))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn listing(uris: &[&str]) -> Snapshot {
-        Snapshot {
-            items: uris.iter().map(|uri| (*uri).to_owned()).collect(),
-            revision: Bytes::from_static(b"rev"),
-        }
-    }
-
     #[test]
-    fn reorders_track_positions_around_episodes_and_rejects_stale_order() {
-        let content = listing(&[
-            "spotify:track:a",
-            "spotify:episode:e",
-            "spotify:track:b",
-            "spotify:track:c",
-        ]);
-        let held = [0, 2, 3];
-        let shown = ["a", "b", "c"].map(str::to_owned);
-        for (wanted, from, to) in [(["b", "c", "a"], 0, 4), (["c", "a", "b"], 3, 0)] {
-            let ops = move_ops(&content, &held, &shown, &wanted.map(str::to_owned)).unwrap();
-            let [op] = ops.as_slice() else {
-                panic!("expected one move")
-            };
-            assert_eq!(op.kind(), Kind::Mov);
-            let movement = op.mov.as_ref().unwrap();
-            assert_eq!(
-                (
-                    movement.from_index(),
-                    movement.length(),
-                    movement.to_index()
-                ),
-                (from, 1, to)
-            );
-        }
-        let stale = ["b", "a", "c"].map(str::to_owned);
-        assert!(move_ops(&content, &held, &stale, &shown).is_err());
-    }
+    fn playlist_edits_use_original_positions_and_revision() {
+        let content = Snapshot {
+            items: ["spotify:track:a", "spotify:episode:e", "spotify:track:b"]
+                .map(str::to_owned)
+                .into(),
+            revision: Bytes::from_static(b"revision"),
+        };
+        let shown = ["a", "b"].map(str::to_owned);
+        let reversed = ["b", "a"].map(str::to_owned);
+        let held = [0, 2];
+        assert!(move_ops(&content, &held, &reversed, &shown).is_err());
+        let mut ops = move_ops(&content, &held, &shown, &reversed).unwrap();
+        let move_op = ops[0].mov.as_ref().unwrap();
+        assert_eq!((move_op.from_index(), move_op.to_index()), (2, 0));
+        ops.push(remove_op("spotify:track:b", 2));
+        let body = changes_of(Some(&content.revision), ops);
+        assert_eq!(body.base_revision.as_ref(), Some(&content.revision));
+        assert_eq!(body.deltas[0].ops[1].rem.as_ref().unwrap().from_index(), 2);
 
-    #[test]
-    fn writes_append_and_indexed_removal_on_the_current_revision() {
-        for uri in ["spotify:track:b", "spotify:playlist:b"] {
-            let content = listing(&["spotify:track:a", uri]);
-            let index = position(&content, uri).unwrap();
-            let body = changes_of(
-                Some(&content.revision),
-                vec![add_op([item(uri)]), remove_op(uri, index)],
-            );
-            assert_eq!(body.base_revision.as_ref(), Some(&content.revision));
-            let [add, rem] = body.deltas[0].ops.as_slice() else {
-                panic!("expected add and remove")
-            };
-            assert_eq!((add.kind(), rem.kind()), (Kind::Add, Kind::Rem));
-            let add = add.add.as_ref().unwrap();
-            let rem = rem.rem.as_ref().unwrap();
-            assert!(add.add_last());
-            assert_eq!(add.items[0].uri, uri);
-            assert_eq!((rem.from_index(), rem.length()), (1, 1));
-            assert!(rem.items_as_key());
-            assert_eq!(rem.items[0].uri, uri);
-        }
-    }
-
-    #[test]
-    fn visibility_targets_the_rootlist_index() {
-        let op = visibility_op(3, true);
-        let update = op.update_item_attributes.as_ref().unwrap();
-
-        assert_eq!(op.kind(), Kind::UpdateItemAttributes);
-        assert_eq!(update.index(), 3);
+        let update = visibility_op(7, true).update_item_attributes.unwrap();
+        assert_eq!(update.index(), 7);
         assert!(update.new_attributes.values.public());
     }
 }

@@ -119,7 +119,12 @@ impl Devices {
         .detach();
         // the report to the other devices also follows the position as it moves
         let ticks = playback.read(cx).ticks().clone();
-        cx.observe(&ticks, |this, _, cx| this.publish(cx)).detach();
+        cx.observe(&ticks, |this, _, cx| {
+            if this.mode == Mode::Publish {
+                this.publish(cx);
+            }
+        })
+        .detach();
         cx.observe(&queue, |this, _, cx| this.publish(cx)).detach();
         cx.observe(&settings, |this, _, cx| this.apply(cx)).detach();
 
@@ -607,14 +612,20 @@ impl Devices {
         if wanted == self.mode {
             return;
         }
-        let named = self.named.take();
-        let events = self.events.take();
-        self.reset(Some(link.clone()));
-        self.named = named;
-        self.events = events;
+        if wanted == Mode::Off {
+            let named = self.named.take();
+            let events = self.events.take();
+            self.reset(Some(link.clone()));
+            self.named = named;
+            self.events = events;
+        }
+        if wanted == Mode::Observe {
+            self.claimed = false;
+        }
+        self.sent = None;
         self.mode = wanted;
         link.send(Request::Mode(wanted));
-        if wanted == Mode::Publish {
+        if wanted != Mode::Off {
             self.publish(cx);
         }
         cx.notify();
@@ -639,20 +650,17 @@ impl Devices {
 
     /// Applies already-delivered events together without delaying commands or scheduling a timer.
     fn on_events(&mut self, events: impl Iterator<Item = Event>, cx: &mut Context<Self>) {
-        let mut changed = false;
-        let mut listed = false;
+        let mut library_changed = false;
+        let mut list_changed = false;
         let mut playlists = HashSet::new();
         for event in events {
             match event {
                 Event::Roster(roster) => self.set_roster(roster, cx),
                 Event::Command(command) => self.run(command, cx),
                 Event::Liked { track, liked } => self.liked(track, liked, cx),
-                Event::LibraryChanged => {
-                    changed = true;
-                    listed = true;
-                }
+                Event::LibraryChanged => library_changed = true,
+                Event::PlaylistListChanged => list_changed = true,
                 Event::PlaylistChanged(id) => {
-                    changed = true;
                     playlists.insert(id);
                 }
                 Event::Jam(mut jam) => {
@@ -703,9 +711,9 @@ impl Devices {
                 }
             }
         }
-        if changed {
+        if library_changed || list_changed || !playlists.is_empty() {
             self.library.update(cx, |library, cx| {
-                library.changed_elsewhere(playlists, listed, cx)
+                library.changed_elsewhere(playlists, library_changed, list_changed, cx)
             });
         }
     }
@@ -746,7 +754,7 @@ impl Devices {
         }
         // playback taken for a local file is never reported, so the network never releases it,
         // and another device starting to play is what takes it back
-        if started && self.claimed && self.sent.is_none() {
+        if started && self.claimed && self.playback.read(cx).local_active() {
             self.claimed = false;
             self.here(cx, |playback, cx| playback.pause(cx));
         }
@@ -919,6 +927,9 @@ impl Devices {
             Command::Pause => self.here(cx, |playback, cx| playback.pause(cx)),
             Command::Next => self.here(cx, |playback, cx| playback.next(cx)),
             Command::Previous => self.here(cx, |playback, cx| playback.previous(cx)),
+            Command::SelectQueue(uid) => {
+                self.here(cx, |playback, cx| playback.play_queue(&uid, cx))
+            }
             Command::Seek(at) => self.seek(at, cx),
             Command::Volume(level) => self.here(cx, |playback, cx| playback.set_volume(level, cx)),
             Command::Shuffle(on) => self.queue.update(cx, |queue, cx| queue.set_shuffle(on, cx)),
@@ -1009,7 +1020,7 @@ impl Devices {
         if !self
             .sent
             .as_deref()
-            .is_some_and(|sent| same_queue(sent, &state))
+            .is_some_and(|sent| sent.same_queue(&state))
         {
             log::debug!("connect: dropping a queue edit made on an older report");
             self.sent = None;
@@ -1072,7 +1083,7 @@ impl Devices {
                 let moved = match restart {
                     true => this.queue.read(cx).revision() != revision,
                     false => match (this.snapshot(cx), &shown) {
-                        (Some(now), Some(shown)) => !same_queue(&now, shown),
+                        (Some(now), Some(shown)) => !now.same_queue(shown),
                         _ => true,
                     },
                 };
@@ -1122,17 +1133,32 @@ impl Devices {
         let Some(link) = self.link.clone() else {
             return;
         };
-        if self.mode != Mode::Publish {
-            return;
-        }
-
-        let Some(now) = self.now_playing(cx) else {
+        let now = match self.mode {
+            Mode::Off => return,
+            Mode::Publish => self.now_playing(cx),
+            Mode::Observe => self
+                .snapshot(cx)
+                .filter(|snapshot| {
+                    snapshot.track.as_ref().map(|track| track.id.as_str())
+                        == self
+                            .playback
+                            .read(cx)
+                            .track()
+                            .and_then(|track| track.id.as_deref())
+                })
+                .map(Arc::new),
+        };
+        let Some(now) = now else {
             if self.sent.take().is_some() {
                 link.send(Request::Publish(None));
                 cx.notify();
             }
             return;
         };
+        if self.mode == Mode::Observe && self.sent.as_ref().is_some_and(|sent| now.same_queue(sent))
+        {
+            return;
+        }
         let Some(reason) = self
             .sent
             .as_ref()
@@ -1421,9 +1447,4 @@ fn kind_of(row: &QueuedTrack) -> QueueKind {
         (false, true) => QueueKind::Suggested,
         (false, false) => QueueKind::Context,
     }
-}
-
-/// Whether two reports show the same queue around the same song, whatever their clocks say.
-fn same_queue(a: &Snapshot, b: &Snapshot) -> bool {
-    a.track == b.track && a.previous == b.previous && a.upcoming == b.upcoming
 }

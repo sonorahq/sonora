@@ -1,8 +1,11 @@
 //! Extended metadata requests, responses, and catalogue payloads.
 
+use anyhow::Result;
 use bytes::Bytes;
 
-pub(crate) const ENDPOINT: &str = "/extended-metadata/v0/extended-metadata";
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/extended-metadata/v0/extended-metadata";
 
 #[derive(prost::Message)]
 pub struct Artist {
@@ -533,7 +536,7 @@ pub struct EntityExtensionData {
     #[prost(string, tag = "2")]
     pub entity_uri: String,
     #[prost(message, optional, tag = "3")]
-    pub extension_data: Option<Payload>,
+    extension_data: Option<Payload>,
 }
 
 /// Status reported for an individual metadata result.
@@ -551,13 +554,46 @@ pub struct EntityExtensionDataHeader {
     // pub offline_ttl_in_seconds: i64,
 }
 
+/// A protobuf message that can be decoded from an extended metadata payload.
+pub trait MetadataMessage: prost::Message + Default {}
+
+impl<T: prost::Message + Default> MetadataMessage for T {}
+
+/// Encoded catalogue metadata that can be cached and decoded on demand.
+#[derive(Clone)]
+pub struct MetadataPayload(Bytes);
+
+impl MetadataPayload {
+    /// Restores the encoded payload from caller-owned storage.
+    pub fn from_bytes(bytes: Bytes) -> Self {
+        Self(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Decodes the message that corresponds to the enclosing extension kind.
+    pub fn decode<M: MetadataMessage>(&self) -> std::result::Result<M, prost::DecodeError> {
+        M::decode(self.0.clone())
+    }
+}
+
+impl EntityExtensionData {
+    pub fn take_payload(&mut self) -> Option<MetadataPayload> {
+        self.extension_data
+            .take()
+            .map(|payload| MetadataPayload(payload.value))
+    }
+}
+
 /// Catalog bytes held in the value field of a protobuf Any.
 #[derive(prost::Message)]
-pub struct Payload {
+struct Payload {
     // #[prost(string, tag = "1")]
     // pub type_url: String,
     #[prost(bytes = "bytes", tag = "2")]
-    pub value: Bytes,
+    value: Bytes,
 }
 
 /// Spotify metadata extension IDs.
@@ -673,4 +709,14 @@ pub struct SearchGenreMetadata {
     pub name: String,
     #[prost(string, tag = "2")]
     pub image_url: String,
+}
+
+impl Session {
+    /// Loads the requested catalogue extensions.
+    pub async fn extended_metadata(
+        &self,
+        request: BatchedEntityRequest,
+    ) -> Result<BatchedExtensionResponse> {
+        http::read_rpc(self, ENDPOINT, request).await
+    }
 }

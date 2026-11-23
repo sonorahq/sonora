@@ -8,16 +8,11 @@ use spotifyapis::proto::metadata::CopyrightType;
 use spotifyapis::proto::{collection::CollectionItem, metadata::ExtensionKind};
 
 use crate::spotify::{collection, wire};
-use crate::{Album, AlbumDetail, ReleaseType, Track};
+use crate::{Album, AlbumDetail, ReleaseType};
 
 pub(super) const ALBUM_PREFIX: &str = "spotify:album:";
 const TRACK_PREFIX: &str = "spotify:track:";
 const UNKNOWN: &str = "Unknown";
-
-pub async fn saved_albums(session: &Session) -> Result<Vec<Album>> {
-    let items = collection::saved_items(session, collection::COLLECTION, ALBUM_PREFIX).await?;
-    hydrate_saved_albums(session, items).await
-}
 
 /// Hydrates saved albums in collection order and applies their saved dates.
 pub(super) async fn hydrate_saved_albums(
@@ -34,19 +29,6 @@ pub(super) async fn hydrate_saved_albums(
             Some(album)
         })
         .collect())
-}
-
-pub async fn album_tracks(session: &Session, album_id: &str) -> Result<Vec<Track>> {
-    let uris = read_album(session, album_id, |_, album| {
-        track_uris(album).collect::<Vec<_>>()
-    })
-    .await?;
-    collection::ordered_tracks(session, &uris, collection::TRACK_DETAILS).await
-}
-
-/// Gets a song's release metadata without hydrating its sibling tracks.
-pub(super) async fn card(session: &Session, album_id: &str) -> Result<Album> {
-    read_album(session, album_id, album_from).await
 }
 
 /// Loads the album and its ordered track IDs together, then hydrates uncached tracks in batches.
@@ -77,7 +59,7 @@ pub(super) fn track_uris(album: &AlbumMessage) -> impl Iterator<Item = String> +
         .disc
         .iter()
         .flat_map(|disc| &disc.track)
-        .filter_map(|track| collection::base62(track.gid.as_ref()?))
+        .filter_map(|track| spotifyapis::id::base62(track.gid.as_ref()?))
         .map(|id| format!("{TRACK_PREFIX}{id}"))
 }
 
@@ -148,7 +130,7 @@ pub(super) fn album_from(uri: &str, album: &AlbumMessage) -> Album {
 }
 
 /// Projects a single album using the shared metadata cache.
-async fn read_album<T>(
+pub(super) async fn read_album<T>(
     session: &Session,
     album_id: &str,
     project_album: impl FnMut(&str, &AlbumMessage) -> T,

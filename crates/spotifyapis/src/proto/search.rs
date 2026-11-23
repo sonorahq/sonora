@@ -1,6 +1,22 @@
 //! SearchView v3 catalogue projections.
 
-pub(crate) const ENDPOINT: &str = "/searchview/v3/search";
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::Result;
+
+use super::{component, linux_headers};
+use crate::{Session, http};
+
+const ENDPOINT: &str = "/searchview/v3/search";
+
+/// The catalogue type to request from SearchView.
+#[derive(Clone, Copy)]
+pub enum SearchKind {
+    Track,
+    Album,
+    Artist,
+    Playlist,
+}
 
 /// Ranked hits from a SearchView main-view request.
 #[derive(prost::Message)]
@@ -190,4 +206,38 @@ pub struct RelatedEntity {
     pub uri: String,
     #[prost(string, tag = "2")]
     pub name: String,
+}
+
+impl Session {
+    /// Searches one catalogue type with its own result limit.
+    pub async fn search(
+        &self,
+        query: &str,
+        kind: SearchKind,
+        limit: usize,
+    ) -> Result<MainViewResponse> {
+        let kind = match kind {
+            SearchKind::Track => "track",
+            SearchKind::Album => "album",
+            SearchKind::Artist => "artist",
+            SearchKind::Playlist => "playlist",
+        };
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+        let id = (fastrand::u128(..) & !0x00000000_0000_f000_c000_000000000000)
+            | 0x00000000_0000_4000_8000_000000000000;
+        let request_id = format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            id >> 96,
+            (id >> 80) as u16,
+            (id >> 64) as u16,
+            (id >> 48) as u16,
+            id & 0xffff_ffff_ffff,
+        );
+        let query = component(query);
+        let path = format!(
+            "{}?query={query}&entity_types={kind}&limit={limit}&timestamp={timestamp}&request_id={request_id}&show_type=podcast",
+            ENDPOINT
+        );
+        http::get(self, &path, linux_headers()).await
+    }
 }
