@@ -493,6 +493,7 @@ soloist-continue = Sürdür
 soloist-pair-step-open = Bu ağa bağlı bir telefonda ya da bilgisayarda Spotify'ı aç
 soloist-pair-step-play = Herhangi bir şarkıyı çalmaya başla
 soloist-pair-step-pick = Cihaz listesini aç ve { $device } adlı cihazı seç
+soloist-pair-firewall = Cihaz görünmüyor mu? Bu bilgisayardaki güvenlik duvarı aşağıdaki bağlantı noktalarına gelen bağlantılara izin vermeli.
 soloist-problem-download = Soloist indirilemedi
 soloist-problem-key = Spotify bu anahtarı kabul etmedi
 soloist-problem-key-detail = Anahtarın tamamını kopyaladığından ve iptal edilmediğinden emin olup yeniden dene.

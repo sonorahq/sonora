@@ -340,6 +340,7 @@ soloist-continue = Lanjutkan
 soloist-pair-step-open = Buka Spotify di ponsel atau komputer yang terhubung ke jaringan ini
 soloist-pair-step-play = Putar lagu apa saja di sana
 soloist-pair-step-pick = Buka daftar perangkat dan pilih { $device }
+soloist-pair-firewall = Tidak muncul? Firewall di komputer ini harus mengizinkan lalu lintas pada port di bawah ini.
 soloist-problem-download = Soloist tidak dapat diunduh
 soloist-problem-key = Spotify tidak menerima kunci ini
 soloist-problem-key-detail = Pastikan kunci tersebut telah disalin secara utuh dan belum dicabut, lalu coba lagi.

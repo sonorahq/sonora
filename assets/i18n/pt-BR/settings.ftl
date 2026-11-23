@@ -340,6 +340,7 @@ soloist-continue = Continuar
 soloist-pair-step-open = Abra o Spotify em um celular ou computador nesta rede
 soloist-pair-step-play = Comece a tocar qualquer música nele
 soloist-pair-step-pick = Abra a lista de dispositivos e selecione { $device }
+soloist-pair-firewall = O dispositivo não aparece? O firewall precisa permitir conexões de entrada nas portas abaixo neste computador.
 soloist-problem-download = Não foi possível baixar o Soloist
 soloist-problem-key = O Spotify não aceitou esta chave
 soloist-problem-key-detail = Confira se a chave foi copiada por inteiro e não foi revogada. Depois, tente novamente.

@@ -11,8 +11,8 @@ use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Outcome, Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora, Toasts};
 use ui::{
-    ActiveTheme as _, Badge, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice,
-    Spinner, Submit, Text,
+    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
+    Submit, Text,
 };
 
 use crate::shared::steps::{progress, steps};
@@ -190,52 +190,30 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                let theme = cx.theme();
-                let port = self.soloist.read(cx).pairing_port();
-                body.push(waiting(
-                    "soloist-pair-status",
-                    if port.is_some() {
-                        t!("soloist-pair-ready")
-                    } else {
-                        t!("soloist-pair-starting")
-                    },
+                body.push(paragraph(
+                    "soloist-pair-firewall",
+                    t!("soloist-pair-firewall"),
                     cx,
                 ));
-                let tcp = port.map_or_else(
-                    || {
-                        Badge::text(t!("soloist-pair-tcp-pending"))
-                            .rounded_full()
-                            .bg(theme.secondary_active)
-                            .into_any_element()
-                    },
-                    |port| {
-                        let port = port.to_string();
-                        copy_port(
-                            "soloist-copy-tcp",
-                            t!("soloist-pair-tcp", port = port.as_str()),
-                            port,
-                        )
-                        .into_any_element()
-                    },
-                );
+                let tcp = self.soloist.read(cx).pairing_port().map(|port| {
+                    let port = port.to_string();
+                    copy_port(
+                        "soloist-copy-tcp",
+                        t!("soloist-pair-tcp", port = port.as_str()),
+                        port,
+                    )
+                });
                 body.push(
                     div()
                         .flex()
                         .flex_wrap()
-                        .items_center()
                         .gap_2()
-                        .text_size(theme.text(Text::Small))
-                        .text_color(theme.muted_foreground)
-                        .child(ui::spoken(
-                            "soloist-pair-firewall",
-                            t!("soloist-pair-ports"),
-                        ))
                         .child(copy_port(
                             "soloist-copy-udp",
                             t!("soloist-pair-udp"),
                             "5353".to_owned(),
                         ))
-                        .child(tcp)
+                        .children(tcp)
                         .into_any_element(),
                 );
             }

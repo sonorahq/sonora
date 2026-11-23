@@ -317,6 +317,7 @@ soloist-continue = Tiếp tục
 soloist-pair-step-open = Mở Spotify trên điện thoại hoặc máy tính trong cùng mạng này
 soloist-pair-step-play = Phát một bài hát bất kỳ ở đó
 soloist-pair-step-pick = Mở danh sách thiết bị và chọn { $device }
+soloist-pair-firewall = Không thấy thiết bị? Tường lửa cần cho phép các cổng bên dưới trên máy tính này.
 soloist-problem-download = Không thể tải Soloist xuống
 soloist-problem-key = Spotify không chấp nhận khóa này
 soloist-problem-key-detail = Kiểm tra xem khóa đã được sao chép đầy đủ và chưa bị thu hồi, rồi thử lại.

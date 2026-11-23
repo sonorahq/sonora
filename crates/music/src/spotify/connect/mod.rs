@@ -85,7 +85,8 @@ struct Worker {
     mode: Mode,
     soloist_device: Option<String>,
     soloist_ready: bool,
-    local_start: Option<(Instant, Start)>,
+    local_control: Option<(Instant, Command)>,
+    paused_soloist: Option<Elsewhere>,
     seen_connection: bool,
     clock_offset_ms: i64,
     /// A Jam link asked about before the dealer connected, looked up once it has.
@@ -145,7 +146,8 @@ impl Worker {
             mode: Mode::Off,
             soloist_device: None,
             soloist_ready: false,
-            local_start: None,
+            local_control: None,
+            paused_soloist: None,
             seen_connection: false,
             clock_offset_ms: 0,
             held: None,
@@ -225,11 +227,12 @@ impl Worker {
                 }
             }
             if self.soloist_ready
-                && let Some((at, start)) = self.local_start.take()
-                && (!start.state.playing || at.elapsed() < Duration::from_secs(30))
+                && let Some((at, command)) = self.local_control.take()
+                && (matches!(&command, Command::Start(start) if !start.state.playing)
+                    || at.elapsed() < Duration::from_secs(30))
                 && let Some(device) = self.soloist_device.as_deref()
             {
-                control(&self.session, device, Command::Start(start)).await;
+                control(&self.session, device, command).await;
             }
         }
         self.disconnected();
@@ -251,32 +254,15 @@ impl Worker {
             Input::Start => self.start_jam().await,
             Input::Leave => self.leave().await,
             Input::Kick(member) => self.kick(&member).await,
+            Input::Control(device, command)
+                if self.mode == Mode::Observe
+                    && self.soloist_device.as_deref() == Some(&device) =>
+            {
+                self.control_soloist(command).await;
+            }
             Input::Control(device, command) => control(&self.session, &device, command).await,
             Input::ControlLocal(command) if self.mode == Mode::Observe => {
-                if let Some(device) = self
-                    .soloist_device
-                    .as_deref()
-                    .filter(|_| self.soloist_ready)
-                {
-                    control(&self.session, device, command).await;
-                } else {
-                    match command {
-                        Command::Start(start) => self.local_start = Some((Instant::now(), start)),
-                        Command::Play | Command::Pause => {
-                            if let Some((at, start)) = &mut self.local_start {
-                                *at = Instant::now();
-                                Arc::make_mut(&mut start.state).playing =
-                                    matches!(command, Command::Play);
-                            }
-                        }
-                        Command::Seek(position) => {
-                            if let Some((_, start)) = &mut self.local_start {
-                                Arc::make_mut(&mut start.state).position = position;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                self.control_soloist(command).await;
             }
             Input::ControlLocal(_) => {}
             Input::Jump {
@@ -284,6 +270,39 @@ impl Worker {
                 track,
                 forward,
             } => self.jump(&device, &track, forward).await,
+        }
+    }
+
+    /// Keeps the user's transport intent while Soloist is absent from the device list.
+    async fn control_soloist(&mut self, command: Command) {
+        if matches!(command, Command::Start(_)) {
+            self.paused_soloist = None;
+        }
+        if let Some(device) = self
+            .soloist_device
+            .as_deref()
+            .filter(|_| self.soloist_ready)
+        {
+            control(&self.session, device, command).await;
+            return;
+        }
+        match command {
+            Command::Start(_) => self.local_control = Some((Instant::now(), command)),
+            Command::Play | Command::Pause => {
+                if let Some((at, Command::Start(start))) = &mut self.local_control {
+                    *at = Instant::now();
+                    Arc::make_mut(&mut start.state).playing = matches!(command, Command::Play);
+                } else {
+                    self.local_control =
+                        matches!(command, Command::Play).then(|| (Instant::now(), Command::Play));
+                }
+            }
+            Command::Seek(position) => {
+                if let Some((_, Command::Start(start))) = &mut self.local_control {
+                    Arc::make_mut(&mut start.state).position = position;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -366,7 +385,8 @@ impl Worker {
         }
         self.rename_at = None;
         self.soloist_device = None;
-        self.local_start = None;
+        self.local_control = None;
+        self.paused_soloist = None;
         // A registration belongs to its Dealer connection. Start the new role on a
         // fresh connection after unregistering the previous device.
         self.disconnected();
@@ -482,7 +502,12 @@ impl Worker {
         self.soloist_ready = false;
         self.reset_jam();
         if was_ready {
-            self.out.send(Event::Roster(Roster::default())).ok();
+            self.out
+                .send(Event::Roster(Roster {
+                    elsewhere: self.paused_soloist.clone(),
+                    ..Default::default()
+                }))
+                .ok();
         }
         if self.held.take().is_some() {
             self.out.send(Event::Invite(None)).ok();
@@ -834,11 +859,10 @@ impl Worker {
     }
 
     fn emit_roster(&mut self, cluster: Cluster) {
-        let roster = self.roster(&cluster);
+        let mut roster = self.roster(&cluster);
         self.soloist_ready = roster.local.is_some();
-        self.playback.device = cluster.active_device_id;
         self.playback.player = cluster.player_state.filter(|_| roster.elsewhere.is_some());
-        if self.playback.device != self.session.device_id() {
+        if cluster.active_device_id != self.session.device_id() {
             self.playback.queue = roster
                 .elsewhere
                 .as_ref()
@@ -848,7 +872,28 @@ impl Worker {
                     received: Instant::now(),
                 });
         }
+        if self.mode == Mode::Observe {
+            self.keep_paused_soloist(&mut roster, &cluster.active_device_id);
+        }
+        self.playback.device = cluster.active_device_id;
         self.out.send(Event::Roster(roster)).ok();
+    }
+
+    /// Spotify can clear its active device during a pause. Keep the last paused queue visible.
+    fn keep_paused_soloist(&mut self, roster: &mut Roster, active: &str) {
+        let local = self.soloist_device.as_deref();
+        if !active.is_empty() && local != Some(active) {
+            self.paused_soloist = None;
+            if matches!(self.local_control, Some((_, Command::Play))) {
+                self.local_control = None;
+            }
+        } else if let Some(remote) = roster.elsewhere.as_ref()
+            && remote.state.track.is_some()
+        {
+            self.paused_soloist = (!remote.state.playing).then(|| remote.clone());
+        } else if self.paused_soloist.is_some() {
+            roster.elsewhere.clone_from(&self.paused_soloist);
+        }
     }
 
     /// Jumps to an occurrence in the current device's queue with one player command.

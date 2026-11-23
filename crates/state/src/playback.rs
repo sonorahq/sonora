@@ -992,6 +992,22 @@ impl Playback {
         true
     }
 
+    /// Resumes the external engine even while Connect has no active device to steer.
+    fn resume_soloist(&self, cx: &App) -> bool {
+        if self.local || self.local_active() {
+            return false;
+        }
+        let Some(devices) = self.devices.as_ref().and_then(|devices| devices.upgrade()) else {
+            return false;
+        };
+        let devices = devices.read(cx);
+        if !devices.controls_local_device() {
+            return false;
+        }
+        devices.control_local_device(Command::Play);
+        true
+    }
+
     /// Has the other device that has playback start the track at `index` of `tracks`, from the
     /// collection `origin` names, and says whether it did. A local file has no place there and
     /// plays here.
@@ -2492,7 +2508,7 @@ impl Playback {
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Play, cx) {
+        if self.steer(|_| Command::Play, cx) || self.resume_soloist(cx) {
             return;
         }
         self.intent = Intent::Play;
@@ -2621,7 +2637,7 @@ impl Playback {
             true => Command::Pause,
             false => Command::Play,
         };
-        if self.steer(command, cx) {
+        if self.steer(command, cx) || self.resume_soloist(cx) {
             return;
         }
         match self.wants_playing() {
