@@ -66,8 +66,9 @@ impl PlaybackFactory for Factory {
 
 struct Subsonic {
     client: SubsonicClient,
-    /// What a seek's download is fetched with, which gives up on a stalled request sooner than
-    /// the api client.
+    /// What a track Sonora asks for unconverted and a seek's download are fetched with, which
+    /// gives up on a stalled request sooner than the api client. That includes a track the
+    /// server converts on its own. A conversion Sonora asks for keeps the api client.
     media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
@@ -154,10 +155,15 @@ impl Fetch for Subsonic {
         let told = Arc::new(OnceLock::new());
         let (stream, details) = tokio::join!(
             async {
-                let response = self.client.open_stream(id, self.transcode).await?;
+                let original = self.transcode == Transcode::default();
+                let http = match original {
+                    true => &self.media,
+                    false => &self.client.http,
+                };
+                let response = self.client.open_stream(http, id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response);
-                let seekable = self.transcode == Transcode::default() && ranged::ranges(&response);
+                let seekable = original && ranged::ranges(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();

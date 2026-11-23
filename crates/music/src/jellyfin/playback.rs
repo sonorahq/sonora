@@ -70,8 +70,9 @@ impl PlaybackFactory for Factory {
 
 struct Jellyfin {
     client: JellyfinClient,
-    /// What a seek's download is fetched with, which gives up on a stalled request sooner than
-    /// the api client.
+    /// What an original file and a seek's download are fetched with, which gives up on a
+    /// stalled request sooner than the api client. A transcode keeps the api client, since the
+    /// server may pause one that runs far ahead.
     media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
@@ -179,7 +180,11 @@ impl Fetch for Jellyfin {
         let told = Arc::new(OnceLock::new());
         let (stream, details) = tokio::join!(
             async {
-                let response = self.client.open_stream(id, self.transcode).await?;
+                let http = match self.original() {
+                    true => &self.media,
+                    false => &self.client.http,
+                };
+                let response = self.client.open_stream(http, id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response)
                     .map(|remote| remote.authorized(self.client.server(), &self.client.header));

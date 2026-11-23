@@ -20,6 +20,7 @@ pub mod mp3;
 pub mod ogg;
 
 use std::io::{Read, Seek};
+use std::iter;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -442,7 +443,21 @@ impl<B: Body> Reach<B> {
         from: u64,
         open: impl FnOnce(Reader<B>) -> Option<D>,
     ) -> Option<D> {
-        let (stream, at, started) = self.locate(main, head, from)?;
+        let covered = self.covers(main, from);
+        self.graft(main, head, from, covered, open)
+    }
+
+    /// What [`exact`](Self::exact) does, for a caller that already knows whether `main` covers
+    /// `from`, so the wait for a nearby byte is not made twice.
+    fn graft<D>(
+        &self,
+        main: &Stream<B>,
+        head: usize,
+        from: u64,
+        covered: bool,
+        open: impl FnOnce(Reader<B>) -> Option<D>,
+    ) -> Option<D> {
+        let (stream, at, started) = self.locate(main, head, from, covered)?;
         let at = self.resync(&stream, at);
         let decoder = open(stream.spliced(head, at))?;
         if let Some(ahead) = started {
@@ -452,14 +467,16 @@ impl<B: Body> Reach<B> {
     }
 
     /// The download that holds byte `from` or soon will, where that byte sits in its spool, and
-    /// that download again when one had to be started for it.
+    /// that download again when one had to be started for it. `covered` says whether `main`
+    /// covers `from`.
     fn locate(
         &self,
         main: &Stream<B>,
         head: usize,
         from: u64,
+        covered: bool,
     ) -> Option<(Stream<B>, usize, Option<Ahead<B>>)> {
-        if self.covers(main, from) {
+        if covered {
             return Some((main.clone(), usize::try_from(from).ok()?, None));
         }
         let held = lock(&self.ahead).clone();
@@ -497,11 +514,16 @@ impl<B: Body> Reach<B> {
         Some((stream, head + into, Some(ahead)))
     }
 
-    /// Whether spool byte `at` of `stream` is there or soon will be. What has arrived always
-    /// is, and a download still running is waited for while it is less than `nearby` short.
+    /// Whether spool byte `at` of `stream` has arrived. A download still running and less than
+    /// `nearby` short is waited for, and one that breaks, stalls or ends before it gets there
+    /// does not cover the byte.
     fn covers(&self, stream: &Stream<B>, at: u64) -> bool {
         let arrived = stream.arrived() as u64;
-        at < arrived || (!stream.done() && at < arrived + self.nearby)
+        if at < arrived || at >= arrived + self.nearby {
+            return at < arrived;
+        }
+        let reached = stream.awaiting(|_, spool, _| (spool.len() as u64 > at).then_some(()));
+        reached.is_some()
     }
 
     /// Where the first frame at or after spool byte `at` of `stream` starts, once enough has
@@ -546,7 +568,7 @@ impl<B: Body> Reach<B> {
         mut open: impl FnMut(Reader<B>) -> Option<D>,
     ) -> Option<D> {
         let guesses = LEADS.iter().map(|lead| span.byte(at.saturating_sub(*lead)));
-        let broke = main.failed().map(|_| main.arrived() as u64);
+        let broke = iter::once_with(|| main.failed().map(|_| main.arrived() as u64)).flatten();
         let mut tries = guesses.chain(broke).chain([span.head as u64]);
         let entered = tries.find_map(|from| {
             self.exact(main, span.head, from, |reader| {
@@ -640,7 +662,7 @@ impl<B: Body> File<B> {
                 if self.reach.covers(main, from) {
                     return None;
                 }
-                let decoder = self.reach.exact(main, layout.head, from, open)?;
+                let decoder = self.reach.graft(main, layout.head, from, false, open)?;
                 let start = layout.time(from);
                 log::debug!(
                     "playback: entered the {} track {} at byte {from}, taken as {:.1}s for {:.1}s",
