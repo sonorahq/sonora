@@ -370,13 +370,12 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Two option cards, Centered and Wide. Each thumbnail is a window's content area with a page
-    /// drawn in it at the width that layout gives. The choice is saved on `AppSettings`, and
+    /// Two option cards, Centered and Wide. Each thumbnail is a miniature window with its page
+    /// drawn at the width that layout gives. The choice is saved on `AppSettings`, and
     /// `Chrome::page` reads it when the pages draw.
     pub(super) fn page_width_cards(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.settings.read(cx).page_width();
-        let rounding = self.look(cx).rounding;
-        let height = cx.theme().metrics.list_row * 1.6;
+        let height = cx.theme().metrics.list_row * 2.2;
         let count = PageWidth::ALL.len();
 
         grid(count as u16, window, cx)
@@ -393,7 +392,7 @@ impl SettingsView {
                                 count,
                             )
                             .thumb_height(height)
-                            .thumb(page_sketch(width, rounding, cx))
+                            .thumb(page_sketch(width, height, cx))
                             .label(i18n::lookup(width.key(), None))
                             .selected(width == chosen)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -557,27 +556,86 @@ pub(super) fn corner(rounding: Rounding, cx: &App) -> Div {
     )
 }
 
-/// A thumbnail of a wide window's content area with a page drawn across it. The centred page
-/// takes `CENTRED_SHARE` of the width and stands in the middle, the wide page takes all of it.
-fn page_sketch(width: PageWidth, rounding: Rounding, cx: &App) -> Div {
+/// A miniature window `height` tall: a sidebar on the left and a page of a title, a row of
+/// cards and three list lines in the content area. The centred page takes `CENTRED_SHARE` of the
+/// content area and stands in its middle with four cards, the wide page fills it with six.
+fn page_sketch(width: PageWidth, height: Pixels, cx: &App) -> Div {
     let theme = cx.theme();
-    let (share, left) = match width {
-        PageWidth::Centered => (CENTRED_SHARE, (1. - CENTRED_SHARE) / 2.),
-        PageWidth::Wide => (1., 0.),
+    let radius = theme.radius * 0.25;
+    let ink = theme.foreground.opacity(0.6);
+    let muted = theme.muted_foreground.opacity(0.4);
+    let pad = height * 0.12;
+    let gap = height * 0.08;
+    let line = height * 0.04;
+    let (share, cards) = match width {
+        PageWidth::Centered => (CENTRED_SHARE, 4),
+        PageWidth::Wide => (1., 6),
     };
 
-    div().size_full().relative().child(
-        div()
-            .absolute()
-            .top(relative(0.2))
-            .bottom(relative(0.2))
-            .left(relative(left))
-            .w(relative(share))
-            .rounded(rounding.radius())
-            .border_2()
-            .border_color(theme.muted_foreground)
-            .bg(theme.secondary),
-    )
+    let sidebar = div()
+        .flex_none()
+        .h_full()
+        .w(relative(0.16))
+        .flex()
+        .flex_col()
+        .gap(gap * 0.75)
+        .p(pad * 0.75)
+        .bg(theme.secondary)
+        .border_r_1()
+        .border_color(theme.border)
+        .children(
+            [0.9, 0.7, 0.8, 0.6]
+                .into_iter()
+                .map(|share| sketch_stroke(share, line, muted, radius)),
+        );
+
+    let page = div()
+        .w(relative(share))
+        .flex()
+        .flex_col()
+        .gap(gap)
+        .child(sketch_stroke(0.3, height * 0.06, ink, radius))
+        .child(div().flex().gap(gap * 0.75).children((0..cards).map(|_| {
+            div()
+                .flex_1()
+                .h(height * 0.28)
+                .rounded(radius)
+                .bg(theme.primary.opacity(0.3))
+        })))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(gap * 0.75)
+                .child(sketch_stroke(1., line, muted, radius))
+                .child(sketch_stroke(0.9, line, muted, radius))
+                .child(sketch_stroke(0.6, line, muted, radius)),
+        );
+
+    div()
+        .size_full()
+        .flex()
+        .bg(theme.background)
+        .child(sidebar)
+        .child(
+            div()
+                .flex_1()
+                .h_full()
+                .flex()
+                .justify_center()
+                .px(pad)
+                .pt(pad)
+                .child(page),
+        )
+}
+
+/// A line of text in a sketch, `width` of its slot across and `thickness` tall.
+fn sketch_stroke(width: f32, thickness: Pixels, fill: Hsla, radius: Pixels) -> Div {
+    div()
+        .w(relative(width))
+        .h(thickness)
+        .rounded(radius)
+        .bg(fill)
 }
 
 /// `content` in the middle of a thumbnail.
