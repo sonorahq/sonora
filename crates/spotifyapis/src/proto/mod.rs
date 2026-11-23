@@ -8,19 +8,19 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::{Deserialize, Deserializer};
 
 pub(super) mod access_point;
-pub mod browse;
+pub mod browsita;
+pub mod casita;
 pub mod collection;
-pub mod connect;
-pub mod home;
-pub mod jam;
-pub mod list_read;
-pub mod lyrics;
-pub mod metadata;
-pub mod playlist;
-pub mod profile;
-pub mod search;
-pub mod sequence;
-mod storage;
+pub mod color_lyrics;
+pub mod connect_state;
+pub mod extended_metadata;
+pub mod list_read_service;
+pub mod playlist_v2;
+pub mod searchview;
+pub mod sequence_proxy;
+pub mod social_connect;
+mod storage_resolve;
+pub mod user_profile_view;
 
 const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
@@ -39,7 +39,11 @@ fn component(value: &str) -> String {
     utf8_percent_encode(value, UNRESERVED).to_string()
 }
 
-fn dealer_headers(connection_id: &str) -> anyhow::Result<HeaderMap> {
+pub(super) fn between_devices(prefix: &str, from: &str, to: &str) -> String {
+    format!("{prefix}/from/{}/to/{}", component(from), component(to))
+}
+
+pub(super) fn dealer_headers(connection_id: &str) -> anyhow::Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     if !connection_id.is_empty() {
         headers.insert("x-spotify-connection-id", connection_id.parse()?);

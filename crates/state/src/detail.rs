@@ -94,6 +94,7 @@ pub struct Detail {
     playlist: Option<Playlist>,
     tracks: Vec<Track>,
     continuation: Option<String>,
+    playlist_revision: Option<Vec<u8>>,
     also_like: Vec<Album>,
     similar: Vec<SavedArtist>,
     loading: bool,
@@ -174,14 +175,26 @@ impl Detail {
                 this.clear();
                 cx.notify();
             }
-            LibraryEvent::TrackAdded { playlist } | LibraryEvent::PlaylistChanged(playlist)
+            LibraryEvent::TrackAdded { playlist }
+            | LibraryEvent::PlaylistChanged(playlist)
+            | LibraryEvent::PlaylistChangedRemotely(playlist, _)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
             {
+                if matches!(event, LibraryEvent::PlaylistChangedRemotely(_, Some(revision))
+                    if this.playlist_revision.as_ref() == Some(revision))
+                {
+                    return;
+                }
                 // a load now would show the order the provider kept over the moves still on
                 // their way, so it waits for them
                 match library.read(cx).reordering(playlist) {
                     true => this.reload_after_order = true,
-                    false => this.load(Collection::Playlist, playlist.clone(), false, cx),
+                    false => this.load(
+                        Collection::Playlist,
+                        playlist.clone(),
+                        matches!(event, LibraryEvent::PlaylistChangedRemotely(..)),
+                        cx,
+                    ),
                 }
             }
             LibraryEvent::PlaylistReordered(playlist)
@@ -189,7 +202,7 @@ impl Detail {
                     && this.reload_after_order
                     && !library.read(cx).reordering(playlist) =>
             {
-                this.load(Collection::Playlist, playlist.clone(), false, cx);
+                this.load(Collection::Playlist, playlist.clone(), true, cx);
             }
             LibraryEvent::ReorderFailed(playlist)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
@@ -242,6 +255,7 @@ impl Detail {
             playlist: None,
             tracks: Vec::new(),
             continuation: None,
+            playlist_revision: None,
             also_like: Vec::new(),
             similar: Vec::new(),
             loading: false,
@@ -743,6 +757,7 @@ impl Detail {
                 self.playlist = Some(playlist);
                 self.tracks = detail.tracks.clone();
                 self.continuation = detail.continuation.clone();
+                self.playlist_revision.clone_from(&detail.playlist.revision);
             }
         }
         self.loaded = true;
@@ -766,6 +781,7 @@ impl Detail {
         self.playlist = None;
         self.tracks.clear();
         self.continuation = None;
+        self.playlist_revision = None;
         self.also_like.clear();
         self.similar.clear();
         self.loading = false;
@@ -911,6 +927,7 @@ mod tests {
 
     fn playlist(owned: bool) -> Playlist {
         Playlist {
+            revision: None,
             id: "p".into(),
             name: "Mix".into(),
             owner: String::new(),

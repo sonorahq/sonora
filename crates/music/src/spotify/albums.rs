@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
-use spotifyapis::proto::metadata::Album as AlbumMessage;
-use spotifyapis::proto::metadata::AlbumType;
-use spotifyapis::proto::metadata::CopyrightType;
-use spotifyapis::proto::{collection::CollectionItem, metadata::ExtensionKind};
+use spotifyapis::proto::extended_metadata::Album as AlbumMessage;
+use spotifyapis::proto::extended_metadata::AlbumType;
+use spotifyapis::proto::extended_metadata::CopyrightType;
+use spotifyapis::proto::{collection::CollectionItem, extended_metadata::ExtensionKind};
 
 use crate::spotify::{collection, wire};
 use crate::{Album, AlbumDetail, ReleaseType};

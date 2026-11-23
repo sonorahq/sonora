@@ -263,7 +263,10 @@ pub enum Event {
     /// Playlists were added, removed, or reordered in the account library.
     PlaylistListChanged,
     /// A playlist's contents or attributes changed in another client.
-    PlaylistChanged(String),
+    PlaylistChanged {
+        id: String,
+        revision: Option<Vec<u8>>,
+    },
     /// One of the account's apps liked a track, or took the like back. `track` is a provider
     /// track id.
     Liked {

@@ -24,13 +24,13 @@ commands it sends to other devices and reads the queue Spotify reports.
 
 | Area | Endpoint | Use |
 | --- | --- | --- |
-| Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext` | Reads ordered track URIs and occurrence IDs for Connect. Sonora uses them to publish the queue and find the requested track and what follows when another device sends a play command without tracks. Also reads track radio stations. |
+| Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext` | Reads occurrence IDs when publishing a Connect queue, resolves play commands whose track or queue cannot be reconstructed locally, and reads track radio stations. |
 | Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolvePage` | Fetches entries for page IDs returned by ResolveContext. Batches known page IDs and follows continuation pages in order when Spotify returns a chain. |
 | Search | `GET /searchview/v3/search` · `entity_types=track` | Searches tracks. |
 | Search | `GET /searchview/v3/search` · `entity_types=album` | Searches albums. |
 | Search | `GET /searchview/v3/search` · `entity_types=artist` | Searches artists. |
 | Search | `GET /searchview/v3/search` · `entity_types=playlist` | Searches playlists. |
-| Metadata | `POST /extended-metadata/v0/extended-metadata` | Loads catalogue metadata, compact profiles, Browse cards, and track audio file IDs for playback and downloads. |
+| Metadata | `POST /extended-metadata/v0/extended-metadata` | Loads catalogue metadata, compact profiles, Home and Browse cards, and track audio file IDs for playback and downloads. |
 | Browse | `GET /browsita/v1/browse` | Supplies music categories and directory links for the flat Browse grid. |
 | Home | `GET /casita/v1/home/default` | Loads Home shelves and shortcuts. |
 | Lyrics | `GET /color-lyrics/v3/track/{id}` | Loads lyrics and timing. |
@@ -38,12 +38,10 @@ commands it sends to other devices and reads the queue Spotify reports.
 | Saved music | `POST /collection/v2/paging` | Reads pages of saved music. |
 | Library pins | `POST /collection/v2/paging` · `ylpin` | Reads the account's Spotify pins. |
 | Saved music and pins | `POST /collection/v2/write` | Updates saved music and pins. |
-| Playlists | `POST /playlist/spotify.list.v1.ListReadService/GetLists` | Batches playlist summaries and reads selected fields from playlists, the library list, and Browse sections. |
-| Playlists | `GET /playlist/v2/playlist/{id}` | Reads a playlist snapshot. |
+| Playlists | `POST /playlist/spotify.list.v1.ListReadService/GetLists` | Reads playlist details, dated entries and contributors, library pages, and Browse sections. Also batches summaries. |
 | Playlists | `POST /playlist/v2/playlist` | Creates a playlist. |
 | Playlists | `POST /playlist/v2/playlist/{id}/changes` | Applies edits. Appends batch tracks without reading a revision. Name and cover can change together. |
 | Playlist cover registration | `POST /playlist/v2/playlist/{id}/register-image` | Registers the uploaded image and returns its picture ID. |
-| Playlists | `GET /playlist/v2/user/{user}/rootlist` | Reads a page of the user's playlist library. |
 | Playlists | `POST /playlist/v2/user/{user}/rootlist/changes` | Updates the playlist library. Appends need no prior read. |
 | Audio storage | `GET /storage-resolve/files/audio/interactive/{file-id}` | Finds signed CDN URLs for playback and downloads. |
 | Connect device state | `PUT /connect-state/v1/devices/{device}` | Publishes device state and receives the account cluster. |
@@ -88,128 +86,3 @@ notifications and to send heartbeats and acknowledgements.
 | Short links | `GET spotify.link/{code}` | Follows redirects to resolve shared links. |
 
 These audio rows describe Sonora’s native Spotify playback and downloads. Soloist manages its own Spotify connections.
-
-## Native playback
-
-A completed cached copy at the requested quality can be saved offline without
-a catalogue, storage resolver, audio-key, or CDN request. Cold playback and
-downloads still use TRACK_V4, the storage resolver, access-point audio keys,
-and ranged Vorbis downloads.
-
-## Optimization priorities
-
-Prioritize time to the first usable content and time until the page is ready.
-Shorten chains of dependent requests, run independent requests concurrently,
-and show results as they arrive when that keeps the page stable. Use the
-[benchmarks](BENCHMARKS.md) to track those timings, request counts, and transfer
-sizes. Smaller responses matter most when they improve load times or materially
-reduce traffic. Prefer a single proven route. Keep an alternate path only when
-observed responses or protocol behavior show why it is needed. Preserve playback
-behavior and check that each page still serves its purpose. Different shelves
-or result counts can be acceptable.
-
-🟢 Implementation complete, only verification remains · 🟠 Partly implemented or a concrete implementation lead · ⚪ Needs a viable approach
-
-| Status | Target | Benchmark signal | What to change |
-| --- | --- | --- | --- |
-| ⚪ | Saved-track metadata size | TRACK_V4 alone uses fewer bytes and omits Genre, Plays, mood, and BPM. | Find a narrower projection that preserves the metadata and sorting Sonora uses. |
-| 🟠 | Browse section reads | Category pages show ready playlist shelves before catalogue hydration and keep all readable music cards. The Genres directory had 17 links after item ten. | Measure time to the first shelf and to the complete page. The smaller projection tested so far saved little. A useful replacement needs to keep the full directory and reduce the requests needed to render it. |
-| 🟢 | Artist catalogue delivery | Bach returned 193 preview releases in 120 ms and all 1,859 in 620 ms after an HTTP/1.1 retry for the HTTP/2 frame-budget error. | Verify the visible preview and full catalogue on desktop. |
-| ⚪ | Album detail | AlbumV4 returned only IDs for all 43 sampled track entries. | Find an album response with full track metadata and availability before removing hydration. |
-| 🟠 | Playlist library reads | GetLists returned the same visibility as the root list for 26 private entries. | Verify visibility on an owned public playlist before switching the library read. |
-| 🟠 | Playlist notification refreshes | Both notifications arrived after overlapping renames of two temporary playlists. | Count the app’s summary, root-list, and pin reads while a refresh is already in flight. |
-| ⚪ | Playlist edit deltas | Sonora still reads a snapshot after a playlist edit notification. | Capture real notifications and check whether they carry the parent revision, ordered operations, and truncation flag needed to apply a complete delta. |
-| ⚪ | Search request count | Five calls and 80 results in the benchmark. The rewrite downloaded 14.9 KiB versus 406.5 KiB upstream. | Verify availability and a ranking signal before dropping track hydration. A combined query still needs independent category limits. |
-
-### Saved tracks and albums
-
-The mixed collection read preserved the IDs, order, and saved dates of all
-2,391 tracks and 17 albums. It used eight requests versus ten for separate
-reads. The first 500 tracks arrived in 272–276 ms in two runs. The full read
-took 510–685 ms. A cold desktop pass showed saved songs with dates.
-
-On the same 500 tracks, TRACK_V4 alone used 430,239 decoded response bytes
-versus 1,088,267 with the four current extensions. It preserved the track
-payload and cover availability for all 500. It would lose data used by the
-Genre and Plays columns, as well as mood and BPM. Sonora now emits fully
-hydrated batches of 500 in collection order. A narrower projection needs to
-preserve sorting and details for the whole library.
-
-### Browse and Home
-
-The Browse root gives an ordered list of dynamic section URIs. GetLists
-`meta_items` projects attributes of those references, so it cannot return
-their nested entries in the same request. Casita returned no reusable
-metadata or refresh token with the tested eager and incremental options.
-Keep both page and section reads until a response supplies the missing data.
-Category pages keep all readable entries. They show the first complete
-playlist shelves before waiting for catalogue metadata. Home keeps its
-ten-card limit for supplemental shelves. A category opened from the Browse
-grid can reuse its title when the root response omits it. The Genres
-directory returned 27 category links, including 17 after item ten. Root
-references exposed no format markers that could identify media-only shelves.
-
-The Browse landing grid still shows curated categories and links to the
-full directories. The earlier comparison showed 25 landing cards versus
-72 upstream. The Pop and Made For You detail pages now show 222 and 102
-music cards on the sampled account, versus 90 and 62 with the previous cap.
-In a live provider run Pop delivered 34 cards in 180 ms and all 222 in
-267 ms. Made For You delivered all 102 in 277 ms when opened with its
-landing title, avoiding a separate title lookup.
-
-Browse sections request picture sizes for their playlist cards. Across seven
-sampled pages, all 582 playlist covers came from those URLs. Omitting the
-unused file-ID field kept the same coverage and transferred roughly the same
-bytes. The APK exposes Browsita for the landing page and Scrollsita for
-Now Playing. The route scan did not establish a Browse section replacement.
-
-Home emits the main feed and then appends Made For You. In five fresh
-provider sessions per build, Made For You supplied all 42 supplemental cards
-through its section projection. The sixth request came from splitting
-Casita’s 109 playlist cards into two batches at a limit of 100. A 128-card
-batch returned all 128 results in a separate probe. Across the five Home
-loads, median time to the first feed fell from 454 to 398 ms and time to the
-full feed fell from 454 to 399 ms. Both returned 178 main cards and 220 total.
-
-### Artist rankings
-
-Artist rankings use ArtistV4. It supplied one usable ranking for 161 of 166
-sampled artists on one account. The former SequenceProxy fallback returned
-ten ranked tracks for Nusrat Fateh and no context for the four other artists
-whose ArtistV4 replies had no ranking. An artist with no agreed ranking has
-no ranked top tracks. The artist’s playable discography is still available.
-
-### Search hydration
-
-SearchView's track schema exposes availability candidates such as
-`content_access`, `windowed`, `premium_only`, and `gating_decision`. Earlier
-samples contained only playable tracks. Compare explicit denials, restricted
-tracks, and market relinks to TRACK_V4 before using those fields to decide
-whether a row can play. SearchView has no known popularity field. Compare
-ranking against the current results or decide explicitly to use Spotify's
-ranked order before removing hydration.
-
-The APK's `/searchview/v3/native` returns a different response with snippet and
-recent-search rows. Decode it with its own schema when evaluating it. A
-replacement for the four concurrent searches needs independent result limits
-and the artist and album fields used by Sonora. Broad queries such as “love”
-and “jazz” exposed category underfill in the blended probes.
-
-### Playlist reads
-
-The root-list GetLists projection returns visibility from `items.attributes`
-with URI field 1 and `PublishedToProfile` field 15. A prior probe matched the
-26 private entries in the current root-list response. Verify a public playlist
-owned by the signed-in account before switching. Visibility was absent from
-standalone playlist metadata.
-
-Summary refreshes use GetLists with a zero-entry window. One request returned
-eight summaries in 65 ms. Edit permissions and artwork URLs matched the
-snapshot for all eight. Some generated playlists returned different
-revisions or format attributes. One returned an approximate count of 200
-while the snapshot reported 30. Opening a playlist still reads its full
-snapshot.
-
-### Playlist edit notifications
-
-- Playlist notifications carry a new revision (field 2), parent (3), operations (4), and truncation flag (7). Apply the ordered batch only when the cached revision matches the parent, the new revision is present and different, and every operation is supported. Preserve item positions and duplicates. Name and cover changes can refresh the header without hydrating tracks again. Missing or unsupported deltas still need a snapshot.

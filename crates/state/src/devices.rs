@@ -682,7 +682,7 @@ impl Devices {
     fn on_events(&mut self, events: impl Iterator<Item = Event>, cx: &mut Context<Self>) {
         let mut library_changed = false;
         let mut list_changed = false;
-        let mut playlists = HashSet::new();
+        let mut playlists = HashMap::new();
         for event in events {
             match event {
                 Event::Roster(roster) => self.set_roster(roster, cx),
@@ -690,8 +690,8 @@ impl Devices {
                 Event::Liked { track, liked } => self.liked(track, liked, cx),
                 Event::LibraryChanged => library_changed = true,
                 Event::PlaylistListChanged => list_changed = true,
-                Event::PlaylistChanged(id) => {
-                    playlists.insert(id);
+                Event::PlaylistChanged { id, revision } => {
+                    playlists.insert(id, revision);
                 }
                 Event::Jam(mut jam) => {
                     if self.leaving && jam.is_none() {

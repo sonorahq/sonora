@@ -9,7 +9,7 @@ use futures::future::try_join_all;
 use super::{auth, search};
 use crate::lyrics::{catalog, lrc};
 use crate::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
-use spotifyapis::proto::lyrics::{Line, Sheet, SyncData, SyncType};
+use spotifyapis::proto::color_lyrics::{Line, Sheet, SyncData, SyncType};
 
 const SOURCE: &str = "Spotify";
 

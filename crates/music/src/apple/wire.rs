@@ -1017,6 +1017,7 @@ pub fn playlist(value: &Resource) -> Option<Playlist> {
     let attributes = value.attributes.as_ref()?;
     let curator = text(&attributes.curator_name).unwrap_or_else(|| "Apple Music".to_owned());
     Some(Playlist {
+        revision: None,
         id: id.to_owned(),
         name: text(&attributes.name)?,
         owner: curator.clone(),
@@ -1037,6 +1038,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
     let id = value.id.as_str()?;
     let attributes = value.attributes.as_ref()?;
     Some(Playlist {
+        revision: None,
         id: id.to_owned(),
         name: text(&attributes.name)?,
         owner: owner.to_owned(),

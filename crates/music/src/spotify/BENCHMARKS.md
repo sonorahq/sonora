@@ -8,52 +8,54 @@ Values read upstream → rewrite, with 🟩 for reductions of at least 25% and �
 
 | Metric | Upstream | Rewrite | Change |
 | --- | ---: | ---: | ---: |
-| Release executable | 115.55 MB | 112.13 MB | −3.0% |
-| Desktop download | 39.10 MB | 12.88 MB | −67.1% 🟩 |
-| Desktop upload | 633.7 KB | 232.8 KB | −63.3% 🟩 |
-| Provider HTTP calls | 103 | 58 | −43.7% 🟩 |
-| Provider time | 11.01 s | 4.73 s | −57.0% 🟩 |
-| Provider download | 7,634.8 KiB | 1,064.8 KiB | −86.1% 🟩 |
-| Provider upload | 120.6 KiB | 88.6 KiB | −26.5% 🟩 |
+| Release executable | 115.69 MB | 111.97 MB | −3.2% |
+| Desktop download | 39.81 MB | 13.41 MB | −66.3% 🟩 |
+| Desktop upload | 651.3 KB | 258.9 KB | −60.2% 🟩 |
+| Provider HTTP calls | 160 | 65 | −59.4% 🟩 |
+| Provider time | 15.88 s | 6.32 s | −60.2% 🟩 |
+| Provider download | 9,924.9 KiB | 2,684.5 KiB | −73.0% 🟩 |
+| Provider upload | 258.7 KiB | 232.0 KiB | −10.3% |
 
 ## Desktop browsing
 
-Upstream `4a783900` at 2026-11-23T01:04:43+00:00 → rewrite `e35cfa91` with local source changes (`808ead4c`) at 2026-11-23T13:34:26+00:00
+Upstream `d7f40ec0` at 2026-11-23T16:29:18+00:00 → rewrite `47fee585` with local source changes (`a3870339`) at 2026-11-23T16:29:40+00:00
 
-One 64-second browsing pass per build with a fresh cache, including artwork and background traffic.
+Fresh-cache browsing, including artwork and background traffic. Pass duration was 26.46 → 22.13 seconds.
 
 | Stage | First change (s) | Settled (s) | Download (KiB) | Upload (KiB) |
 | --- | ---: | ---: | ---: | ---: |
-| Home startup | 1.01 → 0.68 🟩 | 3.22 → 1.67 🟩 | 19,786.3 → 2,588.3 🟩 | 503.8 → 170.6 🟩 |
-| Home scroll | 1.26 → 1.26 | 1.50 → 1.50 | 6,599.0 → 2,636.8 🟩 | 28.1 → 9.5 🟩 |
-| Browse landing | 0.04 → 0.04 | 0.54 → 0.79 🟥 | 2,569.9 → 1,526.3 🟩 | 10.8 → 6.3 🟩 |
-| Search typing | 1.59 → 1.59 | — → 2.59 | 1,132.9 → 529.1 🟩 | 11.8 → 9.1 |
-| Search results | 0.04 → 0.04 | 1.52 → 0.78 🟩 | 934.7 → 664.7 🟩 | 12.8 → 7.1 🟩 |
-| Playlist | 0.25 → 0.26 | 0.25 → 0.26 | 250.3 → 212.5 | 8.9 → 6.4 🟩 |
-| Album | 0.25 → 0.25 | 0.25 → 0.25 | 2,068.6 → 642.6 🟩 | 14.3 → 4.9 🟩 |
-| Artist | 0.25 → 0.27 | 0.75 → 0.27 🟩 | 2,025.3 → 1,453.7 🟩 | 16.2 → 7.8 🟩 |
-| Song | 0.25 → 0.27 | 0.25 → 0.27 | 144.9 → 35.6 🟩 | 2.0 → 1.2 🟩 |
-| Profile | 0.24 → 0.26 | 0.49 → 0.75 🟥 | 1,506.9 → 1,488.2 | 7.0 → 3.8 🟩 |
-| Library playlists | 0.37 → 0.39 | 0.37 → 0.39 | 1,166.2 → 803.0 🟩 | 3.1 → 0.7 🟩 |
+| Home startup | 0.68 → 0.68 | 3.35 → 1.71 🟩 | 20,277.5 → 2,606.6 🟩 | 508.6 → 168.8 🟩 |
+| Home scroll | 1.26 → 1.26 | 1.67 → 1.67 | 6,673.0 → 2,584.4 🟩 | 41.1 → 34.4 |
+| Browse landing | 0.04 → 0.04 | 0.66 → 0.87 | 2,590.8 → 1,515.3 🟩 | 10.8 → 6.3 🟩 |
+| Search typing | 1.59 → 1.59 | 3.04 → 2.42 | 1,111.2 → 597.9 🟩 | 11.7 → 9.1 |
+| Search results | 0.04 → 0.04 | 1.07 → 0.67 🟩 | 918.0 → 726.5 | 12.6 → 7.8 🟩 |
+| Playlist | 0.21 → 0.21 | 0.42 → 0.21 | 250.3 → 226.5 | 8.9 → 6.9 |
+| Album | 0.21 → 0.21 | 0.21 → 0.21 | 2,068.5 → 641.8 🟩 | 14.3 → 4.8 🟩 |
+| Artist | 0.21 → 0.21 | 0.84 → 0.84 | 2,024.7 → 1,513.4 🟩 | 16.1 → 7.9 🟩 |
+| Song | 0.21 → 0.22 | 0.42 → 0.22 | 144.8 → 35.5 🟩 | 2.0 → 1.2 🟩 |
+| Profile | 0.21 → 0.21 | 0.63 → 0.63 | 1,506.9 → 1,488.4 | 6.9 → 3.8 🟩 |
+| Library playlists | 0.34 → 0.34 | 0.55 → 0.55 | 1,312.8 → 1,162.5 | 3.1 → 1.7 🟩 |
 
 ## Spotify API
 
-Upstream `4a783900` at 2026-11-23T10:47:39+00:00 → rewrite `e35cfa91` with local source changes (`f3117294`) at 2026-11-23T13:23:51+00:00
+Upstream `d7f40ec0` at 2026-11-23T16:05:42+00:00 → rewrite `47fee585` with local source changes (`91d0ecd2`) at 2026-11-23T16:16:28+00:00
 
-Totals cover 28 matched reads. Time sums provider calls and excludes rendering.
+Totals cover 31 matched reads. Time sums provider calls and excludes rendering. Home uses the app’s provider feed, including concurrent shelf reads. Home refresh explicitly rereads that feed.
 
 | Workflow | HTTP calls | Time (ms) | Download (KiB) | Upload (KiB) |
 | --- | ---: | ---: | ---: | ---: |
-| Session and profiles | 6 → 5 | 1,061 → 594 🟩 | 39.4 → 17.5 🟩 | 5.6 → 3.5 🟩 |
-| Home and Browse | 10 → 18 🟥 | 2,812 → 1,987 🟩 | 5,513.9 → 382.5 🟩 | 9.5 → 29.9 🟥 |
-| Search | 5 → 5 | 967 → 318 🟩 | 405.6 → 15.0 🟩 | 4.7 → 3.4 🟩 |
-| Playlists and library | 49 → 9 🟩 | 1,772 → 564 🟩 | 334.7 → 60.9 🟩 | 31.5 → 8.6 🟩 |
-| Album and artist pages | 18 → 10 🟩 | 2,483 → 653 🟩 | 1,131.3 → 543.0 🟩 | 54.8 → 35.1 🟩 |
-| Song details and radio | 5 → 3 🟩 | 730 → 167 🟩 | 127.6 → 37.4 🟩 | 5.1 → 4.5 |
-| Lyrics | 9 → 7 | 1,136 → 418 🟩 | 82.2 → 8.2 🟩 | 8.8 → 2.8 🟩 |
-| Current Jam | 1 → 1 | 49 → 33 🟩 | 0.1 → 0.1 🟥 | 0.5 → 0.8 🟥 |
+| Session and profiles | 6 → 5 | 1,371 → 618 🟩 | 39.2 → 17.5 🟩 | 5.6 → 3.5 🟩 |
+| Home | 5 → 4 | 1,380 → 556 🟩 | 5,000.4 → 189.8 🟩 | 5.0 → 9.9 🟥 |
+| Home refresh | 2 → 4 🟥 | 1,078 → 512 🟩 | 192.1 → 45.3 🟩 | 1.8 → 11.3 🟥 |
+| Browse | 3 → 8 🟥 | 937 → 1,729 🟥 | 214.6 → 193.1 | 2.7 → 11.1 🟥 |
+| Search | 5 → 5 | 1,697 → 383 🟩 | 408.7 → 15.9 🟩 | 4.6 → 3.5 |
+| Playlists and library | 82 → 11 🟩 | 2,197 → 758 🟩 | 452.3 → 62.1 🟩 | 49.2 → 10.0 🟩 |
+| Album and artist pages | 19 → 10 🟩 | 3,377 → 596 🟩 | 1,154.6 → 540.7 🟩 | 55.4 → 35.2 🟩 |
+| Song details and radio | 5 → 3 🟩 | 457 → 187 🟩 | 127.5 → 37.2 🟩 | 5.0 → 4.5 |
+| Lyrics | 9 → 7 | 1,346 → 471 🟩 | 82.4 → 8.2 🟩 | 8.9 → 2.8 🟩 |
+| Saved tracks and albums | 24 → 8 🟩 | 2,036 → 510 🟩 | 2,253.0 → 1,574.6 🟩 | 120.6 → 140.2 🟥 |
 
-First provider result on the rewrite was 406 ms for Home and 232 ms for Liked Songs.
+First provider result on the rewrite was 556 ms for Home and 265 ms for Liked Songs.
 
 ## Reproduce
 
@@ -61,7 +63,8 @@ Enter the Sonora build environment with Python 3.12 or later and a C compiler. F
 
 ```sh
 python3 crates/music/src/spotify/benchmark/run.py target/spotify-api-run \
-  --side after --workload api --after-account /path/to/candidate/spotify
+  --side both --workload api \
+  --before-account /path/to/upstream/spotify --after-account /path/to/candidate/spotify
 ```
 
 Choose `--side before`, `after`, or `both` and `--workload api`, `desktop`, or `both`. Point `--before-account` at the folder containing `credentials.json` for upstream and `--after-account` at the folder containing `spotify-oauth.json` for the rewrite. Use the same machine and Spotify account for both builds.

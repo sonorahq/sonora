@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::connect::Connect;
@@ -8,8 +8,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 
 use crate::spotify::{
-    albums, artists, auth::sign_in_error, collection, connect::sequence, playlists, profiles,
-    search, wire,
+    albums, artists, collection, connect::sequence, playlists, profiles, search, wire,
 };
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
@@ -372,46 +371,7 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {
-        let mut playlists = Vec::new();
-        let mut offset = 0;
-        let mut seen = HashSet::new();
-        let mut revision = None;
-        loop {
-            let rootlist = self
-                .session
-                .api()
-                .rootlist_page(offset, 300)
-                .await
-                .map_err(sign_in_error)
-                .context("cannot read the rootlist")?;
-            let Some(contents) = &rootlist.contents else {
-                revision = None;
-                break;
-            };
-            if offset == 0 {
-                revision = rootlist.revision.clone();
-            } else if revision != rootlist.revision {
-                revision = None;
-            }
-            let count = contents.items.len();
-            playlists.extend(
-                wire::playlists_from(&rootlist)
-                    .into_iter()
-                    .filter(|playlist| seen.insert(playlist.id.clone())),
-            );
-            offset += count;
-            if count == 0 || !contents.truncated {
-                break;
-            }
-        }
-
-        for playlist in &mut playlists {
-            playlist.owned = playlist.owner_id == self.session.username();
-        }
-        profiles::playlist_owners(&self.session, &mut playlists).await;
-        self.session.remember_rootlist_revision(revision);
-
-        Ok(playlists)
+        playlists::library(&self.session).await
     }
 
     async fn playlist_snapshots(&self, ids: Vec<String>) -> Option<Vec<Playlist>> {

@@ -24,7 +24,7 @@ use tokio_tungstenite::{
 use crate::{
     Session,
     auth::AuthError,
-    proto::connect::{Context, ProvidedTrack},
+    proto::connect_state::{Context, ProvidedTrack},
 };
 
 const PLAYER_COMMAND: &str = "hm://connect-state/v1/player/command";

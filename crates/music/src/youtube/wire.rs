@@ -104,6 +104,7 @@ pub fn album_detail(source: ytmusic::AlbumDetail) -> AlbumDetail {
 
 pub fn playlist(source: ytmusic::Playlist, owned: bool, public: bool) -> Playlist {
     Playlist {
+        revision: None,
         id: source.id,
         name: source.title,
         owner: source.author.unwrap_or_default(),

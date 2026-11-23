@@ -406,6 +406,7 @@ impl Covers {
     /// permissions, which a listing does not carry, so the caller fills those in.
     pub fn playlist(&self, item: Item) -> Playlist {
         Playlist {
+            revision: None,
             cover: self.of(&item, COVER),
             id: item.id,
             name: item.name.unwrap_or_default(),

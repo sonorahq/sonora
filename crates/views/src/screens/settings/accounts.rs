@@ -744,15 +744,22 @@ impl SettingsView {
                     player.state(),
                     SoloistState::Looking | SoloistState::Setup(_)
                 );
-            let theme = cx.theme();
+            let connecting = on && Sonora::global(cx).devices.read(cx).local_device().is_none();
+            let status = match (on, connecting) {
+                (false, _) => "settings-soloist-label",
+                (true, true) => "settings-soloist-connecting",
+                (true, false) => "settings-soloist-connected",
+            };
+            let status = i18n::lookup(status, None);
             div()
                 .id("provider-soloist")
-                .tip("settings-soloist-tooltip", Perch::Below)
+                .tip_label(
+                    t!("settings-soloist-tooltip", status = status.as_ref()),
+                    Perch::Below,
+                )
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_size(theme.text(Text::Label))
-                .text_color(theme.muted_foreground)
                 .when(removable && !disabled, |row| {
                     row.child(
                         Button::new("remove-soloist")
@@ -772,17 +779,10 @@ impl SettingsView {
                     )
                 })
                 .child(
-                    if on && Sonora::global(cx).devices.read(cx).local_device().is_some() {
-                        t!("settings-soloist-connected")
-                    } else if on {
-                        t!("settings-soloist-connecting")
-                    } else {
-                        t!("settings-soloist-label")
-                    },
-                )
-                .child(
                     Switch::new("use-soloist", on)
-                        .name(t!("settings-soloist"))
+                        .label(t!("settings-soloist-label"))
+                        .name(status)
+                        .pending(connecting)
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();

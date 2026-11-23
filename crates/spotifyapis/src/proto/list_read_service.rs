@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::{Context as _, Result};
 use bytes::Bytes;
 
-use crate::proto::playlist::Capabilities;
+use crate::proto::playlist_v2::Capabilities;
 use crate::{Session, http};
 
 const GET_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/GetLists";
@@ -49,8 +49,8 @@ struct RequestOptions {
 struct Pagination {
     #[prost(int32, tag = "1")]
     pub length: i32,
-    // #[prost(int32, tag = "3")]
-    // pub offset: i32,
+    #[prost(int32, tag = "3")]
+    pub offset: i32,
 }
 
 /// Top-level selection of fields in the list response.
@@ -174,8 +174,8 @@ pub struct Attributes {
     // pub description: Option<String>,
     #[prost(message, optional, tag = "5")]
     pub updated_at: Option<prost_types::Timestamp>,
-    // #[prost(string, optional, tag = "6")]
-    // pub added_by_username: Option<String>,
+    #[prost(string, optional, tag = "6")]
+    pub added_by_username: Option<String>,
     #[prost(string, tag = "7")]
     pub owner_username: String,
     // #[prost(message, optional, tag = "8")]
@@ -192,14 +192,14 @@ pub struct Attributes {
     pub approximate_length: Option<i64>,
     // #[prost(message, optional, tag = "14")]
     // pub available_signals: Option<SignalsList>,
-    // #[prost(bool, optional, tag = "15")]
-    // pub published_to_profile: Option<bool>,
+    #[prost(bool, optional, tag = "15")]
+    pub published_to_profile: Option<bool>,
     // #[prost(message, optional, tag = "16")]
     // pub recommendation_info: Option<RecommendationInfo>,
     // #[prost(message, optional, tag = "17")]
     // pub ai_curation: Option<AiCuration>,
-    // #[prost(message, optional, tag = "18")]
-    // pub added_at: Option<prost_types::Timestamp>,
+    #[prost(message, optional, tag = "18")]
+    pub added_at: Option<prost_types::Timestamp>,
     // #[prost(bool, optional, tag = "19")]
     // pub deleted_by_owner: Option<bool>,
     #[prost(bytes = "bytes", tag = "20")]
@@ -268,19 +268,23 @@ pub enum AttributeKind {
     Uri = 1,
     Name = 3,
     UpdatedAt = 5,
+    AddedByUsername = 6,
     OwnerUsername = 7,
     Capabilities = 9,
     ApproximateLength = 13,
+    PublishedToProfile = 15,
+    AddedAt = 18,
     PictureFileId = 20,
     PictureSizes = 21,
     Format = 23,
     FormatListAttributes = 24,
 }
 
-/// A list URI and an optional entry limit from the start of the list.
+/// A list URI and an optional entry window.
 pub struct ListQuery {
     pub uri: String,
     pub page: Option<i32>,
+    pub offset: i32,
 }
 
 impl ListQuery {
@@ -288,6 +292,7 @@ impl ListQuery {
         Self {
             uri: format!("spotify:playlist:{id}"),
             page,
+            offset: 0,
         }
     }
 }
@@ -341,20 +346,25 @@ impl Session {
         let order: Vec<_> = queries
             .iter()
             .map(|query| {
-                *slots.entry((&query.uri, query.page)).or_insert_with(|| {
-                    let index = requests.len();
-                    requests.push(GetListRequest {
-                        identifier: ListIdentifier {
-                            uri: query.uri.clone(),
-                            revision: Bytes::new(),
-                        },
-                        options: RequestOptions {
-                            requested_fields: projection.fields(),
-                            pagination: query.page.map(|length| Pagination { length }),
-                        },
-                    });
-                    index
-                })
+                *slots
+                    .entry((&query.uri, query.page, query.offset))
+                    .or_insert_with(|| {
+                        let index = requests.len();
+                        requests.push(GetListRequest {
+                            identifier: ListIdentifier {
+                                uri: query.uri.clone(),
+                                revision: Bytes::new(),
+                            },
+                            options: RequestOptions {
+                                requested_fields: projection.fields(),
+                                pagination: query.page.map(|length| Pagination {
+                                    length,
+                                    offset: query.offset,
+                                }),
+                            },
+                        });
+                        index
+                    })
             })
             .collect();
         let response: GetListsResponse =

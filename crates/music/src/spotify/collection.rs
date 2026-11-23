@@ -7,11 +7,11 @@ use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use futures::{StreamExt as _, stream};
 use spotifyapis::id::{base62, raw_id};
-use spotifyapis::proto::metadata::ImageSize;
-use spotifyapis::proto::metadata::{
+use spotifyapis::proto::extended_metadata::ImageSize;
+use spotifyapis::proto::extended_metadata::{
     Album as AlbumMessage, Artist as ArtistMessage, Track as TrackMessage,
 };
-use spotifyapis::proto::metadata::{MetadataMessage, MetadataPayload};
+use spotifyapis::proto::extended_metadata::{MetadataMessage, MetadataPayload};
 use tokio::sync::mpsc;
 
 use super::albums::{ALBUM_PREFIX, hydrate_saved_albums};
@@ -20,7 +20,7 @@ use crate::{
     ArtistRef, Credit, GenreItem, Page, PinTarget, PinTargetKind, SavedCollectionPages, Track,
 };
 use spotifyapis::proto::collection::{CollectionItem, PageRequest, WriteRequest};
-use spotifyapis::proto::metadata::{
+use spotifyapis::proto::extended_metadata::{
     AudioAttributes, BatchedEntityRequest, BatchedExtensionResponse, EntityRequest, ExtensionKind,
     ExtensionQuery, Reputation, TrackDescriptors,
 };

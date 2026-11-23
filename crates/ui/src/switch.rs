@@ -19,8 +19,10 @@ pub struct Switch {
     id: ElementId,
     base: Stateful<Div>,
     checked: bool,
+    pending: bool,
     disabled: bool,
     name: Option<SharedString>,
+    label: Option<SharedString>,
     on_click: Option<Click>,
 }
 
@@ -33,16 +35,29 @@ impl Switch {
             base: div().id(id.clone()),
             id,
             checked,
+            pending: false,
             disabled: false,
             name: None,
+            label: None,
             on_click: None,
         }
     }
 
-    /// Names the switch for screen readers. It draws no text of its own, so a switch without a
-    /// name is announced as nothing but its state.
+    /// Names the switch for screen readers.
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Shows a short label beside the thumb inside the track.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Keeps the switch operable while its checked state is taking effect.
+    pub fn pending(mut self, pending: bool) -> Self {
+        self.pending = pending;
         self
     }
 
@@ -78,18 +93,28 @@ impl RenderOnce for Switch {
             id,
             mut base,
             checked,
+            pending,
             disabled,
             name,
+            label,
             on_click,
         } = self;
         let theme = *cx.theme();
         let height = px((theme.metrics.control_small / px(1.) * SCALE).round());
         let width = px((height / px(1.) * WIDTH).round());
         let thumb = height - px((INSET + BORDER) * 2.);
-        let travel = width - height;
-        let background = match checked {
-            true => theme.primary,
-            false => theme.muted,
+        let travel = if label.is_some() {
+            px(0.)
+        } else {
+            width - height
+        };
+        let (on_track, on_hover, on_knob) = match pending {
+            true => (
+                theme.secondary_active,
+                theme.secondary_hover,
+                theme.foreground,
+            ),
+            false => (theme.primary, theme.primary_hover, theme.primary_foreground),
         };
         let overrides = std::mem::take(base.style());
 
@@ -98,26 +123,41 @@ impl RenderOnce for Switch {
             false => (1., 0.),
         };
         let (track_was, track_is) = match checked {
-            true => (theme.muted, theme.primary),
-            false => (theme.primary, theme.muted),
+            true => (theme.muted, on_track),
+            false => (on_track, theme.muted),
         };
         let (edge_was, edge_is) = match checked {
             true => (theme.border, theme.primary),
             false => (theme.primary, theme.border),
         };
         let (hover_was, hover_is) = match checked {
-            true => (theme.secondary_hover, theme.primary_hover),
-            false => (theme.primary_hover, theme.secondary_hover),
+            true => (theme.secondary_hover, on_hover),
+            false => (on_hover, theme.secondary_hover),
         };
         let (knob_was, knob_is) = match checked {
-            true => (theme.muted_foreground, theme.primary_foreground),
-            false => (theme.primary_foreground, theme.muted_foreground),
+            true => (theme.muted_foreground, on_knob),
+            false => (on_knob, theme.muted_foreground),
         };
 
         let movement =
             window.use_keyed_state((id.clone(), "movement"), cx, |_, _| Movement::new(checked));
         let animates = movement.update(cx, |movement, _| movement.turning(checked));
         let knob = div().size(thumb).flex_none().rounded(thumb / 2.);
+        let name = name.or_else(|| label.clone());
+        let label = label.map(|text| {
+            div()
+                .px(theme.metrics.pad / 2.)
+                .whitespace_nowrap()
+                .text_size(theme.text(crate::Text::Tiny))
+                .text_color(knob_is)
+                .child(text)
+        });
+        let labeled = label.is_some();
+        let (before, after) = if checked {
+            (label, None)
+        } else {
+            (None, label)
+        };
 
         let mut switch = base
             // The role sits on the inner div because the animation wrapper
@@ -129,18 +169,17 @@ impl RenderOnce for Switch {
             .flex()
             .flex_none()
             .items_center()
-            .w(width)
+            .when(!labeled, |this| this.w(width))
+            .when(labeled, |this| this.gap_1())
             .h(height)
             .p(px(INSET))
             .rounded(height / 2.)
-            .bg(background)
+            .bg(track_is)
             .border_1()
-            .border_color(match checked {
-                true => theme.primary,
-                false => theme.border,
-            })
+            .border_color(edge_is)
             .when(disabled, |this| this.opacity(0.4))
             .when(!disabled, |this| this.cursor_pointer())
+            .children(before)
             .child(match animates {
                 true => knob
                     .motion(
@@ -153,7 +192,8 @@ impl RenderOnce for Switch {
                     )
                     .into_any_element(),
                 false => knob.ml(travel * to).bg(knob_is).into_any_element(),
-            });
+            })
+            .children(after);
 
         switch.style().refine(&overrides);
         if !disabled && let Some(handler) = on_click {
@@ -183,7 +223,7 @@ impl RenderOnce for Switch {
                     },
                 )
                 .into_any_element(),
-            false => switch.bg(lit(background, hover_is)).into_any_element(),
+            false => switch.bg(lit(track_is, hover_is)).into_any_element(),
         }
     }
 }

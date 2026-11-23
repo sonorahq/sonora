@@ -926,6 +926,7 @@ impl TidalClient {
             .iter()
             .find_map(|module| module.get("mix").and_then(wire::mix))
             .unwrap_or_else(|| Playlist {
+                revision: None,
                 id: format!("{}{mix_id}", wire::MIX),
                 name: wire::text(&page, "title").unwrap_or_default().to_owned(),
                 owner: "TIDAL".to_owned(),

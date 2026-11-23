@@ -4,10 +4,12 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, ClipboardItem, Context, Entity, FocusHandle, Render, SharedString, Window, div,
+};
 use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
-use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
+use state::{Outcome, Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Badge, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice,
     Spinner, Submit, Text,
@@ -200,37 +202,61 @@ impl SoloistSetup {
                     cx,
                 ));
                 let tcp = port.map_or_else(
-                    || t!("soloist-pair-tcp-pending"),
+                    || {
+                        Badge::text(t!("soloist-pair-tcp-pending"))
+                            .rounded_full()
+                            .bg(theme.secondary_active)
+                            .into_any_element()
+                    },
                     |port| {
                         let port = port.to_string();
-                        t!("soloist-pair-tcp", port = port.as_str())
+                        copy_port(
+                            "soloist-copy-tcp",
+                            t!("soloist-pair-tcp", port = port.as_str()),
+                            port,
+                        )
+                        .into_any_element()
                     },
                 );
-                body.push(paragraph(
-                    "soloist-pair-firewall",
-                    t!("soloist-pair-ports"),
-                    cx,
-                ));
                 body.push(
                     div()
-                        .id("soloist-pair-ports")
-                        .role(Role::Status)
-                        .aria_label(format!("{} · {}", t!("soloist-pair-udp"), tcp))
                         .flex()
                         .flex_wrap()
+                        .items_center()
                         .gap_2()
-                        .child(
-                            Badge::text(t!("soloist-pair-udp"))
-                                .rounded_full()
-                                .bg(theme.secondary_active),
-                        )
-                        .child(Badge::text(tcp).rounded_full().bg(theme.secondary_active))
+                        .text_size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground)
+                        .child(ui::spoken(
+                            "soloist-pair-firewall",
+                            t!("soloist-pair-ports"),
+                        ))
+                        .child(copy_port(
+                            "soloist-copy-udp",
+                            t!("soloist-pair-udp"),
+                            "5353".to_owned(),
+                        ))
+                        .child(tcp)
                         .into_any_element(),
                 );
             }
         }
         body
     }
+}
+
+/// Copies the number without its protocol label so it can be pasted into a firewall rule.
+fn copy_port(id: &'static str, label: SharedString, port: String) -> Button {
+    Button::new(id)
+        .label(label)
+        .name(t!("soloist-pair-copy-port"))
+        .tooltip("soloist-pair-copy-port")
+        .small()
+        .outline()
+        .rounded_full()
+        .on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(port.clone()));
+            Toasts::show(Outcome::Done, "toast-port-copied", cx);
+        })
 }
 
 impl Render for SoloistSetup {

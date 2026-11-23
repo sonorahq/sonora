@@ -21,8 +21,8 @@ use http::HeaderMap;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
 use spotifyapis::access_point::AudioKeyError;
-use spotifyapis::proto::metadata::Track as TrackMessage;
-use spotifyapis::proto::metadata::{ExtensionKind, MetadataPayload};
+use spotifyapis::proto::extended_metadata::Track as TrackMessage;
+use spotifyapis::proto::extended_metadata::{ExtensionKind, MetadataPayload};
 
 use crate::Quality;
 use crate::engine::{self, Fetch, Loudness};

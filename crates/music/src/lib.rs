@@ -126,6 +126,7 @@ pub(crate) fn distinct_cover_urls<'a>(
 pub struct PlaylistMembership {
     pub tracks: HashSet<String>,
     pub covers: Vec<String>,
+    pub revision: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -500,6 +501,7 @@ pub trait MusicApi: Send + Sync {
                 Ok(PlaylistMembership {
                     tracks: tracks.into_iter().filter_map(|track| track.id).collect(),
                     covers,
+                    revision: None,
                 })
             })
             .buffered(4)

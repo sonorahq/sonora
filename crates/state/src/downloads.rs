@@ -551,7 +551,10 @@ impl Downloads {
             return None;
         };
         Some(PlaylistDetail {
-            playlist: playlist.clone(),
+            playlist: Playlist {
+                revision: None,
+                ..playlist.clone()
+            },
             tracks: set.tracks.clone(),
             ..Default::default()
         })

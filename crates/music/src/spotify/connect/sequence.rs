@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 
 use crate::spotify::{auth::sign_in_error, collection, session::Session};
-use spotifyapis::proto::connect::ContextTrack;
+use spotifyapis::proto::connect_state::ContextTrack;
 
 const RADIO_TRACKS: usize = 50;
 

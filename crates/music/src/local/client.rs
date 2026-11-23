@@ -197,6 +197,7 @@ fn playlist_from(stored: Stored, tracks: &[Track]) -> Playlist {
         .cover
         .map(|path| format!("file://{}", path.display()));
     Playlist {
+        revision: None,
         id: stored.id,
         name: stored.name,
         owner: String::new(),

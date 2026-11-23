@@ -1,8 +1,7 @@
 use std::fmt::Write as _;
 
-use spotifyapis::proto::metadata::Image;
-use spotifyapis::proto::metadata::ImageSize;
-use spotifyapis::proto::playlist::{ListAttributes, SelectedListContent as RootList};
+use spotifyapis::proto::extended_metadata::Image;
+use spotifyapis::proto::extended_metadata::ImageSize;
 
 use crate::models;
 
@@ -137,16 +136,6 @@ pub fn image_width(image: &Image) -> i32 {
     }
 }
 
-pub fn blend(attributes: &ListAttributes) -> bool {
-    blend_format(
-        attributes.format(),
-        attributes
-            .format_attributes
-            .iter()
-            .map(|attribute| attribute.key()),
-    )
-}
-
 fn blend_format<'a>(format: &str, mut keys: impl Iterator<Item = &'a str>) -> bool {
     format.to_ascii_lowercase().contains(BLEND)
         || keys.any(|key| key.to_ascii_lowercase().starts_with(BLEND))
@@ -154,16 +143,6 @@ fn blend_format<'a>(format: &str, mut keys: impl Iterator<Item = &'a str>) -> bo
 
 pub fn fetchable(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
-}
-
-fn playlist_cover(attributes: &ListAttributes) -> Option<String> {
-    cover_from(
-        attributes
-            .picture_size
-            .iter()
-            .map(|size| (size.target_name(), size.url())),
-        attributes.picture(),
-    )
 }
 
 fn cover_from<'a>(
@@ -191,7 +170,7 @@ fn cover_from<'a>(
 /// Maps a GetLists summary with the same cover preference as a playlist snapshot.
 pub(super) fn playlist_summary(
     id: String,
-    attrs: spotifyapis::proto::list_read::Attributes,
+    attrs: spotifyapis::proto::list_read_service::Attributes,
     username: &str,
 ) -> models::Playlist {
     let cover = cover_from(
@@ -235,70 +214,6 @@ pub(super) fn playlist_summary(
     }
 }
 
-pub fn playlist_from(id: &str, content: &RootList, username: &str) -> models::Playlist {
-    let mut playlist = playlist_row(
-        id,
-        content.attributes.as_ref(),
-        content.owner_username(),
-        content.length(),
-        content.timestamp(),
-        content.capabilities.as_ref(),
-    );
-    playlist.owned = playlist.owner == username;
-    playlist
-}
-
-pub fn playlists_from(rootlist: &RootList) -> Vec<models::Playlist> {
-    let Some(contents) = &rootlist.contents else {
-        return Vec::new();
-    };
-    contents
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            let id = item.uri.strip_prefix("spotify:playlist:")?;
-            let mut playlist = match contents.meta_items.get(index) {
-                Some(meta) => playlist_row(
-                    id,
-                    meta.attributes.as_ref(),
-                    meta.owner_username(),
-                    meta.length(),
-                    meta.timestamp(),
-                    meta.capabilities.as_ref(),
-                ),
-                None => playlist_row(id, None, "", 0, 0, None),
-            };
-            playlist.public = item.attributes.as_ref().is_some_and(|attrs| attrs.public());
-            Some(playlist)
-        })
-        .collect()
-}
-
-/// Maps the common playlist metadata carried by detail and root-list responses.
-fn playlist_row(
-    id: &str,
-    attributes: Option<&ListAttributes>,
-    owner: &str,
-    length: i32,
-    stamp: i64,
-    permissions: Option<&spotifyapis::proto::playlist::Capabilities>,
-) -> models::Playlist {
-    models::Playlist {
-        id: id.to_owned(),
-        name: playlist_label(attributes.map(ListAttributes::name).unwrap_or_default()),
-        owner: playlist_label(owner),
-        owner_id: owner.to_owned(),
-        collaborative: attributes.is_some_and(ListAttributes::collaborative)
-            || permissions.is_some_and(|permissions| permissions.can_edit_items()),
-        blend: attributes.is_some_and(blend),
-        cover: attributes.and_then(playlist_cover),
-        track_count: length.max(0) as u32,
-        modified_at: seconds(stamp),
-        ..Default::default()
-    }
-}
-
 fn playlist_label(name: &str) -> String {
     if name.is_empty() {
         UNKNOWN.to_owned()
@@ -318,8 +233,4 @@ pub fn copyright(recording: bool, text: &str) -> String {
             false => format!("© {text}"),
         },
     }
-}
-
-pub fn seconds(millis: i64) -> Option<i64> {
-    (millis > 0).then_some(millis / 1_000)
 }

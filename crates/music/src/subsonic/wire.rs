@@ -138,6 +138,7 @@ pub fn playlist(
 ) -> Playlist {
     let owner = owner.unwrap_or_default().to_owned();
     Playlist {
+        revision: None,
         id: id.to_owned(),
         name: name.to_owned(),
         owner: owner.clone(),

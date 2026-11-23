@@ -609,6 +609,7 @@ pub enum ExtensionKind {
     RelatedCreatorsSection = 165,
     VisualIdentity = 179,
     OnPlatformReputation = 185,
+    ListMetadataV2 = 205,
     AudioAttributesV2 = 222,
     SearchGenreMetadata = 280,
 }

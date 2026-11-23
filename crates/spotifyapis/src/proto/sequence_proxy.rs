@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use crate::{Session, http};
 
-use super::connect::ContextTrack;
+use super::connect_state::ContextTrack;
 
 const MAX_PAGES: usize = 40;
 const RESOLVE_CONTEXT: &str =

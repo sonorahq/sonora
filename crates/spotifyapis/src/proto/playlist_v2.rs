@@ -1,14 +1,12 @@
-//! Playlist snapshots, permissions, picture registration, and revision-bound mutations.
+//! Playlist v2 mutations, cover registration, and Dealer notifications.
 
 use anyhow::Result;
 use bytes::Bytes;
 use prost::Message as _;
-use reqwest::header::{self, HeaderMap, HeaderValue};
 
 use super::{component, dealer_headers};
 use crate::{Session, http};
 
-const IMAGE_UPLOAD: &str = "https://image-upload.spotify.com/v4/playlist";
 pub const PLAYLIST_TOPIC: &str = "hm://playlist/v2/playlist";
 pub const USER_TOPIC: &str = "hm://playlist/user";
 const PLAYLIST_ENDPOINT: &str = "/playlist/v2/playlist";
@@ -34,46 +32,6 @@ pub struct Item {
     pub uri: String,
     #[prost(message, optional, tag = "2")]
     pub attributes: Option<ItemAttributes>,
-}
-
-#[derive(prost::Message)]
-pub struct MetaItem {
-    // #[prost(bytes = "bytes", optional, tag = "1")]
-    // pub revision: Option<Bytes>,
-    #[prost(message, optional, tag = "2")]
-    pub attributes: Option<ListAttributes>,
-    #[prost(int32, optional, tag = "3")]
-    pub length: Option<i32>,
-    #[prost(int64, optional, tag = "4")]
-    pub timestamp: Option<i64>,
-    #[prost(string, optional, tag = "5")]
-    pub owner_username: Option<String>,
-    // #[prost(bool, optional, tag = "6")]
-    // pub abuse_reporting_enabled: Option<bool>,
-    #[prost(message, optional, tag = "7")]
-    pub capabilities: Option<Capabilities>,
-    // #[prost(int32, repeated, packed = "false", tag = "8")]
-    // pub geoblock: Vec<i32>,
-    #[prost(sint32, optional, tag = "9")]
-    pub status_code: Option<i32>,
-}
-
-#[derive(prost::Message)]
-pub struct ListItems {
-    #[prost(int32, required, tag = "1")]
-    pub pos: i32,
-    #[prost(bool, required, tag = "2")]
-    pub truncated: bool,
-    #[prost(message, repeated, tag = "3")]
-    pub items: Vec<Item>,
-    #[prost(message, repeated, tag = "4")]
-    pub meta_items: Vec<MetaItem>,
-    // #[prost(message, repeated, tag = "5")]
-    // pub available_signals: Vec<Signal>,
-    // #[prost(string, optional, tag = "6")]
-    // pub continuation_token: Option<String>,
-    // #[prost(message, repeated, tag = "7")]
-    // pub lens_removed_items: Vec<Item>,
 }
 
 #[derive(prost::Message)]
@@ -347,50 +305,6 @@ pub struct ListChanges {
 }
 
 #[derive(prost::Message)]
-pub struct SelectedListContent {
-    #[prost(bytes = "bytes", optional, tag = "1")]
-    pub revision: Option<Bytes>,
-    #[prost(int32, optional, tag = "2")]
-    pub length: Option<i32>,
-    #[prost(message, optional, tag = "3")]
-    pub attributes: Option<ListAttributes>,
-    #[prost(message, optional, tag = "5")]
-    pub contents: Option<ListItems>,
-    // #[prost(message, optional, tag = "6")]
-    // pub diff: Option<Diff>,
-    // #[prost(message, optional, tag = "7")]
-    // pub sync_result: Option<Diff>,
-    // #[prost(bytes = "bytes", repeated, tag = "8")]
-    // pub resulting_revisions: Vec<Bytes>,
-    // #[prost(bool, optional, tag = "9")]
-    // pub multiple_heads: Option<bool>,
-    // #[prost(bool, optional, tag = "10")]
-    // pub up_to_date: Option<bool>,
-    // #[prost(int64, repeated, packed = "false", tag = "14")]
-    // pub nonces: Vec<i64>,
-    #[prost(int64, optional, tag = "15")]
-    pub timestamp: Option<i64>,
-    #[prost(string, optional, tag = "16")]
-    pub owner_username: Option<String>,
-    // #[prost(bool, optional, tag = "17")]
-    // pub abuse_reporting_enabled: Option<bool>,
-    #[prost(message, optional, tag = "18")]
-    pub capabilities: Option<Capabilities>,
-    // #[prost(int32, repeated, packed = "false", tag = "19")]
-    // pub geoblock: Vec<i32>,
-    // #[prost(bool, optional, tag = "20")]
-    // pub changes_require_resync: Option<bool>,
-    // #[prost(int64, optional, tag = "21")]
-    // pub created_at: Option<i64>,
-    // #[prost(message, optional, tag = "22")]
-    // pub applied_lenses: Option<AppliedLenses>,
-    // #[prost(bool, optional, tag = "23")]
-    // pub is_user_created: Option<bool>,
-    // #[prost(message, optional, tag = "24")]
-    // pub signal_results: Option<SignalResult>,
-}
-
-#[derive(prost::Message)]
 pub struct CreateListReply {
     #[prost(string, required, tag = "1")]
     pub uri: String,
@@ -489,22 +403,6 @@ pub struct Capabilities {
 }
 
 impl Session {
-    /// Reads a playlist snapshot.
-    pub async fn playlist(&self, id: &str) -> Result<SelectedListContent> {
-        let path = format!("{}/{}", PLAYLIST_ENDPOINT, component(id));
-        http::get(self, &path, HeaderMap::new()).await
-    }
-
-    /// Reads a page of the signed-in account's playlist library.
-    pub async fn rootlist_page(&self, from: usize, length: usize) -> Result<SelectedListContent> {
-        let path = format!(
-            "{}/{}/rootlist?decorate=revision,attributes,length,owner,capabilities,status_code&from={from}&length={length}",
-            USER_ENDPOINT,
-            component(self.username())
-        );
-        http::get(self, &path, HeaderMap::new()).await
-    }
-
     /// Creates a playlist from the supplied changes.
     pub async fn create_playlist(
         &self,
@@ -576,21 +474,6 @@ impl Session {
         )
         .await?;
         Ok(RegisterPlaylistImageResponse::decode(bytes)?)
-    }
-
-    /// Uploads a JPEG and returns the token for playlist cover registration.
-    pub async fn upload_playlist_image(&self, jpeg: Bytes) -> Result<String> {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Uploaded {
-            upload_token: String,
-        }
-        let headers = HeaderMap::from_iter([
-            (header::ACCEPT, HeaderValue::from_static("application/json")),
-            (header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg")),
-        ]);
-        let bytes = http::post_service(self, IMAGE_UPLOAD, headers, jpeg).await?;
-        Ok(serde_json::from_slice::<Uploaded>(&bytes)?.upload_token)
     }
 }
 

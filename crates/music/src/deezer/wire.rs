@@ -376,6 +376,7 @@ pub fn playlist(value: &Value, user_id: &str) -> Option<Playlist> {
     let md5 = text(value, &["PLAYLIST_PICTURE", "picture"]);
     let kind = text(value, &["PICTURE_TYPE"]).unwrap_or("playlist");
     Some(Playlist {
+        revision: None,
         id: playlist_id,
         name: text(value, &["TITLE", "title"])
             .unwrap_or_default()
@@ -528,6 +529,7 @@ fn picture(item: &Value, size: u32) -> Option<String> {
 /// A playlist Deezer makes for the listener rather than one a user owns.
 fn made(id: String, name: &str, cover: Option<String>, track_count: u32) -> Playlist {
     Playlist {
+        revision: None,
         id,
         name: name.to_owned(),
         owner: MAKER.to_owned(),

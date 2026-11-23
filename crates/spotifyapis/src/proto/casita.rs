@@ -28,7 +28,7 @@ pub struct ResolvedHome {
 // #[derive(prost::Message)]
 // pub struct EagerlyLoadedTraits {
 //     #[prost(message, optional, tag = "1")]
-//     pub traits: Option<super::metadata::BatchedExtensionResponse>,
+//     pub traits: Option<super::extended_metadata::BatchedExtensionResponse>,
 // }
 
 /// The ordered sections of a Casita feed.

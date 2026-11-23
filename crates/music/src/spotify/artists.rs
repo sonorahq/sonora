@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use futures::{StreamExt as _, stream};
-use spotifyapis::proto::metadata::{
+use spotifyapis::proto::extended_metadata::{
     AlbumGroup, Artist as ArtistMessage, Image, RelatedCreators, RelatedEntities, Reputation,
     VisualIdentity,
 };
@@ -13,7 +13,7 @@ use crate::{
     Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SUGGESTIONS,
     SavedArtist, Track,
 };
-use spotifyapis::proto::metadata::ExtensionKind;
+use spotifyapis::proto::extended_metadata::ExtensionKind;
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";

@@ -5,8 +5,8 @@ use anyhow::{Context as _, Result};
 
 use crate::spotify::{auth::sign_in_error, collection, wire};
 use crate::{Contributor, Playlist, UserDetail, UserProfile};
-use spotifyapis::proto::metadata::{ExtensionKind, IdentityProfile};
-use spotifyapis::proto::profile::PublicPlaylist;
+use spotifyapis::proto::extended_metadata::{ExtensionKind, IdentityProfile};
+use spotifyapis::proto::user_profile_view::PublicPlaylist;
 
 const USER_PREFIX: &str = "spotify:user:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
@@ -139,6 +139,7 @@ fn listed(found: PublicPlaylist) -> Option<Playlist> {
     let owner_id = username(&found.owner_uri);
 
     Some(Playlist {
+        revision: None,
         id: id.to_owned(),
         name: found.name,
         owner: if found.owner_name.is_empty() {

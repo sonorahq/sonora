@@ -1133,6 +1133,8 @@ pub enum LibraryEvent {
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),
+    /// A remote playlist edit with the revision reported by its provider.
+    PlaylistChangedRemotely(String, Option<Vec<u8>>),
     /// The provider answered `open_smart_playlist`; the rules editor reads `smart_editing`.
     SmartPlaylistReady(String),
     /// A playlist's new order was written, so a page that put off loading it again can do it now.
@@ -1260,6 +1262,12 @@ impl LibraryState {
     }
 }
 
+/// The applied track membership and its provider revision.
+struct Membership {
+    tracks: HashSet<String>,
+    revision: Option<Vec<u8>>,
+}
+
 impl gpui::EventEmitter<LibraryEvent> for Library {}
 
 pub struct Library {
@@ -1270,8 +1278,8 @@ pub struct Library {
     /// Reads the streaming playlists again after one changed elsewhere, without the rest of
     /// the shelf.
     relisting: Option<Task<()>>,
-    // An empty set requests the full playlist list.
-    pending_relist: Option<HashSet<String>>,
+    // An empty map requests the full playlist list.
+    pending_relist: Option<HashMap<String, Option<Vec<u8>>>>,
     pin_targets_task: Option<Task<()>>,
     pin_task: Option<Task<()>>,
     pin_targets: Option<Vec<music::PinTarget>>,
@@ -1280,7 +1288,7 @@ pub struct Library {
     pending_artists: HashMap<String, Task<()>>,
     /// Tracks and albums on their way into or out of the provider's own library, by id.
     pending_library: HashMap<String, Task<()>>,
-    contents: HashMap<String, HashSet<String>>,
+    contents: HashMap<String, Membership>,
     hidden_local_tracks: HashSet<String>,
     reading: HashMap<String, Rc<Task<()>>>,
     mosaics: mosaic::Tasks,
@@ -2529,7 +2537,11 @@ impl Library {
         }
         let added = playlist_id.clone();
         let known = match addition {
-            Addition::Album(_) => self.contents.get(&playlist_id).cloned().unwrap_or_default(),
+            Addition::Album(_) => self
+                .contents
+                .get(&playlist_id)
+                .map(|membership| membership.tracks.clone())
+                .unwrap_or_default(),
             Addition::Tracks(_) => HashSet::new(),
         };
         let name = self
@@ -2754,8 +2766,9 @@ impl Library {
             |playlist| playlist.track_count += added_count,
             cx,
         );
-        if let Some(ids) = self.contents.get_mut(playlist_id) {
-            ids.extend(track_ids);
+        if let Some(membership) = self.contents.get_mut(playlist_id) {
+            membership.revision = None;
+            membership.tracks.extend(track_ids);
         }
         cx.emit(LibraryEvent::TrackAdded {
             playlist: playlist_id.to_owned(),
@@ -2775,9 +2788,10 @@ impl Library {
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
             cx,
         );
-        if let Some(ids) = self.contents.get_mut(playlist_id) {
+        if let Some(membership) = self.contents.get_mut(playlist_id) {
+            membership.revision = None;
             for track in &track_ids {
-                ids.remove(track);
+                membership.tracks.remove(track);
             }
         }
         for track in track_ids {
@@ -3183,7 +3197,7 @@ impl Library {
         let held = self.contents.get(&playlist_id);
         let tracks: Vec<String> = tracks
             .into_iter()
-            .filter(|track| !held.is_some_and(|held| held.contains(track)))
+            .filter(|track| !held.is_some_and(|held| held.tracks.contains(track)))
             .collect();
         self.add_tracks_to_playlist(playlist_id, Addition::Tracks(tracks), cx);
     }
@@ -3199,7 +3213,7 @@ impl Library {
     }
 
     pub fn holds(&self, playlist_id: &str, track_id: &str) -> Option<bool> {
-        Some(self.contents.get(playlist_id)?.contains(track_id))
+        Some(self.contents.get(playlist_id)?.tracks.contains(track_id))
     }
 
     /// Gives each coverless streaming playlist the mosaic already on disk for it, and answers
@@ -3364,7 +3378,13 @@ impl Library {
                                 {
                                     this.paint_mosaic(id.clone(), stamp, membership.covers, cx);
                                 }
-                                this.contents.insert(id, membership.tracks);
+                                this.contents.insert(
+                                    id,
+                                    Membership {
+                                        tracks: membership.tracks,
+                                        revision: membership.revision,
+                                    },
+                                );
                             }
                             Some(Err(error)) => {
                                 log::warn!("library: cannot read a playlist: {error:#}")
@@ -3542,7 +3562,10 @@ impl Library {
         amend: impl FnOnce(&mut Playlist),
         cx: &mut Context<Self>,
     ) {
-        if self.amend_playlist_quietly(id, amend) {
+        if self.amend_playlist_quietly(id, |playlist| {
+            amend(playlist);
+            playlist.revision = None;
+        }) {
             cx.notify();
         }
     }
@@ -3606,24 +3629,52 @@ impl Library {
     /// refresh their summary rows.
     pub(crate) fn changed_elsewhere(
         &mut self,
-        playlists: HashSet<String>,
+        playlists: HashMap<String, Option<Vec<u8>>>,
         library_changed: bool,
         list_changed: bool,
         cx: &mut Context<Self>,
     ) {
-        for id in &playlists {
-            self.reading.remove(id);
-            self.contents.remove(id);
-            cx.emit(LibraryEvent::PlaylistChanged(id.clone()));
+        let mut membership_only = false;
+        for (id, revision) in &playlists {
+            let membership_current = revision.as_ref().is_some_and(|revision| {
+                self.contents.get(id).and_then(|row| row.revision.as_ref()) == Some(revision)
+            });
+            if !membership_current {
+                self.reading.remove(id);
+                self.contents.remove(id);
+                membership_only |= revision.as_ref().is_some_and(|revision| {
+                    self.playlist(id).and_then(|row| row.revision.as_ref()) == Some(revision)
+                });
+            }
+            cx.emit(LibraryEvent::PlaylistChangedRemotely(
+                id.clone(),
+                revision.clone(),
+            ));
         }
         if library_changed {
             self.refresh(Shelf::Streaming, cx);
             return;
         }
-        self.sync_pin_targets(cx);
+        if list_changed
+            || self.pin_targets.as_deref().is_some_and(|pins| {
+                pins.iter().any(|pin| {
+                    pin.pinned
+                        && pin.kind == music::PinTargetKind::Playlist
+                        && pin
+                            .uri
+                            .rsplit_once(':')
+                            .is_some_and(|(_, id)| playlists.contains_key(id))
+                })
+            })
+        {
+            self.sync_pin_targets(cx);
+        }
+        if membership_only && !list_changed {
+            self.read_playlists(Shelf::Streaming, cx);
+        }
         self.relist(
             if list_changed {
-                HashSet::new()
+                HashMap::new()
             } else {
                 playlists
             },
@@ -3632,7 +3683,7 @@ impl Library {
     }
 
     /// Reads the streaming shelf's playlists and coalesces notifications that arrive during a read.
-    fn relist(&mut self, changed: HashSet<String>, cx: &mut Context<Self>) {
+    fn relist(&mut self, changed: HashMap<String, Option<Vec<u8>>>, cx: &mut Context<Self>) {
         let Some(client) = self.session.read(cx).client_of(Shelf::Streaming) else {
             return;
         };
@@ -3659,16 +3710,20 @@ impl Library {
             .state
             .playlists()
             .iter()
-            .filter(|playlist| changed.contains(&playlist.id))
+            .filter(|playlist| {
+                changed
+                    .get(&playlist.id)
+                    .is_some_and(|revision| revision.is_none() || playlist.revision != *revision)
+            })
             .map(|playlist| playlist.id.clone())
             .collect();
+        if selected && ids.is_empty() {
+            return;
+        }
         held.stale.insert(LibraryPart::Playlists);
         self.relisting = Some(self.io.load(
             async move {
-                if selected
-                    && !ids.is_empty()
-                    && let Some(snapshots) = client.playlist_snapshots(ids).await
-                {
+                if selected && let Some(snapshots) = client.playlist_snapshots(ids).await {
                     return Ok((true, snapshots));
                 }
                 client.playlists().await.map(|playlists| (false, playlists))
@@ -3992,10 +4047,20 @@ impl Library {
         // A streaming playlist's contents are never read again once known, so one whose count
         // moved, or that is gone, drops them here and the read below fetches them afresh.
         if let Some(before) = before {
-            let fresh = counts(self);
-            self.contents.retain(|id, _| {
+            let fresh: HashMap<_, _> = self.shelves[shelf.slot()]
+                .state
+                .playlists()
+                .iter()
+                .map(|row| (row.id.as_str(), row))
+                .collect();
+            self.contents.retain(|id, membership| {
                 Shelf::of(id) != shelf
-                    || (fresh.contains_key(id) && fresh.get(id) == before.get(id))
+                    || fresh.get(id.as_str()).is_some_and(|row| {
+                        before.get(id) == Some(&row.track_count)
+                            || row.revision.as_ref().is_some_and(|revision| {
+                                membership.revision.as_ref() == Some(revision)
+                            })
+                    })
             });
         }
         if part == LibraryPart::Playlists {

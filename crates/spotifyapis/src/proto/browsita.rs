@@ -1,4 +1,5 @@
-//! Browsita landing page messages.
+//! `/browsita/v1/browse` returns the Browse landing page and directory links.
+//! Category contents are read by [`super::list_read_service`].
 
 use anyhow::Result;
 use reqwest::header::HeaderMap;

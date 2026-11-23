@@ -140,6 +140,9 @@ pub struct Playlist {
     /// The provider chooses the tracks itself, as for a Navidrome smart playlist, so none can
     /// be added, removed or moved by hand even by its owner.
     pub read_only: bool,
+    /// Revision of the provider snapshot used to build this playlist.
+    #[serde(skip)]
+    pub revision: Option<Vec<u8>>,
 }
 
 impl Playlist {

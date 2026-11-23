@@ -10,7 +10,7 @@ pub(super) mod sequence;
 
 pub(super) use jam::INVITE;
 use jam::Read;
-use spotifyapis::proto::jam::JAM_TOPIC;
+use spotifyapis::proto::social_connect::JAM_TOPIC;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher as _};
@@ -24,13 +24,13 @@ use futures::future::BoxFuture;
 use sha1::{Digest as _, Sha1};
 use spotifyapis::dealer::{self, Command as Wire, Dealer, Message, PlayCommand, Reply, Request};
 use spotifyapis::proto::collection::{CollectionUpdate, UPDATE_TOPIC as COLLECTION_TOPIC};
-use spotifyapis::proto::connect::{
+use spotifyapis::proto::connect_state::{
     CLUSTER_TOPIC, Capabilities, Cluster, ClusterUpdate, ContextIndex, ContextPlayerOptions,
     Device as WireDevice, DeviceInfo, DeviceType, PlayerState, ProvidedTrack, PutStateReason,
     PutStateRequest, SetVolumeCommand, SetVolumeRequest, Suppressions, VOLUME_TOPIC,
 };
-use spotifyapis::proto::connect::{ContextPage, ContextTrack, TransferState};
-use spotifyapis::proto::playlist::{PLAYLIST_TOPIC, PlaylistModificationInfo, USER_TOPIC};
+use spotifyapis::proto::connect_state::{ContextPage, ContextTrack, TransferState};
+use spotifyapis::proto::playlist_v2::{PLAYLIST_TOPIC, PlaylistModificationInfo, USER_TOPIC};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
@@ -434,7 +434,15 @@ impl Worker {
             let change: PlaylistModificationInfo = message.decode_protobuf()?;
             let uri = change.uri();
             if let Some(id) = uri.strip_prefix("spotify:playlist:") {
-                self.out.send(Event::PlaylistChanged(id.to_owned())).ok();
+                self.out
+                    .send(Event::PlaylistChanged {
+                        id: id.to_owned(),
+                        revision: change
+                            .new_revision
+                            .filter(|value| !value.is_empty())
+                            .map(|value| value.to_vec()),
+                    })
+                    .ok();
             }
         } else if dealer::topic(uri, USER_TOPIC)
             || dealer::topic(
@@ -1021,7 +1029,7 @@ impl Worker {
             .context
             .uri
             .as_deref()
-            .filter(|uri| blind && (by_uid || collection(uri).is_none()))
+            .filter(|uri| blind && uri_id(uri).is_none() && (by_uid || collection(uri).is_none()))
             .map(str::to_owned)
         else {
             out.send(Event::Command(Command::Start(started_by_play(play, None))))
@@ -1870,15 +1878,14 @@ fn started_by_transfer(state: TransferState, now: i64) -> Start {
     }
 }
 
-/// Whether a play command names a context that Sonora has no collection to read back, such as a
-/// jam, so its tracks can only come from the context itself.
 /// What a play command from another device asks for.
 fn started_by_play(play: PlayCommand, resolved: Option<sequence::Resolved>) -> Start {
     let rows = resolved.unwrap_or_else(|| sequence::Resolved::from_pages(play.context.pages));
     let skip = play.options.skip_to.as_ref();
     let id = skip
         .and_then(|skip| skip.track_uri.as_deref())
-        .and_then(uri_id);
+        .and_then(uri_id)
+        .or_else(|| play.context.uri.as_deref().and_then(uri_id));
     let key = Occurrence {
         id: id.map(CatalogueId::Borrowed),
         uid: skip.and_then(|skip| skip.track_uid.as_deref()),

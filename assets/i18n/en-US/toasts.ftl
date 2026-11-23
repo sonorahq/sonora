@@ -192,6 +192,7 @@ toast-theme-link-unreadable = That theme link is damaged or holds something othe
 toast-theme-install-failed = Cannot install { $name }
 toast-theme-delete-failed = Cannot delete { $name }
 toast-code-copied = Code copied
+toast-port-copied = Port number copied
 toast-settings-save-failed = Settings could not be saved
 toast-settings-overwritten = settings.json changed on disk, so your last change was not saved
 toast-widevine-download-failed = Widevine could not be downloaded

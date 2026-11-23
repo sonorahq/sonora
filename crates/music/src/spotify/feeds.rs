@@ -5,10 +5,11 @@ use anyhow::{Context as _, Result, ensure};
 use super::{albums, artists, auth::sign_in_error, collection, playlists, session::Session, wire};
 use crate::{Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist};
 use spotifyapis::proto::{
-    home::{Heading, Shelf},
-    metadata::{
+    casita::{Heading, Shelf},
+    extended_metadata::{
         Album as AlbumMessage, Artist as ArtistMessage, ExtensionKind, SearchGenreMetadata,
     },
+    list_read_service::Attributes,
 };
 
 const SPOKEN_WORD_SHELVES: [&str; 2] = [
@@ -265,15 +266,14 @@ pub(super) async fn cards(
     own_display_name: bool,
 ) -> Result<HashMap<String, GenreItem>> {
     playlists.retain(|uri, _| uris.contains(uri.as_str()));
-    let mut playlist_ids = Vec::new();
     let mut catalogue: Vec<(&str, &[ExtensionKind])> = Vec::new();
     for &uri in &uris {
         match uri
             .strip_prefix("spotify:")
             .and_then(|uri| uri.split_once(':'))
         {
-            Some(("playlist", id)) if !playlists.contains_key(uri) => {
-                playlist_ids.push(id.to_owned())
+            Some(("playlist", _)) if !playlists.contains_key(uri) => {
+                catalogue.push((uri, &[ExtensionKind::ListMetadataV2]))
             }
             Some(("album", _)) => catalogue.push((uri, &[ExtensionKind::AlbumV4])),
             Some(("artist", _)) => catalogue.push((uri, &[ExtensionKind::ArtistV4])),
@@ -286,35 +286,18 @@ pub(super) async fn cards(
     let own = format!("spotify:user:{}", session.username());
     if own_display_name
         && session.display_name().is_none()
-        && (!playlist_ids.is_empty() || !playlists.is_empty())
+        && uris.iter().any(|uri| uri.starts_with("spotify:playlist:"))
     {
         catalogue.push((&own, &[ExtensionKind::UserProfile]));
     }
-    let (missing_playlists, metadata) = tokio::join!(
-        playlists::cards(session, &playlist_ids),
-        collection::extended_batch(session, &catalogue),
-    );
-    playlists.extend(missing_playlists);
-    let mut metadata = metadata?;
+    let mut metadata = collection::extended_batch(session, &catalogue).await?;
     if let Some(data) = collection::take(&mut metadata, ExtensionKind::UserProfile, &own) {
         let profile = super::profiles::contributor(&own, data);
         session.remember_display_name(&profile.name);
     }
-    let own_name = session.display_name().unwrap_or_else(|| session.username());
     let mut cards: HashMap<_, _> = playlists
         .into_iter()
-        .map(|(uri, mut playlist)| {
-            // Spotify publishes this personal collection under its own account.
-            let liked_songs = playlist.owner_id == "spotify"
-                && playlist
-                    .cover
-                    .as_deref()
-                    .is_some_and(|url| url.starts_with(LIKED_SONGS_ART));
-            if own_display_name && (playlist.owner_id == session.username() || liked_songs) {
-                own_name.clone_into(&mut playlist.owner);
-            }
-            (uri, GenreItem::Playlist(playlist))
-        })
+        .map(|(uri, playlist)| (uri, GenreItem::Playlist(playlist)))
         .collect();
     for ((kind, uri), raw) in metadata {
         let item = match kind {
@@ -333,13 +316,34 @@ pub(super) async fn cards(
                 .and_then(|data| genre_card(&uri, data))
                 .map(GenreItem::Genre),
             ExtensionKind::TrackV4 => raw
-                .decode::<spotifyapis::proto::metadata::Track>()
+                .decode::<spotifyapis::proto::extended_metadata::Track>()
                 .ok()
                 .map(|track| GenreItem::Track(collection::track_from(&uri, &track))),
+            ExtensionKind::ListMetadataV2 => uri
+                .strip_prefix("spotify:playlist:")
+                .and_then(|id| playlists::playlist_card(id, raw.decode::<Attributes>().ok()?))
+                .map(GenreItem::Playlist),
             _ => None,
         };
         if let Some(item) = item {
             cards.insert(uri, item);
+        }
+    }
+    if own_display_name {
+        let own_name = session.display_name().unwrap_or_else(|| session.username());
+        for item in cards.values_mut() {
+            let GenreItem::Playlist(playlist) = item else {
+                continue;
+            };
+            // Spotify publishes Liked Songs under its own account.
+            let liked_songs = playlist.owner_id == "spotify"
+                && playlist
+                    .cover
+                    .as_deref()
+                    .is_some_and(|url| url.starts_with(LIKED_SONGS_ART));
+            if playlist.owner_id == session.username() || liked_songs {
+                own_name.clone_into(&mut playlist.owner);
+            }
         }
     }
     Ok(cards)

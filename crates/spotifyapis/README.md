@@ -26,7 +26,7 @@ This example restores an existing grant and searches for tracks. Run it inside a
 ```rust
 use std::path::PathBuf;
 
-use spotifyapis::{Session, auth::OAuth, proto::search::{MainViewResponse, SearchKind}};
+use spotifyapis::{Session, auth::OAuth, proto::searchview::{MainViewResponse, SearchKind}};
 
 async fn search_tracks(
     credentials: PathBuf,
@@ -44,7 +44,7 @@ async fn search_tracks(
 
 Use one [`Session`](src/session.rs) per signed-in account. The crate shares HTTP clients and refreshes the bearer when needed. Some Connect and Jam operations take a [Dealer](src/dealer.rs) connection ID.
 
-For projected list reads, pass a set of list, entry, or referenced-list fields to `Session::get_lists`. It preserves query order and returns a separate result for each list, so one failed lookup does not discard the others. [List projections](src/proto/list_read.rs)
+For projected list reads, pass a set of list, entry, or referenced-list fields to `Session::get_lists`. It preserves query order and returns a separate result for each list, so one failed lookup does not discard the others. [List projections](src/proto/list_read_service.rs)
 
 ## Using the audio APIs
 
@@ -55,3 +55,7 @@ The application handles downloading, decryption, decoding, seeking, output, and 
 ## Compatibility
 
 The crate is developed in the Sonora workspace. Spotify can change internal routes or response formats, so validate the operations your application uses when upgrading.
+
+Wire types and request methods live together by Spotify service. For example, Browsita owns the Browse landing page, while ListReadService reads category contents. A replacement with a different wire format can live alongside the existing service while callers migrate. [Browsita](src/proto/browsita.rs) · [ListReadService](src/proto/list_read_service.rs)
+
+Playlist v2 owns mutations and cover registration. The JPEG upload and Connect player command each have a separate module for their HTTP formats. [Playlist v2](src/proto/playlist_v2.rs) · [Image upload](src/image_upload.rs) · [Player command](src/player_command.rs)

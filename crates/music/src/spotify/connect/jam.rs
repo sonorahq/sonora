@@ -6,7 +6,7 @@ use super::Worker;
 use crate::connect::{Event, Invite, Jam, JamMember, Mode};
 use crate::spotify::{auth::sign_in_error, session::Session};
 use spotifyapis::dealer::Message;
-use spotifyapis::proto::jam::{SessionUpdate, SessionUpdateReason, SocialSession};
+use spotifyapis::proto::social_connect::{SessionUpdate, SessionUpdateReason, SocialSession};
 
 /// Where a Jam's token goes to make a link that opens in Spotify's apps and on the web.
 pub(in crate::spotify) const INVITE: &str = "https://open.spotify.com/socialsession/";

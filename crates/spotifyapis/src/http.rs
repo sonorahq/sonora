@@ -183,7 +183,8 @@ async fn request_at(
     headers: header::HeaderMap,
     body: Bytes,
 ) -> Result<Bytes> {
-    let metadata = method == Method::POST && url.path() == crate::proto::metadata::ENDPOINT;
+    let metadata =
+        method == Method::POST && url.path() == crate::proto::extended_metadata::ENDPOINT;
     let build = |client: &Client| {
         client
             .request(method.clone(), url.clone())

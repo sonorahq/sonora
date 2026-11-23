@@ -6,7 +6,7 @@ use super::{auth::sign_in_error, collection, session::Session, wire};
 use crate::{
     Album, ArtistRef, CoverSize, Found, Playlist, ReleaseType, SavedArtist, SearchPart, Track,
 };
-use spotifyapis::proto::search::{AlbumType, Entity, SearchKind};
+use spotifyapis::proto::searchview::{AlbumType, Entity, SearchKind};
 
 const LIMIT: usize = 20;
 
@@ -37,7 +37,7 @@ pub(super) async fn tracks(session: &Session, term: &str) -> Result<Vec<Track>> 
     collection::ordered_tracks(
         session,
         &uris,
-        &[spotifyapis::proto::metadata::ExtensionKind::TrackV4],
+        &[spotifyapis::proto::extended_metadata::ExtensionKind::TrackV4],
     )
     .await
 }
