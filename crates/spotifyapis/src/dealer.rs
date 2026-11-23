@@ -369,15 +369,17 @@ fn header<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<&'a st
 }
 
 fn decode(bytes: Vec<u8>, headers: &HashMap<String, String>) -> Result<Vec<u8>> {
-    if !header(headers, "Transfer-Encoding")
+    let decoded = if header(headers, "Transfer-Encoding")
         .is_some_and(|encoding| encoding.eq_ignore_ascii_case("gzip"))
     {
-        return Ok(bytes);
-    }
-    let mut decoded = Vec::new();
-    MultiGzDecoder::new(bytes.as_slice())
-        .take(MAX_DECODED + 1)
-        .read_to_end(&mut decoded)?;
+        let mut decoded = Vec::new();
+        MultiGzDecoder::new(bytes.as_slice())
+            .take(MAX_DECODED + 1)
+            .read_to_end(&mut decoded)?;
+        decoded
+    } else {
+        bytes
+    };
     anyhow::ensure!(
         decoded.len() as u64 <= MAX_DECODED,
         "Spotify Dealer payload exceeds the response limit"

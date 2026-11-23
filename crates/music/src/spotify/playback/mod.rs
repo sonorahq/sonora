@@ -61,7 +61,6 @@ impl PlaybackFactory for Factory {
                     _daemon: daemon,
                     connect: self.connect.clone(),
                     context: Mutex::default(),
-                    held: Mutex::default(),
                     audio,
                 }),
                 events,
@@ -80,7 +79,6 @@ struct Official {
     _daemon: oneshot::Sender<()>,
     connect: Arc<Connect>,
     context: Mutex<Option<Collection>>,
-    held: Mutex<Option<Snapshot>>,
     audio: media::Audio,
 }
 
@@ -89,26 +87,24 @@ impl Official {
         self.connect.send(Request::ControlLocal(command));
     }
 
-    fn selection(&self, id: &str, at: Duration) -> Result<Snapshot> {
+    fn select(&self, id: &str, at: Duration, playing: bool) -> Result<()> {
         anyhow::ensure!(
             id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()),
             "invalid Spotify track ID"
         );
-        Ok(Snapshot {
+        let state = Snapshot {
             context: self.context.lock().unwrap().take(),
             track: Some(QueuedTrack::new(id.to_owned(), false)),
             position: at,
-            playing: true,
+            playing,
             ..Default::default()
-        })
-    }
-
-    fn start(&self, state: Snapshot) {
+        };
         self.command(Command::Start(Start {
             state: Arc::new(state),
             restart: true,
             ..Default::default()
         }));
+        Ok(())
     }
 }
 
@@ -141,14 +137,11 @@ impl MusicPlayer for Official {
     }
 
     fn load(&self, track_id: &str, at: Duration, _seamless: bool) -> Result<()> {
-        self.held.lock().unwrap().take();
-        self.start(self.selection(track_id, at)?);
-        Ok(())
+        self.select(track_id, at, true)
     }
 
     fn load_paused_at(&self, track_id: &str, at: Duration) -> Result<()> {
-        *self.held.lock().unwrap() = Some(self.selection(track_id, at)?);
-        Ok(())
+        self.select(track_id, at, false)
     }
 
     fn preload(&self, _track_id: &str, _segue: bool) -> Result<()> {
@@ -160,10 +153,7 @@ impl MusicPlayer for Official {
     }
 
     fn play(&self) {
-        match self.held.lock().unwrap().take() {
-            Some(state) => self.start(state),
-            None => self.command(Command::Play),
-        }
+        self.command(Command::Play);
     }
 
     fn pause(&self) {
@@ -171,11 +161,7 @@ impl MusicPlayer for Official {
     }
 
     fn seek(&self, position: Duration) {
-        if let Some(state) = self.held.lock().unwrap().as_mut() {
-            state.position = position;
-        } else {
-            self.command(Command::Seek(position));
-        }
+        self.command(Command::Seek(position));
     }
 
     fn set_gain(&self, gain: f32) {

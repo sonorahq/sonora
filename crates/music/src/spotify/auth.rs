@@ -4,7 +4,7 @@ use std::sync::Mutex as SyncMutex;
 use anyhow::{Context as _, Result, anyhow};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use spotifyapis::access_point::AudioKeyError;
-use spotifyapis::auth::{self, AuthError, OAuth};
+use spotifyapis::auth::{AuthError, OAuth};
 use tokio::sync::Mutex;
 
 use crate::{PromptSink, SignInFailure, SignInProblem, SignInPrompt, credentials};
@@ -31,7 +31,7 @@ pub(super) struct Account {
 #[derive(Default)]
 struct Cached {
     session: Option<Session>,
-    sign_outs: u64,
+    generation: u64,
 }
 
 impl Account {
@@ -46,20 +46,23 @@ impl Account {
     pub(super) async fn login(&self, prompt: PromptSink, success_message: &str) -> Result<Session> {
         let path = self.config.credential_path()?;
         let device = device_id(&self.config.cache_dir)?;
-        let oauth = OAuth::login(
-            path,
-            &self.config.client_id,
-            &self.config.redirect_uri,
-            success_message,
-            |url| {
-                prompt(SignInPrompt::Url(url.to_owned()));
-                open::that_in_background(url);
-            },
-        )
-        .await
-        .map_err(sign_in_error)?;
+        let (before, login) = {
+            let cached = self.cached.lock().unwrap();
+            let login = OAuth::login(
+                path,
+                &self.config.client_id,
+                &self.config.redirect_uri,
+                success_message,
+                |url| {
+                    prompt(SignInPrompt::Url(url.to_owned()));
+                    open::that_in_background(url);
+                },
+            );
+            (cached.generation, login)
+        };
+        let oauth = login.await.map_err(sign_in_error)?;
         let mut cached = self.cached.lock().unwrap();
-        if !oauth.has_current_grant() {
+        if before != cached.generation || !oauth.has_current_grant() {
             return Err(SignInFailure(SignInProblem::Cancelled).into());
         }
         let session = Session::new(oauth, device);
@@ -77,12 +80,12 @@ impl Account {
                 return Ok(Some(session.clone()));
             }
             cached.session = None;
-            cached.sign_outs
+            cached.generation
         };
         let restored = restore(&self.config).await;
         let mut cached = self.cached.lock().unwrap();
         // Only publish this restore if no sign-out happened while it was validating.
-        if cached.sign_outs == before && cached.session.is_none() {
+        if cached.generation == before && cached.session.is_none() {
             cached.session = restored?.filter(|session| session.api().has_current_grant());
         }
         Ok(cached.session.clone())
@@ -90,11 +93,17 @@ impl Account {
 
     pub(super) fn forget(&self) {
         let mut cached = self.cached.lock().unwrap();
-        cached.sign_outs += 1;
+        cached.generation += 1;
         cached.session = None;
         OAuth::forget(&self.config.oauth_file());
         credentials::remove(&self.config.cache_dir.join(credentials::FILE));
         credentials::remove(&credentials::root().join("spotify").join(credentials::FILE));
+    }
+
+    pub(super) fn cancel_login(&self) {
+        let mut cached = self.cached.lock().unwrap();
+        cached.generation += 1;
+        OAuth::cancel_login(&self.config.oauth_file());
     }
 }
 
@@ -128,10 +137,6 @@ impl AuthConfig {
         );
         Ok(path)
     }
-}
-
-pub fn release(config: &AuthConfig) {
-    auth::release(&config.redirect_uri);
 }
 
 pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {

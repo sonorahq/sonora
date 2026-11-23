@@ -26,7 +26,14 @@ impl ReleaseDate {
         }
         Ok(
             Option::deserialize(deserializer)?.and_then(|date| match date {
-                SavedDate::Typed(date) => Some(date),
+                SavedDate::Typed(date) => {
+                    let (year, month, day) = date.parts();
+                    Self::from_parts(
+                        year.try_into().ok()?,
+                        i32::from(month.unwrap_or_default()),
+                        i32::from(day.unwrap_or_default()),
+                    )
+                }
                 SavedDate::Iso(iso) => Self::parse(&iso),
             }),
         )

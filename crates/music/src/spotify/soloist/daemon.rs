@@ -7,7 +7,7 @@ use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, ensure};
-use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt as _, BufReader, Split};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::Mutex;
 
@@ -66,8 +66,14 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Daemon>
         log::warn!("soloist: cannot record the program's pid: {error}");
     }
     Ok(Daemon {
-        stdout: child.stdout.take().map(|pipe| BufReader::new(pipe).lines()),
-        stderr: child.stderr.take().map(|pipe| BufReader::new(pipe).lines()),
+        stdout: child
+            .stdout
+            .take()
+            .map(|pipe| BufReader::new(pipe).split(b'\n')),
+        stderr: child
+            .stderr
+            .take()
+            .map(|pipe| BufReader::new(pipe).split(b'\n')),
         child,
         key: key.to_owned(),
     })
@@ -274,8 +280,8 @@ pub async fn stopped() {
 /// Owns the child and both pipes. A final refusal is read before reporting the exit.
 pub(super) struct Daemon {
     child: Child,
-    stdout: Option<Lines<BufReader<ChildStdout>>>,
-    stderr: Option<Lines<BufReader<ChildStderr>>>,
+    stdout: Option<Split<BufReader<ChildStdout>>>,
+    stderr: Option<Split<BufReader<ChildStderr>>>,
     key: String,
 }
 
@@ -325,16 +331,24 @@ impl Daemon {
 
 /// Reads a pipe until EOF and disables its branch once it is drained.
 async fn next_line<R: tokio::io::AsyncBufRead + Unpin>(
-    pipe: &mut Option<Lines<R>>,
+    pipe: &mut Option<Split<R>>,
 ) -> Option<String> {
     let Some(lines) = pipe else {
         return std::future::pending().await;
     };
-    let line = lines.next_line().await.ok().flatten();
-    if line.is_none() {
-        *pipe = None;
+    match lines.next_segment().await {
+        Ok(Some(bytes)) => {
+            let bytes = bytes.strip_suffix(b"\r").unwrap_or(&bytes);
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        }
+        result => {
+            if let Err(error) = result {
+                log::debug!("soloist: cannot read a daemon pipe: {error}");
+            }
+            *pipe = None;
+            None
+        }
     }
-    line
 }
 
 #[cfg(unix)]

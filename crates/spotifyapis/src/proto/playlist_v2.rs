@@ -477,13 +477,14 @@ impl crate::dealer::Message {
         let bytes = self.into_protobuf()?;
         let notice = RootlistModificationInfo::decode(bytes.clone()).ok()?;
         if !notice.new_revision.starts_with(b"spotify:") {
-            return Some(notice.new_revision);
+            return (!notice.new_revision.is_empty()).then_some(notice.new_revision);
         }
         let update = PlaylistModificationInfo::decode(bytes).ok()?;
         let root = format!("spotify:user:{username}:rootlist");
         (update.uri() == root)
             .then_some(update.new_revision)
             .flatten()
+            .filter(|revision| !revision.is_empty())
     }
 }
 

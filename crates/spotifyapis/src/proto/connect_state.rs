@@ -521,7 +521,6 @@ pub struct ContextPage {
     #[serde(deserialize_with = "null_default")]
     pub tracks: Vec<ContextTrack>,
     #[prost(bool, optional, tag = "5")]
-    #[serde(skip)]
     pub loading: Option<bool>,
 }
 

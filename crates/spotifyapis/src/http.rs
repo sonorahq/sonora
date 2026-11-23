@@ -68,10 +68,25 @@ pub(crate) async fn read_rpc<T: prost::Message + Default>(
     path: &str,
     request: &impl prost::Message,
 ) -> Result<T> {
-    let body =
-        retry_read(|| post_proto(session, path, PROTOBUF, header::HeaderMap::new(), request))
-            .await?;
+    let body = read_proto(session, path, PROTOBUF, request).await?;
     decode(path, body)
+}
+
+/// Reads a protobuf body for callers that need custom decoding.
+pub(crate) async fn read_proto(
+    session: &Session,
+    path: &str,
+    mime: &'static str,
+    message: &impl prost::Message,
+) -> Result<Bytes> {
+    read(
+        session,
+        Method::POST,
+        path,
+        protobuf_post_headers(mime, header::HeaderMap::new()),
+        message.encode_to_vec().into(),
+    )
+    .await
 }
 
 /// Posts an encoded protobuf message with the route’s media type and extra headers.
@@ -79,16 +94,14 @@ pub(crate) async fn post_proto(
     session: &Session,
     path: &str,
     mime: &'static str,
-    mut headers: header::HeaderMap,
+    headers: header::HeaderMap,
     message: &impl prost::Message,
 ) -> Result<Bytes> {
-    headers.insert(header::ACCEPT, header::HeaderValue::from_static(mime));
-    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(mime));
     send(
         session,
         Method::POST,
         path,
-        headers,
+        protobuf_post_headers(mime, headers),
         message.encode_to_vec().into(),
     )
     .await
@@ -100,20 +113,34 @@ pub(crate) async fn get<T: prost::Message + Default>(
     path: &str,
     headers: header::HeaderMap,
 ) -> Result<T> {
-    let body =
-        retry_read(|| send(session, Method::GET, path, headers.clone(), Bytes::new())).await?;
+    let body = read(session, Method::GET, path, headers, Bytes::new()).await?;
     decode(path, body)
 }
 
-/// Repeats a read once after a transport failure or a transient server error.
-async fn retry_read<T, F: Future<Output = Result<T>>>(mut read: impl FnMut() -> F) -> Result<T> {
-    let result = read().await;
-    if result.as_ref().is_err_and(|error| {
-        error
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(retryable)
-    }) {
-        return read().await;
+fn protobuf_post_headers(mime: &'static str, mut headers: header::HeaderMap) -> header::HeaderMap {
+    headers.extend(proto_headers(mime));
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(mime));
+    headers
+}
+
+/// Tries distinct discovery hosts in regional-first order. A sole host gets one retry.
+async fn read_hosts<'a, T, F: Future<Output = Result<T>>>(
+    hosts: &'a [Url],
+    mut read: impl FnMut(&'a Url) -> F,
+) -> Result<T> {
+    let (first, rest) = hosts
+        .split_first()
+        .context("Spotify discovery returned no API host")?;
+    let mut result = read(first).await;
+    for host in rest.iter().chain(rest.is_empty().then_some(first)) {
+        if !result.as_ref().is_err_and(|error| {
+            error
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(retryable)
+        }) {
+            break;
+        }
+        result = read(host).await;
     }
     result
 }
@@ -149,10 +176,42 @@ pub(crate) async fn send(
     headers: header::HeaderMap,
     body: Bytes,
 ) -> Result<Bytes> {
-    let (base, token) = tokio::try_join!(session.api_url(), session.access_token())?;
+    let (hosts, token) = tokio::try_join!(session.api_urls(), session.access_token())?;
+    send_to(&hosts[0], method, path, &token, headers, body).await
+}
+
+async fn read(
+    session: &Session,
+    method: Method,
+    path: &str,
+    headers: header::HeaderMap,
+    body: Bytes,
+) -> Result<Bytes> {
+    let (hosts, token) = tokio::try_join!(session.api_urls(), session.access_token())?;
+    read_hosts(hosts, |base| {
+        send_to(
+            base,
+            method.clone(),
+            path,
+            &token,
+            headers.clone(),
+            body.clone(),
+        )
+    })
+    .await
+}
+
+async fn send_to(
+    base: &Url,
+    method: Method,
+    path: &str,
+    token: &str,
+    headers: header::HeaderMap,
+    body: Bytes,
+) -> Result<Bytes> {
     let url = base.join(path)?;
     anyhow::ensure!(url.origin() == base.origin(), "invalid Spotify API path");
-    request_at(method, url, &token, headers, body).await
+    request_at(method, url, token, headers, body).await
 }
 
 pub fn status(error: &anyhow::Error) -> Option<StatusCode> {
@@ -263,7 +322,7 @@ fn api_client() -> reqwest::ClientBuilder {
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(API_TIMEOUT)
-        .read_timeout(API_TIMEOUT)
+        .timeout(API_TIMEOUT)
 }
 
 /// Builds and sends a request using the shared Spotify client.

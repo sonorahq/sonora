@@ -241,6 +241,7 @@ fn known_revision(revision: Bytes) -> Option<Vec<u8>> {
 /// Reads the account's playlist cards in root-list order, retaining visibility from each entry.
 pub(super) async fn library(session: &Session) -> Result<Vec<Playlist>> {
     const PAGE_SIZE: i32 = 100;
+    const ATTEMPTS: usize = 3;
     let username = session.username();
     let mut query = ListQuery {
         uri: format!("spotify:user:{username}:rootlist"),
@@ -252,46 +253,49 @@ pub(super) async fn library(session: &Session) -> Result<Vec<Playlist>> {
         referenced: SUMMARY_FIELDS,
         ..Default::default()
     };
-    let mut playlists = Vec::new();
-    let mut seen = HashSet::new();
-    let mut revision = None;
-    loop {
-        let (mut page, version) = session
-            .api()
-            .get_list(&query, projection)
-            .await
-            .map_err(sign_in_error)
-            .context("cannot read the playlist library")?;
-        if query.offset == 0 {
-            revision = Some(version);
-        } else if revision.as_ref() != Some(&version) {
-            revision = None;
-        }
-        let length = page.items.len() as i32;
-        for entry in page.items.into_iter().filter_map(|item| item.attributes) {
-            let Some(id) = entry.uri.strip_prefix("spotify:playlist:") else {
-                continue;
-            };
-            if !seen.insert(id.to_owned()) {
-                continue;
+    'attempt: for _ in 0..ATTEMPTS {
+        query.offset = 0;
+        let mut playlists = Vec::new();
+        let mut seen = HashSet::new();
+        let mut revision = None;
+        loop {
+            let (mut page, version) = session
+                .api()
+                .get_list(&query, projection)
+                .await
+                .map_err(sign_in_error)
+                .context("cannot read the playlist library")?;
+            if revision.as_ref().is_some_and(|first| first != &version) {
+                continue 'attempt;
             }
-            let attrs = page
-                .meta_items
-                .remove(&entry.uri)
-                .and_then(|item| item.attributes)
-                .unwrap_or_default();
-            let mut playlist = wire::playlist_summary(id.to_owned(), attrs, username);
-            playlist.public = entry.published_to_profile.unwrap_or_default();
-            playlists.push(playlist);
+            revision = Some(version);
+            let length = page.items.len() as i32;
+            for entry in page.items.into_iter().filter_map(|item| item.attributes) {
+                let Some(id) = entry.uri.strip_prefix("spotify:playlist:") else {
+                    continue;
+                };
+                if !seen.insert(id.to_owned()) {
+                    continue;
+                }
+                let attrs = page
+                    .meta_items
+                    .remove(&entry.uri)
+                    .and_then(|item| item.attributes)
+                    .unwrap_or_default();
+                let mut playlist = wire::playlist_summary(id.to_owned(), attrs, username);
+                playlist.public = entry.published_to_profile.unwrap_or_default();
+                playlists.push(playlist);
+            }
+            if length < PAGE_SIZE {
+                break;
+            }
+            query.offset += length;
         }
-        if length < PAGE_SIZE {
-            break;
-        }
-        query.offset += length;
+        profiles::playlist_owners(session, &mut playlists).await;
+        session.remember_rootlist_revision(revision);
+        return Ok(playlists);
     }
-    profiles::playlist_owners(session, &mut playlists).await;
-    session.remember_rootlist_revision(revision);
-    Ok(playlists)
+    anyhow::bail!("Spotify playlist library changed during each read")
 }
 
 /// Reads current playlist summaries without fetching their entries.

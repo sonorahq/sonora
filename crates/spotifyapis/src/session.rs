@@ -14,8 +14,14 @@ use crate::{
 /// A signed-in account and its discovered Spotify servers.
 pub struct Session {
     oauth: Arc<OAuth>,
-    endpoints: OnceCell<Endpoints>,
+    endpoints: OnceCell<Discovered>,
     market: OnceCell<String>,
+}
+
+/// Keeps validated API bases in discovery order alongside the other service addresses.
+struct Discovered {
+    endpoints: Endpoints,
+    api_urls: Vec<Url>,
 }
 
 impl Session {
@@ -44,7 +50,8 @@ impl Session {
         let market = self
             .market
             .get_or_try_init(|| async {
-                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                // Leave room for a second access point and its country packet.
+                tokio::time::timeout(std::time::Duration::from_secs(15), async {
                     let (addresses, token) =
                         tokio::try_join!(self.access_points(), self.access_token())?;
                     crate::access_point::account_market(addresses, &token, self.username()).await
@@ -63,15 +70,12 @@ impl Session {
 
     /// Discovered access-point addresses for native Spotify audio connections.
     pub(crate) async fn access_points(&self) -> Result<&[String]> {
-        Ok(&self.endpoints().await?.accesspoint)
+        Ok(&self.endpoints().await?.endpoints.accesspoint)
     }
 
-    /// Picks a regional host or the global host supplied in the discovery response.
-    pub(crate) async fn api_url(&self) -> Result<Url> {
-        self.endpoints()
-            .await?
-            .api_url()
-            .context("Spotify discovery returned no API host")
+    /// Lists validated API bases, with regional hosts before global hosts.
+    pub(crate) async fn api_urls(&self) -> Result<&[Url]> {
+        Ok(&self.endpoints().await?.api_urls)
     }
 
     /// Returns the Dealer hosts supplied in the discovery response.
@@ -79,32 +83,39 @@ impl Session {
         Ok(self
             .endpoints()
             .await?
+            .endpoints
             .dealer
             .iter()
             .filter_map(|address| http::regional_url("wss", address))
             .collect())
     }
 
-    async fn endpoints(&self) -> Result<&Endpoints> {
+    async fn endpoints(&self) -> Result<&Discovered> {
         self.endpoints
             .get_or_try_init(|| async {
                 let endpoints = http::discover().await?;
-                endpoints
-                    .api_url()
-                    .context("Spotify discovery returned no API host")?;
-                Ok::<_, anyhow::Error>(endpoints)
+                let mut api_urls = Vec::new();
+                for url in endpoints
+                    .spclient
+                    .regional
+                    .iter()
+                    .chain(&endpoints.spclient.global)
+                    .filter_map(|address| http::regional_url("https", address))
+                {
+                    if !api_urls.contains(&url) {
+                        api_urls.push(url);
+                    }
+                }
+                anyhow::ensure!(
+                    !api_urls.is_empty(),
+                    "Spotify discovery returned no API host"
+                );
+                Ok(Discovered {
+                    endpoints,
+                    api_urls,
+                })
             })
             .await
             .context("Spotify endpoint discovery failed")
-    }
-}
-
-impl Endpoints {
-    fn api_url(&self) -> Option<Url> {
-        self.spclient
-            .regional
-            .iter()
-            .chain(&self.spclient.global)
-            .find_map(|address| http::regional_url("https", address))
     }
 }

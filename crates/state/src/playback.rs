@@ -1303,13 +1303,6 @@ impl Playback {
         origin: Option<Origin>,
         cx: &mut Context<Self>,
     ) {
-        if origin
-            .as_ref()
-            .is_some_and(|origin| self.start_remote_collection(origin, true, cx))
-        {
-            self.sought = None;
-            return;
-        }
         self.queue
             .update(cx, |queue, cx| queue.set_shuffle(true, cx));
         self.start_any(tracks, origin, cx);

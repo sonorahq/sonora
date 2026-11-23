@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout, timeout_at};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::Session;
@@ -132,6 +132,7 @@ struct Inner {
 struct Request {
     media: MediaKey,
     reply: oneshot::Sender<Result<[u8; 16]>>,
+    deadline: Instant,
 }
 
 /// Spotify's rejection of an access-point login or audio-key request.
@@ -202,12 +203,14 @@ impl AccessPoint {
             return Err(AudioKeyError::Denied.into());
         }
         let (send, reply) = oneshot::channel();
-        timeout(KEY_TIMEOUT, async {
+        let deadline = Instant::now() + KEY_TIMEOUT;
+        timeout_at(deadline, async {
             self.0
                 .requests
                 .send(Request {
                     media: (track, file),
                     reply: send,
+                    deadline,
                 })
                 .await
                 .map_err(|_| anyhow::anyhow!("Spotify access point closed"))?;
@@ -250,7 +253,7 @@ pub(crate) async fn account_market(
             (COUNTRY, body) if body.len() == 2 && body.iter().all(u8::is_ascii_alphabetic) => {
                 return Ok(std::str::from_utf8(&body)?.to_ascii_uppercase());
             }
-            (PING, _) => write_packet(&mut socket, (PONG, vec![0; 4])).await?,
+            (PING, _) => write_packet(&mut socket, (PONG, vec![0; 4]), None).await?,
             _ => {}
         }
     }
@@ -347,18 +350,18 @@ async fn serve(
 ) -> Result<()> {
     let mut cache = HashMap::new();
     let mut next = 0_u32;
-    let mut pending: Option<(u32, Request, Instant)> = None;
+    let mut pending: Option<(u32, Request)> = None;
     let idle = tokio::time::sleep(IDLE_TIMEOUT);
     tokio::pin!(idle);
 
     loop {
-        let expiry = pending.as_ref().map(|(_, _, expires)| *expires);
+        let expiry = pending.as_ref().map(|(_, request)| request.deadline);
         tokio::select! {
             frame = socket.next() => {
                 let (command, body) = frame.context("Spotify closed the access point")??;
                 idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
                 match command {
-                    PING => write_packet(&mut socket, (PONG, vec![0; 4])).await?,
+                    PING => write_packet(&mut socket, (PONG, vec![0; 4]), expiry).await?,
                     PRODUCT => {
                         if let Some(premium) = product(&body) {
                             account.send_replace(Some(premium));
@@ -369,10 +372,10 @@ async fn serve(
                     }
                     KEY | KEY_FAILED => {
                         let Some(sequence) = body.get(..4).and_then(|bytes| bytes.try_into().ok()).map(u32::from_be_bytes) else { continue };
-                        if pending.as_ref().is_none_or(|(expected, _, _)| *expected != sequence) {
+                        if pending.as_ref().is_none_or(|(expected, _)| *expected != sequence) {
                             continue;
                         }
-                        let (_, request, _) = pending.take().expect("matching pending audio key");
+                        let (_, request) = pending.take().expect("matching pending audio key");
                         let result = match command {
                             KEY => body.get(4..20).and_then(|key| <[u8; 16]>::try_from(key).ok())
                                 .context("Spotify returned an invalid audio key"),
@@ -392,7 +395,7 @@ async fn serve(
             }
             request = requests.recv(), if pending.is_none() => {
                 let Some(request) = request else { return Ok(()) };
-                if request.reply.is_closed() {
+                if request.reply.is_closed() || Instant::now() >= request.deadline {
                     continue;
                 }
                 if *account.borrow() == Some(false) {
@@ -409,8 +412,8 @@ async fn serve(
                 body.extend_from_slice(&track);
                 body.extend_from_slice(&next.to_be_bytes());
                 body.extend_from_slice(&[0; 2]);
-                write_packet(&mut socket, (REQUEST_KEY, body)).await?;
-                pending = Some((next, request, Instant::now() + KEY_TIMEOUT));
+                write_packet(&mut socket, (REQUEST_KEY, body), Some(request.deadline)).await?;
+                pending = Some((next, request));
                 next = next.wrapping_add(1);
             }
             () = async {
@@ -418,7 +421,7 @@ async fn serve(
                     tokio::time::sleep_until(expiry).await;
                 }
             }, if expiry.is_some() => {
-                if let Some((_, request, _)) = pending.take() {
+                if let Some((_, request)) = pending.take() {
                     let _ = request.reply.send(Err(anyhow::anyhow!("Spotify audio-key request timed out")));
                 }
             }
@@ -428,10 +431,18 @@ async fn serve(
 }
 
 /// A stalled write invalidates the connection so a later key request can reconnect.
-async fn write_packet(socket: &mut Socket, packet: (u8, Vec<u8>)) -> Result<()> {
-    timeout(WRITE_TIMEOUT, socket.send(packet))
-        .await
-        .context("Spotify access-point write timed out")??;
+async fn write_packet(
+    socket: &mut Socket,
+    packet: (u8, Vec<u8>),
+    deadline: Option<Instant>,
+) -> Result<()> {
+    let limit = Instant::now() + WRITE_TIMEOUT;
+    timeout_at(
+        deadline.map_or(limit, |deadline| limit.min(deadline)),
+        socket.send(packet),
+    )
+    .await
+    .context("Spotify access-point write timed out")??;
     Ok(())
 }
 

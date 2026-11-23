@@ -126,7 +126,7 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
     let artist = metadata(session, artist_id).await?;
     let mut ranked = ranked_tracks(session, &artist).await;
     let uris = release_uris(&artist);
-    let mut known = match albums::project(session, &uris, |uri, album| {
+    let (mut known, mut release_error) = match albums::project(session, &uris, |uri, album| {
         (
             albums::album_from(uri, album),
             albums::track_uris(album).collect::<Vec<_>>(),
@@ -134,11 +134,8 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
     })
     .await
     {
-        Ok(releases) => releases,
-        Err(error) if !ranked.is_empty() => {
-            log::warn!("artists: cannot read releases for {artist_id}: {error:#}");
-            Default::default()
-        }
+        Ok(releases) => (releases, None),
+        Err(error) if !ranked.is_empty() => (Default::default(), Some(error)),
         Err(error) => return Err(error),
     };
     let mut releases: Vec<_> = uris.iter().filter_map(|uri| known.remove(uri)).collect();
@@ -159,7 +156,9 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
             .flat_map(|(_, tracks)| tracks)
             .filter(|uri| seen.insert(uri.clone())),
     );
-    let mut known = collection::metadata(session, &ranked).await?;
+    let mut known = collection::metadata(session, &ranked)
+        .await
+        .map_err(|error| release_error.take().unwrap_or(error))?;
     let (ranked_uris, other_uris) = ranked.split_at(ranked_count);
     let mut ranked: Vec<_> = ranked_uris
         .iter()
@@ -172,7 +171,14 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
         .collect();
     other.sort_by_key(|track| std::cmp::Reverse(track.popularity));
     ranked.extend(other);
-    Ok(crate::artist_songs(ranked, artist_id))
+    let tracks = crate::artist_songs(ranked, artist_id);
+    if let Some(error) = release_error {
+        if tracks.is_empty() {
+            return Err(error);
+        }
+        log::warn!("artists: cannot read releases for {artist_id}: {error:#}");
+    }
+    Ok(tracks)
 }
 
 pub async fn profile(session: &Session, artist_id: &str) -> Result<ArtistProfile> {

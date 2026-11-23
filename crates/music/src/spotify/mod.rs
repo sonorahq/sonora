@@ -117,7 +117,7 @@ impl MusicProvider for SpotifyProvider {
     }
 
     fn abandon(&self) {
-        auth::release(&self.account.config);
+        self.account.cancel_login();
     }
 
     fn stored(&self) -> bool {

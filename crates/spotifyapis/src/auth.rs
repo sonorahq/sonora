@@ -2,8 +2,8 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as SyncMutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::sync::{Arc, Mutex as SyncMutex, Weak};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow};
 
@@ -204,9 +204,9 @@ fn random_secret() -> Result<String> {
 /// Serializes renewals across the provider and the independent lyrics connection.
 static REFRESH: Mutex<()> = Mutex::const_new(());
 /// Orders credential replacement against sign-out.
-static FILE: SyncMutex<()> = SyncMutex::new(());
+static FILE: SyncMutex<Vec<Weak<PathBuf>>> = SyncMutex::new(Vec::new());
 
-fn lock_file() -> Result<std::sync::MutexGuard<'static, ()>> {
+fn lock_file() -> Result<std::sync::MutexGuard<'static, Vec<Weak<PathBuf>>>> {
     FILE.lock()
         .map_err(|_| anyhow!("Spotify credential lock poisoned"))
 }
@@ -243,9 +243,8 @@ pub struct OAuth {
     grant: SyncMutex<Grant>,
 }
 
-/// The current refresh token and the version of its backing file.
+/// The persisted refresh token and any rotation still waiting to be saved.
 struct Grant {
-    modified: SystemTime,
     refresh_token: String,
     pending: Option<String>,
 }
@@ -266,37 +265,42 @@ impl OAuth {
         {
             return Err(AuthError::Credentials.into());
         }
-        Self::new(path, stored, None).map(Some)
+        Ok(Some(Self::new(path, stored, None)))
     }
 
     /// Authorizes in a browser and saves the refresh grant at the caller's credential path.
-    pub async fn login(
+    pub fn login<'a>(
         path: PathBuf,
-        client_id: &str,
-        redirect_uri: &str,
-        success_message: &str,
-        show_url: impl FnOnce(&str),
-    ) -> Result<Arc<Self>> {
-        let (exchange, mut browser) = authorize(client_id, redirect_uri, show_url).await?;
-        let result = match exchange {
-            Ok(response) => Self::save_login(path, client_id, response).await,
-            Err(error) => Err(error),
-        };
-        let (status, body) = if result.is_ok() {
-            ("200 OK", success_message)
-        } else {
-            ("400 Bad Request", "")
-        };
-        let response = format!(
-            "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = tokio::time::timeout(REQUEST_TIMEOUT, browser.write_all(response.as_bytes())).await;
-        result
+        client_id: &'a str,
+        redirect_uri: &'a str,
+        success_message: &'a str,
+        show_url: impl FnOnce(&str) + 'a,
+    ) -> impl Future<Output = Result<Arc<Self>>> + 'a {
+        let login = begin_login(path);
+        async move {
+            let login = login?;
+            let (exchange, mut browser) = authorize(client_id, redirect_uri, show_url).await?;
+            let result = match exchange {
+                Ok(response) => Self::save_login(&login, client_id, response).await,
+                Err(error) => Err(error),
+            };
+            let (status, body) = if result.is_ok() {
+                ("200 OK", success_message)
+            } else {
+                ("400 Bad Request", "")
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ =
+                tokio::time::timeout(REQUEST_TIMEOUT, browser.write_all(response.as_bytes())).await;
+            result
+        }
     }
 
     async fn save_login(
-        path: PathBuf,
+        login: &Arc<PathBuf>,
         client_id: &str,
         mut response: TokenResponse,
     ) -> Result<Arc<Self>> {
@@ -322,15 +326,20 @@ impl OAuth {
             username,
             refresh_token,
         };
-        let _file = lock_file()?;
-        write(&path, &stored)?;
-        Self::new(path, stored, Some(token))
+        let mut file = lock_file()?;
+        let ticket = Arc::downgrade(login);
+        let index = file
+            .iter()
+            .position(|active| active.ptr_eq(&ticket))
+            .context(AuthError::Cancelled)?;
+        file.swap_remove(index);
+        write(login, &stored)?;
+        Ok(Self::new(login.as_ref().clone(), stored, Some(token)))
     }
 
-    fn new(path: PathBuf, grant: Stored, token: Option<Token>) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self {
+    fn new(path: PathBuf, grant: Stored, token: Option<Token>) -> Arc<Self> {
+        Arc::new(Self {
             grant: SyncMutex::new(Grant {
-                modified: modified(&path)?,
                 refresh_token: grant.refresh_token,
                 pending: None,
             }),
@@ -338,21 +347,29 @@ impl OAuth {
             client_id: grant.client_id,
             username: grant.username,
             token: Arc::new(Mutex::new(token)),
-        }))
+        })
     }
 
     pub fn forget(path: &Path) {
-        let _file = match lock_file() {
+        let mut file = match lock_file() {
             Ok(guard) => guard,
             Err(error) => {
                 log::warn!("spotify: cannot remove saved credentials: {error}");
                 return;
             }
         };
+        cancel_logins(&mut file, path);
         if let Err(error) = std::fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             log::warn!("spotify: cannot remove saved credentials: {error}");
+        }
+    }
+
+    /// Revokes pending browser attempts for this file while keeping the saved grant.
+    pub fn cancel_login(path: &Path) {
+        if let Ok(mut file) = lock_file() {
+            cancel_logins(&mut file, path);
         }
     }
 
@@ -376,11 +393,20 @@ impl OAuth {
             .grant
             .lock()
             .map_err(|_| anyhow!("Spotify grant lock poisoned"))?;
+        self.check_grant(&grant)?;
+        use_grant(&mut grant)
+    }
+
+    /// Checks the stored account and token under the credential lock.
+    fn check_grant(&self, grant: &Grant) -> Result<Stored> {
+        let stored = saved(&self.path)?.context(AuthError::Credentials)?;
         anyhow::ensure!(
-            modified(&self.path).map_err(|_| AuthError::Credentials)? == grant.modified,
+            stored.client_id == self.client_id
+                && stored.username == self.username
+                && stored.refresh_token == grant.refresh_token,
             AuthError::Credentials
         );
-        use_grant(&mut grant)
+        Ok(stored)
     }
 
     /// Validates the grant with Spotify before the app treats the account as signed in.
@@ -455,35 +481,33 @@ impl OAuth {
 
     /// Keeps a rotation even if the filesystem is temporarily unavailable.
     fn keep_grant(&self, next: Option<&str>) -> Result<()> {
-        self.with_grant(|grant| {
-            let Some(next) = next.or(grant.pending.as_deref()) else {
-                return Ok(());
-            };
-            if next == grant.refresh_token {
-                grant.pending = None;
+        let _file = lock_file()?;
+        let mut grant = self
+            .grant
+            .lock()
+            .map_err(|_| anyhow!("Spotify grant lock poisoned"))?;
+        let pending = next.map(str::to_owned).or_else(|| grant.pending.clone());
+        let mut stored = match self.check_grant(&grant) {
+            Ok(stored) => stored,
+            Err(error) if error.is::<std::io::Error>() => {
+                grant.pending = pending;
+                log::warn!("spotify: cannot read grant to save renewal: {error:#}");
                 return Ok(());
             }
-            let mut stored = saved(&self.path)?.context(AuthError::Credentials)?;
-            anyhow::ensure!(
-                stored.client_id == self.client_id
-                    && stored.username == self.username
-                    && stored.refresh_token == grant.refresh_token,
-                AuthError::Credentials
-            );
-            next.clone_into(&mut stored.refresh_token);
+            Err(error) => return Err(error),
+        };
+        grant.pending = pending.filter(|next| *next != grant.refresh_token);
+        if let Some(next) = &grant.pending {
+            stored.refresh_token.clone_from(next);
             match write(&self.path, &stored) {
                 Ok(()) => {
-                    grant.modified = modified(&self.path)?;
                     grant.refresh_token = stored.refresh_token;
                     grant.pending = None;
                 }
-                Err(error) => {
-                    grant.pending = Some(stored.refresh_token);
-                    log::warn!("spotify: cannot save renewed grant: {error:#}");
-                }
+                Err(error) => log::warn!("spotify: cannot save renewed grant: {error:#}"),
             }
-            Ok(())
-        })
+        }
+        Ok(())
     }
 }
 
@@ -537,17 +561,24 @@ async fn exchange<const N: usize>(form: [(&str, &str); N]) -> Result<TokenRespon
     Ok(token)
 }
 
-fn modified(path: &Path) -> Result<SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .context("cannot read the Spotify refresh grant timestamp")
+/// Registers a browser attempt before its future runs, so sign-out can revoke its write.
+fn begin_login(path: PathBuf) -> Result<Arc<PathBuf>> {
+    let login = Arc::new(path);
+    let mut file = lock_file()?;
+    file.retain(|attempt| attempt.strong_count() > 0);
+    file.push(Arc::downgrade(&login));
+    Ok(login)
+}
+
+fn cancel_logins(attempts: &mut Vec<Weak<PathBuf>>, path: &Path) {
+    attempts.retain(|attempt| attempt.upgrade().is_some_and(|file| file.as_path() != path));
 }
 
 fn saved(path: &Path) -> Result<Option<Stored>> {
     match std::fs::read(path) {
         Ok(body) => serde_json::from_slice(&body)
             .map(Some)
-            .context("cannot decode the Spotify refresh grant"),
+            .context(AuthError::Credentials),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error).context("cannot read the Spotify refresh grant"),
     }

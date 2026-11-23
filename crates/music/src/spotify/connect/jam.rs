@@ -169,7 +169,9 @@ impl Worker {
             .filter(|read| is_path_id(&read.id, "_-"))
             .map(|read| (read.id.clone(), read.jam.owner))
         else {
+            self.jam = None;
             self.out.send(Event::LeaveFailed).ok();
+            self.begin_jam_read();
             return;
         };
         let connection = self.session.connection_id().to_owned();

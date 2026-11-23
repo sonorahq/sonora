@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::catalog::CatalogSource;
 use crate::settings::AppSettings;
-use crate::{Io, Network, Outcome, Scan, Shelf, Target, Toast, Toasts, join};
+use crate::{Abort, Io, Network, Outcome, Scan, Shelf, Target, Toast, Toasts, join};
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the sign-in window is asked whether the user is through.
@@ -339,6 +339,9 @@ impl Session {
         };
         if self.active == Some(index) {
             return self.sign_out(cx);
+        }
+        if self.awaiting == Some(index) {
+            self.cancel_sign_in(cx);
         }
         self.providers[index].sign_out();
         cx.notify();
@@ -745,11 +748,13 @@ impl Session {
         });
 
         let provider = self.providers[index].clone();
-        let io = self.io.clone();
+        let request = self
+            .io
+            .spawn(async move { provider.sign_in(method, prompt, input_rx).await });
+        let abort = Abort(request.abort_handle());
         self.task = Some(cx.spawn(async move |this, cx| {
-            let authorized =
-                join(io.spawn(async move { provider.sign_in(method, prompt, input_rx).await }))
-                    .await;
+            let _abort = abort;
+            let authorized = join(request).await;
 
             this.update(cx, |this, cx| {
                 this.prompt_task = None;
@@ -769,8 +774,7 @@ impl Session {
             return;
         }
         if let Some(index) = self.awaiting {
-            let provider = self.providers[index].clone();
-            self.io.spawn(async move { provider.abandon() });
+            self.providers[index].abandon();
         }
         self.task = None;
         self.prompt_task = None;
@@ -941,11 +945,19 @@ impl Session {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.active {
-            self.providers[active].sign_out();
+        let target = self.active.or(self.awaiting);
+        let pending = self.awaiting;
+        if let Some(awaiting) = pending.filter(|index| Some(*index) != target) {
+            self.providers[awaiting].abandon();
+        }
+        if let Some(index) = target {
+            self.providers[index].sign_out();
         }
         self.release(cx);
-        if let Some(index) = self.remaining() {
+        let remaining = self.providers.iter().enumerate().find(|(index, provider)| {
+            Some(*index) != target && Some(*index) != pending && provider.stored()
+        });
+        if let Some((index, _)) = remaining {
             self.active = Some(index);
             self.restore(cx);
         }
@@ -990,12 +1002,6 @@ impl Session {
         if matches!(self.state, SessionState::Offline(_)) {
             self.restore(cx);
         }
-    }
-
-    fn remaining(&self) -> Option<usize> {
-        self.active
-            .filter(|index| self.providers[*index].stored())
-            .or_else(|| self.providers.iter().position(|provider| provider.stored()))
     }
 
     fn release(&mut self, cx: &mut Context<Self>) {
