@@ -1864,10 +1864,11 @@ impl SubsonicClient {
         format!("{}@{}", self.username, self.server)
     }
 
-    /// Opens the audio of a track, converted as `transcode` asks, and answers once the response
-    /// headers are in. The body is still on its way.
+    /// Opens the audio of a track through `http`, converted as `transcode` asks, and answers
+    /// once the response headers are in. The body is still on its way.
     pub async fn open_stream(
         &self,
+        http: &reqwest::Client,
         track_id: &str,
         transcode: Transcode,
     ) -> Result<reqwest::Response> {
@@ -1884,8 +1885,7 @@ impl SubsonicClient {
             .client
             .stream_url(track_id, &options)
             .context("cannot build the stream url")?;
-        self.http
-            .get(url)
+        http.get(url)
             .send()
             .await
             .map_err(reqwest::Error::without_url)

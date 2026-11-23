@@ -3,6 +3,10 @@
 //! Almost nothing, as it turns out. The server hands over an ordinary audio file, so the stream
 //! takes the bytes as they come and rodio decodes them. The threads, the queue, the preload and
 //! the gapless join are the engine's.
+//!
+//! A seek past what has arrived of an original FLAC, Ogg or MP3 file does not wait for the
+//! download to get there. It starts a second download at the target through a
+//! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -14,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
+use crate::ranged;
 use crate::stream::{Plain, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
@@ -25,6 +30,9 @@ pub struct Loaded {
     stream: Stream,
     details: Details,
     prepared: Prepared,
+    /// What a seek past the download fetches the file through. Only an original file the server
+    /// sends with a length and answers ranges for has one, and a kept track is whole without it.
+    file: Option<Arc<ranged::File>>,
 }
 
 pub struct Factory {
@@ -42,6 +50,7 @@ impl PlaybackFactory for Factory {
         engine::start(
             Subsonic {
                 client: self.client.clone(),
+                media: ranged::media("subsonic", || self.client.http.clone()),
                 transcode: config.transcode,
                 shelf: config.vault.as_ref().map(|vault| {
                     vault
@@ -57,6 +66,10 @@ impl PlaybackFactory for Factory {
 
 struct Subsonic {
     client: SubsonicClient,
+    /// What a track Sonora asks for unconverted and a seek's download are fetched with, which
+    /// gives up on a stalled request sooner than the api client. That includes a track the
+    /// server converts on its own. A conversion Sonora asks for keeps the api client.
+    media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
     shelf: Option<Shelf>,
@@ -114,6 +127,7 @@ impl Subsonic {
             stream,
             details,
             prepared,
+            file: None,
         })
     }
 }
@@ -141,9 +155,15 @@ impl Fetch for Subsonic {
         let told = Arc::new(OnceLock::new());
         let (stream, details) = tokio::join!(
             async {
-                let response = self.client.open_stream(id, self.transcode).await?;
+                let original = self.transcode == Transcode::default();
+                let http = match original {
+                    true => &self.media,
+                    false => &self.client.http,
+                };
+                let response = self.client.open_stream(http, id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response);
+                let seekable = original && ranged::ranges(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -161,7 +181,10 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                anyhow::Ok((stream, prepared))
+                let file = remote
+                    .filter(|_| seekable)
+                    .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
+                anyhow::Ok((stream, prepared, file))
             },
             async {
                 let details = self.client.details(id).await;
@@ -169,11 +192,12 @@ impl Fetch for Subsonic {
                 details
             },
         );
-        let (stream, prepared) = stream?;
+        let (stream, prepared, file) = stream?;
         Ok(Loaded {
             stream,
             details,
             prepared,
+            file,
         })
     }
 
@@ -226,6 +250,24 @@ impl Fetch for Subsonic {
             );
         }
         Some(decoder)
+    }
+
+    /// Opens the track at `at`, from a download started near `at` when the main one is far from
+    /// it and the file allows that. Otherwise the decoder waits for the main download to get
+    /// there, as [`open`](Fetch::open) does.
+    fn open_near(
+        &self,
+        id: &str,
+        loaded: &Loaded,
+        at: Duration,
+    ) -> Option<(Self::Source, Duration)> {
+        let file = loaded.file.as_ref().zip(loaded.details.duration);
+        let entered = file.and_then(|(file, length)| {
+            file.enter(&loaded.stream, length, at, |reader| {
+                ranged::forward("subsonic", id, Input::spliced(reader))
+            })
+        });
+        entered.or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
     }
 
     /// A decoder opened before a converted track finished arriving can only read forward, so

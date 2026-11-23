@@ -28,6 +28,7 @@ pub mod order;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+pub mod ranged;
 mod redact;
 pub mod scrobble;
 mod sink;
