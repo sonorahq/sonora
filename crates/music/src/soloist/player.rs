@@ -1234,7 +1234,10 @@ impl Brain {
     /// Gives up on the wanted track. The next load starts a new daemon.
     fn fail(&mut self) {
         if let Some(track) = self.track.take() {
-            self.report(PlaybackEvent::Unavailable { id: Some(track.id) });
+            self.report(PlaybackEvent::Unavailable {
+                id: Some(track.id),
+                timed_out: false,
+            });
         }
     }
 
