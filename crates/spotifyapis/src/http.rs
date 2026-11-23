@@ -183,15 +183,36 @@ async fn request_at(
     headers: header::HeaderMap,
     body: Bytes,
 ) -> Result<Bytes> {
-    let response = request(|client| {
+    let metadata = method == Method::POST && url.path() == crate::proto::metadata::ENDPOINT;
+    let build = |client: &Client| {
         client
-            .request(method, url)
+            .request(method.clone(), url.clone())
             .bearer_auth(token)
-            .headers(headers)
+            .headers(headers.clone())
             .header(header::ACCEPT_ENCODING, "gzip")
-            .body(body)
-    })
-    .await?;
+            .body(body.clone())
+    };
+    let response = request(&build).await?;
+    let retry_body = metadata && response.version() == reqwest::Version::HTTP_2;
+    match response_bytes(response).await {
+        Err(error)
+            if retry_body
+                && error
+                    .chain()
+                    .any(|cause| cause.to_string().contains("too_many_data_frames")) =>
+        {
+            // Repeating the same metadata read on HTTP/2 can hit the same frame budget.
+            static HTTP1: OnceCell<Client> = OnceCell::const_new();
+            let client = HTTP1
+                .get_or_try_init(|| async { api_client().http1_only().build() })
+                .await?;
+            response_bytes(build(client).send().await?).await
+        }
+        result => result,
+    }
+}
+
+async fn response_bytes(response: Response) -> Result<Bytes> {
     let response = response.error_for_status()?;
     anyhow::ensure!(
         response.status().is_success(),
@@ -211,20 +232,21 @@ async fn request_at(
     Ok(body)
 }
 
+fn api_client() -> reqwest::ClientBuilder {
+    Client::builder()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(API_TIMEOUT)
+        .read_timeout(API_TIMEOUT)
+}
+
 /// Builds and sends a request using the shared Spotify client.
 pub(crate) async fn request(
     build: impl FnOnce(&Client) -> RequestBuilder,
 ) -> reqwest::Result<Response> {
     initialize_tls();
     let client = HTTP
-        .get_or_try_init(|| async {
-            Client::builder()
-                .https_only(true)
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(API_TIMEOUT)
-                .read_timeout(API_TIMEOUT)
-                .build()
-        })
+        .get_or_try_init(|| async { api_client().build() })
         .await?;
     build(client).send().await
 }

@@ -9,8 +9,8 @@ use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
-    ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
-    Submit, Text,
+    ActiveTheme as _, Badge, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice,
+    Spinner, Submit, Text,
 };
 
 use crate::shared::steps::{progress, steps};
@@ -188,16 +188,45 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                // said only once pairing has waited a while
-                if let Some(port) = self.soloist.read(cx).blocked_port() {
-                    // as text, so no locale groups the digits of a port number
-                    let port = port.to_string();
-                    body.push(paragraph(
-                        "soloist-pair-firewall",
-                        t!("soloist-pair-firewall", port = port.as_str()),
-                        cx,
-                    ));
-                }
+                let theme = cx.theme();
+                let port = self.soloist.read(cx).pairing_port();
+                body.push(waiting(
+                    "soloist-pair-status",
+                    if port.is_some() {
+                        t!("soloist-pair-ready")
+                    } else {
+                        t!("soloist-pair-starting")
+                    },
+                    cx,
+                ));
+                let tcp = port.map_or_else(
+                    || t!("soloist-pair-tcp-pending"),
+                    |port| {
+                        let port = port.to_string();
+                        t!("soloist-pair-tcp", port = port.as_str())
+                    },
+                );
+                body.push(paragraph(
+                    "soloist-pair-firewall",
+                    t!("soloist-pair-ports"),
+                    cx,
+                ));
+                body.push(
+                    div()
+                        .id("soloist-pair-ports")
+                        .role(Role::Status)
+                        .aria_label(format!("{} · {}", t!("soloist-pair-udp"), tcp))
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            Badge::text(t!("soloist-pair-udp"))
+                                .rounded_full()
+                                .bg(theme.secondary_active),
+                        )
+                        .child(Badge::text(tcp).rounded_full().bg(theme.secondary_active))
+                        .into_any_element(),
+                );
             }
         }
         body

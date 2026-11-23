@@ -412,8 +412,15 @@ pub fn init(
         let playback = playback.clone();
         let devices = devices.clone();
         move |_, _: &SoloistSwitched, cx| {
-            playback.update(cx, |playback, cx| playback.switch_engine(cx));
+            let handoff = devices.read(cx).local_device_playback();
             devices.update(cx, |devices, cx| devices.apply(cx));
+            let handoff = handoff.filter(|_| !devices.read(cx).controls_local_device());
+            playback.update(cx, |playback, cx| {
+                playback.switch_engine(handoff.is_some(), cx)
+            });
+            if let Some(start) = handoff {
+                devices.update(cx, |devices, cx| devices.start(start, cx));
+            }
         }
     })
     .detach();

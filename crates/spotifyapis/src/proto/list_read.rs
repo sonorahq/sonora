@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use anyhow::{Context as _, Result};
 use bytes::Bytes;
 
+use crate::proto::playlist::Capabilities;
 use crate::{Session, http};
 
 const GET_LISTS: &str = "/playlist/spotify.list.v1.ListReadService/GetLists";
@@ -171,24 +172,24 @@ pub struct Attributes {
     pub name: String,
     // #[prost(string, optional, tag = "4")]
     // pub description: Option<String>,
-    // #[prost(message, optional, tag = "5")]
-    // pub updated_at: Option<prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    pub updated_at: Option<prost_types::Timestamp>,
     // #[prost(string, optional, tag = "6")]
     // pub added_by_username: Option<String>,
     #[prost(string, tag = "7")]
     pub owner_username: String,
     // #[prost(message, optional, tag = "8")]
     // pub created_at: Option<prost_types::Timestamp>,
-    // #[prost(message, optional, tag = "9")]
-    // pub capabilities: Option<Capabilities>,
+    #[prost(message, optional, tag = "9")]
+    pub capabilities: Option<Capabilities>,
     // #[prost(message, optional, tag = "10")]
     // pub geoblock: Option<Geoblock>,
     // #[prost(int32, optional, tag = "11")]
     // pub status_code: Option<i32>,
     // #[prost(bool, optional, tag = "12")]
     // pub abuse_reporting_enabled: Option<bool>,
-    // #[prost(int64, optional, tag = "13")]
-    // pub approximate_length: Option<i64>,
+    #[prost(int64, optional, tag = "13")]
+    pub approximate_length: Option<i64>,
     // #[prost(message, optional, tag = "14")]
     // pub available_signals: Option<SignalsList>,
     // #[prost(bool, optional, tag = "15")]
@@ -207,8 +208,8 @@ pub struct Attributes {
     pub picture_sizes: Option<PictureSizes>,
     // #[prost(string, optional, tag = "22")]
     // pub client_id: Option<String>,
-    // #[prost(string, optional, tag = "23")]
-    // pub format: Option<String>,
+    #[prost(string, optional, tag = "23")]
+    pub format: Option<String>,
     #[prost(message, optional, tag = "24")]
     pub format_attributes: Option<FormatAttributes>,
     // #[prost(bytes, optional, tag = "25")]
@@ -266,9 +267,13 @@ pub enum AttributeKind {
     Unspecified = 0,
     Uri = 1,
     Name = 3,
+    UpdatedAt = 5,
     OwnerUsername = 7,
+    Capabilities = 9,
+    ApproximateLength = 13,
     PictureFileId = 20,
     PictureSizes = 21,
+    Format = 23,
     FormatListAttributes = 24,
 }
 

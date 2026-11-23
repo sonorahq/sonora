@@ -41,6 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The volume icon switches at once as you change the volume, instead of popping on every step.
 - Spotify renews sign-ins in the background. Sign in again once if you’re upgrading from the previous Spotify player.
 - Spotify playback without Soloist follows Sonora’s playback cache settings immediately.
+- Set up and switch Soloist on the Spotify provider row. Pairing shows the network ports as soon as they are known.
 
 ### Fixed
 
@@ -75,6 +76,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Album pages keep the current cover visible while a higher-resolution image loads.
 - Spotify’s Liked Songs card on Home shows the signed-in account’s display name.
 - Switching between built-in Spotify playback and Soloist keeps Sonora’s queue and the current song’s position.
+- Signing out of Spotify keeps your Soloist pairing for the next time you sign in to the same account.
+- Shuffled album and playlist tracks keep their collection context when Sonora plays them through Soloist.
+- Home’s play buttons follow the active Spotify Connect playlist, including playback through Soloist.
 
 ### Fixed
 

@@ -62,7 +62,12 @@ trait CatalogBackend: Send + Sync {
         &self,
         continuation: &str,
     ) -> Result<(Vec<Track>, Option<String>)>;
-    async fn genre(&self, id: &str) -> Result<GenreDetail>;
+    async fn genre(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail>;
 }
 
 struct ApiBackend(Arc<dyn MusicApi>);
@@ -123,8 +128,13 @@ impl CatalogBackend for ApiBackend {
     ) -> Result<(Vec<Track>, Option<String>)> {
         self.0.playlist_continuation(continuation).await
     }
-    async fn genre(&self, id: &str) -> Result<GenreDetail> {
-        self.0.genre(id).await
+    async fn genre(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail> {
+        self.0.genre_with_preview(id, title, preview).await
     }
 }
 
@@ -341,8 +351,15 @@ impl CatalogSource {
         self.genres.peek(id)
     }
 
-    pub(crate) async fn genre(&self, id: &str) -> Result<Arc<GenreDetail>> {
-        self.genres.load(id, self.backend.genre(id)).await
+    pub(crate) async fn genre_with_preview(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<Arc<GenreDetail>> {
+        self.genres
+            .load(id, self.backend.genre(id, title, preview))
+            .await
     }
 
     pub(crate) async fn invalidate_genre(&self, id: &str) {
@@ -476,6 +493,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, atomic::AtomicBool};
+    use tokio::sync::mpsc;
 
     use anyhow::anyhow;
     use async_trait::async_trait;
@@ -622,7 +640,12 @@ mod tests {
         ) -> anyhow::Result<(Vec<Track>, Option<String>)> {
             Ok((Vec::new(), None))
         }
-        async fn genre(&self, id: &str) -> anyhow::Result<GenreDetail> {
+        async fn genre(
+            &self,
+            id: &str,
+            _title: Option<&str>,
+            _preview: mpsc::Sender<GenreDetail>,
+        ) -> anyhow::Result<GenreDetail> {
             self.count("genre", id);
             Ok(GenreDetail {
                 name: format!("{}:{id}", self.label),
@@ -722,7 +745,15 @@ mod tests {
         for _ in 0..2 {
             assert!(catalog.album("empty").await.unwrap().tracks.is_empty());
             assert!(catalog.playlist("empty").await.unwrap().tracks.is_empty());
-            assert!(catalog.genre("empty").await.unwrap().sections.is_empty());
+            let (preview, _updates) = mpsc::channel(1);
+            assert!(
+                catalog
+                    .genre_with_preview("empty", None, preview)
+                    .await
+                    .unwrap()
+                    .sections
+                    .is_empty()
+            );
         }
         assert_eq!(api.called("album", "empty"), 1);
         assert_eq!(api.called("playlist", "empty"), 1);

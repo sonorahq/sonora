@@ -2,13 +2,14 @@ mod media;
 
 pub(super) use media::OfflineFactory;
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::future::BoxFuture;
 use tokio::sync::oneshot;
 
-use crate::connect::Collection;
+use crate::connect::{Collection, Command, Connect, QueuedTrack, Request, Snapshot, Start};
 use crate::{
     Encoding, Fraction, Offer, PlaybackConfig, PlaybackEvents, PlaybackFactory,
     Player as MusicPlayer, Quality,
@@ -42,11 +43,12 @@ pub(crate) const QUALITIES: &[Offer] = &[
 /// Chooses Sonora audio playback or the paired Soloist player.
 pub struct Factory {
     session: Session,
+    connect: Arc<Connect>,
 }
 
 impl Factory {
-    pub fn new(session: Session) -> Self {
-        Self { session }
+    pub fn new(session: Session, connect: Arc<Connect>) -> Self {
+        Self { session, connect }
     }
 }
 
@@ -57,24 +59,62 @@ impl PlaybackFactory for Factory {
             session: Some(self.session.clone()),
             quality: config.quality,
         };
-        if soloist::ready() {
-            let (engine, events) = soloist::start(&config, self.session.soloist_playback().clone());
-            return (Box::new(Official { engine, audio }), Box::new(events));
+        if soloist::ready_for(self.session.username()) {
+            let (daemon, events) = soloist::start(&config);
+            return (
+                Box::new(Official {
+                    _daemon: daemon,
+                    connect: self.connect.clone(),
+                    context: Mutex::default(),
+                    held: Mutex::default(),
+                    audio,
+                }),
+                events,
+            );
         }
         engine::start(audio, config)
     }
 
     fn qualities(&self) -> Option<&'static [Offer]> {
-        soloist::ready().then_some(soloist::QUALITIES)
+        soloist::ready_for(self.session.username()).then_some(soloist::QUALITIES)
     }
 }
 
-/// Soloist as the Spotify engine. It streams every track, a downloaded one too, so nothing
-/// plays without a network while it is in use. A track is only fetched ahead as the next in the
-/// queue, which Soloist then joins to the current one by itself.
+/// Owns the daemon and handles engine restores until the Connect roster takes over.
 struct Official {
-    engine: soloist::Engine,
+    _daemon: oneshot::Sender<()>,
+    connect: Arc<Connect>,
+    context: Mutex<Option<Collection>>,
+    held: Mutex<Option<Snapshot>>,
     audio: media::Audio,
+}
+
+impl Official {
+    fn command(&self, command: Command) {
+        self.connect.send(Request::ControlLocal(command));
+    }
+
+    fn selection(&self, id: &str, at: Duration) -> Result<Snapshot> {
+        anyhow::ensure!(
+            id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+            "invalid Spotify track ID"
+        );
+        Ok(Snapshot {
+            context: self.context.lock().unwrap().take(),
+            track: Some(QueuedTrack::new(id.to_owned(), false)),
+            position: at,
+            playing: true,
+            ..Default::default()
+        })
+    }
+
+    fn start(&self, state: Snapshot) {
+        self.command(Command::Start(Start {
+            state: Arc::new(state),
+            restart: true,
+            ..Default::default()
+        }));
+    }
 }
 
 impl MusicPlayer for Official {
@@ -110,60 +150,44 @@ impl MusicPlayer for Official {
     }
 
     fn load(&self, track_id: &str, at: Duration, _seamless: bool) -> Result<()> {
-        validate_track(track_id)?;
-        self.engine.load(track_id, at, true);
+        self.held.lock().unwrap().take();
+        self.start(self.selection(track_id, at)?);
         Ok(())
     }
 
     fn load_paused_at(&self, track_id: &str, at: Duration) -> Result<()> {
-        validate_track(track_id)?;
-        self.engine.load(track_id, at, false);
+        *self.held.lock().unwrap() = Some(self.selection(track_id, at)?);
         Ok(())
     }
 
-    fn preload(&self, track_id: &str, segue: bool) -> Result<()> {
-        validate_track(track_id)?;
-        if segue {
-            self.engine.line_up(track_id);
-        }
+    fn preload(&self, _track_id: &str, _segue: bool) -> Result<()> {
         Ok(())
-    }
-
-    fn unline(&self) {
-        self.engine.line_down();
     }
 
     fn within(&self, collection: Option<&Collection>) {
-        let uri = collection.and_then(|collection| match collection {
-            Collection::Album(id) => Some(format!("spotify:album:{id}")),
-            Collection::Playlist(id) => Some(format!("spotify:playlist:{id}")),
-            Collection::Saved | Collection::Radio(_) | Collection::CollectionRadio(..) => None,
-        });
-        self.engine.within(uri);
+        *self.context.lock().unwrap() = collection.cloned();
     }
 
     fn play(&self) {
-        self.engine.play();
+        match self.held.lock().unwrap().take() {
+            Some(state) => self.start(state),
+            None => self.command(Command::Play),
+        }
     }
 
     fn pause(&self) {
-        self.engine.pause();
+        self.command(Command::Pause);
     }
 
     fn seek(&self, position: Duration) {
-        self.engine.seek(position);
+        if let Some(state) = self.held.lock().unwrap().as_mut() {
+            state.position = position;
+        } else {
+            self.command(Command::Seek(position));
+        }
     }
 
     fn set_gain(&self, gain: f32) {
-        self.engine.set_gain(gain);
+        self.command(Command::Volume(gain.clamp(0.0, 1.0).cbrt()));
     }
-}
-
-/// Rejects malformed IDs before sending them to Soloist.
-fn validate_track(id: &str) -> Result<()> {
-    anyhow::ensure!(
-        id.len() == 22 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()),
-        "invalid Spotify track ID"
-    );
-    Ok(())
 }

@@ -5,7 +5,7 @@ use bytes::Bytes;
 
 use crate::{Session, http};
 
-const ENDPOINT: &str = "/extended-metadata/v0/extended-metadata";
+pub(crate) const ENDPOINT: &str = "/extended-metadata/v0/extended-metadata";
 
 #[derive(prost::Message)]
 pub struct Artist {

@@ -95,12 +95,42 @@ fn music_browse_target(uri: &str) -> bool {
 }
 
 /// Reads a genre page, then loads its ordered sections in one batch.
-pub(super) async fn page(session: &Session, id: &str) -> Result<GenreDetail> {
+pub(super) async fn page(
+    session: &Session,
+    id: &str,
+    title: Option<&str>,
+    preview: Option<tokio::sync::mpsc::Sender<GenreDetail>>,
+) -> Result<GenreDetail> {
     let BrowsePage {
-        name,
+        mut name,
         sections,
         playlists,
-    } = page_sections(session, id).await?;
+    } = page_sections(session, id, None).await?;
+    if name.is_empty()
+        && let Some(title) = title
+    {
+        title.clone_into(&mut name);
+    }
+    if let Some(preview) = preview {
+        let ready: Vec<_> = sections
+            .iter()
+            .take_while(|(_, uris)| uris.iter().all(|uri| playlists.contains_key(uri)))
+            .filter(|(_, uris)| !uris.is_empty())
+            .map(|(title, uris)| GenreSection {
+                title: title.clone(),
+                items: uris
+                    .iter()
+                    .map(|uri| GenreItem::Playlist(playlists[uri].clone()))
+                    .collect(),
+            })
+            .collect();
+        if !ready.is_empty() {
+            let _ = preview.try_send(GenreDetail {
+                name: name.clone(),
+                sections: ready,
+            });
+        }
+    }
     let page_uri = format!("spotify:genre:{id}");
     let mut uris: HashSet<_> = sections
         .iter()
@@ -121,7 +151,11 @@ pub(super) async fn page(session: &Session, id: &str) -> Result<GenreDetail> {
 }
 
 /// Reads the ordered section references and their cards before metadata is resolved.
-async fn page_sections(session: &Session, id: &str) -> Result<BrowsePage> {
+async fn page_sections(
+    session: &Session,
+    id: &str,
+    media_limit: Option<usize>,
+) -> Result<BrowsePage> {
     let root = playlists::browse_sections(session, vec![format!("spotify:genre:{id}")], false)
         .await
         .context("cannot read Spotify Browse page")?
@@ -139,7 +173,7 @@ async fn page_sections(session: &Session, id: &str) -> Result<BrowsePage> {
     };
     for mut shelf in playlists::browse_sections(session, section_uris, true).await? {
         page.playlists.extend(std::mem::take(&mut shelf.playlists));
-        page.sections.push(section(shelf));
+        page.sections.push(section(shelf, media_limit));
     }
     Ok(page)
 }
@@ -175,8 +209,8 @@ fn resolve_cards(uris: Vec<String>, cards: &HashMap<String, GenreItem>) -> Vec<G
         .collect()
 }
 
-/// Keeps every directory entry and up to ten media cards per shelf.
-fn section(section: playlists::BrowseSection) -> (String, Vec<String>) {
+/// Keeps directory links and optionally limits the media on Home shelves.
+fn section(section: playlists::BrowseSection, media_limit: Option<usize>) -> (String, Vec<String>) {
     let mut media = 0;
     let items = section
         .items
@@ -187,7 +221,7 @@ fn section(section: playlists::BrowseSection) -> (String, Vec<String>) {
                 return true;
             }
             media += 1;
-            media <= ITEMS_PER_SHELF
+            media_limit.is_none_or(|limit| media <= limit)
         })
         .collect();
     (section.title, items)
@@ -349,7 +383,7 @@ async fn home(session: &Session, publish: impl FnOnce(&HomeFeed)) -> Result<Opti
         Ok::<_, anyhow::Error>((feed, cards))
     };
     let ((mut feed, mut known), made) = tokio::try_join!(main, async {
-        Ok(page_sections(session, MADE_FOR_YOU).await)
+        Ok(page_sections(session, MADE_FOR_YOU, Some(ITEMS_PER_SHELF)).await)
     })?;
     let Ok(BrowsePage {
         sections,

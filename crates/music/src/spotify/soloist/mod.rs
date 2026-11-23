@@ -1,20 +1,19 @@
 //! Spotify Soloist, the headless player Spotify publishes, as a second way to play Spotify.
 //!
-//! librespot asks for audio keys the way Spotify's desktop app does, and Spotify denies them to
+//! Sonora's built-in player asks for audio keys the way Spotify's desktop app does, and Spotify denies them to
 //! some accounts. Soloist is Spotify's own client for third parties, so it plays for every
 //! Premium account, lossless included. It is a separate program. Sonora downloads it from
-//! Spotify on the listener's word, starts it with the listener's own API key and drives it over
-//! the WebSocket it opens on loopback. It plays to the system's output by itself, so the
+//! Spotify on the listener's word, starts it with the listener's own API key and controls it through
+//! Spotify Connect. It plays to the system's output by itself, so the
 //! equalizer, the visualizer and the output setting do not reach its sound.
 //!
 //! It is off until the listener sets it up, in three steps `state` asks for in order: [`fetch`]
 //! the program, take an API key, and [`pair`] the program with the account from one of Spotify's
 //! own apps. [`set_up`] says whether all three are done. The listener can still switch Soloist
-//! off, and the Spotify provider starts Soloist instead of Sonora's audio engine while [`ready`]
+//! off, and the Spotify provider starts Soloist instead of Sonora's audio engine while [`ready_for`]
 //! says it is both set up and on.
 //!
-//! Like `drm`, this sits in the crate root so `state` and `views` reach it without naming a
-//! provider.
+//! The crate root re-exports the setup controls for app state.
 
 mod archive;
 mod binary;
@@ -22,7 +21,6 @@ mod daemon;
 mod pair;
 mod player;
 mod prefs;
-mod wire;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -34,7 +32,7 @@ use crate::{Encoding, Offer, Quality, credentials};
 pub use binary::{Build, fetch, installed};
 pub use daemon::stopped;
 pub use pair::{Trouble, pair};
-pub(crate) use player::{Engine, start};
+pub(crate) use player::start;
 
 /// Where the listener makes an API key, which only a Premium account can.
 pub const DASHBOARD: &str = "https://developer.spotify.com/dashboard/soloist";
@@ -142,10 +140,14 @@ pub fn enable(on: bool) -> Result<()> {
     Ok(())
 }
 
-/// Whether Soloist plays: it is set up and switched on. The Spotify provider starts a Soloist
-/// engine while this holds. Cheap enough for a render once the disk has been read.
-pub fn ready() -> bool {
-    set_up() && enabled()
+/// Whether the saved Soloist pairing belongs to this Spotify account.
+pub fn set_up_for(username: &str) -> bool {
+    set_up() && paired_account().as_deref() == Some(username)
+}
+
+/// Whether the paired daemon can play for this Spotify account.
+pub fn ready_for(username: &str) -> bool {
+    enabled() && set_up_for(username)
 }
 
 /// Whether Spotify denied this account an audio key the last time librespot asked for one,
@@ -196,21 +198,14 @@ pub fn reload() {
     }
 }
 
-/// Removes what belongs to the account: the API key, the paired sign-in, the playback cache
-/// and the memory of a denied key. Soloist is off from here on, and the program stays for the
-/// next setup. Blocking.
-pub fn forget() -> Result<()> {
+/// Removes the Soloist program, pairing, key, and playback cache. Blocking.
+pub fn remove() -> Result<()> {
     STANDING.store(UNREADY, Ordering::Relaxed);
     DENIED.store(UNREADY, Ordering::Relaxed);
     SWITCH.store(READY, Ordering::Relaxed);
     [home(), cache()]
         .iter()
-        .try_for_each(|folder| clear(folder))
-}
-
-/// Removes everything [`forget`] does and the program too. Blocking.
-pub fn remove() -> Result<()> {
-    forget()?;
+        .try_for_each(|folder| clear(folder))?;
     binary::uninstall()
 }
 

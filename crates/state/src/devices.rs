@@ -446,6 +446,30 @@ impl Devices {
         }
     }
 
+    /// Routes playback to the configured external engine, even while it registers.
+    pub(crate) fn controls_local_device(&self) -> bool {
+        self.mode == Mode::Observe
+    }
+
+    pub(crate) fn control_local_device(&self, command: Command) {
+        if let Some(link) = &self.link {
+            link.send(Request::ControlLocal(command));
+        }
+    }
+
+    /// Captures the active Soloist queue before its daemon stops.
+    pub(crate) fn local_device_playback(&self) -> Option<Start> {
+        let remote = self.steered()?;
+        if self.roster.local.as_ref()?.id != remote.device.id || remote.state.track.is_none() {
+            return None;
+        }
+        Some(Start {
+            state: remote.state,
+            preserve_queue: true,
+            restart: true,
+        })
+    }
+
     /// Changes the device's volume and shows the requested level until its next report arrives.
     /// The caller notifies playback, since playback may already be updating when this runs.
     pub(crate) fn set_volume(&mut self, device: &str, level: f32, cx: &mut Context<Self>) {
@@ -590,10 +614,16 @@ impl Devices {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = if !settings.spotify_connect() {
-            Mode::Off
-        } else if link.jams() && music::soloist::ready() {
+        let wanted = if link.jams()
+            && self
+                .session
+                .read(cx)
+                .soloist_account()
+                .is_some_and(music::soloist::ready_for)
+        {
             Mode::Observe
+        } else if !settings.spotify_connect() {
+            Mode::Off
         } else {
             Mode::Publish
         };
@@ -625,7 +655,7 @@ impl Devices {
         self.sent = None;
         self.mode = wanted;
         link.send(Request::Mode(wanted));
-        if wanted != Mode::Off {
+        if wanted == Mode::Publish {
             self.publish(cx);
         }
         cx.notify();
@@ -1053,7 +1083,7 @@ impl Devices {
     /// queue, once what it names has loaded. Nothing is applied if the listener changed the queue
     /// here while it loaded: a handover gives way to any change, and an edit to one that moved the
     /// songs the report showed. Songs already in the queue are not read from the provider again.
-    fn start(&mut self, start: Start, cx: &mut Context<Self>) {
+    pub(crate) fn start(&mut self, start: Start, cx: &mut Context<Self>) {
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
@@ -1127,38 +1157,29 @@ impl Devices {
 
     /// Tells the account's other apps what plays, when something does that this app took.
     fn publish(&mut self, cx: &mut Context<Self>) {
-        if self.changing.is_some() {
+        if self.mode == Mode::Observe {
+            if !self.claimed
+                && self.playback.read(cx).local_active()
+                && self.playback.read(cx).wants_playing()
+            {
+                self.claimed = true;
+                self.pause_elsewhere();
+            }
+            return;
+        }
+        if self.changing.is_some() || self.mode != Mode::Publish {
             return;
         }
         let Some(link) = self.link.clone() else {
             return;
         };
-        let now = match self.mode {
-            Mode::Off => return,
-            Mode::Publish => self.now_playing(cx),
-            Mode::Observe => self
-                .snapshot(cx)
-                .filter(|snapshot| {
-                    snapshot.track.as_ref().map(|track| track.id.as_str())
-                        == self
-                            .playback
-                            .read(cx)
-                            .track()
-                            .and_then(|track| track.id.as_deref())
-                })
-                .map(Arc::new),
-        };
-        let Some(now) = now else {
+        let Some(now) = self.now_playing(cx) else {
             if self.sent.take().is_some() {
                 link.send(Request::Publish(None));
                 cx.notify();
             }
             return;
         };
-        if self.mode == Mode::Observe && self.sent.as_ref().is_some_and(|sent| now.same_queue(sent))
-        {
-            return;
-        }
         let Some(reason) = self
             .sent
             .as_ref()

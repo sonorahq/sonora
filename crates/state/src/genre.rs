@@ -280,7 +280,10 @@ impl GenreDetails {
     }
 
     pub fn name(&self) -> Option<&str> {
-        self.detail.as_ref().map(|detail| detail.name.as_str())
+        self.detail
+            .as_ref()
+            .map(|detail| detail.name.as_str())
+            .filter(|name| !name.is_empty())
     }
 
     pub fn sections(&self) -> Rc<Vec<GenreSection>> {
@@ -336,17 +339,37 @@ impl GenreDetails {
         self.loading = true;
         cx.notify();
 
+        let title = self
+            .genres
+            .read(cx)
+            .genres()
+            .iter()
+            .find(|genre| genre.id == id)
+            .map(|genre| genre.name.clone());
+        let (preview, mut updates) = tokio::sync::mpsc::channel(1);
         let request = self.io.spawn({
             let id = id.clone();
             async move {
                 if fresh {
                     catalog.invalidate_genre(&id).await;
                 }
-                catalog.genre(&id).await
+                catalog
+                    .genre_with_preview(&id, title.as_deref(), preview)
+                    .await
             }
         });
         self.request = Some(request.abort_handle());
         self.task = Some(cx.spawn(async move |this, cx| {
+            if let Some(detail) = updates.recv().await {
+                this.update(cx, |this, cx| {
+                    if this.id.as_deref() == Some(id.as_str()) {
+                        this.sections = Rc::new(detail.sections.clone());
+                        this.detail = Some(Arc::new(detail));
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
             let loaded = join(request).await;
 
             this.update(cx, |this, cx| {
@@ -358,7 +381,8 @@ impl GenreDetails {
                 this.request = None;
                 match crate::settled(loaded, cx) {
                     Ok(detail) => this.adopt(&id, detail, cx),
-                    Err(reason) => this.error = Some(reason),
+                    Err(reason) if this.detail.is_none() => this.error = Some(reason),
+                    Err(reason) => log::warn!("genres: cannot finish loading {id}: {reason}"),
                 }
                 cx.notify();
             })

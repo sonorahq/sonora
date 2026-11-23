@@ -17,9 +17,8 @@ Relative HTTP paths use Spotify’s regional API host. Search and Lyrics send `a
 Starting a history track can rebuild the queue from its context. A live test
 kept the same context. Preservation of custom queue entries is unverified.
 
-When Soloist owns playback, Sonora sends its history and upcoming tracks to
-that device with `set_queue`. A live probe confirmed that Soloist reports
-both lists without changing the current song or context.
+Soloist is a separate Connect device. Sonora sends it the same playback
+commands it sends to other devices and reads the queue Spotify reports.
 
 ## Protobuf HTTP calls
 
@@ -39,8 +38,8 @@ both lists without changing the current song or context.
 | Saved music | `POST /collection/v2/paging` | Reads pages of saved music. |
 | Library pins | `POST /collection/v2/paging` · `ylpin` | Reads the account's Spotify pins. |
 | Saved music and pins | `POST /collection/v2/write` | Updates saved music and pins. |
-| Playlists | `POST /playlist/spotify.list.v1.ListReadService/GetLists` | Reads selected fields from playlists, the library list, and Browse sections, including playlist cards in those sections. |
-| Playlists | `GET /playlist/v2/playlist/{id}` | Reads a playlist snapshot or a summary without entries. |
+| Playlists | `POST /playlist/spotify.list.v1.ListReadService/GetLists` | Batches playlist summaries and reads selected fields from playlists, the library list, and Browse sections. |
+| Playlists | `GET /playlist/v2/playlist/{id}` | Reads a playlist snapshot. |
 | Playlists | `POST /playlist/v2/playlist` | Creates a playlist. |
 | Playlists | `POST /playlist/v2/playlist/{id}/changes` | Applies edits. Appends batch tracks without reading a revision. Name and cover can change together. |
 | Playlist cover registration | `POST /playlist/v2/playlist/{id}/register-image` | Registers the uploaded image and returns its picture ID. |
@@ -76,7 +75,6 @@ notifications and to send heartbeats and acknowledgements.
 | `hm://playlist/v2/playlist` | Protobuf | Refreshes changed playlists. |
 | `hm://playlist/user` and `hm://playlist/v2/user/{user}/rootlist` | Protobuf | Refreshes the library playlist list when its revision changes. |
 | `social-connect/v2/session_update` | JSON | Reports Jam session changes. Live start and end notifications used JSON even with protobuf HTTP replies. |
-| Soloist | JSON over a local WebSocket | Controls the daemon, which manages its own upstream connections. |
 
 ## Other protocols and formats
 
@@ -115,10 +113,10 @@ or result counts can be acceptable.
 | Status | Target | Benchmark signal | What to change |
 | --- | --- | --- | --- |
 | ⚪ | Saved-track metadata size | TRACK_V4 alone uses fewer bytes and omits Genre, Plays, mood, and BPM. | Find a narrower projection that preserves the metadata and sorting Sonora uses. |
-| 🟠 | Browse section reads | A ten-entry GetLists window returned the exact first ten entries for all sampled long shelves. Pop returned 90 of 222 entries and Made For You 63 of 103. | Use a bounded window for shelves identified as media-only. Confirm the identifying fields across more pages and keep full reads for mixed shelves. |
-| 🟠 | Artist catalogue delivery | Mozart returned 195 preview releases in 159 ms and all 1,867 in 537 ms. Bach hit an HTTP/2 response-body error on two runs. | Reproduce and fix the large-catalogue transport failure. |
+| 🟠 | Browse section reads | Category pages show ready playlist shelves before catalogue hydration and keep all readable music cards. The Genres directory had 17 links after item ten. | Measure time to the first shelf and to the complete page. The smaller projection tested so far saved little. A useful replacement needs to keep the full directory and reduce the requests needed to render it. |
+| 🟢 | Artist catalogue delivery | Bach returned 193 preview releases in 120 ms and all 1,859 in 620 ms after an HTTP/1.1 retry for the HTTP/2 frame-budget error. | Verify the visible preview and full catalogue on desktop. |
 | ⚪ | Album detail | AlbumV4 returned only IDs for all 43 sampled track entries. | Find an album response with full track metadata and availability before removing hydration. |
-| 🟠 | Playlist reads | One GetLists call returned four playlist summaries in 97 ms with matching revisions, names, descriptions, owners, timestamps, and track counts. | Batch summary refreshes through GetLists after checking permission values and artwork URLs. Verify public visibility before replacing the root-list read. |
+| 🟠 | Playlist library reads | GetLists returned the same visibility as the root list for 26 private entries. | Verify visibility on an owned public playlist before switching the library read. |
 | 🟠 | Playlist notification refreshes | Both notifications arrived after overlapping renames of two temporary playlists. | Count the app’s summary, root-list, and pin reads while a refresh is already in flight. |
 | ⚪ | Playlist edit deltas | Sonora still reads a snapshot after a playlist edit notification. | Capture real notifications and check whether they carry the parent revision, ordered operations, and truncation flag needed to apply a complete delta. |
 | ⚪ | Search request count | Five calls and 80 results in the benchmark. The rewrite downloaded 14.9 KiB versus 406.5 KiB upstream. | Verify availability and a ranking signal before dropping track hydration. A combined query still needs independent category limits. |
@@ -144,14 +142,26 @@ The Browse root gives an ordered list of dynamic section URIs. GetLists
 their nested entries in the same request. Casita returned no reusable
 metadata or refresh token with the tested eager and incremental options.
 Keep both page and section reads until a response supplies the missing data.
-The current UI keeps at most ten media cards per shelf and preserves every
-category link. In one paired GetLists probe with the same playlist-card
-projection, Pop’s section read went from 175 to 113 ms and Made For You’s
-from 262 to 123 ms. The long shelves sampled contained media only. Use a
-stable shelf classification before applying the limit to other pages.
-Pop still downloads 119.6 KiB
-versus 92.0 KiB upstream for the same 90 items. Browse landing uses two calls
-versus one upstream and downloads 3.4 KiB versus 30.4 KiB.
+Category pages keep all readable entries. They show the first complete
+playlist shelves before waiting for catalogue metadata. Home keeps its
+ten-card limit for supplemental shelves. A category opened from the Browse
+grid can reuse its title when the root response omits it. The Genres
+directory returned 27 category links, including 17 after item ten. Root
+references exposed no format markers that could identify media-only shelves.
+
+The Browse landing grid still shows curated categories and links to the
+full directories. The earlier comparison showed 25 landing cards versus
+72 upstream. The Pop and Made For You detail pages now show 222 and 102
+music cards on the sampled account, versus 90 and 62 with the previous cap.
+In a live provider run Pop delivered 34 cards in 180 ms and all 222 in
+267 ms. Made For You delivered all 102 in 277 ms when opened with its
+landing title, avoiding a separate title lookup.
+
+Browse sections request picture sizes for their playlist cards. Across seven
+sampled pages, all 582 playlist covers came from those URLs. Omitting the
+unused file-ID field kept the same coverage and transferred roughly the same
+bytes. The APK exposes Browsita for the landing page and Scrollsita for
+Now Playing. The route scan did not establish a Browse section replacement.
 
 Home emits the main feed and then appends Made For You. In five fresh
 provider sessions per build, Made For You supplied all 42 supplemental cards
@@ -193,12 +203,12 @@ with URI field 1 and `PublishedToProfile` field 15. A prior probe matched the
 owned by the signed-in account before switching. Visibility was absent from
 standalone playlist metadata.
 
-GetLists with a zero-entry window returned four owned playlist summaries in
-one request. Each matched the snapshot’s revision, name, description, owner,
-update time, count, and picture file ID. Capabilities and picture-size
-presence also matched. Compare capability values and picture URLs before
-switching. The root-list projection reported an explicit private value for
-all 26 playlists. The account had no owned public playlist to verify.
+Summary refreshes use GetLists with a zero-entry window. One request returned
+eight summaries in 65 ms. Edit permissions and artwork URLs matched the
+snapshot for all eight. Some generated playlists returned different
+revisions or format attributes. One returned an approximate count of 200
+while the snapshot reported 30. Opening a playlist still reads its full
+snapshot.
 
 ### Playlist edit notifications
 

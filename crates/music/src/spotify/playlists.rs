@@ -246,25 +246,51 @@ pub(super) async fn summaries(session: &Session, mut ids: Vec<String>) -> Vec<Pl
     let username = session.username();
     ids.sort_unstable();
     ids.dedup();
-    let mut playlists = stream::iter(ids)
-        .map(|id| async move {
-            match session
-                .api()
-                .playlist(&id, true)
-                .await
-                .map_err(sign_in_error)
-            {
-                Ok(content) => Some(wire::playlist_from(&id, &content, username)),
+    let projection = ListProjection {
+        list: &[
+            AttributeKind::Name,
+            AttributeKind::OwnerUsername,
+            AttributeKind::UpdatedAt,
+            AttributeKind::Capabilities,
+            AttributeKind::ApproximateLength,
+            AttributeKind::PictureFileId,
+            AttributeKind::PictureSizes,
+            AttributeKind::Format,
+            AttributeKind::FormatListAttributes,
+        ],
+        ..Default::default()
+    };
+    let mut playlists = Vec::with_capacity(ids.len());
+    for batch in ids.chunks(BATCH) {
+        let queries: Vec<_> = batch
+            .iter()
+            .map(|id| ListQuery::playlist(id, Some(0)))
+            .collect();
+        let replies = match session
+            .api()
+            .get_lists(&queries, projection)
+            .await
+            .map_err(sign_in_error)
+        {
+            Ok(replies) => replies,
+            Err(error) => {
+                log::warn!("playlists: cannot refresh Spotify playlist summaries: {error:#}");
+                continue;
+            }
+        };
+        for (id, reply) in batch.iter().zip(replies) {
+            match reply.and_then(|(entity, _)| {
+                entity
+                    .attributes
+                    .context("Spotify omitted the playlist summary")
+            }) {
+                Ok(attrs) => playlists.push(wire::playlist_summary(id.clone(), attrs, username)),
                 Err(error) => {
-                    log::warn!("playlists: cannot refresh Spotify playlist {id}: {error:#}");
-                    None
+                    log::warn!("playlists: cannot refresh Spotify playlist {id}: {error:#}")
                 }
             }
-        })
-        .buffer_unordered(4)
-        .filter_map(std::future::ready)
-        .collect::<Vec<_>>()
-        .await;
+        }
+    }
     profiles::playlist_owners(session, &mut playlists).await;
     playlists
 }
@@ -518,7 +544,7 @@ fn listed_track(track: &Track, item: &Item) -> Track {
 async fn snapshot(session: &Session, playlist_id: &str) -> Result<SelectedListContent> {
     session
         .api()
-        .playlist(playlist_id, false)
+        .playlist(playlist_id)
         .await
         .map_err(sign_in_error)
         .context("cannot read the playlist")
@@ -760,6 +786,11 @@ pub(super) struct BrowseSection {
     pub(super) playlists: HashMap<String, Playlist>,
 }
 
+const BROWSE_CARD_FIELDS: [AttributeKind; 3] = [
+    AttributeKind::Name,
+    AttributeKind::OwnerUsername,
+    AttributeKind::PictureSizes,
+];
 const CARD_FIELDS: [AttributeKind; 4] = [
     AttributeKind::Name,
     AttributeKind::OwnerUsername,
@@ -782,8 +813,12 @@ pub(super) async fn browse_sections(
         .collect();
     let projection = ListProjection {
         list: &[AttributeKind::Name],
-        items: &[AttributeKind::Uri, AttributeKind::FormatListAttributes],
-        referenced: if with_cards { &CARD_FIELDS } else { &[] },
+        items: if with_cards {
+            &[AttributeKind::Uri, AttributeKind::FormatListAttributes]
+        } else {
+            &[AttributeKind::Uri]
+        },
+        referenced: if with_cards { &BROWSE_CARD_FIELDS } else { &[] },
     };
     session
         .api()
@@ -893,6 +928,11 @@ fn playlist_card(id: &str, attributes: Attributes) -> Option<Playlist> {
     Some(Playlist {
         id: id.to_owned(),
         name: attributes.name,
+        owner: if attributes.owner_username == "spotify" {
+            "Spotify".to_owned()
+        } else {
+            String::new()
+        },
         owner_id: attributes.owner_username,
         cover,
         public: true,

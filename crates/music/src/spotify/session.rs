@@ -1,4 +1,3 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex as SyncMutex, RwLock, RwLockReadGuard};
 
 use bytes::Bytes;
@@ -21,7 +20,6 @@ struct Inner {
     session_id: String,
     connection_id: RwLock<String>,
     display_name: OnceCell<String>,
-    soloist_playback: Arc<AtomicBool>,
     metadata: collection::Cache,
     rootlist_revision: SyncMutex<Option<Bytes>>,
 }
@@ -36,7 +34,6 @@ impl Session {
             session_id: format!("{:032x}", fastrand::u128(..)),
             connection_id: RwLock::default(),
             display_name: OnceCell::new(),
-            soloist_playback: Arc::default(),
             metadata: collection::Cache::default(),
             rootlist_revision: SyncMutex::default(),
         }))
@@ -44,11 +41,6 @@ impl Session {
 
     pub(super) fn audio_keys(&self) -> &AudioKeys {
         &self.0.audio_keys
-    }
-
-    /// Shares whether Sonora queued the playback on its Soloist daemon.
-    pub(super) fn soloist_playback(&self) -> &Arc<AtomicBool> {
-        &self.0.soloist_playback
     }
 
     pub(super) fn metadata(&self) -> &collection::Cache {

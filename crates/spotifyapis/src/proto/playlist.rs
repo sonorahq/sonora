@@ -438,7 +438,7 @@ pub enum Kind {
     UpdateListAttributes = 6,
 }
 
-#[derive(prost::Message)]
+#[derive(PartialEq, prost::Message)]
 pub struct Capabilities {
     // #[prost(bool, optional, tag = "1")]
     // pub can_view: Option<bool>,
@@ -489,10 +489,9 @@ pub struct Capabilities {
 }
 
 impl Session {
-    /// Reads a playlist snapshot or just its summary.
-    pub async fn playlist(&self, id: &str, summary: bool) -> Result<SelectedListContent> {
-        let query = if summary { "?from=0&length=0" } else { "" };
-        let path = format!("{}/{}{query}", PLAYLIST_ENDPOINT, component(id));
+    /// Reads a playlist snapshot.
+    pub async fn playlist(&self, id: &str) -> Result<SelectedListContent> {
+        let path = format!("{}/{}", PLAYLIST_ENDPOINT, component(id));
         http::get(self, &path, HeaderMap::new()).await
     }
 

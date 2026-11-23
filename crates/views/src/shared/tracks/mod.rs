@@ -49,6 +49,13 @@ pub(crate) type PlaybackStatus = (Option<String>, Option<bool>, Option<Origin>);
 
 pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> PlaybackStatus {
     let playback = playback.read(cx);
+    if let Some(remote) = playback.steered(cx) {
+        return (
+            remote.state.track.as_ref().map(|track| track.id.clone()),
+            remote.state.track.as_ref().map(|_| remote.state.playing),
+            playback.shown_origin(cx),
+        );
+    }
     let track = playback.track().and_then(|track| track.id.clone());
     (track, playback.control(), playback.origin(cx).cloned())
 }

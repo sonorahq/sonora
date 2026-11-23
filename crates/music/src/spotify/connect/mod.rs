@@ -15,7 +15,6 @@ use spotifyapis::proto::jam::JAM_TOPIC;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use http::StatusCode;
@@ -95,6 +94,8 @@ struct Worker {
     dealer: Option<DealerLink>,
     mode: Mode,
     soloist_device: Option<String>,
+    soloist_ready: bool,
+    local_start: Option<(Instant, Command)>,
     seen_connection: bool,
     clock_offset_ms: i64,
     /// A Jam link asked about before the dealer connected, looked up once it has.
@@ -140,8 +141,6 @@ struct DealerLink {
 struct ClusterPlayback {
     device: String,
     player: Option<PlayerState>,
-    soloist_options: Option<(bool, Repeat)>,
-    soloist_queue: Option<Arc<Snapshot>>,
     queue: Option<TransferQueue>,
 }
 
@@ -161,6 +160,8 @@ impl Worker {
             dealer: None,
             mode: Mode::Off,
             soloist_device: None,
+            soloist_ready: false,
+            local_start: None,
             seen_connection: false,
             clock_offset_ms: 0,
             held: None,
@@ -233,7 +234,13 @@ impl Worker {
                     }
                 }
             }
-            self.sync_soloist_queue().await;
+            if self.soloist_ready
+                && let Some((at, command)) = self.local_start.take()
+                && at.elapsed() < Duration::from_secs(30)
+                && let Some(device) = self.soloist_device.as_deref()
+            {
+                control(&self.session, device, command).await;
+            }
         }
         self.disconnected();
     }
@@ -255,6 +262,20 @@ impl Worker {
             Input::Leave => self.leave().await,
             Input::Kick(member) => self.kick(&member).await,
             Input::Control(device, command) => control(&self.session, &device, command).await,
+            Input::ControlLocal(command) if self.mode == Mode::Observe => {
+                if let Some(device) = self
+                    .soloist_device
+                    .as_deref()
+                    .filter(|_| self.soloist_ready)
+                {
+                    control(&self.session, device, command).await;
+                } else if matches!(command, Command::Start(_)) {
+                    self.local_start = Some((Instant::now(), command));
+                } else if matches!(command, Command::Pause) {
+                    self.local_start = None;
+                }
+            }
+            Input::ControlLocal(_) => {}
             Input::Jump {
                 device,
                 track,
@@ -335,27 +356,23 @@ impl Worker {
         }
         let previous = std::mem::replace(&mut self.mode, mode);
         if previous == Mode::Publish {
+            self.now = None;
             self.uid_read = None;
             self.uids = Uids::default();
         }
         if previous != Mode::Off {
             self.withdraw().await;
         }
-        self.ack_at = None;
         self.rename_at = None;
-        self.pending = None;
         self.soloist_device = None;
-        if mode == Mode::Off {
-            self.disconnected();
-            self.dealer = None;
-        } else if self.dealer_ready() {
-            self.refresh_roster().await;
-        } else if self.dealer.is_none() {
-            self.dealer = Some(DealerLink {
-                socket: Dealer::start(self.session.api().clone()),
-                retry_at: None,
-            });
-        }
+        self.local_start = None;
+        // A registration belongs to its Dealer connection. Start the new role on a
+        // fresh connection after unregistering the previous device.
+        self.disconnected();
+        self.dealer = (mode != Mode::Off).then(|| DealerLink {
+            socket: Dealer::start(self.session.api().clone()),
+            retry_at: None,
+        });
     }
 
     /// Registers this Dealer connection for playback updates.
@@ -445,6 +462,7 @@ impl Worker {
         let was_ready = self.dealer_ready();
         self.session.set_connection_id("");
         self.playback = ClusterPlayback::default();
+        self.soloist_ready = false;
         self.jam = None;
         self.jam_read = None;
         if was_ready {
@@ -795,18 +813,9 @@ impl Worker {
 
     fn emit_roster(&mut self, cluster: Cluster) {
         let roster = self.roster(&cluster);
-        let owns_soloist = self.soloist_device.as_deref()
-            == Some(cluster.active_device_id.as_str())
-            && self.session.soloist_playback().load(Ordering::Relaxed);
-        if owns_soloist {
-            self.follow_soloist_options(cluster.player_state.as_ref());
-        } else {
-            self.playback.soloist_options = None;
-        }
+        self.soloist_ready = roster.local.is_some();
         self.playback.device = cluster.active_device_id;
-        self.playback.player = cluster
-            .player_state
-            .filter(|_| owns_soloist || roster.elsewhere.is_some());
+        self.playback.player = cluster.player_state.filter(|_| roster.elsewhere.is_some());
         if let Some(remote) = &roster.elsewhere
             && self.playback.player.is_some()
         {
@@ -816,95 +825,6 @@ impl Worker {
             });
         }
         self.out.send(Event::Roster(roster)).ok();
-    }
-
-    /// Sends Sonora's queue to the active Soloist without publishing another device's state.
-    async fn sync_soloist_queue(&mut self) {
-        let device = &self.playback.device;
-        if self.mode != Mode::Observe
-            || self.soloist_device.as_ref() != Some(device)
-            || !self.session.soloist_playback().load(Ordering::Relaxed)
-        {
-            self.playback.soloist_queue = None;
-            return;
-        }
-        let (Some(now), Some(player)) = (&self.now, &self.playback.player) else {
-            return;
-        };
-        if player.track.as_ref().and_then(provided_id)
-            != now.track.as_ref().map(|track| track.id.as_str())
-            || now.track.is_none()
-            || self
-                .playback
-                .soloist_queue
-                .as_ref()
-                .is_some_and(|sent| now.same_queue(sent))
-        {
-            return;
-        }
-        let matches = |local: &[QueuedTrack], remote: &[ProvidedTrack]| {
-            local
-                .iter()
-                .map(|track| (track.id.as_str(), track.queued))
-                .eq(remote
-                    .iter()
-                    .filter_map(|track| Some((provided_id(track)?, is_queued(track)))))
-        };
-        if matches(&now.previous, &player.prev_tracks)
-            && matches(&now.upcoming, &player.next_tracks)
-        {
-            return;
-        }
-        let entries = |tracks: &[QueuedTrack]| {
-            tracks
-                .iter()
-                .map(|track| {
-                    let entry = provided(track, &player.context_uri, track.uid.clone());
-                    serde_json::json!({
-                        "uri": entry.uri,
-                        "uid": entry.uid,
-                        "provider": entry.provider,
-                        "metadata": entry.metadata,
-                    })
-                })
-                .collect::<Vec<_>>()
-        };
-        let command = serde_json::json!({
-            "endpoint": "set_queue",
-            "prev_tracks": entries(&now.previous),
-            "next_tracks": entries(&now.upcoming),
-            "queue_revision": player.queue_revision,
-        });
-        self.playback.soloist_queue = Some(now.clone());
-        if let Err(error) = player_command(&self.session, device, command).await {
-            log::warn!("connect: cannot sync the Soloist queue: {error}");
-        }
-    }
-
-    /// Imports changes after Soloist takes playback without replacing Sonora's starting options.
-    fn follow_soloist_options(&mut self, state: Option<&PlayerState>) {
-        let Some(options) = state.and_then(|state| state.options.as_ref()) else {
-            return;
-        };
-        let shuffle = options.shuffling_context;
-        let repeat = repeat_mode(
-            Some(options.repeating_track),
-            Some(options.repeating_context),
-        )
-        .unwrap_or_default();
-        let Some((old_shuffle, old_repeat)) =
-            self.playback.soloist_options.replace((shuffle, repeat))
-        else {
-            return;
-        };
-        if shuffle != old_shuffle {
-            self.out
-                .send(Event::Command(Command::Shuffle(shuffle)))
-                .ok();
-        }
-        if repeat != old_repeat {
-            self.out.send(Event::Command(Command::Repeat(repeat))).ok();
-        }
     }
 
     /// Jumps to an occurrence in the current device's queue with one player command.
@@ -1021,11 +941,10 @@ impl Worker {
                 .map(|info| known(id, info))
         });
         let active = cluster.active_device_id.as_str();
-        let owned = self.session.soloist_playback().load(Ordering::Relaxed);
         let elsewhere = cluster
             .device
             .get(&cluster.active_device_id)
-            .filter(|_| active != mine && !(is_soloist(active) && owned))
+            .filter(|_| active != mine)
             .map(|info| {
                 let empty = PlayerState::default();
                 let state = cluster.player_state.as_ref().unwrap_or(&empty);
@@ -1436,14 +1355,33 @@ fn play_command(start: &Start, username: &str) -> Option<serde_json::Value> {
         Some(collection) => collection_uri(collection, username),
         None => track.clone()?,
     };
+    let mut options = serde_json::json!({
+        "seek_to": start.position.as_millis() as u64,
+        "initially_paused": !start.playing,
+    });
+    if let Some(uri) = track {
+        let mut skip_to = serde_json::json!({ "track_uri": uri });
+        if let Some(uid) = start
+            .track
+            .as_ref()
+            .map(|track| &track.uid)
+            .filter(|uid| !uid.is_empty())
+        {
+            skip_to["track_uid"] = serde_json::json!(uid);
+        }
+        options["skip_to"] = skip_to;
+    }
+    if let Some(shuffle) = start.shuffle {
+        options["player_options_override"]["shuffling_context"] = shuffle.into();
+    }
+    if let Some(repeat) = start.repeat {
+        options["player_options_override"]["repeating_context"] = (repeat == Repeat::All).into();
+        options["player_options_override"]["repeating_track"] = (repeat == Repeat::One).into();
+    }
     Some(context_play(
         &context,
         &format!("context://{context}"),
-        serde_json::json!({
-            "skip_to": track.map(|uri| serde_json::json!({ "track_uri": uri })),
-            "seek_to": start.position.as_millis() as u64,
-            "initially_paused": !start.playing,
-        }),
+        options,
     ))
 }
 

@@ -6,7 +6,7 @@ use gpui::{AnyElement, App, Context, Div, MouseUpEvent, SharedString, Window, di
 use i18n::t;
 use music::drm::Origin;
 use music::{Codec, Encoding, Offer, Quality, Transcode};
-use state::{CdmState, Sleep, SoloistState};
+use state::{CdmState, Sleep};
 use ui::{ActiveTheme as _, Button, MenuItem, OptionCard, Picker, Scrubber, Switch, Text};
 
 use super::rows::{Announced as _, grid, segmented};
@@ -60,11 +60,6 @@ impl SettingsView {
         if self.drm.read(cx).shown(cx) {
             groups.push(
                 Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
-            );
-        }
-        if self.soloist.read(cx).shown(cx) {
-            groups.push(
-                Group::new("settings-group-soloist", "icons/headphones.svg").rows([Slot::Soloist]),
             );
         }
         groups.extend(self.sessions_groups(cx));
@@ -468,96 +463,6 @@ impl SettingsView {
                         .child(detail),
                 )
             })
-            .into_any_element()
-    }
-}
-
-impl SettingsView {
-    /// The Soloist row, which only appears while the current provider can play through
-    /// Soloist on this computer. Not set up, it offers the setup. Set up, it names the build and
-    /// carries the switch that turns Soloist on and off without undoing the setup. Remove is
-    /// offered whenever the program is on disk, a setup left halfway included. The explanation
-    /// wraps below the row either way, since it is where the listener learns what Soloist
-    /// changes before they turn it on and after.
-    pub(super) fn soloist_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let state = self.soloist.read(cx).state().clone();
-        let removable = self.soloist.read(cx).installed()
-            && matches!(state, SoloistState::Off | SoloistState::Ready(_));
-        let note = match &state {
-            SoloistState::Looking => t!("settings-looking"),
-            SoloistState::Off => t!("settings-soloist-off"),
-            SoloistState::Setup(_) => t!("settings-soloist-setting-up"),
-            SoloistState::Ready(build) => {
-                t!("settings-soloist-ready", version = build.version.as_str())
-            }
-        };
-        let on = self.soloist.read(cx).in_use();
-        let detail = match on {
-            true => t!("settings-soloist-on-detail"),
-            false => t!("settings-soloist-detail"),
-        };
-
-        let action = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_2()
-            .text_color(theme.muted_foreground)
-            .text_size(theme.text(Text::Label))
-            .child(ui::spoken("settings-soloist-note", note))
-            .when(state == SoloistState::Off, |row| {
-                row.child(
-                    Button::new("setup-soloist")
-                        .label(t!("settings-soloist-setup"))
-                        .small()
-                        .outline()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.soloist.update(cx, |soloist, cx| soloist.begin(cx));
-                        })),
-                )
-            })
-            .when(removable, |row| {
-                row.child(
-                    Button::new("remove-soloist")
-                        .label(t!("settings-soloist-remove"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let soloist = this.soloist.clone();
-                            Confirm::ask(
-                                Kind::Soloist,
-                                move |cx| soloist.update(cx, |soloist, cx| soloist.remove(cx)),
-                                cx,
-                            );
-                        })),
-                )
-            })
-            .when(matches!(state, SoloistState::Ready(_)), |row| {
-                row.child(
-                    Switch::new("use-soloist", on)
-                        .name(t!("settings-soloist"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.soloist
-                                .update(cx, |soloist, cx| soloist.set_used(!on, cx));
-                        })),
-                )
-            });
-
-        div()
-            .flex()
-            .flex_col()
-            .child(self.row(t!("settings-soloist"), action.into_any_element()))
-            .child(
-                div()
-                    .id("settings-soloist-detail")
-                    .role(Role::Paragraph)
-                    .aria_label(detail.clone())
-                    .pb_5()
-                    .text_color(theme.muted_foreground)
-                    .text_size(theme.text(Text::Label))
-                    .child(detail),
-            )
             .into_any_element()
     }
 }

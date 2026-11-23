@@ -111,7 +111,7 @@ impl Worker {
             }
             Request::Transfer(device) => self.transfer(&device).await?,
             Request::Control(device, command) => control(&self.client, &device, command).await?,
-            Request::Jump { .. } => {}
+            Request::Jump { .. } | Request::ControlLocal(_) => {}
             Request::Peek(_) => {
                 self.out.send(Event::Invite(None::<Invite>)).ok();
             }

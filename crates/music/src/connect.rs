@@ -297,6 +297,8 @@ pub enum Request {
     Publish(Option<std::sync::Arc<Snapshot>>),
     Transfer(String),
     Control(String, Command),
+    /// Controls the separately registered player on this computer.
+    ControlLocal(Command),
     /// Advances within the remote queue to a specific occurrence.
     Jump {
         device: String,

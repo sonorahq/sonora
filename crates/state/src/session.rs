@@ -210,6 +210,14 @@ impl Session {
         &self.state
     }
 
+    /// The signed-in account that can use a matching Soloist pairing.
+    pub(crate) fn soloist_account(&self) -> Option<&str> {
+        match &self.state {
+            SessionState::SignedIn(profile) if self.offers_soloist() => Some(&profile.id),
+            _ => None,
+        }
+    }
+
     pub fn client(&self) -> Option<Arc<dyn MusicApi>> {
         self.client.clone()
     }

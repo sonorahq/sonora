@@ -138,11 +138,18 @@ pub fn image_width(image: &Image) -> i32 {
 }
 
 pub fn blend(attributes: &ListAttributes) -> bool {
-    attributes.format().to_ascii_lowercase().contains(BLEND)
-        || attributes
+    blend_format(
+        attributes.format(),
+        attributes
             .format_attributes
             .iter()
-            .any(|attribute| attribute.key().to_ascii_lowercase().starts_with(BLEND))
+            .map(|attribute| attribute.key()),
+    )
+}
+
+fn blend_format<'a>(format: &str, mut keys: impl Iterator<Item = &'a str>) -> bool {
+    format.to_ascii_lowercase().contains(BLEND)
+        || keys.any(|key| key.to_ascii_lowercase().starts_with(BLEND))
 }
 
 pub fn fetchable(url: &str) -> bool {
@@ -150,24 +157,82 @@ pub fn fetchable(url: &str) -> bool {
 }
 
 fn playlist_cover(attributes: &ListAttributes) -> Option<String> {
-    for target in BY_SIZE {
-        if let Some(size) = attributes
+    cover_from(
+        attributes
             .picture_size
             .iter()
-            .find(|size| size.target_name() == target)
-            .filter(|size| fetchable(size.url()))
+            .map(|size| (size.target_name(), size.url())),
+        attributes.picture(),
+    )
+}
+
+fn cover_from<'a>(
+    mut sizes: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    picture: &[u8],
+) -> Option<String> {
+    for target in BY_SIZE {
+        if let Some((_, url)) = sizes
+            .clone()
+            .find(|(name, _)| *name == target)
+            .filter(|(_, url)| fetchable(url))
         {
-            return Some(size.url().to_owned());
+            return Some(url.to_owned());
         }
     }
 
-    attributes
-        .picture_size
-        .first()
-        .map(|size| size.url())
+    sizes
+        .next()
+        .map(|(_, url)| url)
         .filter(|url| fetchable(url))
         .map(str::to_owned)
-        .or_else(|| image_url(attributes.picture()))
+        .or_else(|| image_url(picture))
+}
+
+/// Maps a GetLists summary with the same cover preference as a playlist snapshot.
+pub(super) fn playlist_summary(
+    id: String,
+    attrs: spotifyapis::proto::list_read::Attributes,
+    username: &str,
+) -> models::Playlist {
+    let cover = cover_from(
+        attrs
+            .picture_sizes
+            .iter()
+            .flat_map(|sizes| &sizes.picture_size)
+            .map(|size| (size.target_name.as_str(), size.url.as_str())),
+        &attrs.picture_file_id,
+    );
+    models::Playlist {
+        id,
+        name: playlist_label(&attrs.name),
+        owner: playlist_label(&attrs.owner_username),
+        owned: attrs.owner_username == username,
+        owner_id: attrs.owner_username,
+        collaborative: attrs
+            .capabilities
+            .is_some_and(|value| value.can_edit_items()),
+        blend: blend_format(
+            attrs.format.as_deref().unwrap_or_default(),
+            attrs
+                .format_attributes
+                .iter()
+                .flat_map(|attrs| attrs.entries.keys())
+                .map(String::as_str),
+        ),
+        cover,
+        track_count: u32::try_from(
+            attrs
+                .approximate_length
+                .unwrap_or_default()
+                .clamp(0, i64::from(u32::MAX)),
+        )
+        .unwrap_or_default(),
+        modified_at: attrs
+            .updated_at
+            .filter(|stamp| stamp.seconds > 0)
+            .map(|stamp| stamp.seconds),
+        ..Default::default()
+    }
 }
 
 pub fn playlist_from(id: &str, content: &RootList, username: &str) -> models::Playlist {
@@ -219,17 +284,10 @@ fn playlist_row(
     stamp: i64,
     permissions: Option<&spotifyapis::proto::playlist::Capabilities>,
 ) -> models::Playlist {
-    let label = |name: &str| {
-        if name.is_empty() {
-            UNKNOWN.to_owned()
-        } else {
-            name.to_owned()
-        }
-    };
     models::Playlist {
         id: id.to_owned(),
-        name: label(attributes.map(ListAttributes::name).unwrap_or_default()),
-        owner: label(owner),
+        name: playlist_label(attributes.map(ListAttributes::name).unwrap_or_default()),
+        owner: playlist_label(owner),
         owner_id: owner.to_owned(),
         collaborative: attributes.is_some_and(ListAttributes::collaborative)
             || permissions.is_some_and(|permissions| permissions.can_edit_items()),
@@ -238,6 +296,14 @@ fn playlist_row(
         track_count: length.max(0) as u32,
         modified_at: seconds(stamp),
         ..Default::default()
+    }
+}
+
+fn playlist_label(name: &str) -> String {
+    if name.is_empty() {
+        UNKNOWN.to_owned()
+    } else {
+        name.to_owned()
     }
 }
 

@@ -27,12 +27,16 @@ impl SpotifyClient {
         let connect = Arc::new(crate::spotify::connect::open(session.clone()));
         Self { session, connect }
     }
+
+    pub(super) fn connect_handle(&self) -> Arc<Connect> {
+        self.connect.clone()
+    }
 }
 
 #[async_trait]
 impl MusicApi for SpotifyClient {
     fn connect(&self) -> Option<Arc<Connect>> {
-        Some(self.connect.clone())
+        Some(self.connect_handle())
     }
 
     fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
@@ -278,7 +282,16 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
-        super::feeds::page(&self.session, genre_id).await
+        super::feeds::page(&self.session, genre_id, None, None).await
+    }
+
+    async fn genre_with_preview(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: tokio::sync::mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail> {
+        super::feeds::page(&self.session, id, title, Some(preview)).await
     }
 
     async fn create_playlist(&self, name: &str) -> Result<String> {

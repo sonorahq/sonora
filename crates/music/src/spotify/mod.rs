@@ -13,6 +13,7 @@ mod playlists;
 mod profiles;
 mod search;
 mod session;
+pub mod soloist;
 mod wire;
 
 use std::sync::Arc;
@@ -57,7 +58,7 @@ impl SpotifyProvider {
     async fn session(&self, session: session::Session) -> Result<ProviderSession> {
         let client = SpotifyClient::new(session.clone());
         let profile = client.profile().await?;
-        let playback = Arc::new(Factory::new(session));
+        let playback = Arc::new(Factory::new(session, client.connect_handle()));
         Ok(ProviderSession {
             profile,
             api: Arc::new(client),
@@ -140,12 +141,8 @@ impl MusicProvider for SpotifyProvider {
         self.session(session).await
     }
 
-    /// Forgets the account and the Soloist pairing with it, since that pairing is this
-    /// account's sign-in too.
+    /// Clears Sonora's Spotify login. Soloist keeps its separately paired login.
     fn sign_out(&self) {
         self.account.forget();
-        if let Err(error) = crate::soloist::forget() {
-            log::warn!("spotify: cannot remove the soloist setup: {error:#}");
-        }
     }
 }
