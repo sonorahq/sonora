@@ -172,7 +172,8 @@ impl Render for SidebarRight {
                 cx.notify();
             }))
             .when(!theme.transparent, |this| this.bg(theme.background))
-            .border_color(theme.border)
+            // Its edge is the page's, drawn by `sheet_edge` so it can round into the title bar.
+            .border_color(gpui::transparent_black())
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),
                 _ => self

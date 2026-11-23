@@ -927,7 +927,9 @@ impl Aside {
             .justify_between()
             .gap_2()
             .h(snapped(theme.metrics.header, window))
-            .px_2()
+            // The title starts where the section labels under it do.
+            .pl_4()
+            .pr_2()
             .when(self.titled, |this| {
                 this.border_b_1().border_color(theme.border).child(eyebrow(
                     match self.tab {

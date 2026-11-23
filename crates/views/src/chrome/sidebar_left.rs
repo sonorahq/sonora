@@ -842,7 +842,12 @@ impl Render for SidebarLeft {
             }))
             .when(!self.is_open(), |this| this.hidden())
             .when(!theme.transparent, |this| this.bg(sidebar_bg))
-            .border_color(sidebar_border)
+            // Beside the page its edge is the page's, drawn by `sheet_edge` so it can round
+            // into the title bar. An overlaid sidebar floats over the page and keeps its own.
+            .border_color(match overlaid {
+                true => sidebar_border,
+                false => gpui::transparent_black(),
+            })
             // A sidebar dragged shut keeps only its edge until the drag lets go.
             .when(closing, |this| this.border_r_0())
             .when(overlaid, |this| {
@@ -857,6 +862,9 @@ impl Render for SidebarLeft {
                     .child(
                         Scroller::new("sidebar-left-rows", &self.scrollbar)
                             .bottom_inset(super::Chrome::bottom(cx))
+                            // The rows start right under the title bar, so they fade out there
+                            // as they scroll away instead of being cut off at its edge.
+                            .fade_scrolled(theme.metrics.inset)
                             .size_full()
                             .child(
                                 div()
@@ -866,7 +874,9 @@ impl Render for SidebarLeft {
                                     .flex_col()
                                     .gap_1()
                                     .w_full()
-                                    .py_3()
+                                    // The first row's fill starts level with the page's top
+                                    // edge beside it.
+                                    .pb_3()
                                     .map(|column| match rail {
                                         true => column.px_2(),
                                         false => column.px_3(),

@@ -184,12 +184,20 @@ pub(crate) fn bleed<S: TableSource>(table: Table<S>, framed: bool, cx: &App) -> 
     let theme = cx.theme();
     div()
         .when(framed, |this| this.px(theme.metrics.inset))
-        .child(table.when(framed, |table| {
-            table
+        .child(match framed {
+            true => table
                 .rounded(theme.radius)
                 .border_1()
-                .border_color(theme.border)
-        }))
+                .border_color(theme.border),
+            // Unframed, the head sticks to the top of the page, so it rounds with the page.
+            false => table.stuck_corners(crate::chrome::inner_corners(cx)),
+        })
+}
+
+/// How far below the top of a page holding a full-page table its scrollbar starts: under the
+/// table's head, which sticks to the top of the page as it scrolls.
+pub(crate) fn below_head(window: &Window, cx: &App) -> Pixels {
+    ui::snapped(cx.theme().metrics.header, window).max(Chrome::sheet_corners(cx).top_right)
 }
 
 /// How far below the top of a page holding a full-page table its scrollbar starts, which is

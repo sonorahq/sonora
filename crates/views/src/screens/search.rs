@@ -1081,6 +1081,7 @@ impl SearchView {
                 Scroller::new("search-browse", &self.browsing)
                     .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .fade_top(FADE)
                     .px(gutter)
                     .pb(pad)
@@ -1227,6 +1228,7 @@ impl SearchView {
             .child(
                 Scroller::new(id, bar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .fade_top(FADE)
                     .px(gutter)
                     .pb(theme.metrics.inset)

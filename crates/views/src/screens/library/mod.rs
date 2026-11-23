@@ -925,6 +925,7 @@ impl LibraryView {
 
         Scroller::new("library-cards", &self.card_scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
             .child(
@@ -1011,6 +1012,7 @@ impl LibraryView {
 
         Scroller::new("library-cards", &self.card_scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
             .child(

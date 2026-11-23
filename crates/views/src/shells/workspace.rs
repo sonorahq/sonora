@@ -12,7 +12,7 @@ use ui::{
 };
 
 use crate::chrome::{
-    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions,
+    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions, sheet_edge,
 };
 use crate::shared::menus::CardMenu;
 use crate::shells::Shell;
@@ -143,7 +143,8 @@ impl Shell for Workspace {
             navigation: true,
             sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            border: true,
+            // The page draws this edge itself, so it can round into the sidebars.
+            border: false,
             content,
             transparent: false,
         }
@@ -341,6 +342,7 @@ impl Render for Workspace {
                             .child(self.swipe_cue.clone()),
                     )
                     .child(self.sidebar_right.clone())
+                    .child(sheet_edge(cx))
                     .when(overlay, |this| this.child(self.sidebar.clone())),
             )
             .child(
