@@ -2,9 +2,13 @@
 //! the file as the CDN sent it, still encrypted, with its key and metadata beside it. The vault
 //! seals all of that again under the vault's master key, so a download plays outside Sonora
 //! only for someone who holds that key, and for them it is as easy to play as any file.
+//!
+//! A track streaming from the CDN is decrypted as it lands, and a seek past what has arrived
+//! starts a second download near the target through [`ranged`].
 
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use super::access_point::KeyDenied;
 use crate::spotify::proto::audio::StorageResolveResponse;
@@ -20,13 +24,14 @@ use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use http::HeaderMap;
 use prost::Message as _;
-use reqwest::{Response, StatusCode, Url, header};
+use reqwest::Url;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
 
 use crate::Quality;
 use crate::engine::{self, Fetch, Loudness};
-use crate::stream::{Plain, Source, Stream};
+use crate::ranged::{self, Address, Reach, Resuming, Span};
+use crate::stream::{Body, Source, Spool, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, Fraction, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
 
@@ -36,11 +41,16 @@ const MEDIA_COUNTER: [u8; 16] = [
     0x72, 0xe0, 0x67, 0xfb, 0xdd, 0xcb, 0xcf, 0x77, 0xeb, 0xe8, 0xbc, 0x64, 0x3f, 0x63, 0x0d, 0x93,
 ];
 
-const FIRST_RANGE: u64 = 64 * 1024;
+/// The most one request to the CDN asks for.
 const MAX_RANGE: u64 = 2 * 1024 * 1024;
 const MAX_DOWNLOAD: u64 = 256 * 1024 * 1024;
 
 type Cipher = ctr::Ctr128BE<aes::Aes128>;
+
+/// The client CDN downloads go through, which gives up on a stalled request sooner than the api
+/// client.
+static MEDIA: LazyLock<reqwest::Client> =
+    LazyLock::new(|| ranged::media("spotify", reqwest::Client::new));
 
 /// The existing vault format for an encrypted Spotify file and its playback facts.
 #[derive(Serialize, Deserialize)]
@@ -83,9 +93,31 @@ pub(super) struct Loaded {
     duration: Option<Duration>,
     loudness: Option<Loudness>,
     encoding: Option<Encoding>,
-    arriving: Option<Stream<Plain>>,
-    key: Option<[u8; 16]>,
+    arriving: Option<Stream<Unlocked>>,
+    /// What a seek past the download fetches the file through. `None` for a track from the
+    /// vault, which is whole.
+    reach: Option<Arc<Reach<Unlocked>>>,
     format: i32,
+}
+
+/// Decrypts a file from the CDN as it lands, so the spool holds it in the clear, Spotify's own
+/// header included. The keystream counts from the file's first byte, so a body for a download
+/// that starts part way has to know where.
+pub(super) struct Unlocked {
+    cipher: Cipher,
+}
+
+/// Where a file sits on the CDN, and how to ask for a fresh url once that one expires.
+#[derive(Clone)]
+struct Located {
+    url: String,
+    renewal: Arc<dyn ranged::Renew>,
+}
+
+/// What a download asks Spotify for a fresh CDN url of the file it is fetching with.
+struct Renewal {
+    session: Session,
+    file_id: String,
 }
 
 /// Opens the saved media with its stored key and presents only the audio to the decoder.
@@ -154,14 +186,19 @@ impl Fetch for Audio {
             && let Some(kept) = shelf.find(id, variant).await
             && let Ok(facts) = serde_json::from_slice::<Facts>(&kept.facts)
         {
-            return Loaded::streaming(&facts, kept.source, Some(kept.length)).await;
+            return Loaded::streaming(&facts, kept.source, Some(kept.length), None).await;
         }
         let mut media = resolve_media(session, id, self.quality).await?;
-        let response = open_file(session, &media.facts.file_id).await?;
+        let (response, located) = open_file(session, &media.facts.file_id).await?;
         media.fetch_key(session).await?;
         crate::soloist::granted();
         let facts = media.facts;
-        let total = Some(response.length());
+        let total = response.total();
+        let reach = facts.key.map(|key| {
+            Reach::new("spotify", id, move |start| {
+                (located.address(), Unlocked::at(&key, start))
+            })
+        });
         let source = match &self.shelf {
             Some(shelf) => {
                 let facts = serde_json::to_vec(&facts)?;
@@ -169,7 +206,7 @@ impl Fetch for Audio {
             }
             None => Recording::through(response),
         };
-        Loaded::streaming(&facts, source, total).await
+        Loaded::streaming(&facts, source, total, reach).await
     }
 
     async fn downloaded(&self, loaded: &Loaded) {
@@ -212,7 +249,7 @@ impl Fetch for Audio {
     fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
         let mut media = match &loaded.arriving {
             Some(stream) => {
-                Media::new(stream.reader(), stream.total(), loaded.key, loaded.format).ok()?
+                Media::new(stream.reader(), stream.total(), None, loaded.format).ok()?
             }
             None => read_saved(self.shelf.as_ref(), id).ok()?.1,
         };
@@ -241,15 +278,55 @@ impl Fetch for Audio {
         }
         Some(decoder)
     }
+
+    /// Opens a track still arriving part way at `at`, from a download started near `at` when
+    /// the main one is far from it, so a seek past the download waits for one short stretch.
+    /// Otherwise the decoder waits for the main download to get there, as
+    /// [`open`](Fetch::open) does.
+    fn open_near(
+        &self,
+        id: &str,
+        loaded: &Loaded,
+        at: Duration,
+    ) -> Option<(Self::Source, Duration)> {
+        let entered = loaded
+            .arriving
+            .as_ref()
+            .zip(loaded.reach.as_ref())
+            .zip(loaded.duration)
+            .filter(|((stream, _), _)| ranged::ahead(stream, at))
+            .and_then(|((stream, reach), length)| {
+                let span = Span::measure(stream, length, ogg_head)?;
+                reach.enter(stream, span, at, |reader| {
+                    let mut media = Media::new(reader, None, None, loaded.format).ok()?;
+                    media.seek(SeekFrom::Start(0)).ok()?;
+                    ranged::forward("spotify", id, BufReader::new(media))
+                })
+            });
+        match entered {
+            Some(decoder) => Some((decoder, at)),
+            None => self.open(id, loaded, at).map(|source| (source, at)),
+        }
+    }
 }
 
 impl Loaded {
-    /// Primes either the cached or CDN stream before opening a decoder.
-    async fn streaming(facts: &Facts, source: impl Source, total: Option<u64>) -> Result<Self> {
-        let stream = Stream::pulling(source, total, Plain).primed().await?;
-        let mut media = Media::new(stream.reader(), total, facts.key, facts.format)?;
+    /// Primes either the cached or CDN stream before opening a decoder, decrypting it on the
+    /// way into the spool.
+    async fn streaming(
+        facts: &Facts,
+        source: impl Source,
+        total: Option<u64>,
+        reach: Option<Reach<Unlocked>>,
+    ) -> Result<Self> {
+        let key = facts.key.context("Spotify gave no key for the track")?;
+        let stream = Stream::pulling(source, total, Unlocked::at(&key, 0))
+            .primed()
+            .await?;
+        let mut media = Media::new(stream.reader(), total, None, facts.format)?;
         let mut loaded = Self::from_facts(facts, media.loudness());
         loaded.arriving = Some(stream);
+        loaded.reach = reach.map(Arc::new);
         Ok(loaded)
     }
 
@@ -272,7 +349,7 @@ impl Loaded {
             loudness,
             encoding,
             arriving: None,
-            key: facts.key,
+            reach: None,
             format: facts.format,
         }
     }
@@ -390,8 +467,10 @@ pub(super) async fn download(
     {
         return Err(error);
     }
-    let mut response = open_file(session, &media.facts.file_id).await?;
-    let total = response.length();
+    let (mut response, _) = open_file(session, &media.facts.file_id).await?;
+    let total = response
+        .total()
+        .context("Spotify CDN did not say how long the file is")?;
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         bytes.extend_from_slice(&chunk);
@@ -472,13 +551,41 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
     })
 }
 
-/// Resolves a signed CDN URL and opens its initial byte range.
-async fn open_file(session: &Session, file_id: &str) -> Result<Cdn> {
+/// Resolves the file's signed CDN urls and opens it at the first that answers, and says where.
+async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Located)> {
+    let renewal: Arc<dyn ranged::Renew> = Arc::new(Renewal {
+        session: session.clone(),
+        file_id: file_id.to_owned(),
+    });
+    for url in cdn_urls(session, file_id).await? {
+        let located = Located {
+            url,
+            renewal: renewal.clone(),
+        };
+        let Ok(file) = Resuming::open(located.address()).await else {
+            continue;
+        };
+        anyhow::ensure!(
+            file.total().is_some_and(|total| total <= MAX_DOWNLOAD),
+            "Spotify track is too large"
+        );
+        return Ok((file, located));
+    }
+    anyhow::bail!("cannot open Spotify audio on its CDN")
+}
+
+/// The https urls Spotify's CDN serves a file at, in the order Spotify gave them.
+async fn cdn_urls(session: &Session, file_id: &str) -> Result<Vec<String>> {
     let endpoint = format!("/storage-resolve/files/audio/interactive/{file_id}");
     let resolved: StorageResolveResponse =
         transport::get(session, &endpoint, HeaderMap::new()).await?;
     anyhow::ensure!(resolved.result == 0, "Spotify did not grant a CDN download");
-    Cdn::open(resolved.cdnurl).await
+    let secure = |address: &String| {
+        Url::parse(address).is_ok_and(|url| {
+            url.scheme() == "https" && url.username().is_empty() && url.password().is_none()
+        })
+    };
+    Ok(resolved.cdnurl.into_iter().filter(secure).collect())
 }
 
 /// Batches track metadata for the requested track and, when needed, its market alternatives.
@@ -514,117 +621,47 @@ fn vorbis(track: &TrackMessage, quality: Quality) -> Option<(i32, [u8; 20])> {
     })
 }
 
-/// Delivers verified CDN ranges in file order to the shared playback spool and download vault.
-struct Cdn {
-    url: Url,
-    response: Response,
-    length: u64,
-    at: u64,
-    range_start: u64,
-    range_end: u64,
-    range_started: Instant,
-}
-
-impl Cdn {
-    async fn open(addresses: Vec<String>) -> Result<Self> {
-        for address in addresses {
-            let Ok(url) = Url::parse(&address) else {
-                continue;
-            };
-            if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
-                continue;
-            }
-            let range_started = Instant::now();
-            if let Ok((response, range_end, length)) = cdn_range(&url, 0, FIRST_RANGE).await {
-                anyhow::ensure!(length <= MAX_DOWNLOAD, "Spotify track is too large");
-                return Ok(Self {
-                    url,
-                    response,
-                    length,
-                    at: 0,
-                    range_start: 0,
-                    range_end,
-                    range_started,
-                });
-            }
-        }
-        anyhow::bail!("cannot open Spotify audio on its CDN")
-    }
-
-    fn length(&self) -> u64 {
-        self.length
+impl Unlocked {
+    /// A body for a download that starts at byte `start` of the file.
+    fn at(key: &[u8; 16], start: u64) -> Self {
+        let mut cipher = Cipher::new(&(*key).into(), &MEDIA_COUNTER.into());
+        cipher.seek(start);
+        Self { cipher }
     }
 }
 
-impl Source for Cdn {
-    async fn chunk(&mut self) -> Result<Option<Bytes>> {
-        loop {
-            if let Some(bytes) = self
-                .response
-                .chunk()
-                .await
-                .map_err(reqwest::Error::without_url)?
-            {
-                anyhow::ensure!(
-                    bytes.len() as u64 <= self.range_end - self.at,
-                    "Spotify CDN sent bytes past the requested range"
-                );
-                self.at += bytes.len() as u64;
-                return Ok(Some(bytes));
-            }
-            anyhow::ensure!(
-                self.at == self.range_end,
-                "Spotify CDN range was incomplete"
-            );
-            if self.at == self.length {
-                return Ok(None);
-            }
-            // Aim for about one second of measured transfer, with a bounded request size.
-            let elapsed = self.range_started.elapsed().as_millis().max(1);
-            let rate = u128::from(self.range_end - self.range_start) * 1000 / elapsed;
-            let length = rate.clamp(u128::from(FIRST_RANGE), u128::from(MAX_RANGE)) as u64;
-            self.range_started = Instant::now();
-            let (response, end, total) =
-                cdn_range(&self.url, self.at, length.min(self.length - self.at)).await?;
-            anyhow::ensure!(total == self.length, "Spotify CDN file length changed");
-            self.response = response;
-            self.range_start = self.at;
-            self.range_end = end;
-        }
+impl Body for Unlocked {
+    fn feed(&mut self, chunk: &[u8], out: &mut Vec<u8>) {
+        let at = out.len();
+        out.extend_from_slice(chunk);
+        self.cipher.apply_keystream(&mut out[at..]);
+    }
+
+    fn confidential(&self) -> bool {
+        true
     }
 }
 
-/// Checks the returned range and returns its exclusive end and the full file length.
-async fn cdn_range(url: &Url, start: u64, length: u64) -> Result<(Response, u64, u64)> {
-    let last = start + length - 1;
-    let response = transport::request(|client| {
-        client
-            .get(url.clone())
-            .header(header::RANGE, format!("bytes={start}-{last}"))
-    })
-    .await
-    .map_err(reqwest::Error::without_url)?;
-    anyhow::ensure!(
-        response.status() == StatusCode::PARTIAL_CONTENT,
-        "Spotify CDN rejected an audio range ({})",
-        response.status()
-    );
-    let range = response
-        .headers()
-        .get(header::CONTENT_RANGE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("bytes "))
-        .and_then(|value| value.split_once('/'))
-        .context("Spotify CDN returned no valid Content-Range")?;
-    let (first, end) = range
-        .0
-        .split_once('-')
-        .context("invalid Spotify CDN range")?;
-    let total: u64 = range.1.parse().context("invalid Spotify CDN file length")?;
-    let end: u64 = end.parse().context("invalid Spotify CDN range end")?;
-    anyhow::ensure!(
-        first.parse::<u64>()? == start && total > start && end == last.min(total - 1),
-        "Spotify CDN returned the wrong audio range"
-    );
-    Ok((response, end + 1, total))
+impl Located {
+    /// How every request for the file is made: in ranges of at most [`MAX_RANGE`], with a fresh
+    /// url asked for once the CDN refuses this one.
+    fn address(&self) -> Address {
+        Address::new("spotify", MEDIA.clone(), self.url.clone())
+            .capped(MAX_RANGE)
+            .renewed(self.renewal.clone())
+    }
+}
+
+#[async_trait]
+impl ranged::Renew for Renewal {
+    async fn url(&self) -> Result<(String, HeaderMap)> {
+        let urls = cdn_urls(&self.session, &self.file_id).await?;
+        let url = urls.into_iter().next().context("Spotify gave no CDN url")?;
+        Ok((url, HeaderMap::new()))
+    }
+}
+
+/// Where the Ogg header pages of a Spotify file end, past Spotify's own header in front of them.
+fn ogg_head(spool: &Spool) -> Option<Option<usize>> {
+    ranged::ogg::head_after(spool, VORBIS_HEADER_LEN as usize)
 }
