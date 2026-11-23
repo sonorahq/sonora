@@ -133,7 +133,8 @@ impl ranged::Renew for Locator {
     /// A fresh url, which reaches the main download too since both share the locator, and the
     /// user agent of the client it came from.
     async fn url(&self) -> Result<(String, HeaderMap)> {
-        Ok((self.renew().await?, headers(self)))
+        self.renew().await?;
+        Ok(request(self))
     }
 }
 
@@ -340,11 +341,11 @@ async fn attempt_open(
     let reach = segments.is_some().then(|| {
         let media = media.clone();
         let reach = Reach::new("youtube", id, move |_| {
-            let address = Address::new("youtube", media.clone(), locator.url());
-            let address = address
+            let (url, headers) = request(&locator);
+            let address = Address::new("youtube", media.clone(), url)
                 .capped(ytmusic::stream::CHUNK)
                 .renewed(locator.clone());
-            (address.headers(headers(&locator)), Plain)
+            (address.headers(headers), Plain)
         });
         Arc::new(reach.nearby(NEARBY))
     });
@@ -370,13 +371,15 @@ fn front(stream: &Stream) -> (Option<Segments>, Option<Trim>) {
         .unwrap_or_default()
 }
 
-/// The headers ytmusic sends with every request for the file, as reqwest takes them.
-fn headers(locator: &Locator) -> HeaderMap {
-    let headers = locator.headers().into_iter().filter_map(|(name, value)| {
+/// The url of the file and the headers ytmusic sends with every request for it, as reqwest
+/// takes them.
+fn request(locator: &Locator) -> (String, HeaderMap) {
+    let (url, headers) = locator.request();
+    let headers = headers.into_iter().filter_map(|(name, value)| {
         let name = HeaderName::from_bytes(name.as_bytes()).ok()?;
         Some((name, HeaderValue::from_str(value).ok()?))
     });
-    headers.collect()
+    (url, headers.collect())
 }
 
 /// What tells two kept copies of one track apart: the bitrate ceiling it was fetched under.
