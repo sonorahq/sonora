@@ -103,10 +103,11 @@ impl SettingsView {
                 music::output::system_audio_settings_uri(device.map(|device| device.id.as_str()))
             }
         };
+        let khz = |rate: u32| t!("unit-khz", value = f64::from(rate) / 1_000.);
         let rate = current
-            .map(|rate| t!("settings-sample-rate-value", khz = f64::from(rate) / 1_000.))
+            .map(khz)
             .unwrap_or_else(|| t!("settings-output-idle"));
-        let rate = ui::spoken("sample-rate-value", rate);
+        let rate = ui::spoken_steady("sample-rate-value", rate, rates.iter().copied().map(khz));
         let stepper = current
             .filter(|_| rates.len() > 1 && !following)
             .map(|current| {
@@ -188,7 +189,13 @@ impl SettingsView {
         let buffer = current
             .map(|frames| SharedString::from(frames.to_string()))
             .unwrap_or_else(|| t!("settings-output-idle"));
-        let buffer = ui::spoken("buffer-value", buffer);
+        let buffer = ui::spoken_steady(
+            "buffer-value",
+            buffer,
+            buffers
+                .iter()
+                .map(|frames| SharedString::from(frames.to_string())),
+        );
         let stepper = current.filter(|_| buffers.len() > 1).map(|current| {
             output_stepper(
                 "buffer",

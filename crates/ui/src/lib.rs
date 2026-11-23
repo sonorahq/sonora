@@ -1,5 +1,6 @@
 mod arrow_ring;
 mod artwork;
+mod badge;
 mod button;
 mod card;
 mod checkbox;
@@ -7,7 +8,6 @@ mod controls;
 mod deck;
 mod drag;
 mod dropdown;
-mod explicit;
 mod filters;
 mod flight;
 mod form;
@@ -55,6 +55,7 @@ mod switch;
 mod table;
 mod tabs;
 mod theme;
+mod themed;
 mod time;
 mod toast;
 mod tooltip;
@@ -70,6 +71,7 @@ pub use arrow_ring::ArrowRing;
 pub use artwork::{
     Artwork, Avatar, PREFETCH_REACH, Prefetch, artwork_usage, cover_palette, prefetch, prefetching,
 };
+pub use badge::Badge;
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
 pub use card::Card;
@@ -80,7 +82,6 @@ pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
-pub use explicit::Badge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };
@@ -102,7 +103,7 @@ pub use input::{
 pub use kbd::Kbd;
 pub use label::{
     Tails, eyebrow, eyebrow_with, faint, heading, spoken, spoken_eyebrow, spoken_heading,
-    spoken_vacant, vacant,
+    spoken_steady, spoken_vacant, vacant,
 };
 pub use lattice::Lattice;
 pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
@@ -158,6 +159,7 @@ pub use theme::{
     MAX_LYRICS_SCALE, MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, Theme, ThemeKind,
     ThemeOverrides, WindowBlur, backdrop,
 };
+pub use themed::Themed;
 pub use time::{clock, runtime, tabular};
 pub use toast::Toast;
 pub use tooltip::{Perch, Tipped, Tooltip};

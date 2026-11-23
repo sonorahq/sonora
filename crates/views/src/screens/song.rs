@@ -215,7 +215,7 @@ impl SongView {
             (
                 "song-fact-popularity",
                 t!("song-popularity"),
-                t!("song-popularity-value", value = track.popularity),
+                t!("unit-percent", value = track.popularity),
             ),
         ];
         InfoCard::new(t!("song-about"))

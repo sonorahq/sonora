@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
-use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::menus::{ItemMenu, liked_menu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
@@ -727,7 +726,7 @@ impl LibraryView {
             true => (
                 t!("library-liked-songs"),
                 "icons/heart-filled.svg",
-                t!("detail-playlist"),
+                t!("kind-playlist"),
             ),
             false => (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-library")),
         };
@@ -822,25 +821,15 @@ impl LibraryView {
         if albums.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.albums.clone();
-        let count = albums.len();
-        let starred = Confirm::unstarring(&albums[0].id, cx);
-        let apply = move |cx: &mut App| {
-            library.update(cx, |library, cx| {
-                for album in albums {
-                    library.toggle_album(album, cx);
-                }
-            });
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Confirm::ask(Kind::Albums(count), apply, cx),
-        }
+        self.library.update(cx, |library, cx| {
+            for album in albums {
+                library.toggle_album(album, cx);
+            }
+        });
+        self.albums.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn drop_artists(&mut self, cx: &mut Context<Self>) {
@@ -862,25 +851,15 @@ impl LibraryView {
         if artists.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.artists.clone();
-        let count = artists.len();
-        let starred = Confirm::unstarring(&artists[0].id, cx);
-        let apply = move |cx: &mut App| {
-            library.update(cx, |library, cx| {
-                for artist in artists {
-                    library.toggle_artist(artist, cx);
-                }
-            });
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Confirm::ask(Kind::Artists(count), apply, cx),
-        }
+        self.library.update(cx, |library, cx| {
+            for artist in artists {
+                library.toggle_artist(artist, cx);
+            }
+        });
+        self.artists.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn drop_playlists(&mut self, cx: &mut Context<Self>) {
@@ -897,21 +876,13 @@ impl LibraryView {
         if ids.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.playlists.clone();
-        Confirm::ask(
-            Kind::Playlists(ids.len()),
-            move |cx| {
-                library.update(cx, |library, cx| {
-                    library.remove_playlists_from_library(ids, cx)
-                });
-                table.update(cx, |table, cx| {
-                    table.delegate_mut().clear_selection();
-                    cx.notify();
-                });
-            },
-            cx,
-        );
+        self.library.update(cx, |library, cx| {
+            library.remove_playlists_from_library(ids, cx)
+        });
+        self.playlists.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn resize(&mut self, window: &Window, cx: &mut Context<Self>) {

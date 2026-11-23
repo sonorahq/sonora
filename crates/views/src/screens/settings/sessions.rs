@@ -67,12 +67,12 @@ impl SettingsView {
             .flex_none()
             .secondary()
             .small()
-            .label(t!("settings-sessions-save"))
+            .label(t!("common-save"))
             .disabled(saving)
             .on_click(cx.listener(|this, _, _, cx| this.save_sessions_server(cx)));
 
         self.yielding_row(
-            t!("settings-sessions-server"),
+            t!("common-server-address"),
             div()
                 .flex_1()
                 .min_w_0()

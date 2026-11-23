@@ -96,6 +96,11 @@ const SONGS_QUERY: &[(&str, &str)] = &[
 const CATALOG_QUERY: &[(&str, &str)] = &[("include", "catalog")];
 const ALBUMS_QUERY: &[(&str, &str)] = &[("include", "catalog,artists"), ALBUM_ARTISTS];
 
+/// How long opening a connection may take, shared out across every address the host resolves
+/// to. Without it an unreachable Apple edge holds a request for the OS connect timeout, 21 s
+/// per address on Windows, before the next address is tried.
+const CONNECT: Duration = Duration::from_secs(8);
+
 /// Asks for the artists behind every album in an answer, nested ones included. Apple otherwise
 /// names them in one string with no id, and a card cannot link to an artist without one. Only
 /// the typed form reaches albums inside a view or under a library row.
@@ -263,6 +268,7 @@ impl AppleClient {
     pub async fn connect(user_token: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(AGENT)
+            .connect_timeout(CONNECT)
             .build()
             .context("cannot build the apple http client")?;
         let bearer = auth::bearer(&http).await?;

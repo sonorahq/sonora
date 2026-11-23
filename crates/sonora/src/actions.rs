@@ -192,9 +192,9 @@ fn menus() -> Vec<Menu> {
             name: t!("app-edit"),
             disabled: false,
             items: vec![
-                MenuItem::os_action(t!("app-cut"), Cut, OsAction::Cut),
-                MenuItem::os_action(t!("app-copy"), Copy, OsAction::Copy),
-                MenuItem::os_action(t!("app-paste"), Paste, OsAction::Paste),
+                MenuItem::os_action(t!("common-cut"), Cut, OsAction::Cut),
+                MenuItem::os_action(t!("common-copy"), Copy, OsAction::Copy),
+                MenuItem::os_action(t!("common-paste"), Paste, OsAction::Paste),
                 MenuItem::os_action(t!("app-select-all"), SelectAll, OsAction::SelectAll),
             ],
         });

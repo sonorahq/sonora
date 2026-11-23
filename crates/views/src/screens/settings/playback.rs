@@ -157,14 +157,11 @@ impl SettingsView {
             .items_center()
             .gap_3()
             .child(
-                ui::spoken(
-                    "settings-cache-size-value",
-                    t!("settings-cache-size-value", count = current),
-                )
-                .flex_none()
-                .w(theme.metrics.cover * SLEEP_LABEL)
-                .whitespace_nowrap()
-                .text_right(),
+                ui::spoken("settings-cache-size-value", t!("unit-gb", value = current))
+                    .flex_none()
+                    .w(theme.metrics.cover * SLEEP_LABEL)
+                    .whitespace_nowrap()
+                    .text_right(),
             )
             .child(
                 div()
@@ -175,7 +172,7 @@ impl SettingsView {
                     .child(
                         Scrubber::new(&self.cache, fraction)
                             .name(t!("settings-cache-size"))
-                            .value(t!("settings-cache-size-value", count = current))
+                            .value(t!("unit-gb", value = current))
                             .colors(
                                 theme.progress_bar,
                                 theme.muted_foreground.opacity(0.3),
@@ -488,7 +485,7 @@ impl SettingsView {
         let removable = self.soloist.read(cx).installed()
             && matches!(state, SoloistState::Off | SoloistState::Ready(_));
         let note = match &state {
-            SoloistState::Looking => t!("settings-soloist-looking"),
+            SoloistState::Looking => t!("settings-looking"),
             SoloistState::Off => t!("settings-soloist-off"),
             SoloistState::Setup(_) => t!("settings-soloist-setting-up"),
             SoloistState::Ready(build) => {
@@ -569,7 +566,7 @@ impl SettingsView {
 /// Shared by the row and its search entry.
 pub(super) fn widevine_copy(state: &CdmState) -> (&'static str, &'static str) {
     match state {
-        CdmState::Looking => ("settings-widevine-detail", "settings-widevine-looking"),
+        CdmState::Looking => ("settings-widevine-detail", "settings-looking"),
         CdmState::Ready(Origin::Configured) => {
             ("settings-widevine-detail", "settings-widevine-configured")
         }
@@ -582,8 +579,8 @@ pub(super) fn widevine_copy(state: &CdmState) -> (&'static str, &'static str) {
         CdmState::Wanted | CdmState::Offered(_) => {
             ("settings-widevine-none", "settings-widevine-asking")
         }
-        CdmState::Offering => ("settings-widevine-none", "settings-widevine-fetching"),
-        CdmState::Installing => ("settings-widevine-none", "settings-widevine-installing"),
+        CdmState::Offering => ("settings-widevine-none", "settings-downloading"),
+        CdmState::Installing => ("settings-widevine-none", "settings-installing"),
         CdmState::Declined | CdmState::Missing => {
             ("settings-widevine-none", "settings-widevine-missing")
         }
@@ -712,7 +709,7 @@ pub(super) fn codec_key(codec: Option<Codec>) -> &'static str {
 
 pub(super) fn bitrate_label(bitrate: Option<u32>) -> SharedString {
     match bitrate {
-        Some(kbps) => t!("settings-stream-bitrate-value", kbps = i64::from(kbps)),
+        Some(kbps) => t!("unit-kbps", value = i64::from(kbps)),
         None => t!("settings-stream-bitrate-unlimited"),
     }
 }

@@ -29,7 +29,6 @@ use ui::{
 
 use crate::shared::blend::{Joined, Reach};
 use crate::shared::cells;
-use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
@@ -111,7 +110,8 @@ pub(crate) fn drop_picked(table: &Entity<TableState<TrackSource>>, cx: &mut App)
     drop_picked_if(table, |_| true, cx);
 }
 
-/// Asks to drop the picked rows that `keep` holds to, and leaves the rest of the pick alone.
+/// Drops the picked rows that `keep` holds to, and leaves the rest of the pick alone. It runs
+/// without asking, since every removal it makes is reported in a toast with an Undo.
 pub(crate) fn drop_picked_if(
     table: &Entity<TableState<TrackSource>>,
     keep: impl Fn(&Track) -> bool,
@@ -134,25 +134,11 @@ pub(crate) fn drop_picked_if(
     if tracks.is_empty() {
         return;
     }
-    let kind = if playlist.is_some() {
-        Kind::PlaylistSongs(tracks.len())
-    } else if history.is_some() {
-        Kind::History(tracks.len())
-    } else {
-        Kind::LibrarySongs(tracks.len())
-    };
-    let table = table.clone();
-    Confirm::ask(
-        kind,
-        move |cx| {
-            forget(&tracks, playlist.as_ref(), history.as_ref(), cx);
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        },
-        cx,
-    );
+    forget(&tracks, playlist.as_ref(), history.as_ref(), cx);
+    table.update(cx, |table, cx| {
+        table.delegate_mut().clear_selection();
+        cx.notify();
+    });
 }
 
 fn forget(
@@ -364,27 +350,28 @@ impl TrackSource {
         })
     }
 
-    /// How the rows of this table are numbered. A catalog shelf holds only the files it was
-    /// given, so an album there is numbered by each track's own place in it and a missing file
-    /// leaves a gap.
+    /// How the rows of this table are numbered. An album that spans more than one disc counts
+    /// each track behind its disc on every shelf. A single-disc album on a catalog shelf is
+    /// numbered by each track's own place, since the shelf holds only the files it was given and a
+    /// missing one leaves a gap.
     fn numbering(&self, cx: &App) -> Numbering {
         let Some(id) = self.album.as_ref().and_then(|album| album.read(cx).id()) else {
             return Numbering::Listing;
         };
-        if !Sonora::global(cx)
+        let tracks = self.provider.tracks(cx);
+        let first = tracks.first().map(disc);
+        if tracks.iter().any(|track| Some(disc(track)) != first) {
+            return Numbering::Disc;
+        }
+
+        let catalog = Sonora::global(cx)
             .library
             .read(cx)
             .shape(Shelf::of(id))
-            .is_catalog()
-        {
-            return Numbering::Listing;
-        }
-
-        let tracks = self.provider.tracks(cx);
-        let first = tracks.first().map(disc);
-        match tracks.iter().any(|track| Some(disc(track)) != first) {
-            true => Numbering::Disc,
-            false => Numbering::Track,
+            .is_catalog();
+        match catalog {
+            true => Numbering::Track,
+            false => Numbering::Listing,
         }
     }
 

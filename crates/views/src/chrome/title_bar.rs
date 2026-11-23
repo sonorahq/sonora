@@ -9,13 +9,13 @@ use gpui::{
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Button, MenuItem, Picker, Popovers, Spin};
+use ui::{ActiveTheme as _, Badge, Button, MenuItem, Picker, Popovers, Spin};
 
 use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
-use router::{Destination, Navigation, SettingsPage, navigate, open_settings};
+use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
@@ -246,7 +246,11 @@ impl TitleBar {
                     .icon(crate::shared::provider_logo(slug))
                     .selected(info.active)
                     .on_click(move |_, _, cx| {
+                        let before = session.read(cx).provider_slug();
                         session.update(cx, |session, cx| session.switch(slug, cx));
+                        if session.read(cx).provider_slug() != before {
+                            open_startup(cx);
+                        }
                     })
             })
             .collect();
@@ -432,6 +436,7 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
+                    .when(cfg!(debug_assertions), |this| this.child(dev_badge()))
                     .child(div().flex_1())
                     .when(navigation, |this| {
                         this.child(
@@ -519,6 +524,24 @@ fn traffic_lights_inset(settings: &AppSettings, height: Pixels) -> Option<Pixels
     #[cfg(not(target_os = "macos"))]
     let _ = (settings, height);
     None
+}
+
+/// The tag a debug build carries in its title bar, so it is never mistaken for a release.
+fn dev_badge() -> impl IntoElement {
+    div()
+        .id("dev-badge")
+        .role(Role::Label)
+        .aria_label(t!("app-dev-build"))
+        .flex_none()
+        .ml_1()
+        .child(Badge::text(t!("app-dev-badge")))
+}
+
+/// Opens the screen chosen as the startup page in Settings, where a newly switched provider lands.
+fn open_startup(cx: &mut App) {
+    let startup = Sonora::global(cx).settings.read(cx).startup().to_owned();
+    let screen = Screen::from_id(&startup).unwrap_or(Screen::Home);
+    navigate(screen.destination(), cx);
 }
 
 fn window_controls(leading: bool, traffic_light: bool) -> AnyElement {

@@ -192,9 +192,9 @@ impl Queue {
         });
     }
 
-    /// Makes `tracks` what plays after the current track, as a Sonora Session shares it. Local
-    /// files and suggestions are never shared, so the ones here stay after them.
-    pub(crate) fn share_upcoming(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+    /// Makes `tracks` what plays after the current track, as a Sonora Session shares it, each
+    /// with whether it was queued by hand. The rest of the collection here plays on after them.
+    pub(crate) fn share_upcoming(&mut self, tracks: Vec<(Track, bool)>, cx: &mut Context<Self>) {
         self.edit(cx, |order| order.share_upcoming(tracks));
     }
 

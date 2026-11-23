@@ -5,10 +5,11 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use jiff::SignedDuration;
 use jiff::fmt::rfc2822::DateTimeParser;
-use reqwest::header::{CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
+use reqwest::header::{AUTHORIZATION, CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
 use symphonia::core::io::MediaSourceStreamOptions;
 
-use crate::stream::{Reader, Stream};
+use crate::ranged::{Address, File, Reach};
+use crate::stream::{Plain, Reader, Stream};
 
 /// The largest metadata suffix retained separately from the sequential download.
 const METADATA_LIMIT: u64 = 16 * 1024 * 1024;
@@ -59,6 +60,26 @@ impl Remote {
             .then(|| reqwest::header::HeaderValue::from_str(value).ok())
             .flatten();
         self
+    }
+
+    /// What a seek past `main`, the download of track `id`, fetches the file through, with the
+    /// credentials of the range requests. `None` for a file no seek can enter part way.
+    pub(crate) fn file(
+        self,
+        name: &'static str,
+        id: &str,
+        http: reqwest::Client,
+        main: &Stream,
+    ) -> Option<Arc<File>> {
+        let reach = Reach::new(name, id, move |_| {
+            let authorization = self
+                .authorization
+                .iter()
+                .map(|value| (AUTHORIZATION, value.clone()));
+            let address = Address::new(name, http.clone(), self.url.to_string());
+            (address.headers(authorization.collect()), Plain)
+        });
+        File::detect(main, reach)
     }
 
     /// Accepts only an exact partial response and bounds both its size and its lifetime.
@@ -202,6 +223,19 @@ pub(crate) struct Input {
     tail: Option<Arc<Tail>>,
     total: Option<u64>,
     at: u64,
+}
+
+impl Input {
+    /// Reads `reader` as it is, with no fetched tail and no known end, for a reader spliced
+    /// part way into a file that a decoder only reads forward.
+    pub(crate) fn spliced(reader: Reader) -> Self {
+        Self {
+            reader,
+            tail: None,
+            total: None,
+            at: 0,
+        }
+    }
 }
 
 impl Read for Input {

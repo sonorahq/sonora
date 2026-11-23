@@ -79,6 +79,6 @@ required:
 # outgrows it. `shortlist` is how many of those get read in full, and `report` is the most the
 # comment ever lists.
 duplicates:
-  scan: 300
+  scan: 1000
   shortlist: 6
   report: 3

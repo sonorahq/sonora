@@ -68,7 +68,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
 
         if missing {
-            let name = t!("theme-unavailable", name = selected);
+            let name = t!("common-unavailable", name = selected);
             cards.push(
                 OptionCard::new("unavailable-theme")
                     .choice(name.clone(), true, count - 1, count)
@@ -85,7 +85,7 @@ impl SettingsView {
         cards.push(
             OptionCard::new("open-theme-folder")
                 .role(Role::Button)
-                .aria_label(t!("settings-theme-folder"))
+                .aria_label(t!("settings-open-folder"))
                 .w(CARD)
                 .thumb_height(THUMB)
                 .dashed()
@@ -102,7 +102,7 @@ impl SettingsView {
                                 .text_color(theme.muted_foreground),
                         ),
                 )
-                .label(t!("settings-theme-folder"))
+                .label(t!("settings-open-folder"))
                 .on_click(move |_, _, cx| {
                     let path =
                         settings.update(cx, |settings, _| settings.ensure_themes_directory());

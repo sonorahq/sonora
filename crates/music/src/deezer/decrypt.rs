@@ -76,21 +76,33 @@ impl Cipher {
 /// buffer holds is always in the clear.
 ///
 /// A partial block is kept back until the rest of it arrives, because only whole blocks are
-/// encrypted, and whatever is left at the end of the track is appended as it is.
+/// encrypted, and whatever is left at the end of the track is appended as it is. Stripes count
+/// from the start of the file, so a body fed a download that starts part way has to know where.
 pub struct Striped {
     cipher: Cipher,
     /// The tail of the last chunk, short of a whole block.
     pending: Vec<u8>,
-    /// How many blocks have gone by, which is what decides an encrypted stripe.
+    /// The index in the file of the next whole block, which is what decides an encrypted
+    /// stripe.
     blocks: u64,
 }
 
 impl Striped {
     pub fn new(key: &Secret) -> Self {
+        Self::at(key, 0)
+    }
+
+    /// A body for a download that starts at byte `start` of the file. The byte has to fall on a
+    /// block boundary, since a block is only decrypted whole.
+    pub fn at(key: &Secret, start: u64) -> Self {
+        debug_assert!(
+            start.is_multiple_of(BLOCK as u64),
+            "a striped download starts on a block boundary"
+        );
         Self {
             cipher: Cipher::new(key),
             pending: Vec::with_capacity(2 * BLOCK),
-            blocks: 0,
+            blocks: start / BLOCK as u64,
         }
     }
 }
@@ -233,4 +245,60 @@ fn parse_half(candidate: &str, terminator: &str) -> Option<[u8; 8]> {
     }
     bytes.reverse();
     <[u8; 8]>::try_from(bytes.as_slice()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use blowfish::cipher::BlockModeEncrypt;
+
+    use super::*;
+    use crate::stream::Body as _;
+
+    const KEY: Secret = *b"0123456789abcdef";
+
+    /// Seven whole blocks and a partial one of bytes that differ from block to block.
+    fn plain() -> Vec<u8> {
+        (0..7 * BLOCK + 777)
+            .map(|at| (at * 31 + at / BLOCK * 7) as u8)
+            .collect()
+    }
+
+    /// What the CDN sends for `plain`: blocks 0, 3 and 6 encrypted, each from the fixed IV.
+    fn striped(plain: &[u8]) -> Vec<u8> {
+        let mut file = plain.to_vec();
+        let blowfish = Blowfish::new_from_slice(&KEY).unwrap();
+        for (index, block) in file.chunks_mut(BLOCK).enumerate() {
+            if index % STRIPE == 0 && block.len() == BLOCK {
+                cbc::Encryptor::<Blowfish>::inner_iv_init(blowfish.clone(), &IV.into())
+                    .encrypt_padded::<NoPadding>(block, BLOCK)
+                    .unwrap();
+            }
+        }
+        file
+    }
+
+    /// Feeds `bytes` to `body` in uneven chunks, as a download hands them over.
+    fn decrypt(mut body: Striped, bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for chunk in bytes.chunks(1500) {
+            body.feed(chunk, &mut out);
+        }
+        body.flush(&mut out);
+        out
+    }
+
+    #[test]
+    fn a_download_from_any_block_decrypts_as_the_whole_file_does() {
+        let plain = plain();
+        let file = striped(&plain);
+        for block in 0..=7 {
+            let start = block * BLOCK;
+            let body = Striped::at(&KEY, start as u64);
+            assert_eq!(
+                decrypt(body, &file[start..]),
+                plain[start..],
+                "from block {block}"
+            );
+        }
+    }
 }

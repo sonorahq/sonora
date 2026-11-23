@@ -67,9 +67,7 @@ sonora → views → state → logic → music
 - **Never write a bare breakpoint.** Use the `ui::Room` ladder, and classify width with
   `Chrome::room` or `Chrome::content`, never the raw viewport. A view whose layout depends on
   width observes `Chrome::entity(cx)`.
-- **Every user-facing string comes from Fluent.** Add the key to `assets/i18n/en-US/main.ftl`. Other
-  locales may lag. Never call `t!` in a constructor: store the key and resolve it in `render`.
-  Counts use Fluent selectors. Log messages and `.context(…)` stay in English.
+- **Every user-facing string comes from Fluent.** Add the key to the matching `.ftl` file under `assets/i18n/en-US/`. Other locales may lag. Never call `t!` in a constructor: store the key and resolve it in `render`. Counts use Fluent selectors. Log messages and `.context(…)` stay in English.
 - **Every interactive element is announced by screen readers.** A node reaches the
   accessibility tree only with both `.id()` and `.role()`; pair every role with an
   `aria_label` resolved from Fluent in `render` (icon-only buttons take their name from the

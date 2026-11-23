@@ -117,6 +117,12 @@ chmod +x sonora-*.AppImage
 ./sonora-*.AppImage
 ```
 
+#### Other distributions
+
+Some distributions package Sonora themselves. [Repology](https://repology.org/project/sonora/versions) lists them.
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/sonora.svg)](https://repology.org/project/sonora/versions)
+
 ### Nix
 
 Pick a channel with the input's ref and install `inputs.sonora.packages.${system}.default`:
@@ -158,6 +164,14 @@ Configuration with NixOS or Home Manager is provided by the module under `progra
 
 ### Windows
 
+#### WinGet
+
+Install with [WinGet](https://github.com/microsoft/winget-cli), which comes with Windows 10 and 11:
+
+```powershell
+winget install SonoraHQ.Sonora
+```
+
 #### Installer
 
 Download and run the [installer](https://github.com/sonorahq/sonora/releases/latest/download/Sonora-Setup.exe),
@@ -189,24 +203,24 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1433/1433 | 100% |
-| Deutsch (`de`) | 1106/1433 | 77% |
-| Español (`es`) | 1104/1433 | 77% |
-| Français (`fr`) | 1105/1433 | 77% |
-| Italiano (`it`) | 1104/1433 | 77% |
-| Bahasa Indonesia (`id`) | 1427/1433 | 100% |
-| 日本語 (`ja`) | 1104/1433 | 77% |
-| 한국어 (`ko`) | 1428/1433 | 100% |
-| Русский (`ru`) | 1216/1433 | 85% |
-| Українська (`uk`) | 1106/1433 | 77% |
-| Polski (`pl`) | 1106/1433 | 77% |
-| Čeština (`cs`) | 1104/1433 | 77% |
-| Português (Brasil) (`pt-BR`) | 1104/1433 | 77% |
-| Português (Portugal) (`pt-PT`) | 1104/1433 | 77% |
-| 简体中文 (`zh-CN`) | 1104/1433 | 77% |
-| Türkçe (`tr`) | 1433/1433 | 100% |
-| Shqip (`sq`) | 1104/1433 | 77% |
-| Tiếng Việt (`vi`) | 1339/1433 | 93% |
+| English (`en-US`) | 1345/1345 | 100% |
+| Deutsch (`de`) | 1030/1345 | 77% |
+| Español (`es`) | 1028/1345 | 76% |
+| Français (`fr`) | 1029/1345 | 77% |
+| Italiano (`it`) | 1028/1345 | 76% |
+| Bahasa Indonesia (`id`) | 1332/1345 | 99% |
+| 日本語 (`ja`) | 1028/1345 | 76% |
+| 한국어 (`ko`) | 1342/1345 | 100% |
+| Русский (`ru`) | 1130/1345 | 84% |
+| Українська (`uk`) | 1030/1345 | 77% |
+| Polski (`pl`) | 1030/1345 | 77% |
+| Čeština (`cs`) | 1028/1345 | 76% |
+| Português (Brasil) (`pt-BR`) | 1342/1345 | 100% |
+| Português (Portugal) (`pt-PT`) | 1028/1345 | 76% |
+| 简体中文 (`zh-CN`) | 1028/1345 | 76% |
+| Türkçe (`tr`) | 1338/1345 | 99% |
+| Shqip (`sq`) | 1028/1345 | 76% |
+| Tiếng Việt (`vi`) | 1250/1345 | 93% |
 
 <!-- i18n:end -->
 

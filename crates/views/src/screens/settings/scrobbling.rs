@@ -71,7 +71,7 @@ impl SettingsView {
         let row = rows.get(index)?;
         let service = row.id();
         let detail = match row.state() {
-            ScrobbleState::Off => t!("settings-scrobble-off"),
+            ScrobbleState::Off => t!("common-not-connected"),
             ScrobbleState::Linking => t!("settings-scrobble-waiting"),
             ScrobbleState::On(name) => match name.is_empty() {
                 true => t!("settings-scrobble-on"),
@@ -171,7 +171,7 @@ impl SettingsView {
         link: Link,
         cx: &mut Context<Self>,
     ) {
-        let account = self.settings.read(cx).account(service);
+        let account = self.scrobbling.read(cx).account(service);
         let (first, second) = match link {
             Link::Browser => {
                 return self.scrobbling.update(cx, |scrobbling, cx| {
@@ -180,7 +180,7 @@ impl SettingsView {
             }
             Link::Keys => (
                 Field {
-                    hint: "settings-scrobble-key",
+                    hint: "common-api-key",
                     value: account.key,
                     masked: false,
                 },
@@ -204,12 +204,12 @@ impl SettingsView {
             ),
             Link::Server => (
                 Field {
-                    hint: "settings-scrobble-server",
+                    hint: "common-server-address",
                     value: account.server,
                     masked: false,
                 },
                 Some(Field {
-                    hint: "settings-scrobble-key",
+                    hint: "common-api-key",
                     value: account.session,
                     masked: true,
                 }),

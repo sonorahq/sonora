@@ -206,7 +206,7 @@ impl Toast {
     /// Adds an Undo button. `run` puts back what the toast reports was removed, and has to cope
     /// with everything that may have changed since, since the toast stays up for seconds.
     pub fn undo(self, run: impl Fn(&mut App) + 'static) -> Self {
-        self.action("toast-undo", run)
+        self.action("common-undo", run)
     }
 
     /// Shows how far the work has got, from 0 to 1, as a ring that fills in place of the spinner.

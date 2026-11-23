@@ -107,10 +107,32 @@ pub(crate) struct Shared {
     pub track: Option<Track>,
     #[serde(default)]
     pub upcoming: Vec<Track>,
+    /// Which of `upcoming` were queued by hand, by index. A member or server that knows nothing
+    /// of it leaves it out, and every upcoming track is then taken to be the collection's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<usize>,
     pub playing: bool,
     /// Where the track was, in milliseconds, at `at`.
     pub position: u64,
     /// The server's clock in milliseconds when the state reached it.
     #[serde(default)]
     pub at: u64,
+}
+
+impl Shared {
+    /// The shareable upcoming tracks, each with whether it was queued by hand. A file on another
+    /// member's disk means nothing here.
+    pub fn upcoming_marked(&self) -> Vec<(Track, bool)> {
+        self.upcoming
+            .iter()
+            .enumerate()
+            .filter(|(_, track)| {
+                track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !music::is_local_id(id))
+            })
+            .map(|(index, track)| (track.clone(), self.queued.contains(&index)))
+            .collect()
+    }
 }

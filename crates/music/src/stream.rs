@@ -332,23 +332,43 @@ impl<B: Body> Stream<B> {
     /// Starts pulling `source` into a spool and returns at once, like [`new`](Self::new).
     /// `total` is the body length when it is known up front.
     pub fn pulling(source: impl Source, total: Option<u64>, body: B) -> Self {
+        Self::seeded(&[], source, total, body)
+    }
+
+    /// Starts pulling `source` into a spool that already holds `head`, like
+    /// [`pulling`](Self::pulling). The head never passes through the body, since it is meant to
+    /// be copied out of another spool that already holds the track as a reader sees it. `total`
+    /// counts the head too.
+    pub fn seeded(head: &[u8], source: impl Source, total: Option<u64>, body: B) -> Self {
+        let mut spool = match body.confidential() {
+            true => Spool::held(total, body.ceiling()),
+            false => Spool::new(total, body.ceiling()),
+        };
+        let failed = match head.is_empty() {
+            true => None,
+            false => spool
+                .append(head)
+                .err()
+                .map(|error| format!("cannot keep the track: {error}")),
+        };
+        let complete = failed.is_some();
         let shared = Arc::new(Shared {
             state: Mutex::new(Buffered {
-                spool: match body.confidential() {
-                    true => Spool::held(total, body.ceiling()),
-                    false => Spool::new(total, body.ceiling()),
-                },
+                spool,
                 total,
-                complete: false,
-                failed: None,
+                complete,
+                failed,
                 body,
             }),
             filled: Condvar::new(),
         });
-        let (progress, arrived) = watch::channel(0usize);
-        tokio::spawn(pump(source, Arc::downgrade(&shared), progress));
+        let (progress, arrived) = watch::channel(head.len());
+        if !complete {
+            tokio::spawn(pump(source, Arc::downgrade(&shared), progress));
+        }
         Self { shared, arrived }
     }
+
     /// Starts the download and waits for the preroll, or for the whole body of a track shorter
     /// than that.
     pub async fn open(response: reqwest::Response, body: B) -> Result<Self> {

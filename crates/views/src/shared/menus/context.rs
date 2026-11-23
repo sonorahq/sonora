@@ -146,25 +146,19 @@ impl ItemMenu {
         let remove = match ids.is_empty() {
             true => MenuItem::new(
                 "remove-from-playlist",
-                counted(
-                    "menu-remove-from-playlist",
-                    "menu-remove-tracks-from-playlist",
-                    count,
-                ),
+                t!("menu-remove-tracks-from-playlist", count = count),
             )
             .icon("icons/x.svg")
             .disabled(),
             false => MenuItem::new(
                 "remove-from-playlist",
-                counted(
-                    "menu-remove-from-playlist",
-                    "menu-remove-tracks-from-playlist",
-                    count,
-                ),
+                t!("menu-remove-tracks-from-playlist", count = count),
             )
             .icon("icons/x.svg")
             .on_click(move |_, _, cx| {
-                Confirm::playlist_songs(ids.clone(), detail.clone(), count, cx)
+                detail.update(cx, |detail, cx| {
+                    detail.remove_tracks_from_playlist(ids.clone(), cx)
+                });
             }),
         };
         self.build(tracks, Some(remove), None, None, columns, cx)
@@ -180,14 +174,16 @@ impl ItemMenu {
         let held = tracks.to_vec();
         let forget = MenuItem::new(
             "remove-from-history",
-            counted(
-                "menu-remove-from-history",
-                "menu-remove-tracks-from-history",
-                tracks.len(),
-            ),
+            t!("menu-remove-tracks-from-history", count = tracks.len()),
         )
         .icon("icons/trash-2.svg")
-        .on_click(move |_, _, cx| Confirm::history_songs(held.clone(), history.clone(), cx));
+        .on_click(move |_, _, cx| {
+            history.update(cx, |history, cx| {
+                for track in &held {
+                    history.remove(track, cx);
+                }
+            });
+        });
         self.build(tracks, None, Some(forget), None, columns, cx)
     }
 
@@ -359,21 +355,21 @@ impl ItemMenu {
             .collect();
         let next = queue_item(
             "play-next",
-            counted("menu-play-next", "menu-play-tracks-next", count),
+            t!("menu-play-next", count = count.max(1)),
             "icons/list-start.svg",
             &queued,
             QueuePlacement::Next,
         );
         let queue = queue_item(
             "add-to-queue",
-            counted("menu-add-to-queue", "menu-add-tracks-to-queue", count),
+            t!("menu-add-to-queue", count = count.max(1)),
             "icons/list-plus.svg",
             &queued,
             QueuePlacement::End,
         );
         let last = queue_item(
             "play-last",
-            counted("menu-play-last", "menu-play-tracks-last", count),
+            t!("menu-play-last", count = count.max(1)),
             "icons/list-end.svg",
             &queued,
             QueuePlacement::Last,
@@ -474,7 +470,7 @@ impl ItemMenu {
         let pinnable = (!many).then(|| track.pin()).flatten();
         let edit = (!many && imported).then(|| {
             let track = track.clone();
-            MenuItem::new("edit-tags", t!("menu-edit-tags"))
+            MenuItem::new("edit-tags", t!("tags-edit-title"))
                 .icon("icons/pencil.svg")
                 .on_click(move |_, window, cx| TagEditor::open(track.clone(), window, cx))
         });
@@ -483,7 +479,7 @@ impl ItemMenu {
             let ids = ids.clone();
             MenuItem::new(
                 "delete-track-files",
-                counted("menu-delete-track-file", "menu-delete-track-files", count),
+                t!("menu-delete-track-files", count = count.max(1)),
             )
             .icon("icons/trash-2.svg")
             .on_click(move |_, _, cx| Confirm::delete_track_files(ids.clone(), cx))
@@ -494,7 +490,7 @@ impl ItemMenu {
             false => Some(
                 MenuItem::new(
                     "add-to-playlist",
-                    counted("menu-add-to-playlist", "menu-add-tracks-to-playlist", count),
+                    t!("menu-add-to-playlist", count = count.max(1)),
                 )
                 .icon("icons/square-plus.svg")
                 .submenu(
@@ -547,15 +543,6 @@ fn queue_item(
     })
 }
 
-fn counted(one: &'static str, many: &'static str, count: usize) -> SharedString {
-    if count <= 1 {
-        return i18n::lookup(one, None);
-    }
-    let mut args = i18n::FluentArgs::new();
-    args.set("count", count as i64);
-    i18n::lookup(many, Some(&args))
-}
-
 /// Joins the non-empty groups of a menu with a separator between each.
 fn sections(menu: Menu, groups: Vec<Vec<MenuItem>>) -> Menu {
     groups
@@ -605,8 +592,6 @@ struct Tile {
     active: bool,
     /// Draws a download ring instead of the icon.
     ring: Option<Ring>,
-    /// Closes the menu before the click runs, for a click that opens a dialog.
-    closes: bool,
     on_click: Option<TileClick>,
 }
 
@@ -628,7 +613,6 @@ impl Tile {
             tip,
             active: false,
             ring: None,
-            closes: false,
             on_click: None,
         }
     }
@@ -643,11 +627,6 @@ impl Tile {
         self
     }
 
-    fn closes(mut self, closes: bool) -> Self {
-        self.closes = closes;
-        self
-    }
-
     fn on_click(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
@@ -658,7 +637,7 @@ impl FluentBuilder for Tile {}
 
 /// The row of toggles on top of an item menu: the favorite, the library where it is apart from
 /// the favorites, the download and the pin. The tiles share the row evenly, only a tile that is on
-/// has a fill, and they leave the menu open when picked unless they hand off to a dialog.
+/// has a fill, and they leave the menu open when picked.
 #[derive(IntoElement)]
 struct Tiles(Vec<Tile>);
 
@@ -678,7 +657,6 @@ impl RenderOnce for Tiles {
                     tip,
                     active,
                     ring,
-                    closes,
                     on_click,
                 } = tile;
                 Button::new(id)
@@ -706,12 +684,7 @@ impl RenderOnce for Tiles {
                         None => button.icon(icon),
                     })
                     .when_some(on_click, |button, click| {
-                        button.on_click(move |_, window, cx| {
-                            if closes {
-                                ui::close_menu(window, cx);
-                            }
-                            click(window, cx);
-                        })
+                        button.on_click(move |_, window, cx| click(window, cx))
                     })
             }))
     }
@@ -790,32 +763,23 @@ fn track_tiles(
 
     let favorable = actionable(Library::pending);
     let saved = every(Library::saved);
-    // Unfavoriting asks first where the heart is the library itself, and the menu gives way to
-    // that question rather than staying open over it.
-    let asks = saved
-        && !favorable
-            .first()
-            .and_then(|track| track.id.as_deref())
-            .is_some_and(|id| Confirm::unstarring(id, cx));
-    let heart = heart_tile(saved)
-        .closes(asks)
-        .when(!favorable.is_empty(), |tile| {
-            let library = library.clone();
-            tile.on_click(move |_, cx| {
+    let heart = heart_tile(saved).when(!favorable.is_empty(), |tile| {
+        let library = library.clone();
+        tile.on_click(move |_, cx| {
+            library.update(cx, |library, cx| {
                 if saved {
-                    Confirm::library_songs(favorable.clone(), cx);
+                    library.save_tracks(favorable.clone(), false, cx);
                     return;
                 }
-                library.update(cx, |library, cx| {
-                    let tracks = favorable
-                        .iter()
-                        .filter(|track| !track.id.as_deref().is_some_and(|id| library.saved(id)))
-                        .cloned()
-                        .collect();
-                    library.save_tracks(tracks, true, cx);
-                });
-            })
-        });
+                let tracks = favorable
+                    .iter()
+                    .filter(|track| !track.id.as_deref().is_some_and(|id| library.saved(id)))
+                    .cloned()
+                    .collect();
+                library.save_tracks(tracks, true, cx);
+            });
+        })
+    });
 
     let shelved = editable.then(|| {
         let held = actionable(Library::pending_library);
@@ -969,18 +933,13 @@ fn album_tiles(album: &Album, cx: &App) -> Vec<Tile> {
     let library = sonora.library.clone();
     let state = library.read(cx);
     let saved = state.saved_album(&album.id);
-    let heart = heart_tile(saved)
-        .closes(saved && !Confirm::unstarring(&album.id, cx))
-        .when(!state.pending_album(&album.id), |tile| {
-            let album = album.clone();
-            tile.on_click(move |_, cx| match saved {
-                true => Confirm::albums(vec![album.clone()], cx),
-                false => {
-                    let library = Sonora::global(cx).library.clone();
-                    library.update(cx, |library, cx| library.toggle_album(album.clone(), cx));
-                }
-            })
-        });
+    let heart = heart_tile(saved).when(!state.pending_album(&album.id), |tile| {
+        let album = album.clone();
+        tile.on_click(move |_, cx| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| library.toggle_album(album.clone(), cx));
+        })
+    });
 
     let editable = sonora
         .session
@@ -1021,17 +980,20 @@ pub(crate) fn album_menu(
 ) -> Menu {
     let album_id = album.id.clone();
     let from = Origin::album(album_id.clone()).named(album.name.clone());
-    let add_to_playlist = MenuItem::new("add-album-to-playlist", t!("menu-add-to-playlist"))
-        .icon("icons/square-plus.svg")
-        .submenu(
-            menus.playlist_rows(
-                Addition::Album(album_id.clone()),
-                Shelf::of(&album_id),
-                Vec::new(),
-                cx,
-            ),
-            menus.playlist_submenu.clone(),
-        );
+    let add_to_playlist = MenuItem::new(
+        "add-album-to-playlist",
+        t!("menu-add-to-playlist", count = 1),
+    )
+    .icon("icons/square-plus.svg")
+    .submenu(
+        menus.playlist_rows(
+            Addition::Album(album_id.clone()),
+            Shelf::of(&album_id),
+            Vec::new(),
+            cx,
+        ),
+        menus.playlist_submenu.clone(),
+    );
 
     sections(
         item_shell("album-context-menu", album_tiles(&album, cx)),
@@ -1065,20 +1027,13 @@ fn artist_tiles(artist: &SavedArtist, cx: &App) -> Vec<Tile> {
         .then(|| {
             let state = sonora.library.read(cx);
             let saved = state.saved_artist(&artist.id);
-            heart_tile(saved)
-                .closes(saved && !Confirm::unstarring(&artist.id, cx))
-                .when(!state.pending_artist(&artist.id), |tile| {
-                    let artist = artist.clone();
-                    tile.on_click(move |_, cx| match saved {
-                        true => Confirm::artists(vec![artist.clone()], cx),
-                        false => {
-                            let library = Sonora::global(cx).library.clone();
-                            library.update(cx, |library, cx| {
-                                library.toggle_artist(artist.clone(), cx)
-                            });
-                        }
-                    })
+            heart_tile(saved).when(!state.pending_artist(&artist.id), |tile| {
+                let artist = artist.clone();
+                tile.on_click(move |_, cx| {
+                    let library = Sonora::global(cx).library.clone();
+                    library.update(cx, |library, cx| library.toggle_artist(artist.clone(), cx));
                 })
+            })
         });
     follow
         .into_iter()
@@ -1155,15 +1110,12 @@ fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
             },
         )
         .active(saved)
-        .closes(saved)
-        .on_click(move |_, cx| match saved {
-            true => Confirm::playlists(vec![playlist.id.clone()], cx),
-            false => {
-                let library = Sonora::global(cx).library.clone();
-                library.update(cx, |library, cx| {
-                    library.add_playlist_to_library(playlist.clone(), cx)
-                });
-            }
+        .on_click(move |_, cx| {
+            let library = Sonora::global(cx).library.clone();
+            library.update(cx, |library, cx| match saved {
+                true => library.remove_playlist_from_library(playlist.id.clone(), cx),
+                false => library.add_playlist_to_library(playlist.clone(), cx),
+            });
         })
     });
     kept.into_iter()
@@ -1209,7 +1161,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
             .capabilities_of(Shelf::of(&playlist.id))
             .smart_playlists)
         .then(|| {
-            MenuItem::new("smart-playlist-rules", t!("menu-smart-playlist-rules"))
+            MenuItem::new("smart-playlist-rules", t!("smart-rules-edit-title"))
                 .icon("icons/list-plus.svg")
                 .on_click({
                     let playlist = playlist.clone();
@@ -1227,7 +1179,7 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     let actions = match playlist.owned {
         true => visibility
             .into_iter()
-            .chain([MenuItem::new("edit-playlist", t!("menu-edit-playlist"))
+            .chain([MenuItem::new("edit-playlist", t!("playlist-edit-title"))
                 .icon("icons/pencil.svg")
                 .on_click({
                     let playlist = playlist.clone();
@@ -1236,16 +1188,16 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
                     }
                 })])
             .chain(smart_rules)
-            .chain(
-                [MenuItem::new("delete-playlist", t!("menu-delete-playlist"))
+            .chain([
+                MenuItem::new("delete-playlist", t!("playlist-delete-title"))
                     .icon("icons/trash-2.svg")
                     .on_click({
                         let playlist = playlist.clone();
                         move |_, window, cx| {
                             PlaylistEditor::open(Edit::Delete(playlist.clone()), window, cx);
                         }
-                    })],
-            )
+                    }),
+            ])
             .chain(imported.then(|| {
                 MenuItem::new("export-playlist", t!("menu-export-playlist"))
                     .icon("icons/square-arrow-out-up-right.svg")
@@ -1390,7 +1342,9 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<Men
     .map(|(id, label, icon, placement)| {
         let origin = origin.clone();
         let playback = playback.clone();
-        MenuItem::new(id, i18n::lookup(label, None))
+        let mut args = i18n::FluentArgs::new();
+        args.set("count", 1);
+        MenuItem::new(id, i18n::lookup(label, Some(&args)))
             .icon(icon)
             .on_click(move |_, _, cx| {
                 playback.update(cx, |playback, cx| {
@@ -1523,7 +1477,7 @@ pub(crate) fn new_playlist_menu(
                 .on_click(on_create),
         )
         .items(smart.then(|| {
-            MenuItem::new("create-smart-playlist", t!("menu-new-smart-playlist"))
+            MenuItem::new("create-smart-playlist", t!("smart-rules-create-title"))
                 .icon("icons/list-plus.svg")
                 .on_click(move |_, window, cx| {
                     SmartPlaylistEditor::open(SmartEdit::Create { shelf }, window, cx);

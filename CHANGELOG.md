@@ -7,8 +7,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
+- The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
+- The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
+
 ### Changed
 
+- Seeking far ahead in a song that is still downloading plays from there in a second or two on Deezer, YouTube Music, Subsonic, Navidrome and Jellyfin, as it already did on Tidal.
+- Home on Subsonic and Navidrome servers labels the albums added to the server most recently as Recently added and adds a Newest releases shelf ordered by release year.
+- The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
+- Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
+- Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
+- Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
+- Switching to another service from the account menu opens your startup page instead of leaving you on a page of the previous service.
+- In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
+- In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
+- A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
+
+### Fixed
+
+- Removing a single track from history or a playlist shows a translated menu label again.
+- Once the fullscreen player hides the cursor, nothing under it stays highlighted, and a click brings the cursor and controls back instead of jumping to the lyric line or link beneath it.
+- With a light theme, the rest of the app no longer turns dark while the fullscreen player opens or closes.
+- Searching YouTube Music no longer fills the account's YouTube search history with every half-typed query.
+- Repeat All starts a playlist over even when its last songs are unavailable, instead of stopping at the end.
+- Spotify and Deezer albums that span more than one disc number their songs by disc, as in 1.12 and 2.1, instead of counting straight through.
+- Closing the fullscreen player in a narrow window no longer leaves the player bar without its cover for a moment.
+- The play button on a pinned Liked Songs starts your liked songs instead of doing nothing.
+- Apple Music songs on networks that cannot reach some of Apple's playback servers start after a short pause instead of failing to play after 40 seconds.
+- Previous goes back to the last song again when SponsorBlock skips the opening of a YouTube Music track, instead of starting the same track over.
+- Seeking many times in a row, with the arrow keys or while a song is still starting, lands once on the last position instead of the song jumping on by itself afterwards.
+- Synced lyrics catch up right away when the playing song turns out to be somewhere other than where Sonora showed it, as could happen with Spotify through Soloist after launch or a song change, instead of standing still until you click a line.
+- Spotify's other apps show what plays next while Soloist plays an album or playlist, instead of an empty queue.
+- In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
+- In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
+- Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
+
+### Fixed
+
+- The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
+
+## [0.50.3] - 2026-11-20
+
+### Changed
+
+- Word-synced lyrics are shown ahead of line-synced ones by default again, whichever source has them. Turn Prioritize word-synced lyrics off in Lyrics sources to let the source order decide.
 - The Nix package builds on a Mac without Xcode, and an Apple silicon Mac downloads it from the binary cache instead of compiling it.
 
 ### Fixed
@@ -18,6 +63,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.
 - Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
 - The heart in the player favorites the song playing on another Spotify Connect device, so it no longer saves a song this computer played earlier.
+- When songs of one Navidrome or Subsonic album carry their own covers, the fullscreen player and the system media controls show each song's own cover.
 - The nightly update channel finds new nightly builds again. A nightly installed before November 19 does not see them, so install the latest nightly by hand once.
 
 ## [0.50.2] - 2026-11-18
@@ -2811,7 +2857,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.2...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.3...HEAD
+[0.50.3]: https://github.com/sonorahq/sonora/compare/v0.50.2...v0.50.3
 [0.50.2]: https://github.com/sonorahq/sonora/compare/v0.50.1...v0.50.2
 [0.50.1]: https://github.com/sonorahq/sonora/compare/v0.50.0...v0.50.1
 [0.50.0]: https://github.com/sonorahq/sonora/compare/v0.49.1...v0.50.0

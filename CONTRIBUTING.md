@@ -40,6 +40,12 @@ with no body, and any major user-facing changes should be mentioned under `## [U
 `CHANGELOG.md`. Keep each entry to one short line about what users can now do, without
 implementation details.
 
+Screenshots are required for any non-trivial change to what users see: a new screen or element,
+a reworked layout, a new setting, a theme change, or anything a reviewer would only judge by
+looking at it. When you change something that already exists, show it before and after. A pull
+request without them will not be reviewed until they are added. A small spacing nudge or a
+change nobody can see needs none.
+
 ## Translations
 
 English must be present for every key. Other locales can lag behind, since a missing key falls back to English.

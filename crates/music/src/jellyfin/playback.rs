@@ -4,6 +4,10 @@
 //! stream takes the bytes as they come and rodio decodes them. The threads, the queue, the
 //! preload and the gapless join are the engine's. Played and downloaded tracks are kept in the
 //! vault as plain files, so they play again with no network.
+//!
+//! A seek past what has arrived of an original FLAC, Ogg or MP3 file does not wait for the
+//! download to get there. It starts a second download at the target through a
+//! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -16,6 +20,7 @@ use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::jellyfin::client::{Details, JellyfinClient};
 use crate::mp4::{Input, Prepared, Remote};
+use crate::ranged;
 use crate::stream::{Plain, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
@@ -29,6 +34,9 @@ pub struct Loaded {
     stream: Stream,
     details: Details,
     prepared: Prepared,
+    /// What a seek past the download fetches the file through. Only an original file the server
+    /// sends with a length and answers ranges for has one, and a kept track is whole without it.
+    file: Option<Arc<ranged::File>>,
 }
 
 pub struct Factory {
@@ -46,6 +54,7 @@ impl PlaybackFactory for Factory {
         engine::start(
             Jellyfin {
                 client: self.client.clone(),
+                media: ranged::media("jellyfin", || self.client.http.clone()),
                 transcode: config.transcode,
                 shelf: config.vault.as_ref().map(|vault| {
                     vault
@@ -61,6 +70,10 @@ impl PlaybackFactory for Factory {
 
 struct Jellyfin {
     client: JellyfinClient,
+    /// What an original file and a seek's download are fetched with, which gives up on a
+    /// stalled request sooner than the api client. A transcode keeps the api client, since the
+    /// server may pause one that runs far ahead.
+    media: reqwest::Client,
     transcode: Transcode,
     /// Where played tracks are kept, so playing one again needs nothing from the server.
     shelf: Option<Shelf>,
@@ -126,6 +139,7 @@ impl Jellyfin {
             stream,
             details,
             prepared,
+            file: None,
         })
     }
 
@@ -166,10 +180,15 @@ impl Fetch for Jellyfin {
         let told = Arc::new(OnceLock::new());
         let (stream, details) = tokio::join!(
             async {
-                let response = self.client.open_stream(id, self.transcode).await?;
+                let http = match self.original() {
+                    true => &self.media,
+                    false => &self.client.http,
+                };
+                let response = self.client.open_stream(http, id, self.transcode).await?;
                 let total = response.content_length();
                 let remote = Remote::new(&response)
                     .map(|remote| remote.authorized(self.client.server(), &self.client.header));
+                let seekable = self.original() && ranged::ranges(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let told = told.clone();
@@ -187,7 +206,10 @@ impl Fetch for Jellyfin {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                anyhow::Ok((stream, prepared))
+                let file = remote
+                    .filter(|_| seekable)
+                    .and_then(|remote| remote.file("jellyfin", id, self.media.clone(), &stream));
+                anyhow::Ok((stream, prepared, file))
             },
             async {
                 let details = self.details(id).await;
@@ -195,11 +217,12 @@ impl Fetch for Jellyfin {
                 details
             },
         );
-        let (stream, prepared) = stream?;
+        let (stream, prepared, file) = stream?;
         Ok(Loaded {
             stream,
             details,
             prepared,
+            file,
         })
     }
 
@@ -263,6 +286,24 @@ impl Fetch for Jellyfin {
             );
         }
         Some(decoder)
+    }
+
+    /// Opens the track at `at`, from a download started near `at` when the main one is far from
+    /// it and the file allows that. Otherwise the decoder waits for the main download to get
+    /// there, as [`open`](Fetch::open) does.
+    fn open_near(
+        &self,
+        id: &str,
+        loaded: &Loaded,
+        at: Duration,
+    ) -> Option<(Self::Source, Duration)> {
+        let file = loaded.file.as_ref().zip(loaded.details.duration);
+        let entered = file.and_then(|(file, length)| {
+            file.enter(&loaded.stream, length, at, |reader| {
+                ranged::forward("jellyfin", id, Input::spliced(reader))
+            })
+        });
+        entered.or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
     }
 
     /// A decoder opened before its track finished arriving may only read forward, so every seek

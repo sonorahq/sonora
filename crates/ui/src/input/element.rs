@@ -330,7 +330,7 @@ impl Render for Input {
                 position,
                 Menu::new("input-context-menu")
                     .item(
-                        MenuItem::new("cut", t!("menu-cut"))
+                        MenuItem::new("cut", t!("common-cut"))
                             .icon("icons/scissors.svg")
                             .when(empty, MenuItem::disabled)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -340,7 +340,7 @@ impl Render for Input {
                             })),
                     )
                     .item(
-                        MenuItem::new("copy", t!("menu-copy"))
+                        MenuItem::new("copy", t!("common-copy"))
                             .icon("icons/copy.svg")
                             .when(empty, MenuItem::disabled)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -350,7 +350,7 @@ impl Render for Input {
                             })),
                     )
                     .item(
-                        MenuItem::new("paste", t!("menu-paste"))
+                        MenuItem::new("paste", t!("common-paste"))
                             .icon("icons/clipboard-paste.svg")
                             .when(!paste, MenuItem::disabled)
                             .on_click(cx.listener(|this, _, window, cx| {

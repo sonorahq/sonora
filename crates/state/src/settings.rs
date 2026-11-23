@@ -70,7 +70,7 @@ impl ConnectName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-spotify-connect-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Both => "settings-spotify-connect-name-both",
             Self::Computer => "settings-spotify-connect-name-computer",
             Self::Custom => "settings-spotify-connect-name-custom",
@@ -119,7 +119,7 @@ impl DiscordName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-discord-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Provider => "settings-discord-name-provider",
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",
@@ -484,8 +484,9 @@ struct Values {
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
     /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
-    /// come from. The source order then only settles lyrics of the same kind.
-    lyrics_word_synced_first: bool,
+    /// come from. The source order then only settles lyrics of the same kind. It took a new key
+    /// when it came on by default, so settings saved while it was off pick up the new default.
+    lyrics_prefer_word_synced: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -522,8 +523,14 @@ struct Values {
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    scrobbling: BTreeMap<String, Account>,
+    /// Scrobbling accounts as Sonora kept them here before they moved into the accounts folder.
+    /// The first launch that finds one moves it out, and only one that cannot move stays.
+    // TODO(0.52.0): remove this field and the migration that reads it.
+    #[serde(rename = "scrobbling", skip_serializing_if = "BTreeMap::is_empty")]
+    legacy_scrobbling: BTreeMap<String, LegacyScrobbler>,
+    /// Linked scrobbling services, by slug, that the user switched off. Their link stays.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    scrobbling_off: BTreeSet<String>,
     /// Providers, by slug, whose plays stay out of the linked scrobbling services. Some of them
     /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
@@ -536,6 +543,16 @@ struct Values {
     )]
     keybinds: BTreeMap<String, Vec<String>>,
     appearance: Appearance,
+}
+
+/// A scrobbling account as `settings.json` held it, with its on switch beside the secrets.
+// TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct LegacyScrobbler {
+    #[serde(flatten)]
+    pub account: Account,
+    pub enabled: bool,
 }
 
 /// The arrangement of the workspace's player bar, independent of its surface material.
@@ -759,7 +776,7 @@ impl Default for Values {
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
-            lyrics_word_synced_first: false,
+            lyrics_prefer_word_synced: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -782,7 +799,8 @@ impl Default for Values {
             hidden_nav: Vec::new(),
             added_nav: Vec::new(),
             silenced_requirements: Vec::new(),
-            scrobbling: BTreeMap::new(),
+            legacy_scrobbling: BTreeMap::new(),
+            scrobbling_off: BTreeSet::new(),
             unscrobbled: BTreeSet::new(),
             keybinds: BTreeMap::new(),
             appearance: Appearance::default(),
@@ -1283,7 +1301,7 @@ impl AppSettings {
 
     /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
     pub fn lyrics_word_synced_first(&self) -> bool {
-        self.values.lyrics_word_synced_first
+        self.values.lyrics_prefer_word_synced
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1366,18 +1384,15 @@ impl AppSettings {
         !self.values.unscrobbled.contains(provider)
     }
 
-    /// Every linked scrobbling account, keyed by its service slug.
-    pub fn scrobbling(&self) -> &BTreeMap<String, Account> {
-        &self.values.scrobbling
+    /// Whether listens go to the scrobbling service with this slug once it is linked.
+    pub fn scrobbling_on(&self, service: &str) -> bool {
+        !self.values.scrobbling_off.contains(service)
     }
 
-    /// One service's account, blank when it was never linked.
-    pub fn account(&self, service: &str) -> Account {
-        self.values
-            .scrobbling
-            .get(service)
-            .cloned()
-            .unwrap_or_default()
+    /// The scrobbling accounts an older Sonora left in `settings.json`, keyed by service slug.
+    // TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+    pub(crate) fn legacy_scrobbling(&self) -> &BTreeMap<String, LegacyScrobbler> {
+        &self.values.legacy_scrobbling
     }
 
     pub fn sidebar_width(&self) -> f32 {
@@ -1937,7 +1952,7 @@ impl AppSettings {
     }
 
     pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
-        self.values.lyrics_word_synced_first = first;
+        self.values.lyrics_prefer_word_synced = first;
         self.schedule_save(cx);
     }
 
@@ -2048,25 +2063,34 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    /// Stores a linked account, or forgets the service when the account carries no session.
-    pub fn set_account(&mut self, service: &str, account: Account, cx: &mut Context<Self>) {
-        match account.linked() {
-            true => {
-                self.values.scrobbling.insert(service.to_owned(), account);
-            }
-            false => {
-                self.values.scrobbling.remove(service);
-            }
+    /// Turns submissions to one scrobbling service on or off, leaving its link alone.
+    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
+        let changed = match enabled {
+            true => self.values.scrobbling_off.remove(service),
+            false => self.values.scrobbling_off.insert(service.to_owned()),
+        };
+        if changed {
+            self.schedule_save(cx);
         }
-        self.schedule_save(cx);
     }
 
-    /// Turns submissions to one linked service on or off, leaving the link itself alone.
-    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
-        let Some(account) = self.values.scrobbling.get_mut(service) else {
+    /// Drops the legacy accounts that now live in the accounts folder, keeping the on switch of
+    /// each. `moved` pairs a service slug with whether it was on.
+    // TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+    pub(crate) fn forget_legacy_scrobbling(
+        &mut self,
+        moved: &[(String, bool)],
+        cx: &mut Context<Self>,
+    ) {
+        if moved.is_empty() {
             return;
-        };
-        account.enabled = enabled;
+        }
+        for (service, enabled) in moved {
+            self.values.legacy_scrobbling.remove(service);
+            if !enabled {
+                self.values.scrobbling_off.insert(service.clone());
+            }
+        }
         self.schedule_save(cx);
     }
 
@@ -3177,15 +3201,33 @@ fn save_settings(path: &Path, bytes: &[u8], previous: Option<&[u8]>) -> Result<(
     if let Some(previous) =
         previous.filter(|previous| serde_json::from_slice::<Values>(json(previous)).is_ok())
     {
-        write_settings(&path.with_file_name("sonora.backup.json"), previous)
-            .context("cannot back up settings")?;
+        write_settings(
+            &path.with_file_name("sonora.backup.json"),
+            &without_scrobbling(previous),
+        )
+        .context("cannot back up settings")?;
     }
     write_settings(path, bytes)
 }
 
+/// Settings without the scrobbling accounts an older Sonora kept in them, so the backup of the
+/// file they are moved out of does not keep a copy. Settings without them come back unchanged.
+// TODO(0.52.0): remove with `Values::legacy_scrobbling` and back up `previous` as it is.
+fn without_scrobbling(previous: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let Ok(mut values) =
+        serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(json(previous))
+    else {
+        return previous.into();
+    };
+    if values.remove("scrobbling").is_none() {
+        return previous.into();
+    }
+    serde_json::to_vec_pretty(&values).map_or_else(|_| previous.into(), Into::into)
+}
+
 /// Replaces settings with a synced file beside the destination, so an interrupted save leaves
-/// the previous contents intact. Symlinks keep pointing to their target. The file can hold
-/// scrobbling keys, so on unix only its owner may read it.
+/// the previous contents intact. Symlinks keep pointing to their target. On unix only the owner
+/// may read it, since an older Sonora kept scrobbling keys in it.
 fn write_settings(path: &Path, bytes: &[u8]) -> Result<()> {
     let path = match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {

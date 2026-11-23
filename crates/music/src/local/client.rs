@@ -735,7 +735,7 @@ impl MusicApi for LocalClient {
         let playlists = self.playlists().await.unwrap_or_default();
         if !playlists.is_empty() {
             sections.push(GenreSection {
-                title: "home-playlists".to_owned(),
+                title: "nav-playlists".to_owned(),
                 items: playlists
                     .into_iter()
                     .take(15)

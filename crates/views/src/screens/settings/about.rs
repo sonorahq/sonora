@@ -198,10 +198,10 @@ impl SettingsView {
                     .id("settings-about-name")
                     .role(gpui::accesskit::Role::Heading)
                     .aria_level(2)
-                    .aria_label(t!("settings-about-name"))
+                    .aria_label(t!("common-sonora"))
                     .text_size(theme.text(Text::Title))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(t!("settings-about-name")),
+                    .child(t!("common-sonora")),
             )
     }
 

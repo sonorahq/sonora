@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Pixels, Render, ScrollHandle,
-    SharedString, Subscription, Task, Window, canvas, div, px,
+    SharedString, Subscription, Task, Window, canvas, div, point, px,
 };
 use i18n::{Language, t};
 use music::SignInPrompt;
@@ -259,6 +259,9 @@ pub struct SettingsView {
     /// enabled sources. `None` while the drop would leave the order as it is.
     lyrics_drop_gap: Option<usize>,
     scrollbar: Entity<Scrollbar>,
+    /// The page that opened a drill-in and where its tab was scrolled, so the way back to that
+    /// page or to the drill-in's parent lands there again.
+    drilled_from: Option<(SettingsPage, Pixels)>,
     /// Invalidates off-screen heights when data changes, without rebuilding them for each
     /// playback tick, animation frame or scroll update.
     layout_revision: u64,
@@ -416,8 +419,7 @@ impl SettingsView {
         })
         .detach();
 
-        let connect_name =
-            cx.new(|cx| Input::new("settings-spotify-connect-custom-hint", cx).compact());
+        let connect_name = cx.new(|cx| Input::new("settings-spotify-connect-name", cx).compact());
         let custom = settings.read(cx).spotify_connect_custom_name().to_owned();
         connect_name.update(cx, |input, cx| input.set_text(custom, cx));
         cx.observe(&connect_name, |this, input, cx| {
@@ -467,6 +469,7 @@ impl SettingsView {
             reveal: None,
             lyrics_drop_gap: None,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
+            drilled_from: None,
             layout_revision: 0,
             geometry: None,
             opacity: ScrubberState::new("opacity"),
@@ -491,7 +494,7 @@ impl SettingsView {
             library_scroll: ScrollHandle::new(),
             selected_library,
             scrobbling,
-            scrobble_first: cx.new(|cx| Input::new("settings-scrobble-key", cx)),
+            scrobble_first: cx.new(|cx| Input::new("common-api-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
             connect_name,
             sessions_server,
@@ -510,10 +513,34 @@ impl SettingsView {
 
     /// Shows the tab a page belongs to and ends any search, so a route always lands on a plain
     /// tab. A new route starts at the top of its tab, or at its section when that lies further
-    /// down, and a route to the page already on show keeps the tab where it was scrolled.
+    /// down, and a route to the page already on show keeps the tab where it was scrolled. A
+    /// drill-in going back to its tab returns to where the tab was scrolled when it opened.
     pub(crate) fn select(&mut self, page: SettingsPage, cx: &mut Context<Self>) {
         if self.page != page {
-            self.scrollbar.update(cx, |bar, _| bar.place(Pixels::ZERO));
+            let back = self
+                .drilled_from
+                .take()
+                .filter(|(from, _)| {
+                    self.page.parent().is_some()
+                        && (page == *from || self.page.parent() == Some(page))
+                })
+                .map(|(_, at)| at);
+            let drilling = page.parent().is_some()
+                && self.page.parent().is_none()
+                && self.page.tab() == page.tab()
+                && !self.searching();
+            if drilling {
+                let at = self.scrollbar.read(cx).scroll().offset().y;
+                self.drilled_from = Some((self.page, at));
+            }
+            self.scrollbar.update(cx, |bar, _| {
+                bar.place(Pixels::ZERO);
+                // the drill-in on show is shorter than the tab, so the offset is handed to the
+                // handle as is and clamped against the tab once it lays out
+                if let Some(at) = back {
+                    bar.scroll().set_offset(point(Pixels::ZERO, at));
+                }
+            });
             // a search result names a setting on the page it opens, and any other route to a
             // later page of a tab reveals that page's title
             self.reveal = match self.reveal {
@@ -525,7 +552,7 @@ impl SettingsView {
                 {
                     Some(Reveal::Slot(slot))
                 }
-                _ => (page.parent().is_none() && page != page.tab().lead())
+                _ => (back.is_none() && page.parent().is_none() && page != page.tab().lead())
                     .then_some(Reveal::Section(page)),
             };
         }
@@ -777,7 +804,7 @@ impl SettingsView {
                 (t!("settings-accounts"), format!("{detail} {names}").into())
             }
             Slot::LocalFolder => (
-                t!("settings-local-folder"),
+                t!("settings-music-folders"),
                 match self.session.read(cx).local_paths().is_empty() {
                     true => t!("settings-local-folder-empty"),
                     false => SharedString::default(),
@@ -901,9 +928,9 @@ impl SettingsView {
                 t!("settings-keep-tracks-detail"),
             ),
             Slot::CacheSize => (t!("settings-cache-size"), t!("settings-cache-size-detail")),
-            Slot::CacheUsage => (t!("settings-cache-used"), t!("settings-cache-used-detail")),
+            Slot::CacheUsage => (t!("settings-space-used"), t!("settings-cache-used-detail")),
             Slot::DownloadsUsage => (
-                t!("settings-downloads-used"),
+                t!("settings-space-used"),
                 t!("settings-downloads-used-detail"),
             ),
             Slot::OfflineMode => (
@@ -995,7 +1022,7 @@ impl SettingsView {
             ),
             Slot::SessionsButton => (t!("settings-sessions-button"), SharedString::default()),
             Slot::SessionsOfficial => (t!("settings-sessions-official"), SharedString::default()),
-            Slot::SessionsServer => (t!("settings-sessions-server"), SharedString::default()),
+            Slot::SessionsServer => (t!("common-server-address"), SharedString::default()),
             Slot::Discord => (t!("settings-discord"), t!("settings-discord-detail")),
             Slot::DiscordName => (
                 t!("settings-discord-name"),

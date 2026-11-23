@@ -244,7 +244,7 @@ impl ReleaseFilter {
     pub(crate) fn label(self) -> SharedString {
         match self {
             Self::All => t!("artist-filter-all"),
-            Self::Albums => t!("artist-filter-albums"),
+            Self::Albums => t!("nav-albums"),
             Self::Singles => t!("artist-filter-singles"),
             Self::Eps => t!("artist-filter-eps"),
         }

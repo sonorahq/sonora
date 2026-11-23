@@ -102,7 +102,6 @@ impl Service for AudioScrobbler {
             secret: shared,
             session: granted.key,
             name: granted.name,
-            enabled: true,
             ..Account::default()
         })
     }

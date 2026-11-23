@@ -9,6 +9,8 @@ use crate::{AppSettings, Io, Network, Playback, PlaybackState, Session, SessionE
 
 const CACHE_CAPACITY: u64 = 32;
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+/// A skipped section starting this close to zero still opens the track.
+const OPENING: Duration = Duration::from_secs(1);
 
 /// Follows local YouTube playback and seeks over sections marked by SponsorBlock.
 pub struct SponsorBlock {
@@ -92,26 +94,30 @@ impl SponsorBlock {
         self.skipped = None;
     }
 
-    /// The current local track's skip ranges, merged and normalized for a seek bar.
-    pub fn ranges(&self, cx: &App) -> Vec<(f32, f32)> {
+    /// The current track's length while its sections apply to it, the one gate shared by the
+    /// seek bar and the previous button.
+    fn applied(&self, cx: &App) -> Option<Duration> {
         let playback = self.playback.read(cx);
-        let Some(track) = playback.track() else {
-            return Vec::new();
-        };
+        let track = playback.track()?;
         let duration = track.duration;
-        if duration.is_zero()
-            || !self.settings.read(cx).sponsorblock()
-            || Network::lost(cx)
-            || playback.steered(cx).is_some()
-            || track.id.as_deref() != self.video.as_deref()
-            || track
+        (!duration.is_zero()
+            && self.settings.read(cx).sponsorblock()
+            && !Network::lost(cx)
+            && playback.steered(cx).is_none()
+            && track.id.as_deref() == self.video.as_deref()
+            && track
                 .id
                 .as_deref()
                 .and_then(|id| self.session.read(cx).slug_for(id))
-                != Some("youtube")
-        {
+                == Some("youtube"))
+        .then_some(duration)
+    }
+
+    /// The current local track's skip ranges, merged and normalized for a seek bar.
+    pub fn ranges(&self, cx: &App) -> Vec<(f32, f32)> {
+        let Some(duration) = self.applied(cx) else {
             return Vec::new();
-        }
+        };
         let mut ranges: Vec<(f32, f32)> = Vec::new();
         for segment in self
             .segments
@@ -150,6 +156,7 @@ impl SponsorBlock {
             if let Some(video) = self.video.clone() {
                 if let Some(segments) = self.cache.get(&video) {
                     self.segments = segments;
+                    self.mark_lead_in(cx);
                     self.skip(cx);
                     return;
                 }
@@ -184,7 +191,38 @@ impl SponsorBlock {
                 }));
             }
         }
+        self.mark_lead_in(cx);
         self.skip(cx);
+    }
+
+    /// Tells playback where the music starts when a skipped section opens the current track,
+    /// so the previous button goes back right after that skip instead of restarting.
+    fn mark_lead_in(&mut self, cx: &mut Context<Self>) {
+        let end = self.applied(cx).and_then(|duration| {
+            // Join only touching sections, as `skip` does, so a restart drops no music.
+            let mut end: Option<Duration> = None;
+            for segment in self
+                .segments
+                .iter()
+                .filter(|segment| segment.matches_duration(duration))
+            {
+                if segment.start > end.unwrap_or(OPENING) {
+                    break;
+                }
+                end = Some(end.map_or(segment.end, |end| end.max(segment.end)));
+            }
+            end.map(|end| end.min(duration))
+        });
+        let stored = self
+            .playback
+            .read(cx)
+            .lead_in()
+            .map(|(id, at)| (id.as_str(), *at));
+        if stored != self.video.as_deref().zip(end) {
+            let lead_in = self.video.clone().zip(end);
+            self.playback
+                .update(cx, |playback, _| playback.set_lead_in(lead_in));
+        }
     }
 
     /// Retains sections for replay, but attempts each skip once until its seek lands.

@@ -8,7 +8,7 @@ use tokio::task::JoinSet;
 use ytmusic::YtMusic;
 
 use crate::cover::{self, CoverLimits};
-use crate::youtube::{genres, radio, subscriptions, wire};
+use crate::youtube::{genres, radio, search, subscriptions, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Feed, Genre,
     GenreDetail, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist,
@@ -431,9 +431,7 @@ impl MusicApi for YouTubeClient {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
-        Ok(self
-            .api
-            .search_songs(query)
+        Ok(search::tracks(&self.api, query)
             .await?
             .into_iter()
             .enumerate()
@@ -444,7 +442,7 @@ impl MusicApi for YouTubeClient {
     async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
         Ok(self
             .api
-            .search_albums(query)
+            .search_albums_with(query, false)
             .await?
             .into_iter()
             .map(wire::album)
@@ -458,7 +456,7 @@ impl MusicApi for YouTubeClient {
     async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
         Ok(self
             .api
-            .search_playlists(query)
+            .search_playlists_with(query, false)
             .await?
             .into_iter()
             .map(|playlist| wire::playlist(playlist, false, false))

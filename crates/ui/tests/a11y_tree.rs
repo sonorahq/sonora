@@ -377,6 +377,26 @@ async fn spoken_text_names_itself_from_its_value(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn steady_text_speaks_only_its_value(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |_, _| {
+        let element = ui::spoken_steady("rate", "48 kHz", ["44.1 kHz".into(), "192 kHz".into()])
+            .into_element();
+        snapshot("spoken-steady", &element)
+    });
+    let lines = rendered(&lines, "spoken-steady");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("role=Label") && line.contains("name=Some(\"48 kHz\")")),
+        "steady text is not announced by its value: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("192 kHz")),
+        "steady text announces the widths it only measures: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn checkbox_takes_a_name_without_a_label(cx: &mut TestAppContext) {
     let lines = open_probe(cx, |window, cx| {
         let element = Checkbox::new("consent", false)

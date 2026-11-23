@@ -9,7 +9,7 @@ config="$root/.github/triage/config.yml"
 repo="${REPO:-${GITHUB_REPOSITORY:-}}"
 issue="${ISSUE:?the issue number is required}"
 base="${TRIAGE_BASE_URL:-https://opencode.ai/zen/go/v1}"
-model="${TRIAGE_MODEL:-glm-5.3-flash}"
+model="${TRIAGE_MODEL:-glm-5.3}"
 dry="${DRY_RUN:-}"
 session="triage-${repo//\//-}-$issue"
 

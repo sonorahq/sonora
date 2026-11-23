@@ -28,6 +28,7 @@ pub mod order;
 pub mod output;
 pub mod potoken;
 pub mod progress;
+pub mod ranged;
 mod redact;
 pub mod scrobble;
 mod sink;
@@ -705,8 +706,16 @@ pub enum PlaybackEvent {
     Ended {
         id: Option<String>,
     },
+    /// The engine went back from `id` to the track before it, as another app of the service
+    /// asked. That track already plays, and the queue steps back to it.
+    SteppedBack {
+        id: Option<String>,
+    },
+    /// Track `id` could not be loaded. `timed_out` says the host it came from never answered in
+    /// time, so the listener can be pointed at their connection rather than at the track.
     Unavailable {
         id: Option<String>,
+        timed_out: bool,
     },
     /// The provider turned the load down for now, as it does under a rate limit, so the same
     /// track may play after a wait.
@@ -743,6 +752,7 @@ impl PlaybackEvent {
             | Self::Length { id, .. }
             | Self::Downloaded { id }
             | Self::Ended { id, .. }
+            | Self::SteppedBack { id }
             | Self::Unavailable { id, .. }
             | Self::Throttled { id } => id.as_deref(),
             Self::Signal { id, .. } => Some(id),
@@ -768,6 +778,11 @@ pub trait Player: Send + Sync {
     /// Takes back what `preload` lined up behind the current track, as when a change of repeat
     /// altered what follows it. An engine that cannot is left as it is.
     fn unline(&self) {}
+
+    /// Names the collection the next `load` or `load_paused_at` plays inside, given only while
+    /// the queue follows that collection's own order. An engine whose service shows its queue
+    /// to the account's other devices plays the track there so they see what comes next.
+    fn within(&self, _collection: Option<&connect::Collection>) {}
     fn play(&self);
     fn pause(&self);
 

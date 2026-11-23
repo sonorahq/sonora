@@ -103,7 +103,7 @@ impl Powerbar {
                 let current_status = playback_status(&playback, cx);
 
                 let input = cx.new(|cx| {
-                    Input::new("powerbar-placeholder", cx)
+                    Input::new("search-placeholder", cx)
                         .name("powerbar-title")
                         .icon("icons/search.svg")
                         .bare()

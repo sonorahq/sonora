@@ -301,9 +301,10 @@ impl SettingsView {
             .items_center()
             .gap_2()
             .child(step("font-smaller", "−", "settings-font-smaller", -1.))
-            .child(ui::spoken(
+            .child(ui::spoken_steady(
                 "settings-font-value",
-                t!("settings-font-value", size = look.font.round() as i64),
+                font_px(look.font),
+                [font_px(MIN_FONT), font_px(MAX_FONT)],
             ))
             .child(step("font-larger", "+", "settings-font-larger", 1.));
 
@@ -429,7 +430,7 @@ impl SettingsView {
                     .child(
                         Scrubber::new(&self.opacity, value)
                             .name(t!("settings-opacity"))
-                            .value(t!("settings-opacity-value", percent = percent))
+                            .value(t!("unit-percent", value = percent))
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
                                 let transparency = (1. - *fraction) * MAX_TRANSPARENCY;
@@ -453,7 +454,7 @@ impl SettingsView {
             .child(
                 ui::spoken(
                     "settings-opacity-value",
-                    t!("settings-opacity-value", percent = percent),
+                    t!("unit-percent", value = percent),
                 )
                 .flex_none()
                 .w(theme.metrics.control * 1.5)
@@ -587,4 +588,9 @@ fn centred(content: impl IntoElement) -> Div {
         .items_center()
         .justify_center()
         .child(content)
+}
+
+/// A font size as the pixels its stepper shows.
+fn font_px(font: f32) -> SharedString {
+    t!("unit-px", value = font.round() as i64)
 }

@@ -176,6 +176,11 @@ impl<O> Entry<O> {
     fn id(&self) -> Option<&str> {
         self.track.id.as_deref()
     }
+
+    /// Whether it is a file on this disk, which means nothing to anyone else.
+    fn is_local(&self) -> bool {
+        self.id().is_some_and(music::is_local_id)
+    }
 }
 
 /// A track removed from the queue on its own, and where it sat. Handing it back to
@@ -663,11 +668,12 @@ impl<O: Clone + PartialEq> Order<O> {
         self.upcoming.iter().map(|entry| entry.track.as_ref())
     }
 
-    /// How many songs are left to play before the recommendations.
+    /// How many playable songs are left before the recommendations. Songs that cannot play are
+    /// skipped on the way, so a queue whose rest is all unavailable has nothing ahead.
     pub fn ahead(&self) -> usize {
         self.upcoming
             .iter()
-            .filter(|entry| entry.kind != QueueKind::Suggested)
+            .filter(|entry| entry.kind != QueueKind::Suggested && entry.track.playable)
             .count()
     }
 
@@ -970,23 +976,68 @@ impl<O: Clone + PartialEq> Order<O> {
             .map(|entry| entry.track.as_ref())
     }
 
-    /// Makes `tracks` what plays after the current track, as a Sonora Session shares it. Local
-    /// files and suggestions are never shared, so the ones here stay after them.
-    pub fn share_upcoming(&mut self, tracks: Vec<Track>) {
-        let origin = self.origin().cloned();
-        let kept: Vec<_> = self
-            .upcoming
-            .drain(..)
-            .filter(|entry| {
-                entry.kind == QueueKind::Suggested
-                    || entry.track.id.as_deref().is_some_and(music::is_local_id)
+    /// What a Sonora Session sees of the upcoming tracks, in play order: every one queued by hand
+    /// and the next `window` of the collection's, each with whether it was queued by hand. Local
+    /// files and suggestions are never shared.
+    pub fn shared_upcoming(&self, window: usize) -> impl Iterator<Item = (&Track, bool)> {
+        let mut left = window;
+        self.upcoming
+            .iter()
+            .filter(|entry| entry.kind != QueueKind::Suggested && !entry.is_local())
+            .filter(move |entry| match entry.kind {
+                QueueKind::Queued => true,
+                _ if left == 0 => false,
+                _ => {
+                    left -= 1;
+                    true
+                }
             })
-            .collect();
-        self.upcoming = tagged(tracks, origin, QueueKind::Context)
-            .chain(kept)
-            .collect();
+            .map(|entry| (entry.track.as_ref(), entry.kind == QueueKind::Queued))
+    }
+
+    /// Makes `tracks` what plays after the current track, as a Sonora Session shares it, each
+    /// with whether it was queued by hand. The session only sees the start of the collection, so
+    /// the songs here past the last one it names play on after them. Local files and suggestions
+    /// are never shared, so the ones here stay last.
+    pub fn share_upcoming(&mut self, tracks: Vec<(Track, bool)>) {
+        let origin = self.origin().cloned();
+        let last = tracks
+            .iter()
+            .rev()
+            .find(|(_, queued)| !queued)
+            .and_then(|(track, _)| track.id.clone());
+        let mut beyond = last.is_none();
+        let mut tail = Vec::new();
+        let mut kept = Vec::new();
+        for entry in self.upcoming.drain(..) {
+            if entry.kind == QueueKind::Suggested || entry.is_local() {
+                kept.push(entry);
+                continue;
+            }
+            let named = last.is_some() && entry.id() == last.as_deref();
+            if beyond && entry.kind == QueueKind::Context {
+                tail.push(entry);
+            }
+            beyond |= named;
+        }
+        let shared = tracks.into_iter().map(|(track, queued)| {
+            let kind = match queued {
+                true => QueueKind::Queued,
+                false => QueueKind::Context,
+            };
+            Entry::new(track, origin.clone(), kind)
+        });
+        self.upcoming = shared.chain(tail).chain(kept).collect();
         self.suggested += 1;
         self.changed();
+    }
+
+    /// Where the first upcoming occurrence of the track `id` sits, for a Sonora Session moving on
+    /// to a track this queue already has.
+    pub fn upcoming_index(&self, id: &str) -> Option<usize> {
+        self.upcoming
+            .iter()
+            .position(|entry| entry.id() == Some(id))
     }
 
     /// Inserts hand-queued tracks at `placement`, keeping their order and provenance.
