@@ -26,7 +26,6 @@ settings-page-scrobbling = Scrobbling
 settings-page-general = Général
 settings-page-about = À propos
 settings-tab-integrations = Intégrations
-settings-group-services = Services de streaming
 settings-group-local-files = Fichiers locaux
 settings-group-background = Arrière-plan
 settings-group-controls = Contrôles

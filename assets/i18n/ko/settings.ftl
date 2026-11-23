@@ -62,7 +62,6 @@ keybind-toggle-window-fullscreen = 전체 화면 창
 keybind-increase-font-size = 글자 크게
 keybind-decrease-font-size = 글자 작게
 keybind-reset-font-size = 기본 글자 크기
-settings-group-services = 스트리밍 서비스
 settings-group-local-files = 로컬 파일
 settings-group-background = 배경
 settings-group-controls = 컨트롤

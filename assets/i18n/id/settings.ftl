@@ -62,7 +62,6 @@ keybind-toggle-window-fullscreen = Jendela layar penuh
 keybind-increase-font-size = Teks lebih besar
 keybind-decrease-font-size = Teks lebih kecil
 keybind-reset-font-size = Ukuran teks default
-settings-group-services = Layanan streaming
 settings-group-local-files = File lokal
 settings-group-background = Latar belakang
 settings-group-controls = Kontrol

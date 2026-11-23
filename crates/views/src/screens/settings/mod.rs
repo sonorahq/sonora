@@ -67,6 +67,7 @@ const STORAGE_POLL: Duration = Duration::from_secs(2);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Slot {
     Accounts,
+    AccountsLink,
     LocalFolder,
     SubsonicLibrary,
     Folders,
@@ -629,7 +630,7 @@ impl SettingsView {
     /// The groups a page shows, in order.
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
-            SettingsPage::Providers => self.accounts_groups(cx),
+            SettingsPage::Providers => self.accounts_groups(),
             SettingsPage::Appearance => self.appearance_groups(cx),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
@@ -644,6 +645,7 @@ impl SettingsView {
             SettingsPage::Keybinds => self.keybinds_groups(),
             SettingsPage::LyricsSources => self.lyrics_sources_groups(),
             SettingsPage::MusicFolders => self.music_folders_groups(),
+            SettingsPage::Accounts => self.accounts_page_groups(cx),
         }
     }
 
@@ -679,9 +681,9 @@ impl SettingsView {
     /// What a page shows between its title and its groups, built only while visible.
     fn header(&self, page: SettingsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
         match page {
-            SettingsPage::Providers | SettingsPage::About => Some(
+            SettingsPage::Accounts | SettingsPage::About => Some(
                 self.lazy((page.id(), 0_usize), cx, move |this, _, cx| match page {
-                    SettingsPage::Providers => this.profile(cx).into_any_element(),
+                    SettingsPage::Accounts => this.profile(cx).into_any_element(),
                     _ => this.mark(cx).into_any_element(),
                 })
                 .into_any_element(),
@@ -788,7 +790,7 @@ impl SettingsView {
     /// of searches.
     fn slot_meta(&self, slot: Slot, cx: &App) -> Option<(SharedString, SharedString)> {
         let meta = match slot {
-            Slot::Folders => return None,
+            Slot::Folders | Slot::AccountsLink => return None,
             Slot::Startup => (t!("settings-startup"), t!("settings-startup-detail")),
             Slot::Provider => (t!("settings-provider"), t!("settings-provider-detail")),
             Slot::Entries => (t!("settings-entries"), t!("settings-entries-detail")),
@@ -1100,6 +1102,7 @@ impl SettingsView {
             Slot::NowPlayingOnFileOpen => self.now_playing_on_file_open_row(cx),
             Slot::TaskbarProgress => self.taskbar_progress_row(cx),
             Slot::Accounts => div().into_any_element(),
+            Slot::AccountsLink => self.accounts_link_row(cx),
             Slot::LocalFolder => self.local_folder_row(cx),
             Slot::SubsonicLibrary => self.subsonic_library_row(cx),
             Slot::Folders => self.folders(cx),

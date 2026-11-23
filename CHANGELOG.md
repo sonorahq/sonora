@@ -23,6 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
 - Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
 - Switching to another service from the account menu opens your startup page instead of leaving you on a page of the previous service.
+- The account menu lists Guest mode next to your services so you can switch to it from there, and Manage accounts opens a page of its own for signing in and out, which Settings now links to instead of listing every service.
 - In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.

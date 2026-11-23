@@ -26,7 +26,6 @@ settings-page-scrobbling = 听歌记录
 settings-page-general = 通用
 settings-page-about = 关于
 settings-tab-integrations = 集成
-settings-group-services = 流媒体服务
 settings-group-local-files = 本地文件
 settings-group-background = 背景
 settings-group-controls = 控件

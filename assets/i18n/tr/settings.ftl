@@ -26,7 +26,6 @@ settings-page-scrobbling = Scrobble
 settings-page-general = Genel
 settings-page-about = Hakkında
 settings-tab-integrations = Entegrasyonlar
-settings-group-services = Yayın servisleri
 settings-group-local-files = Yerel dosyalar
 settings-group-background = Arka plan
 settings-group-controls = Denetimler
