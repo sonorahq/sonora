@@ -58,7 +58,6 @@ keybind-toggle-window-fullscreen = Cửa sổ toàn màn hình
 keybind-increase-font-size = Chữ lớn hơn
 keybind-decrease-font-size = Chữ nhỏ hơn
 keybind-reset-font-size = Cỡ chữ mặc định
-settings-group-services = Dịch vụ phát trực tuyến
 settings-group-local-files = Tệp cục bộ
 settings-group-background = Nền
 settings-group-controls = Điều khiển

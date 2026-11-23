@@ -26,7 +26,6 @@ settings-page-scrobbling = Scrobbling
 settings-page-general = Obecné
 settings-page-about = O aplikaci
 settings-tab-integrations = Integrace
-settings-group-services = Streamovací služby
 settings-group-local-files = Místní soubory
 settings-group-background = Pozadí
 settings-group-controls = Ovládání

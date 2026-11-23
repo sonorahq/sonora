@@ -26,7 +26,6 @@ settings-page-scrobbling = Scrobble
 settings-page-general = 一般
 settings-page-about = 情報
 settings-tab-integrations = 連携
-settings-group-services = ストリーミングサービス
 settings-group-local-files = ローカルファイル
 settings-group-background = 背景
 settings-group-controls = コントロール

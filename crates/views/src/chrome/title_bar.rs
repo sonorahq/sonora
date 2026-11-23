@@ -15,6 +15,7 @@ use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
+use music::SignIn;
 use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
@@ -226,15 +227,15 @@ impl TitleBar {
             )
     }
 
-    /// The account button and the menu it opens: the connected services to switch between, a
-    /// way to manage them, then History and Settings. A guest session shows as guest mode, and
-    /// only while it is the one in use.
+    /// The account button and the menu it opens: the connected services to switch between,
+    /// guest mode when a provider offers it, a way to manage them, then History and Settings.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
-        let guest = session
-            .read(cx)
-            .providers()
-            .any(|info| info.active && info.guest);
+        let guest = session.read(cx).providers().find(|info| {
+            info.options
+                .iter()
+                .any(|option| matches!(option, SignIn::Anonymous))
+        });
         let mut services: Vec<MenuItem> = session
             .read(cx)
             .connected()
@@ -254,11 +255,22 @@ impl TitleBar {
                     })
             })
             .collect();
-        if guest {
+        if let Some(info) = guest {
+            let (slug, stored) = (info.slug, info.guest);
             services.push(
                 MenuItem::new("account-guest", t!("login-guest-title"))
                     .icon("icons/hat-glasses.svg")
-                    .selected(true),
+                    .selected(info.active && info.guest)
+                    .on_click(move |_, _, cx| {
+                        let before = session.read(cx).provider_slug();
+                        session.update(cx, |session, cx| match stored {
+                            true => session.switch(slug, cx),
+                            false => session.sign_in(slug, SignIn::Anonymous, cx),
+                        });
+                        if session.read(cx).provider_slug() != before {
+                            open_startup(cx);
+                        }
+                    }),
             );
         }
 
@@ -278,7 +290,7 @@ impl TitleBar {
                         MenuItem::new("account-manage", t!("account-manage"))
                             .icon("icons/user-round.svg")
                             .on_click(|_, _, cx| {
-                                navigate(Destination::Settings(SettingsPage::Providers), cx)
+                                navigate(Destination::Settings(SettingsPage::Accounts), cx)
                             }),
                     )
                     .item(MenuItem::separator("account-pages"))
