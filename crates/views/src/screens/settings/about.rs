@@ -113,6 +113,10 @@ impl SettingsView {
             (UpdateState::Quiet, false) if updates.check_failed() => {
                 t!("settings-update-status-failed")
             }
+            (UpdateState::Quiet, false) if updates.found().is_some() => t!(
+                "settings-update-status-found",
+                version = updates.found().unwrap_or_default()
+            ),
             (UpdateState::Quiet, false) => match updates.checked_at() {
                 Some(at) => {
                     let when = relative_stamp(Some(at));
@@ -121,7 +125,11 @@ impl SettingsView {
                 None => t!("settings-update-status-never"),
             },
         };
-        let can_check = updates.can_check();
+        let can_check = updates.can_check()
+            && !matches!(
+                updates.state(),
+                UpdateState::Fetching(_) | UpdateState::Ready(_)
+            );
 
         let turn = {
             let mut spin = self.update_spin.borrow_mut();

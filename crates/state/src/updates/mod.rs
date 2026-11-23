@@ -34,6 +34,9 @@ const PROGRESS_STEPS: f32 = 10_000.;
 /// How often a running Sonora asks GitHub again, so a copy left open in the tray for days still
 /// hears about a release.
 const POLL: Duration = Duration::from_secs(6 * 60 * 60);
+/// How long a look waits on GitHub before it counts as failed, so a stalled connection never
+/// leaves a check loading.
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(20);
 /// Held while an update is prepared or cleared away.
 static STAGING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const AGENT: &str = concat!(
@@ -156,6 +159,10 @@ pub struct Updates {
     checked_at: Option<i64>,
     /// Whether the last look failed to hear back from GitHub.
     check_failed: bool,
+    /// The newer version the last look found, which stays known after its card is closed.
+    found: Option<String>,
+    /// The version a look is downloading in the background, so a check asked for meanwhile says so.
+    staging: Option<String>,
     /// How far the running download has got, in [`PROGRESS_STEPS`], written on tokio.
     progress: Arc<AtomicU32>,
     _settings: Subscription,
@@ -204,6 +211,8 @@ impl Updates {
             checking: None,
             checked_at: None,
             check_failed: false,
+            found: None,
+            staging: None,
             progress: Arc::default(),
             _settings: watch,
             _poll: poll,
@@ -241,6 +250,12 @@ impl Updates {
     /// Whether the last look could not reach GitHub or read its answer.
     pub fn check_failed(&self) -> bool {
         self.check_failed
+    }
+
+    /// The newer version the last look found, or `None` when it found the running build newest
+    /// or no look has heard back yet.
+    pub fn found(&self) -> Option<&str> {
+        self.found.as_deref()
     }
 
     /// How far the running download has got, from 0 to 1, or `None` while nothing downloads or
@@ -283,6 +298,9 @@ impl Updates {
             Toast::new(Outcome::Loading, "update-checking"),
             cx,
         ));
+        if let Some(version) = self.staging.clone() {
+            self.downloading(&version, cx);
+        }
         cx.notify();
         if self.task.is_none() {
             self.look(true, cx);
@@ -316,12 +334,16 @@ impl Updates {
     /// and nothing when a release was found, since its card says so.
     fn report(&mut self, heard: Heard, cx: &mut Context<Self>) {
         match &heard {
-            Heard::Latest | Heard::Found => {
+            Heard::Latest | Heard::Found(_) => {
                 self.checked_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .ok()
                     .map(|since| since.as_secs() as i64);
                 self.check_failed = false;
+                self.found = match &heard {
+                    Heard::Found(version) => Some(version.clone()),
+                    _ => None,
+                };
             }
             Heard::Failed(_) => self.check_failed = true,
             Heard::Abandoned => {}
@@ -341,7 +363,7 @@ impl Updates {
                 Toast::new(Outcome::Failed, "update-check-failed").detail(error),
                 cx,
             ),
-            Heard::Found | Heard::Abandoned => Toasts::close(id, cx),
+            Heard::Found(_) | Heard::Abandoned => Toasts::close(id, cx),
         }
     }
 
@@ -356,6 +378,8 @@ impl Updates {
             return;
         };
         let version = release.version.clone();
+        // The install takes over the task, so a look the listener asked for ends here.
+        self.report(Heard::Abandoned, cx);
         self.state = UpdateState::Fetching(release);
         cx.notify();
 
@@ -464,35 +488,41 @@ impl Updates {
                 this.update(cx, |this, cx| this.offer(release, cx)).ok();
                 return;
             }
-            this.update(cx, |this, cx| this.downloading(&release.version, cx))
-                .ok();
+            this.update(cx, |this, cx| {
+                this.staging = Some(release.version.clone());
+                this.downloading(&release.version, cx);
+            })
+            .ok();
             let staging = release.clone();
             let staged = join(io.spawn(async move { stage(&http, &staging, channel).await })).await;
-            this.update(cx, |this, cx| match staged {
-                Ok(staged) if this.channel == channel && this.automatic => {
-                    // The manifest is written here rather than on tokio, so a look cancelled by
-                    // a change in settings never leaves an update behind to install.
-                    if let Err(error) = staged.write() {
+            this.update(cx, |this, cx| {
+                this.staging = None;
+                match staged {
+                    Ok(staged) if this.channel == channel && this.automatic => {
+                        // The manifest is written here rather than on tokio, so a look cancelled by
+                        // a change in settings never leaves an update behind to install.
+                        if let Err(error) = staged.write() {
+                            log::warn!("updates: cannot stage {}: {error:#}", release.version);
+                            this.offer(release, cx);
+                            return;
+                        }
+                        log::info!("updates: {} is ready for the next start", staged.version);
+                        this.task = None;
+                        this.report(Heard::Found(release.version.clone()), cx);
+                        if this.dismissed.as_deref() != Some(release.version.as_str()) {
+                            this.state = UpdateState::Ready(release);
+                            cx.notify();
+                        }
+                    }
+                    // The change in settings that brought this about already cleared the update.
+                    Ok(_) => {
+                        this.task = None;
+                        this.report(Heard::Abandoned, cx);
+                    }
+                    Err(error) => {
                         log::warn!("updates: cannot stage {}: {error:#}", release.version);
                         this.offer(release, cx);
-                        return;
                     }
-                    log::info!("updates: {} is ready for the next start", staged.version);
-                    this.task = None;
-                    this.report(Heard::Found, cx);
-                    if this.dismissed.as_deref() != Some(release.version.as_str()) {
-                        this.state = UpdateState::Ready(release);
-                        cx.notify();
-                    }
-                }
-                // The change in settings that brought this about already cleared the update.
-                Ok(_) => {
-                    this.task = None;
-                    this.report(Heard::Abandoned, cx);
-                }
-                Err(error) => {
-                    log::warn!("updates: cannot stage {}: {error:#}", release.version);
-                    this.offer(release, cx);
                 }
             })
             .ok();
@@ -502,7 +532,7 @@ impl Updates {
     /// Shows the card for `release` unless the listener already closed it once.
     fn offer(&mut self, release: Release, cx: &mut Context<Self>) {
         self.task = None;
-        self.report(Heard::Found, cx);
+        self.report(Heard::Found(release.version.clone()), cx);
         if self.dismissed.as_deref() == Some(release.version.as_str()) {
             return;
         }
@@ -515,8 +545,8 @@ impl Updates {
 enum Heard {
     /// The running build is the newest on its channel.
     Latest,
-    /// A newer build is out and its card is shown or on its way.
-    Found,
+    /// A newer build is out, by its version, and its card is shown or on its way.
+    Found(String),
     /// GitHub could not be asked, for the reason given.
     Failed(String),
     /// The look was cancelled before it heard anything.
@@ -553,6 +583,7 @@ async fn latest(http: &reqwest::Client, channel: Channel) -> Result<Option<Relea
         .get(channel.url())
         .header("User-Agent", AGENT)
         .header("Accept", "application/vnd.github+json")
+        .timeout(LOOKUP_TIMEOUT)
         .send()
         .await
         .context("cannot reach github")?

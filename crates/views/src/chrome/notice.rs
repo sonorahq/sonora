@@ -386,6 +386,11 @@ fn card_element(card: Card, window: &mut Window, cx: &mut App) -> AnyElement {
             value = (done.unwrap_or(0.) * 100.).floor() as usize
         )
     });
+    // The percentage drawn beside the progress bar is read after the detail.
+    let about = match (detail.clone(), percent.clone()) {
+        (Some(detail), Some(percent)) => Some(SharedString::from(format!("{detail}, {percent}"))),
+        (detail, percent) => detail.or(percent),
+    };
 
     let body = div()
         .flex()
@@ -424,7 +429,7 @@ fn card_element(card: Card, window: &mut Window, cx: &mut App) -> AnyElement {
                         .truncate()
                         .child(title.clone()),
                 )
-                .when_some(detail.clone(), |this, detail| {
+                .when_some(detail, |this, detail| {
                     this.child(
                         div()
                             .text_size(theme.text(Text::Small))
@@ -493,7 +498,7 @@ fn card_element(card: Card, window: &mut Window, cx: &mut App) -> AnyElement {
         .id(SharedString::from(format!("{id}-card")))
         .role(Role::Alert)
         .aria_label(title)
-        .when_some(detail, |this, detail| this.aria_description(detail))
+        .when_some(about, |this, about| this.aria_description(about))
         .occlude()
         .relative()
         .w_full()
