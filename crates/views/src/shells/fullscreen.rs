@@ -1303,11 +1303,15 @@ impl FullscreenView {
                 this.left = true;
                 cx.notify();
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                cx.show_cursor();
-                this.stir(cx);
-            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| this.rouse(cx)))
+    }
+
+    /// Wakes the sleeping controls from a press and shows the cursor, keeping the press from
+    /// whatever sits under the hidden pointer.
+    fn rouse(&mut self, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        cx.show_cursor();
+        self.stir(cx);
     }
 
     fn menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -1764,8 +1768,14 @@ impl Render for FullscreenView {
                 cx.notify();
             }))
             // Capture phase: every click stirs the idle timer, even one a
-            // control underneath swallows for itself.
-            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| this.poke(cx)))
+            // control underneath swallows for itself. Asleep, it only wakes, which covers the
+            // frame before the dormant layer first paints.
+            .capture_any_mouse_down(cx.listener(
+                |this, _: &MouseDownEvent, _, cx| match this.awake {
+                    true => this.poke(cx),
+                    false => this.rouse(cx),
+                },
+            ))
             // A trackpad reports fingers that only touch it as a scroll that moves nothing.
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
                 if event.delta.pixel_delta(window.line_height()) != Point::default() {
