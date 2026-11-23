@@ -94,7 +94,7 @@ library-local-unconfigured = 로컬 라이브러리 구성
 
 # app menu
 app-refresh = 새로고침
-app-dev-badge = dev
+app-dev-badge = 개발
 app-dev-build = 개발 빌드
 downloads-active = 다운로드 중
 downloads-left = { $count ->
