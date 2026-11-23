@@ -441,33 +441,17 @@ impl PlayerBar {
         }
     }
 
-    /// The tools for a view that copies the bar's layout: `sessions` where the bar shows its
-    /// picker, then empty room for the panel buttons the copy leaves to its own switcher, so the
-    /// seek bar ends where the bar's does. None where the bar has no tools either.
-    pub(crate) fn tools_like(
-        sessions: Entity<SessionsButton>,
-        window: &Window,
-        cx: &App,
-    ) -> Option<Div> {
-        let picker = Self::picker_shown(cx);
-        let panels = Self::panel_buttons(window, cx);
-        (picker || panels > 0).then(|| {
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_1()
-                .when(picker, |this| this.child(sessions))
-                .when(panels > 0, |this| {
-                    this.child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .gap_1()
-                            .children((0..panels).map(|_| div().flex_none().size(px(ICON_BUTTON)))),
-                    )
-                })
-        })
+    /// The tools for a view below `Room::Wide` that copies the bar's layout: `sessions` where the
+    /// bar shows its picker. The bar has no panel buttons there, and its tools take their place
+    /// in the row even when they draw nothing, so the copy's do too and its seek bar ends where
+    /// the bar's does.
+    pub(crate) fn tools_like(sessions: Entity<SessionsButton>, cx: &App) -> Div {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .when(Self::picker_shown(cx), |this| this.child(sessions))
     }
 
     /// How the bar draws its volume control at this width, in whatever layout it has.
