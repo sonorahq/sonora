@@ -11,10 +11,11 @@ use crate::credentials;
 mod audioscrobbler;
 mod listenbrainz;
 mod maloja;
+mod tealfm;
 
 /// A track shorter than this never counts, and a play this long always does. Last.fm wrote both
-/// rules and ListenBrainz and Maloja repeat them, so they belong to the play rather than to any
-/// one service.
+/// rules and ListenBrainz, Maloja and teal.fm repeat them, so they belong to the play rather than
+/// to any one service.
 const MIN_LENGTH: Duration = Duration::from_secs(30);
 const FULL_PLAY: Duration = Duration::from_secs(240);
 
@@ -25,6 +26,7 @@ pub fn services() -> Vec<Arc<dyn Service>> {
         Arc::new(audioscrobbler::LIBREFM),
         Arc::new(listenbrainz::ListenBrainz),
         Arc::new(maloja::Maloja),
+        Arc::new(tealfm::TealFm::default()),
     ]
 }
 
@@ -75,6 +77,8 @@ pub enum Link {
     Token,
     /// A server url and one of that server's API keys. Maloja.
     Server,
+    /// An ATProto handle or DID and an app password for that account. teal.fm.
+    Password,
 }
 
 /// What the settings screen collected for a `Link`. A service refuses a variant it did not ask
@@ -82,9 +86,22 @@ pub enum Link {
 #[derive(Clone, Debug)]
 pub enum Secret {
     None,
-    Keys { key: String, secret: String },
-    Token { token: String, server: String },
-    Server { url: String, key: String },
+    Keys {
+        key: String,
+        secret: String,
+    },
+    Token {
+        token: String,
+        server: String,
+    },
+    Server {
+        url: String,
+        key: String,
+    },
+    Password {
+        identifier: String,
+        password: String,
+    },
 }
 
 /// A linked scrobbling account, both as `Service::connect` returns it and as [`store`] keeps it.
@@ -93,17 +110,17 @@ pub enum Secret {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Account {
-    /// The API key, for the services that issue one.
+    /// The API key, for the services that issue one, or the DID of an ATProto account.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub key: String,
     /// The shared secret that signs requests. Only the audioscrobbler protocol uses it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub secret: String,
-    /// The session key, user token or server key that authenticates a submission.
+    /// The session key, user token, server key or app password that authenticates a submission.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub session: String,
-    /// The server this account lives on, for the services the user hosts themselves. Empty means
-    /// the service's own public instance.
+    /// The server this account lives on, for the services the user hosts themselves, or the PDS
+    /// of an ATProto account. Empty means the service's own public instance.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub server: String,
     /// What the settings row calls the account.

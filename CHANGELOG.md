@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
+- Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
 
 ### Changed
 

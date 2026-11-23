@@ -214,6 +214,18 @@ impl SettingsView {
                     masked: true,
                 }),
             ),
+            Link::Password => (
+                Field {
+                    hint: "settings-scrobble-handle",
+                    value: account.name,
+                    masked: false,
+                },
+                Some(Field {
+                    hint: "settings-scrobble-app-password",
+                    value: account.session,
+                    masked: true,
+                }),
+            ),
         };
 
         self.scrobble_first.update(cx, |input, cx| {
@@ -254,6 +266,10 @@ impl SettingsView {
                 url: first,
                 key: second,
             },
+            Link::Password => Secret::Password {
+                identifier: first,
+                password: second,
+            },
         };
 
         self.scrobble_prompt = None;
@@ -277,6 +293,7 @@ impl SettingsView {
         let title = i18n::lookup(&format!("settings-{service}"), None);
         let request = match link {
             Link::Token => "settings-scrobble-token-request",
+            Link::Password => "settings-scrobble-password-request",
             _ => "settings-scrobble-request",
         };
 
