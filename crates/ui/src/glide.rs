@@ -62,9 +62,9 @@ struct Drift {
     armed: bool,
     eased: Option<f32>,
     beat: Option<Instant>,
-    /// The offset the glide last wrote or started from. A step that finds the scroll somewhere
-    /// else carries the glide along by as much, so a hold that kept content in place mid-glide
-    /// is not undone.
+    /// The offset the glide last wrote or started from. A step or aim that finds the scroll
+    /// somewhere else carries the glide along by as much, so a hold that kept content in place
+    /// mid-glide is not undone.
     placed: Option<Point<Pixels>>,
 }
 
@@ -133,12 +133,15 @@ impl Glide {
         self.schedule_frame(scroll, window);
     }
 
-    pub fn aim(&self, scroll: &impl ScrollPosition, to: Point<Pixels>, window: &mut Window) {
+    pub fn aim<S: ScrollPosition>(&self, scroll: &S, to: Point<Pixels>, window: &mut Window) {
         {
             let mut drift = self.drift.borrow_mut();
-            if !drift.gliding {
-                drift.shown = scroll.offset();
-                drift.placed = Some(drift.shown);
+            match drift.gliding {
+                true => drift.carry(scroll),
+                false => {
+                    drift.shown = scroll.offset();
+                    drift.placed = Some(drift.shown);
+                }
             }
             drift.target = held(to, scroll);
             drift.gliding = true;
@@ -227,13 +230,7 @@ impl Glide {
             if !drift.gliding {
                 return;
             }
-            if S::EXACT
-                && let Some(placed) = drift.placed
-            {
-                let moved = scroll.offset() - placed;
-                drift.shown += moved;
-                drift.target += moved;
-            }
+            drift.carry(scroll);
 
             let now = Instant::now();
             let elapsed = drift
@@ -297,6 +294,24 @@ impl Glide {
             None => window.refresh(),
         }
         self.schedule_frame(scroll, window);
+    }
+}
+
+impl Drift {
+    /// Carries the glide along by as far as something else moved the scroll since the glide last
+    /// wrote it, and takes the scroll where it is now as the glide's own.
+    fn carry<S: ScrollPosition>(&mut self, scroll: &S) {
+        if !S::EXACT {
+            return;
+        }
+        let Some(placed) = self.placed else {
+            return;
+        };
+        let now = scroll.offset();
+        let moved = now - placed;
+        self.shown += moved;
+        self.target += moved;
+        self.placed = Some(now);
     }
 }
 
