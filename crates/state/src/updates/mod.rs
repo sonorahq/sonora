@@ -181,14 +181,24 @@ impl Updates {
             this.channel = channel;
             this.automatic = automatic;
             this.task = None;
+            this.staging = None;
+            if moved {
+                this.found = None;
+                this.checked_at = None;
+            }
             this.state = UpdateState::Quiet;
             cx.notify();
             if moved || !automatic {
                 forget(&this.io);
             }
             this.look(moved, cx);
-            if this.task.is_none() {
-                this.report(Heard::Abandoned, cx);
+            match (this.task.is_some(), this.checking) {
+                (false, _) => this.report(Heard::Abandoned, cx),
+                // A look the listener asked for carries on in the new one, which starts by asking.
+                (true, Some(id)) => {
+                    Toasts::settle(id, Toast::new(Outcome::Loading, "update-checking"), cx)
+                }
+                (true, None) => {}
             }
         });
         let poll = cx.spawn(async move |this, cx| {
@@ -312,6 +322,7 @@ impl Updates {
             self.dismissed = Some(release.version.clone());
         }
         self.task = None;
+        self.staging = None;
         self.state = UpdateState::Quiet;
         self.report(Heard::Abandoned, cx);
         cx.notify();
