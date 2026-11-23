@@ -120,10 +120,34 @@ pub struct Playlist {
     pub read_only: bool,
 }
 
+/// What the name of a rating playlist starts with on a service without rating folders.
+pub(crate) const RATING_PREFIX: &str = "Sonora Rating ";
+
+/// A rating in half-stars as the stars it is worth, such as `4.5`. It is the number in the name
+/// of the playlist that holds the rating, and `parse_rating` reads it back.
+pub(crate) fn rating_label(half_stars: u8) -> String {
+    format!("{:.1}", f64::from(half_stars) / 2.)
+}
+
+/// Reads a name made by `rating_label` back into half-stars.
+pub(crate) fn parse_rating(name: &str) -> Option<u8> {
+    (1..=10).find(|rating| name == rating_label(*rating))
+}
+
 impl Playlist {
     /// Whether the listener can add, remove or move this playlist's tracks.
     pub fn takes_tracks(&self) -> bool {
         (self.owned || self.collaborative) && !self.read_only
+    }
+
+    /// The half-star value of a Sonora rating playlist on a service without rating folders.
+    /// Followed playlists and unrelated names are left alone.
+    pub fn rating(&self) -> Option<u8> {
+        let name = self
+            .name
+            .strip_prefix(RATING_PREFIX)
+            .filter(|_| self.owned)?;
+        parse_rating(name)
     }
 }
 
