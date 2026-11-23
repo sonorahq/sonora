@@ -43,7 +43,7 @@ env:
   ORAS_VERSION: 1.3.6
   ORAS_SHA256: 66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
   # Bump to start from a cold build after changing how snapshot.sh builds.
-  SNAPSHOT_FORMAT: 1
+  SNAPSHOT_FORMAT: 2
 
 jobs:
   plain:

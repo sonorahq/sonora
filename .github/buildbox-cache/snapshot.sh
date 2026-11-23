@@ -19,11 +19,13 @@ set -euo pipefail
 if [[ ${1:-} != --as-builder ]]; then
   pacman -Syu --noconfirm --needed $(grep -v '^#' /checkout/.github/buildbox-cache/packages)
   useradd -m -u 1001 -s /bin/bash sleebu
-  mkdir -p /work/snap /work/out
-  chown sleebu: /work/snap /work/out
+  mkdir -p /work/snap /work/out /home/.cargo
+  chown sleebu: /work/snap /work/out /home/.cargo
   # The buildbox runs rbuild-run over ssh with little more than HOME, USER and PATH, plus these.
+  # Cargo fingerprints a third-party crate by the absolute path of its sources, so the snapshot
+  # only seeds a checkout whose CARGO_HOME is the same. The buildbox gives every user /home/.cargo.
   exec runuser -u sleebu -- env -i HOME=/home/sleebu USER=sleebu LOGNAME=sleebu SHELL=/bin/bash \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/bin \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/bin CARGO_HOME=/home/.cargo \
     CARGO_TARGET_DIR=/work/snap/target CARGO_BUILD_JOBS="$(nproc)" \
     CMAKE_BUILD_PARALLEL_LEVEL=12 MAKEFLAGS=-j12 \
     bash "$0" --as-builder </dev/null
