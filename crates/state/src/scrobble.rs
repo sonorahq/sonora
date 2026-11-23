@@ -95,6 +95,8 @@ pub struct Scrobbling {
     play: Option<Play>,
     current: Option<String>,
     started: SystemTime,
+    /// How many plays have begun since launch, which numbers each one as its [`Play::order`].
+    plays: u64,
     /// Whether the current play has already gone to the provider it came from.
     reported: bool,
     /// Where the current track was last heard, for the report that says it stopped.
@@ -145,6 +147,7 @@ impl Scrobbling {
             play: None,
             current: None,
             started: SystemTime::now(),
+            plays: 0,
             reported: false,
             position: Duration::ZERO,
             reports: send_reports(&io),
@@ -313,12 +316,13 @@ impl Scrobbling {
         if !resumed {
             self.current = track.id.clone();
             self.started = SystemTime::now();
+            self.plays += 1;
             self.reported = false;
             for row in &mut self.rows {
                 row.sent = false;
             }
         }
-        self.play = played(track, self.started);
+        self.play = played(track, self.started, self.plays);
         self.position = playback.position();
         self.report(Report::Playing, cx);
         let Some(play) = self.play.clone() else {
@@ -379,7 +383,8 @@ impl Scrobbling {
         if playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref() {
             self.position = playback.position();
         }
-        if *playback.state() != PlaybackState::Playing || !play.earned(playback.position()) {
+        let played = playback.position();
+        if *playback.state() != PlaybackState::Playing || !play.earned(played) {
             return;
         }
 
@@ -397,7 +402,7 @@ impl Scrobbling {
 
         let muted = self.muted(cx);
         for row in &mut self.rows {
-            if muted || row.sent || !row.live() {
+            if muted || row.sent || !row.live() || !row.service.earned(play, played) {
                 continue;
             }
             row.sent = true;
@@ -452,7 +457,7 @@ impl Scrobbling {
 }
 
 /// Turns a track into a listen. A track with no artist or no title is not submittable anywhere.
-fn played(track: &Track, at: SystemTime) -> Option<Play> {
+fn played(track: &Track, at: SystemTime, order: u64) -> Option<Play> {
     let artist = track
         .artist_refs
         .first()
@@ -468,6 +473,7 @@ fn played(track: &Track, at: SystemTime) -> Option<Play> {
         album: Some(track.album.clone()).filter(|album| !album.is_empty()),
         duration: track.duration,
         at,
+        order,
     })
 }
 

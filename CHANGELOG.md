@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
+- Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
 
 ### Changed
 
@@ -23,13 +24,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
 - Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
 - Switching to another service from the account menu opens your startup page instead of leaving you on a page of the previous service.
+- The account menu lists Guest mode next to your services so you can switch to it from there, and Manage accounts opens a page of its own for signing in and out, which Settings now links to instead of listing every service.
 - In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
+- The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
 
 ### Fixed
 
+- The playback buttons in the Windows taskbar preview are sharper, with bolder skip icons that follow the display scale.
 - Removing a single track from history or a playlist shows a translated menu label again.
 - Once the fullscreen player hides the cursor, nothing under it stays highlighted, and a click brings the cursor and controls back instead of jumping to the lyric line or link beneath it.
 - With a light theme, the rest of the app no longer turns dark while the fullscreen player opens or closes.
@@ -46,7 +50,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, a song change no longer sends the new song to where the last one was, or rocks playback back and forth for a few seconds.
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 - Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
-- Your Spotify API key no longer shows in the process list while Soloist 1.4.0 or newer runs.
+- TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
+- Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
+- Escape closes the search suggestions and leaves the search field in one press.
+- Sonora keeps your Spotify API key out of the process list once Soloist 1.4.0 or newer has stored it.
 
 ### Fixed
 

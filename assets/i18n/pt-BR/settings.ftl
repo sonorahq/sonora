@@ -62,7 +62,6 @@ keybind-toggle-window-fullscreen = Janela em tela cheia
 keybind-increase-font-size = Aumentar texto
 keybind-decrease-font-size = Diminuir texto
 keybind-reset-font-size = Tamanho de texto padrão
-settings-group-services = Serviços de streaming
 settings-group-local-files = Arquivos locais
 settings-group-background = Fundo
 settings-group-controls = Controles

@@ -186,9 +186,10 @@ impl Button {
         self
     }
 
-    /// Keeps room for the widest of `labels` and centres the shown label in it. A new label
-    /// starts where the last one started and glides to the middle. Pass every label the button
-    /// can show, the current one included.
+    /// Keeps room for the widest of `labels` and centres the icon and the shown label together
+    /// in it, so the space before the icon matches the space after the label. A new label starts
+    /// where the last one started and glides to the middle. Pass every label the button can
+    /// show, the current one included.
     pub fn reserve(mut self, labels: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.reserve = labels.into_iter().map(Into::into).collect();
         self
@@ -733,7 +734,8 @@ impl RenderOnce for Button {
                 shape.leaving = None;
             }
             // A changed label in a reserved slot starts where the last one started and glides to
-            // its own place in the middle.
+            // its own place in the middle. Half the room the label leaves goes before the icon,
+            // so the icon and the label move as one.
             let inset = reserved.map(|(slot, shown)| {
                 let target = (f32::from(slot - shown) / 2.).max(0.);
                 let inset = shape.inset.get_or_insert_with(|| Sprung::at(target));
@@ -776,6 +778,7 @@ impl RenderOnce for Button {
             ),
         };
 
+        let has_icon = icon.is_some();
         let button = base
             .role(match tab {
                 true => gpui::accesskit::Role::Tab,
@@ -797,6 +800,11 @@ impl RenderOnce for Button {
             .gap(gap)
             .h(height)
             .px(padding)
+            // With an icon, half the room a reserved slot leaves goes before the icon, so the
+            // space before the icon matches the space after the label.
+            .when_some(inset.filter(|_| has_icon), |this, inset| {
+                this.pl(padding + inset)
+            })
             .rounded(radius)
             // Mid-resize the box is narrower or wider than what it holds, so the content keeps
             // its own width from the leading edge and the box clips it as it grows. It leaves the
@@ -918,15 +926,23 @@ impl RenderOnce for Button {
                 // pixel grid so it moves by fractions rather than whole pixels. A label wider
                 // than what is left of the slot runs on into the padding for the moment it
                 // starts there.
-                Some(((slot, _), inset)) => this.child(
-                    div().flex_none().w(slot).pixel_snap(false).child(
-                        div()
-                            .pixel_snap(false)
-                            .ml(inset)
-                            .whitespace_nowrap()
-                            .child(label),
-                    ),
-                ),
+                Some(((slot, _), inset)) => {
+                    // With an icon the inset sits in the padding before it, so the slot gives that
+                    // room back and the label follows the icon directly.
+                    let (width, lead) = match has_icon {
+                        true => (slot - inset, Pixels::ZERO),
+                        false => (slot, inset),
+                    };
+                    this.child(
+                        div().flex_none().w(width).pixel_snap(false).child(
+                            div()
+                                .pixel_snap(false)
+                                .ml(lead)
+                                .whitespace_nowrap()
+                                .child(label),
+                        ),
+                    )
+                }
                 None => this.child(
                     div()
                         .min_w_0()

@@ -8,9 +8,9 @@ use gpui::prelude::*;
 use gpui::accesskit::{Role, Toggled};
 use gpui::{
     Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, ExternalPaths,
-    FontWeight, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
-    SharedString, Size, SpringConfig, SpringState, Task, UniformListScrollHandle, Window, canvas,
-    div, ease_in_out, px, relative, size, svg, uniform_list,
+    FontWeight, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, SharedString,
+    Size, SpringConfig, SpringState, Task, UniformListScrollHandle, Window, canvas, div,
+    ease_in_out, px, relative, size, svg, uniform_list,
 };
 use i18n::t;
 use music::{Contributor, Shape, Track, Voice};
@@ -66,7 +66,6 @@ const PLAIN_LYRICS_GROWTH: f32 = 1.15;
 const LYRICS_FRAME: Size<Pixels> = size(px(1152.), px(648.));
 // the most a large window grows fullscreen lyrics by
 const LYRICS_FRAME_MOST: f32 = 2.;
-const PINNED_SHARE: f32 = 0.25;
 const PIN: f32 = 0.3;
 // how far a row falls behind, in verse sizes
 const LAG: f32 = 24.;
@@ -199,6 +198,18 @@ struct SheetLayout {
     font: u64,
 }
 
+/// Where the last pin of the now-playing heading asked the queue to rest, kept until it lands.
+#[derive(Clone, Copy)]
+struct Pinned {
+    goal: Pixels,
+    /// How many rows the queue listed when the pin was last applied.
+    rows: usize,
+    /// The offset gpui settled on after that, or `None` before the list has been laid out again.
+    rested: Option<Pixels>,
+    /// The scrollbar's nudge count at the pin, which moves once the reader scrolls themselves.
+    nudges: u64,
+}
+
 #[derive(Clone)]
 struct ContextMenuState {
     track: Track,
@@ -237,6 +248,8 @@ pub(crate) struct Aside {
     /// app's own queue. A change pins the now-playing row again.
     queue_track: Option<String>,
     anchor: bool,
+    /// The last pin while it has not landed yet, cleared once it does.
+    queue_pin: Option<Pinned>,
     titled: bool,
     aiming: bool,
     rested: Option<Pixels>,
@@ -256,6 +269,9 @@ pub(crate) struct Aside {
     lyrics_wraps: HashMap<usize, Wrapped>,
     lane_rooms: HashMap<usize, Pixels>,
     seen: Pixels,
+    /// Whether the rows took new heights last frame, when the hold moved the scroll to keep the
+    /// sheet in place. The rows do not lag behind that move, since the sheet did not slide.
+    reflowed: bool,
     flying: bool,
     flew: bool,
     slid: std::time::Instant,
@@ -346,6 +362,7 @@ impl Aside {
             past_len: 0,
             queue_track: None,
             anchor: true,
+            queue_pin: None,
             titled: true,
             aiming: false,
             rested: None,
@@ -365,6 +382,7 @@ impl Aside {
             lyrics_wraps: HashMap::new(),
             lane_rooms: HashMap::new(),
             seen: px(0.),
+            reflowed: false,
             flying: false,
             flew: true,
             slid: std::time::Instant::now(),
@@ -537,13 +555,13 @@ impl Aside {
         self.previous_active_line = None;
         self.departing_line = None;
         self.placing = true;
+        self.drifts.clear();
         self.forget_measurements();
     }
 
     fn forget_measurements(&mut self) {
         self.lyrics_wraps.clear();
         self.lane_rooms.clear();
-        self.drifts.clear();
         self.sheet_layout = None;
         self.settled.clear();
         self.was_settled.clear();
@@ -569,7 +587,10 @@ impl Aside {
 
         // follow the seen position
         let offset = scroll.offset().y + presentation;
-        let step = offset - self.seen;
+        let step = match std::mem::take(&mut self.reflowed) {
+            true => px(0.),
+            false => offset - self.seen,
+        };
         self.seen = offset;
         if nudges != self.nudges {
             self.flying = false;
@@ -1183,11 +1204,11 @@ impl Aside {
             self.lyrics_wrap_width = Some(wrap_width);
             self.lyrics_wrap_size = Some(wrap_size);
             self.forget_measurements();
-            // A sheet following the sung line puts that line back in its place once the rows
-            // have their new heights. A sheet the listener scrolled is held by its top instead.
+            self.reflowed = true;
+            // The hold keeps the followed line where it stood while the rows take their new
+            // heights, so the sheet only aims again, for when the end of the sheet moved it.
             if self.pinned {
                 self.aiming = true;
-                self.placing = true;
             }
             window.request_animation_frame();
         }
@@ -1736,9 +1757,13 @@ impl Aside {
             Some(lines) => self.verse_slack(lyric_row_count(lines), window, cx),
             None => (px(REST), px(REST)),
         };
+        // A sheet following the sung line holds that line in place when it reflows, in the same
+        // frame, and a sheet the listener scrolled holds its top.
+        let kept = self.followed.filter(|_| self.pinned && lines.is_some());
 
         let sheet = Scroller::new("lyrics", &self.verse_bar)
-            .hold_while(!self.pinned)
+            .hold_while(!self.pinned || kept.is_some())
+            .keep(kept)
             .reflowed(rewrapped)
             .bottom_inset(self.bottom(cx))
             .when(lines.is_some(), Scroller::manual_presentation)
@@ -1932,39 +1957,76 @@ impl Aside {
             return;
         };
 
-        let viewport = self.scroll.0.borrow().base_handle.bounds().size.height;
-        if viewport <= px(0.) {
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        if handle.bounds().size.height <= px(0.) {
             window.request_animation_frame();
             return;
         }
 
-        let above = Self::rows_above(viewport, window, cx);
-        self.scroll
-            .scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, above);
+        let goal = Self::pinned_offset(index, window, cx);
+        handle.set_offset(gpui::point(handle.offset().x, -goal));
+        self.queue_pin = Some(Pinned {
+            goal,
+            rows: sections.len(),
+            rested: None,
+            nudges: self.scrollbar.read(cx).nudges(),
+        });
         self.anchor = false;
     }
 
-    /// How many rows `pin` keeps above the now-playing one, so it sits a quarter of the way down.
-    fn rows_above(viewport: Pixels, window: &Window, cx: &App) -> usize {
+    /// Applies the last pin again when rows arrive under it, as when the upcoming songs load
+    /// after the restored one and gpui clamped the pin short. It lets go once the pin lands or
+    /// the queue is scrolled away from where it rested.
+    fn settle_pin(&mut self, sections: &Sections, cx: &App) {
+        let Some(pinned) = self.queue_pin else {
+            return;
+        };
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let at = -handle.offset().y;
+        let moved = self.scrollbar.read(cx).nudges() != pinned.nudges
+            || pinned
+                .rested
+                .is_some_and(|rested| (at - rested).abs() > px(0.5));
+        if at >= pinned.goal - px(0.5) || moved {
+            self.queue_pin = None;
+            return;
+        }
+        self.queue_pin = Some(match sections.len() == pinned.rows {
+            true => Pinned {
+                rested: Some(at),
+                ..pinned
+            },
+            false => {
+                handle.set_offset(gpui::point(handle.offset().x, -pinned.goal));
+                Pinned {
+                    rows: sections.len(),
+                    rested: None,
+                    ..pinned
+                }
+            }
+        });
+    }
+
+    /// How far `pin` scrolls the queue so the previous song is the only history row left above
+    /// the now-playing heading. A queue without history stays at the top. gpui clamps the
+    /// offset when it lays the list out, so a queue too short to scroll stays where it fits.
+    fn pinned_offset(index: usize, window: &Window, cx: &App) -> Pixels {
         let row = snapped(cx.theme().metrics.list_row, window);
-        (viewport * PINNED_SHARE / row).round() as usize
+        row * index.saturating_sub(2) as f32
     }
 
     /// Where the queue rests once `pin` has placed the now-playing row, in scrolled pixels,
-    /// clamped the way gpui clamps the deferred scroll. Zero while nothing is playing, so a
-    /// recall falls back to the top, and None before the list has been laid out.
+    /// clamped the way gpui clamps the list. Zero while nothing is playing, so a recall falls
+    /// back to the top, and None before the list has been laid out.
     fn resting_offset(&self, sections: &Sections, window: &Window, cx: &App) -> Option<Pixels> {
         let handle = self.scroll.0.borrow().base_handle.clone();
-        let viewport = handle.bounds().size.height;
-        if viewport <= px(0.) {
+        if handle.bounds().size.height <= px(0.) {
             return None;
         }
         let Some(index) = sections.current_index() else {
             return Some(Pixels::ZERO);
         };
-        let row = snapped(cx.theme().metrics.list_row, window);
-        let above = Self::rows_above(viewport, window, cx);
-        let goal = row * index.saturating_sub(above) as f32;
+        let goal = Self::pinned_offset(index, window, cx);
         Some(goal.clamp(Pixels::ZERO, handle.max_offset().y))
     }
 
@@ -2100,6 +2162,9 @@ impl Render for Aside {
             self.queue_track = queue_track;
             self.anchor = true;
         }
+        if self.tab == SideTab::Queue {
+            self.settle_pin(&sections, cx);
+        }
         if self.anchor && self.tab == SideTab::Queue {
             self.pin(&sections, window, cx);
         }
@@ -2172,12 +2237,19 @@ impl Render for Aside {
                                             true => Pixels::ZERO,
                                             false => px(FADE * 0.5),
                                         };
-                                        this.fade_edges(px(FADE * 0.5), under)
+                                        let scrolled =
+                                            -self.scroll.0.borrow().base_handle.offset().y
+                                                > px(0.5);
+                                        let over = match scrolled {
+                                            true => cx.theme().metrics.pad * 2.,
+                                            false => Pixels::ZERO,
+                                        };
+                                        this.fade_edges(over, under)
                                     })
                                     .child(
                                         self.rows(listing, sections.clone(), cx)
                                             .px_2()
-                                            .pt(px(FADE * 0.5))
+                                            .pt(cx.theme().metrics.pad)
                                             .track_scroll(&self.scroll)
                                             .size_full(),
                                     ),

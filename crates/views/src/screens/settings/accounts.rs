@@ -68,17 +68,40 @@ fn offered(method: &SignIn, stored: bool) -> bool {
 }
 
 impl SettingsView {
-    pub(super) fn accounts_groups(&self, cx: &App) -> Vec<Group> {
-        // The library picker only exists once an account that can be limited to a library is
-        // stored: without one there is no server to list libraries from.
+    pub(super) fn accounts_groups(&self) -> Vec<Group> {
+        vec![
+            Group::new("settings-group-library", "icons/library-big.svg")
+                .rows([Slot::AccountsLink, Slot::LocalFolder]),
+        ]
+    }
+
+    /// The streaming services page: a card per provider and guest mode, then the library
+    /// picker once an account that can be limited to a library is stored, since without one
+    /// there is no server to list libraries from.
+    pub(super) fn accounts_page_groups(&self, cx: &App) -> Vec<Group> {
         let scoped = self.session.read(cx).offers_libraries();
         vec![
-            Group::new("settings-group-services", "icons/music.svg")
+            Group::untitled()
                 .cards(Slot::Accounts)
                 .rows(scoped.then_some(Slot::SubsonicLibrary)),
-            Group::new("settings-group-local-files", "icons/file-music.svg")
-                .rows([Slot::LocalFolder]),
         ]
+    }
+
+    /// The row that opens the streaming services page, naming the service in use, or guest
+    /// mode when that is what plays.
+    pub(super) fn accounts_link_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let value = match self.guest(cx).filter(|guest| guest.active) {
+            Some(_) => Some(t!("login-guest-title")),
+            None => self
+                .providers(cx)
+                .into_iter()
+                .find(|account| account.active)
+                .map(|account| SharedString::from(account.name)),
+        };
+
+        drill("accounts", t!("settings-accounts"), value, cx)
+            .on_click(|_, _, cx| navigate(Destination::Settings(SettingsPage::Accounts), cx))
+            .into_any_element()
     }
 
     pub(super) fn music_folders_groups(&self) -> Vec<Group> {

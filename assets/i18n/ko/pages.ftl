@@ -1,5 +1,6 @@
 members-title = 멤버
 members-empty = 함께 듣는 사람을 보려면 세션을 시작하거나 참여하세요.
+members-picked = 현재 재생 중인 곡을 대기열에 추가함
 
 # login
 login-restoring = 저장된 세션 확인 중…
@@ -105,6 +106,7 @@ user-playlists-empty = 공개 플레이리스트가 아직 없습니다.
 home-quick-picks = 빠른 선곡
 home-quick-picks-empty = 몇 곡에 좋아요를 누르면 여기에 표시됩니다.
 home-recently-added = 최근 추가됨
+home-newest-releases = 최신 발매작
 home-recently-played = 최근 재생한 항목
 home-most-played = 가장 많이 재생한 항목
 home-favorite-albums = 즐겨찾기한 앨범

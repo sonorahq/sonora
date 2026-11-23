@@ -26,7 +26,6 @@ settings-page-scrobbling = Scrobbling
 settings-page-general = Të përgjithshme
 settings-page-about = Rreth
 settings-tab-integrations = Integrimet
-settings-group-services = Shërbimet e transmetimit
 settings-group-local-files = Skedarët lokalë
 settings-group-background = Sfondi
 settings-group-controls = Kontrollet

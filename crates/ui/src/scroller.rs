@@ -34,6 +34,8 @@ pub struct Scroller {
     hold: Option<bool>,
     /// Whether the held content reflowed this frame without the region changing width.
     reflowed: bool,
+    /// The child held where it stands on screen in place of what is at the top.
+    keep: Option<usize>,
 }
 
 impl Scroller {
@@ -51,6 +53,7 @@ impl Scroller {
             fade_ends: Pixels::ZERO,
             hold: None,
             reflowed: false,
+            keep: None,
         }
     }
 
@@ -72,6 +75,13 @@ impl Scroller {
     /// text wrapped to the width measured a frame earlier does.
     pub fn reflowed(mut self, reflowed: bool) -> Self {
         self.reflowed = reflowed;
+        self
+    }
+
+    /// Holds the direct child at `place` where it stands on screen, rather than what is at the
+    /// top, when a held region reflows. Lyrics keep the line being sung in view this way.
+    pub fn keep(mut self, place: Option<usize>) -> Self {
+        self.keep = place;
         self
     }
 
@@ -149,19 +159,14 @@ impl RenderOnce for Scroller {
             fade_ends,
             hold,
             reflowed,
+            keep,
         } = self;
         let hold = hold.filter(|_| owns_scroll);
         let children: Vec<AnyElement> = match hold {
             Some(_) => children
                 .into_iter()
                 .enumerate()
-                .map(|(place, child)| {
-                    held(
-                        ElementId::NamedInteger("scroller-child".into(), place as u64),
-                        child,
-                    )
-                    .into_any_element()
-                })
+                .map(|(place, child)| held(child_key(place), child).into_any_element())
                 .collect(),
             None => children,
         };
@@ -228,6 +233,7 @@ impl RenderOnce for Scroller {
             Some(active) => Hold::new(held_id, Axis::Vertical, &scroll, surface)
                 .active(active)
                 .reflowed(reflowed)
+                .keep(keep.map(child_key))
                 .into_any_element(),
             None => surface.into_any_element(),
         };
@@ -363,4 +369,9 @@ pub fn return_to(
             }),
         cx,
     ))
+}
+
+/// The key a held region anchors its direct child at `place` by.
+fn child_key(place: usize) -> ElementId {
+    ElementId::NamedInteger("scroller-child".into(), place as u64)
 }
