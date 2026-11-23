@@ -27,6 +27,8 @@ const RESOLVER: &str = "https://public.api.bsky.app";
 const CLIENT: &str = concat!("org.sonorahq.sonora/", env!("CARGO_PKG_VERSION"));
 /// How long a handle's own host gets to answer before resolution falls back to the AppView.
 const WELL_KNOWN_WAIT: Duration = Duration::from_secs(5);
+/// How long any other teal.fm request may take, so a stalled PDS cannot hold a link or a write.
+const REQUEST_WAIT: Duration = Duration::from_secs(30);
 /// The lexicon counts a track shorter than this only once it has played to the end.
 const WHOLE_BELOW: Duration = Duration::from_secs(120);
 /// How far short of the end a short track may stop and still count as played to the end, since
@@ -40,6 +42,9 @@ const END_SLACK: Duration = Duration::from_secs(3);
 #[derive(Default)]
 pub struct TealFm {
     tokens: Mutex<Option<Tokens>>,
+    /// The start of the newest play whose status was written. Status writes hold it for their
+    /// whole request, so they land one at a time and an older play never overwrites a newer one.
+    status: tokio::sync::Mutex<Option<SystemTime>>,
 }
 
 impl TealFm {
@@ -172,6 +177,12 @@ impl Service for TealFm {
     }
 
     async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
+        let mut newest = self.status.lock().await;
+        if newest.is_some_and(|newest| play.at < newest) {
+            return Ok(());
+        }
+        *newest = Some(play.at);
+
         let now = SystemTime::now();
         let lasts = match play.duration.is_zero() {
             true => STATUS_FALLBACK,
@@ -497,9 +508,14 @@ fn xrpc(server: &str, method: &str) -> String {
 /// plain http, redirects included, since it carries the app password and the tokens it buys.
 fn http() -> Result<&'static reqwest::Client> {
     static HTTP: OnceLock<reqwest::Result<reqwest::Client>> = OnceLock::new();
-    HTTP.get_or_init(|| reqwest::Client::builder().https_only(true).build())
-        .as_ref()
-        .map_err(|error| anyhow!("cannot build the teal.fm http client: {error}"))
+    HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .https_only(true)
+            .timeout(REQUEST_WAIT)
+            .build()
+    })
+    .as_ref()
+    .map_err(|error| anyhow!("cannot build the teal.fm http client: {error}"))
 }
 
 /// The `submissionClientAgent` string, `org.sonorahq.sonora/<version> (<os>)`.
