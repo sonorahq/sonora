@@ -38,7 +38,6 @@ const SLOW: &[&str] = &[
     "timeout",
     "deadline has elapsed",
     "did not properly respond",
-    "os error 110",
     "os error 10060",
 ];
 
