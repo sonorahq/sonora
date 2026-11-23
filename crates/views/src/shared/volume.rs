@@ -89,6 +89,71 @@ pub(crate) fn turn_volume<V: VolumeHost>(
         .update(cx, |playback, cx| playback.set_volume(level, cx));
 }
 
+/// The mute button with a horizontal slider `width` wide beside it, for a place with room for
+/// one. `slider` is the host's own, `over` is where the pointer hovers the slider if it does,
+/// and the drag shares `RisingVolume::held` with the slider that rises.
+pub(crate) fn volume_slider<V: VolumeHost>(
+    slider: &ScrubberState,
+    over: Option<f32>,
+    held: bool,
+    width: Pixels,
+    playback: &Entity<Playback>,
+    cx: &mut Context<V>,
+) -> gpui::Stateful<gpui::Div> {
+    let theme = *cx.theme();
+    let empty = theme.muted_foreground.opacity(0.3);
+    let level = playback.read(cx).shown_volume(cx);
+    let muted = playback.read(cx).muted(cx);
+    let bubble = (over.is_some() || held).then(|| (level, percent(level)));
+
+    div()
+        .id("player-volume")
+        .role(Role::Group)
+        .aria_label(t!("equalizer-status-volume"))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1()
+        .on_scroll_wheel(cx.listener(turn_volume))
+        .child(
+            Button::new("volume")
+                .ghost()
+                .small()
+                .icon(volume_icon(level))
+                .tooltip_above(match muted {
+                    true => "player-unmute",
+                    false => "player-mute",
+                })
+                .tint(theme.muted_foreground)
+                .on_click(cx.listener(move |this: &mut V, _, _, cx| {
+                    this.playback()
+                        .update(cx, |playback, cx| playback.toggle_muted(cx));
+                })),
+        )
+        .child(
+            div().w(width).flex_none().child(
+                Scrubber::new(slider, level)
+                    .name(t!("equalizer-status-volume"))
+                    .value(percent(level))
+                    .colors(theme.progress_bar, empty, theme.foreground)
+                    .when_some(bubble, |this, (at, text)| this.bubble(at, text))
+                    .on_move(cx.listener(|this: &mut V, fraction: &f32, _, cx| {
+                        let level = *fraction;
+                        this.volume().held = true;
+                        this.playback()
+                            .update(cx, |playback, cx| playback.slide_volume(level, cx));
+                        cx.notify();
+                    }))
+                    .on_release(cx.listener(|this: &mut V, _: &MouseUpEvent, _, cx| {
+                        this.volume().held = false;
+                        this.playback()
+                            .update(cx, |playback, cx| playback.end_volume_slide(cx));
+                        cx.notify();
+                    })),
+            ),
+        )
+}
+
 /// The mute button with a vertical slider that rises over it on hover, for a place with no room
 /// for a slider beside the button. `volume` and `playback` are the host's own. A `frosted` button and
 /// panel float over artwork and blur what is under them.
@@ -97,7 +162,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
     playback: &Entity<Playback>,
     frosted: bool,
     cx: &mut Context<V>,
-) -> impl IntoElement + use<V> {
+) -> gpui::Div {
     let theme = *cx.theme();
     let hazy = frosted && ui::blurring(cx);
     let zone = px(ZONE);
