@@ -535,7 +535,9 @@ impl<B: Body> Reach<B> {
     /// Opens a decoder with `open` a little before `at` in a file that is still arriving and
     /// moves it to `at`, for a format whose frames say where they are in the track. Where to
     /// enter is guessed from the time, so a try that lands past `at` or fails to open is made
-    /// again from further back, and the last try reads forward from the top of `main`.
+    /// again from further back, and the last try reads forward from the top of `main`. A `main`
+    /// that broke gets a try from where it broke before that, since no decoder over it reads on
+    /// past there.
     pub fn enter<D: rodio::Source>(
         &self,
         main: &Stream<B>,
@@ -544,7 +546,9 @@ impl<B: Body> Reach<B> {
         mut open: impl FnMut(Reader<B>) -> Option<D>,
     ) -> Option<D> {
         let guesses = LEADS.iter().map(|lead| span.byte(at.saturating_sub(*lead)));
-        let entered = guesses.chain([span.head as u64]).find_map(|from| {
+        let broke = main.failed().map(|_| main.arrived() as u64);
+        let mut tries = guesses.chain(broke).chain([span.head as u64]);
+        let entered = tries.find_map(|from| {
             self.exact(main, span.head, from, |reader| {
                 let mut decoder = open(reader)?;
                 let seek = decoder.try_seek(at).inspect_err(|error| {
