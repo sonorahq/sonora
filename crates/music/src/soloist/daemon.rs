@@ -35,16 +35,19 @@ const RELEASE_POLL: Duration = Duration::from_millis(100);
 pub(super) static RUNNING: Mutex<()> = Mutex::const_new(());
 
 /// Starts the program on the data folder `data` with `flags` after the ones every run takes. The
-/// key is stored in the folder first and never travels on the command line, which every process
-/// on the computer can read. The output is piped for `follow`.
+/// key is stored in the folder first, which keeps it off the command line, where every process
+/// on the computer could read it. A build before 1.4.0 cannot store one and takes it no other
+/// way. The output is piped for `follow`.
 pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> {
     let path = binary::path();
     reap(data, &path);
-    entrust(&path, key, data)?;
     let mut command = Command::from(binary::command(&path));
+    command.arg("--device-name").arg(DEVICE);
+    if let Err(error) = entrust(&path, key, data) {
+        log::warn!("soloist: {error:#}, so the key goes on the command line");
+        command.arg("--api-key").arg(key);
+    }
     command
-        .arg("--device-name")
-        .arg(DEVICE)
         .arg("--data-dir")
         .arg(data)
         .arg("--cache-dir")
@@ -89,7 +92,9 @@ fn entrust(program: &Path, key: &str, data: &Path) -> Result<()> {
         "soloist did not store the api key: {}",
         String::from_utf8_lossy(&output.stderr)
             .replace(key, "<key>")
-            .trim()
+            .lines()
+            .next()
+            .unwrap_or_default()
     );
     Ok(())
 }
