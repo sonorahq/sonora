@@ -567,8 +567,8 @@ fn glyph(name: &str, look: Look) -> Option<HICON> {
     let mut source = std::str::from_utf8(bytes)
         .ok()?
         .replace("currentColor", colour);
-    // ponytail: two literal stroke widths (1.5 Iconoir/Solar, 2 Lucide) cover the
-    // packs in use; a regex or per-pack table if another pack's skip glyph goes soft.
+    // Thin skip strokes blur at taskbar size, so they are thickened. Iconoir and
+    // Solar stroke at 1.5 and Lucide at 2, while Remix fills its glyphs.
     if name.starts_with("skip") {
         source = source
             .replace("stroke-width=\"1.5\"", "stroke-width=\"2.25\"")
