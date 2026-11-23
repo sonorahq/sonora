@@ -434,8 +434,9 @@ impl<B: Body> Reach<B> {
 
     /// Opens a decoder with `open` over the file's first `head` bytes followed by the file from
     /// byte `from`. It reads `main` when that has the byte or is close to it, the last download
-    /// a seek started when that one is, and otherwise a new download from there, which is kept
-    /// once `open` succeeds. A reach for MP3 moves the splice onto the next frame.
+    /// a seek started when that one is and has not broken, and otherwise a new download from
+    /// there, which is kept once `open` succeeds. A reach for MP3 moves the splice onto the next
+    /// frame.
     pub fn exact<D>(
         &self,
         main: &Stream<B>,
@@ -486,6 +487,7 @@ impl<B: Body> Reach<B> {
             from: start,
         }) = held
             && start <= from
+            && stream.failed().is_none()
             && let Ok(into) = usize::try_from(from - start)
             && self.covers(&stream, (head + into) as u64)
         {
