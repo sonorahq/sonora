@@ -16,6 +16,8 @@ pub enum Collection {
     Saved,
     /// The radio of a track, which goes on with similar songs once the track ends.
     Radio(String),
+    /// The radio of a whole album, playlist or artist.
+    CollectionRadio(crate::RadioSeed, String),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

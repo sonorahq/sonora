@@ -15,7 +15,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = Unduh
 menu-remove-download = Hapus unduhan
 menu-downloading = Mengunduh. Klik untuk berhenti
-menu-song-radio = Buka radio lagu
 menu-go-to-album = Buka album
 menu-go-to-artist = Buka artis
 menu-go-to-playlist = Buka daftar putar

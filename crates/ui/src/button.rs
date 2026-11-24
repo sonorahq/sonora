@@ -125,6 +125,8 @@ pub struct Button {
     turn: f32,
     /// Whether a swapped icon fades into the one it replaces in place, with no pop.
     blend: bool,
+    /// Whether a new icon takes the old one's place at once, with no swap at all.
+    snap: bool,
     /// The side the icon leaves towards on a click, for a button whose icon rides a belt.
     belt: Option<Side>,
     hovered: Option<StyleRefinement>,
@@ -169,6 +171,7 @@ impl Button {
             steady: false,
             turn: 0.,
             blend: false,
+            snap: false,
             belt: None,
             hovered: None,
             fill: None,
@@ -392,6 +395,13 @@ impl Button {
         self
     }
 
+    /// Swaps icons at once, for an icon that follows a value as it slides, where a swap on
+    /// every step would keep the icon pulsing.
+    pub fn snapping(mut self) -> Self {
+        self.snap = true;
+        self
+    }
+
     /// Puts the icon on a belt. Each click slides it out towards `side`, shrinking and fading,
     /// while a copy comes in from the other side, and clicks in a row keep the belt running.
     pub fn belt(mut self, side: Side) -> Self {
@@ -494,6 +504,7 @@ impl RenderOnce for Button {
             steady,
             turn,
             blend,
+            snap,
             belt,
             hovered,
             fill,
@@ -711,9 +722,10 @@ impl RenderOnce for Button {
                 let at = width.follow(target, Springs::RESIZE, RESIZE_REST, window, cx);
                 ((at - target).abs() > RESIZE_REST).then(|| px(at))
             });
-            // A new icon grows in from small while the one it replaces shrinks away over it.
+            // A new icon grows in from small while the one it replaces shrinks away over it,
+            // unless the button snaps to it.
             if shape.icon != icon {
-                if let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
+                if !snap && let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
                     shape.pop.jump(0.);
                     shape.leaving = Some((old, Sprung::at(1.)));
                 }

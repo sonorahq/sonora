@@ -16,7 +16,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = 下载
 menu-remove-download = 移除下载
 menu-downloading = 正在下载。点击停止
-menu-song-radio = 前往歌曲电台
 menu-go-to-album = 前往专辑
 menu-go-to-artist = 前往歌手
 menu-view-details = 查看详情

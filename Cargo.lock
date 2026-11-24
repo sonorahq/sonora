@@ -4325,6 +4325,7 @@ version = "0.50.3"
 dependencies = [
  "anyhow",
  "fastrand",
+ "futures",
  "log",
  "music",
  "serde",
