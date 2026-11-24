@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use music::{MusicApi, RadioSeed, Track};
 
 /// How few tracks may be left to play before the next stretch of radio is asked for. Asking this
@@ -19,10 +19,6 @@ const BLEND_WIDTH: usize = 3;
 
 /// How many of a collection's songs a blended radio is seeded from before it ends.
 const BLEND_SEEDS: usize = 24;
-
-/// How many tracks open a blended radio. They come from the radio of one seed alone, so the first
-/// song plays without waiting on the others, and that seed is blended again with the next ones.
-const BLEND_OPENING: usize = 3;
 
 /// What a blended radio's continuation starts with, so it is never mistaken for one the provider
 /// handed out. The index of the next seed to use follows on its own line, then every seed, one
@@ -63,7 +59,10 @@ pub fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
 ///
 /// A provider that builds such a radio itself (`native`) is asked first. Any other, or one that
 /// fails or answers with nothing, gets a blend of the track radios of a few of the collection's
-/// songs picked at random. Each later stretch blends a few more of them until the seeds run out.
+/// songs picked at random. It opens with the first of them alone, the way a song's radio opens
+/// with the song, so playback starts as soon as the collection is read and the radio follows.
+/// Each later stretch blends a few more of them until the seeds run out, and none of the seeds
+/// is dealt out again.
 pub async fn collection_radio(
     client: &dyn MusicApi,
     seed: RadioSeed,
@@ -94,19 +93,22 @@ pub async fn collection_radio(
         RadioSeed::Artist => client.artist_tracks(id).await?,
     };
     let mut seen = HashSet::new();
-    let mut seeds = songs
+    let mut songs = songs
         .into_iter()
         .filter(|song| song.playable)
-        .filter_map(|song| song.id)
-        .filter(|id| seen.insert(id.clone()))
+        .filter(|song| song.id.as_ref().is_some_and(|id| seen.insert(id.clone())))
         .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !seeds.is_empty(),
-        "the collection has no song to seed a radio"
-    );
-    fastrand::shuffle(&mut seeds);
-    seeds.truncate(BLEND_SEEDS);
-    open(client, seeds).await
+    fastrand::shuffle(&mut songs);
+    songs.truncate(BLEND_SEEDS);
+    let seeds = songs
+        .iter()
+        .filter_map(|song| song.id.clone())
+        .collect::<Vec<_>>();
+    let opener = songs
+        .into_iter()
+        .next()
+        .context("the collection has no song to seed a radio")?;
+    Ok((vec![opener], Some(continuation(&seeds, 0))))
 }
 
 /// A station a queue is following: the track it grew from, the continuation its next stretch is
@@ -149,24 +151,6 @@ impl Station {
             dry,
         })
     }
-}
-
-/// The opening stretch of a blended radio: the first few tracks of the first seed's radio alone,
-/// so the first song plays as soon as that one radio is in. The continuation starts back at that
-/// seed, which is then blended with the next ones. When its radio fails or holds nothing but
-/// seeds, the opening is a full stretch instead.
-async fn open(client: &dyn MusicApi, seeds: Vec<String>) -> Result<(Vec<Track>, Option<String>)> {
-    match client.track_radio(&seeds[0], None).await {
-        Ok((mut tracks, _)) => {
-            tracks.retain(|track| !seeded(track, &seeds));
-            if !tracks.is_empty() {
-                tracks.truncate(BLEND_OPENING);
-                return Ok((tracks, Some(continuation(&seeds, 0))));
-            }
-        }
-        Err(error) => log::warn!("station: no radio of {} to open with: {error:#}", seeds[0]),
-    }
-    blend(client, seeds, 0).await
 }
 
 /// One stretch of a blended radio: the track radios of the [`BLEND_WIDTH`] seeds from `at`, asked
