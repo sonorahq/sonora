@@ -1378,11 +1378,7 @@ impl Playback {
             return playing.then_some(placement);
         }
         if let Some(sent) = self.queue_elsewhere(&tracks, cx) {
-            let placed = match placement {
-                QueuePlacement::Gap(gap) => QueuePlacement::Gap(gap),
-                _ => QueuePlacement::End,
-            };
-            return sent.then_some(placed);
+            return steered_placement(placement, sent);
         }
         if !playing {
             self.begin(tracks, 0, origin, cx);
@@ -3832,13 +3828,33 @@ fn seek_target(at: Duration, total: Duration, forward: bool) -> Duration {
     }
 }
 
+/// What to report after tracks went to a steered device. Its queue command only appends, so a
+/// requested gap is not applied there and must not be reported as a placement either.
+fn steered_placement(placement: QueuePlacement, sent: bool) -> Option<QueuePlacement> {
+    match placement {
+        QueuePlacement::Gap(_) => None,
+        _ => sent.then_some(QueuePlacement::End),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, VOLUME_STEP, gain, seek_target, volume_after,
+        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, QueuePlacement, VOLUME_STEP, gain,
+        seek_target, steered_placement, volume_after,
     };
+
+    #[test]
+    fn a_steered_gap_is_not_reported_as_placed() {
+        assert_eq!(steered_placement(QueuePlacement::Gap(2), true), None);
+        assert_eq!(
+            steered_placement(QueuePlacement::End, true),
+            Some(QueuePlacement::End)
+        );
+        assert_eq!(steered_placement(QueuePlacement::End, false), None);
+    }
 
     #[test]
     fn never_amplifies_past_unity() {
