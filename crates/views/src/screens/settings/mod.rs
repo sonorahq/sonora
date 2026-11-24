@@ -1329,9 +1329,9 @@ impl SettingsView {
             #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
             Slot::Decorations => self.decorations_row(cx),
             #[cfg(not(target_os = "macos"))]
-            Slot::Side => self.side_row(cx),
+            Slot::Side => self.side_row(window, cx),
             #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => self.traffic_light_controls_row(cx),
+            Slot::TrafficLights => self.traffic_light_controls_row(window, cx),
             #[cfg(any(
                 target_os = "windows",
                 target_os = "linux",

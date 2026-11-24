@@ -104,6 +104,7 @@ settings-blur = Размытие интерфейса
 settings-blur-detail = Матовое стекло для меню и плавающих элементов
 settings-blur-window = Размытие окна
 settings-blur-window-detail = Рисует окно поверх размытого рабочего стола. Нужна непрозрачность ниже 100%
+settings-blur-window-compositor-detail = Рисует окно поверх размытого рабочего стола везде, где оно прозрачно: от этой непрозрачности или от композитора
 settings-blur-title = Размытие
 settings-blur-window-short = Окно
 settings-blur-ui-short = Интерфейс

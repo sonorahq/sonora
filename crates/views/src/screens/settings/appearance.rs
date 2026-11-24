@@ -593,23 +593,37 @@ impl SettingsView {
     }
 
     /// Whether Sonora draws the window's controls itself, which the side and the traffic light
-    /// look only shape while it does. Server-side decorations leave them to the compositor.
+    /// look only shape while it does. On Linux and FreeBSD it reads the decorations the window
+    /// got, as the title bar does, since a compositor may answer a request for server-side ones
+    /// with the client's own.
     #[cfg(not(target_os = "macos"))]
-    fn own_controls(&self, cx: &App) -> bool {
-        let settings = self.settings.read(cx);
+    fn own_controls(&self, window: &Window, cx: &App) -> bool {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let shown = !settings.server_side_decorations();
+        let shown = {
+            let _ = cx;
+            matches!(
+                window.window_decorations(),
+                gpui::Decorations::Client { .. }
+            )
+        };
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let shown = settings.window_controls();
+        let shown = {
+            let _ = window;
+            self.settings.read(cx).window_controls()
+        };
         shown
     }
 
     /// The traffic light look of the window controls, off and held while Sonora draws no
     /// controls of its own.
     #[cfg(not(target_os = "macos"))]
-    pub(super) fn traffic_light_controls_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn traffic_light_controls_row(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let on = self.settings.read(cx).traffic_light_controls();
-        let shown = self.own_controls(cx);
+        let shown = self.own_controls(window, cx);
 
         super::Row::new(
             t!("settings-traffic-light-controls"),
@@ -670,9 +684,9 @@ impl SettingsView {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub(super) fn side_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn side_row(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let left = self.settings.read(cx).controls_on_left();
-        let shown = self.own_controls(cx);
+        let shown = self.own_controls(window, cx);
 
         let sides = segmented(
             "controls-side",
