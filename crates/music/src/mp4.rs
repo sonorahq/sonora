@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use jiff::SignedDuration;
 use jiff::fmt::rfc2822::DateTimeParser;
 use reqwest::header::{AUTHORIZATION, CONTENT_RANGE, DATE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE};
-use symphonia::core::io::MediaSourceStreamOptions;
+use symphonia::core::io::{MediaSource, MediaSourceStreamOptions};
 
 use crate::ranged::{Address, File, Reach};
 use crate::stream::{Plain, Reader, Stream};
@@ -267,6 +267,16 @@ impl Seek for Input {
         self.reader.seek(SeekFrom::Start(self.at))?;
         self.at = self.reader.seek(pos)?;
         Ok(self.at)
+    }
+}
+
+impl MediaSource for Input {
+    fn is_seekable(&self) -> bool {
+        self.total.is_some()
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.total
     }
 }
 

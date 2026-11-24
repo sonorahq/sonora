@@ -8,21 +8,33 @@
 //! download to get there. It starts a second download at the target through a
 //! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
 use crate::ranged;
-use crate::stream::{Plain, Stream};
+use crate::stream::{Plain, Source, Stream};
 use crate::subsonic::client::{Details, SubsonicClient, subsonic_encoding};
 use crate::vault::{Recording, Shelf};
 use crate::{Codec, Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
+use symphonia::core::{
+    codecs::{
+        CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS,
+        CODEC_TYPE_VORBIS,
+    },
+    formats::FormatOptions,
+    io::{MediaSource, MediaSourceStream},
+    meta::MetadataOptions,
+    probe::Hint,
+};
 
 /// A track downloading, and what the server says about its length and loudness.
 #[derive(Clone)]
@@ -79,15 +91,81 @@ struct Subsonic {
 /// response type is ambiguous. The catalog encoding is not evidence about a converted stream.
 fn served_encoding(transcode: Transcode, content_type: Option<&str>) -> Option<Encoding> {
     let response = subsonic_encoding(content_type, None, None, None, None);
-    response.or_else(|| {
-        let kbps = transcode.bitrate.unwrap_or_default();
-        match transcode.codec {
-            Some(Codec::Mp3) => Some(Encoding::Mp3 { kbps }),
-            Some(Codec::Opus) => Some(Encoding::Opus { kbps }),
-            Some(Codec::Aac) => Some(Encoding::Aac { kbps }),
-            None => None,
-        }
+    response.or_else(|| match transcode.codec {
+        Some(Codec::Mp3) => Some(Encoding::Mp3 { kbps: 0 }),
+        Some(Codec::Opus) => Some(Encoding::Opus { kbps: 0 }),
+        Some(Codec::Aac) => Some(Encoding::Aac { kbps: 0 }),
+        None => None,
     })
+}
+
+/// Reads codec resolution from served audio headers, without relying on catalog metadata.
+fn probe_encoding(reader: impl MediaSource + 'static) -> Option<Encoding> {
+    let stream = MediaSourceStream::new(Box::new(reader), Default::default());
+    let probed = symphonia::default::get_probe()
+        .format(
+            &Hint::new(),
+            stream,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .ok()?;
+    encoding_from_params(&probed.format.default_track()?.codec_params)
+}
+
+fn encoding_from_params(params: &symphonia::core::codecs::CodecParameters) -> Option<Encoding> {
+    let depth = params
+        .bits_per_sample
+        .or(params.bits_per_coded_sample)
+        .and_then(|depth| u8::try_from(depth).ok())
+        .unwrap_or_default();
+    let rate = params.sample_rate.unwrap_or_default();
+    match params.codec {
+        CODEC_TYPE_FLAC => Some(Encoding::Flac { depth, rate }),
+        CODEC_TYPE_ALAC => Some(Encoding::Alac { depth }),
+        CODEC_TYPE_AAC => Some(Encoding::Aac { kbps: 0 }),
+        CODEC_TYPE_MP3 => Some(Encoding::Mp3 { kbps: 0 }),
+        CODEC_TYPE_OPUS => Some(Encoding::Opus { kbps: 0 }),
+        CODEC_TYPE_VORBIS => Some(Encoding::Vorbis { kbps: 0 }),
+        _ => None,
+    }
+}
+
+/// Observes a bounded prefix so a short download's encoding is known before its cache facts
+/// are finalized. Larger streams are probed from the prepared spool in `load`.
+struct ServedResponse {
+    response: reqwest::Response,
+    facts: Arc<Mutex<Facts>>,
+    prefix: Vec<u8>,
+}
+
+impl Source for ServedResponse {
+    async fn chunk(&mut self) -> Result<Option<Bytes>> {
+        let chunk = self
+            .response
+            .chunk()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot read the served audio")?;
+        if let Some(chunk) = &chunk {
+            const PROBE_LIMIT: usize = 256 * 1024;
+            let remaining = PROBE_LIMIT.saturating_sub(self.prefix.len());
+            self.prefix
+                .extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            if remaining > 0
+                && !self.prefix.is_empty()
+                && let Some(encoding) = probe_encoding(Cursor::new(self.prefix.clone()))
+            {
+                match self.facts.lock() {
+                    Ok(mut facts) => facts.encoding = Some(encoding),
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding: {error}")
+                    }
+                }
+            }
+        }
+        Ok(chunk)
+    }
 }
 
 /// What the server said about a track, kept beside it in the vault.
@@ -169,22 +247,19 @@ impl Fetch for Subsonic {
                     false => &self.client.http,
                 };
                 let response = self.client.open_stream(http, id, self.transcode).await?;
-                let encoding = served_encoding(
-                    self.transcode,
-                    response
-                        .headers()
-                        .get(reqwest::header::CONTENT_TYPE)
-                        .and_then(|content_type| content_type.to_str().ok()),
-                );
-                match facts.lock() {
-                    Ok(mut facts) => facts.encoding = encoding,
-                    Err(error) => {
-                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
-                    }
-                }
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|content_type| content_type.to_str().ok())
+                    .map(str::to_owned);
                 let total = response.content_length();
                 let remote = Remote::new(&response);
                 let seekable = original && ranged::ranges(&response);
+                let source = ServedResponse {
+                    response,
+                    facts: facts.clone(),
+                    prefix: Vec::new(),
+                };
                 let body = match &self.shelf {
                     Some(shelf) => {
                         let facts = facts.clone();
@@ -207,9 +282,9 @@ impl Fetch for Subsonic {
                                 })
                                 .ok()
                         };
-                        shelf.keep(id, &self.variant(), serialize_facts, response)
+                        shelf.keep(id, &self.variant(), serialize_facts, source)
                     }
-                    None => Recording::through(response),
+                    None => Recording::through(source),
                 };
                 let mut stream = Stream::pulling(body, total, Plain).primed().await?;
                 let prepared = Prepared::load(
@@ -217,6 +292,14 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
+                let encoding = probe_encoding(prepared.reader(&stream))
+                    .or_else(|| served_encoding(self.transcode, content_type.as_deref()));
+                match facts.lock() {
+                    Ok(mut facts) => facts.encoding = encoding,
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
+                    }
+                }
                 let file = remote
                     .filter(|_| seekable)
                     .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
@@ -370,7 +453,37 @@ mod tests {
                 },
                 Some("audio/mp4"),
             ),
-            Some(Encoding::Aac { kbps: 256 })
+            Some(Encoding::Aac { kbps: 0 })
+        );
+    }
+
+    #[test]
+    fn decoder_metadata_recovers_lossless_resolution() {
+        let mut params = symphonia::core::codecs::CodecParameters::new();
+        params
+            .for_codec(CODEC_TYPE_FLAC)
+            .with_sample_rate(96_000)
+            .with_bits_per_sample(24);
+        assert_eq!(
+            encoding_from_params(&params),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000,
+            })
+        );
+    }
+
+    #[test]
+    fn requested_bitrate_is_not_reported_as_the_served_bitrate() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Aac),
+                    bitrate: Some(256),
+                },
+                None,
+            ),
+            Some(Encoding::Aac { kbps: 0 })
         );
     }
 
