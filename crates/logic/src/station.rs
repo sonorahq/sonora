@@ -20,8 +20,13 @@ const BLEND_WIDTH: usize = 3;
 /// How many of a collection's songs a blended radio is seeded from before it ends.
 const BLEND_SEEDS: usize = 24;
 
+/// How many tracks open a blended radio. They come from the radio of one seed alone, so the first
+/// song plays without waiting on the others, and that seed is blended again with the next ones.
+const BLEND_OPENING: usize = 3;
+
 /// What a blended radio's continuation starts with, so it is never mistaken for one the provider
-/// handed out. The seeds still to use follow it, one per line.
+/// handed out. The index of the next seed to use follows on its own line, then every seed, one
+/// per line, so that none of them is ever played as part of the radio.
 const BLEND_MARK: &str = "sonora-blend";
 
 /// How many stretches in a row have brought nothing new once one lands with `fresh` tracks the
@@ -69,15 +74,9 @@ pub async fn collection_radio(
     if let Some(from) = from {
         return match from.strip_prefix(BLEND_MARK) {
             Some(rest) => {
-                blend(
-                    client,
-                    rest.lines()
-                        .filter(|seed| !seed.is_empty())
-                        .map(str::to_owned)
-                        .collect(),
-                    Vec::new(),
-                )
-                .await
+                let mut lines = rest.lines().filter(|line| !line.is_empty());
+                let at = lines.next().and_then(|at| at.parse().ok()).unwrap_or(0);
+                blend(client, lines.map(str::to_owned).collect(), at).await
             }
             None => client.collection_radio(seed, id, Some(from)).await,
         };
@@ -95,19 +94,19 @@ pub async fn collection_radio(
         RadioSeed::Artist => client.artist_tracks(id).await?,
     };
     let mut seen = HashSet::new();
-    let mut songs = songs
+    let mut seeds = songs
         .into_iter()
         .filter(|song| song.playable)
-        .filter(|song| song.id.as_ref().is_some_and(|id| seen.insert(id.clone())))
+        .filter_map(|song| song.id)
+        .filter(|id| seen.insert(id.clone()))
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        !songs.is_empty(),
+        !seeds.is_empty(),
         "the collection has no song to seed a radio"
     );
-    fastrand::shuffle(&mut songs);
-    songs.truncate(BLEND_SEEDS);
-    let seeds = songs.iter().filter_map(|song| song.id.clone()).collect();
-    blend(client, seeds, songs).await
+    fastrand::shuffle(&mut seeds);
+    seeds.truncate(BLEND_SEEDS);
+    open(client, seeds).await
 }
 
 /// A station a queue is following: the track it grew from, the continuation its next stretch is
@@ -152,44 +151,72 @@ impl Station {
     }
 }
 
-/// One stretch of a blended radio: the track radios of the next [`BLEND_WIDTH`] of `seeds`, asked
-/// for at once and dealt out in turn, each after its seed when `songs` holds it. The rest of the
-/// seeds make the continuation. A seed whose radio fails is skipped, and the stretch fails only
-/// when every one of them did.
+/// The opening stretch of a blended radio: the first few tracks of the first seed's radio alone,
+/// so the first song plays as soon as that one radio is in. The continuation starts back at that
+/// seed, which is then blended with the next ones. When its radio fails or holds nothing but
+/// seeds, the opening is a full stretch instead.
+async fn open(client: &dyn MusicApi, seeds: Vec<String>) -> Result<(Vec<Track>, Option<String>)> {
+    match client.track_radio(&seeds[0], None).await {
+        Ok((mut tracks, _)) => {
+            tracks.retain(|track| !seeded(track, &seeds));
+            if !tracks.is_empty() {
+                tracks.truncate(BLEND_OPENING);
+                return Ok((tracks, Some(continuation(&seeds, 0))));
+            }
+        }
+        Err(error) => log::warn!("station: no radio of {} to open with: {error:#}", seeds[0]),
+    }
+    blend(client, seeds, 0).await
+}
+
+/// One stretch of a blended radio: the track radios of the [`BLEND_WIDTH`] seeds from `at`, asked
+/// for at once and dealt out in turn, with every seed left out. A seed whose radio fails is
+/// skipped, and the stretch fails only when every one of them did. It ends the radio once no
+/// seed is left after it.
 async fn blend(
     client: &dyn MusicApi,
-    mut seeds: Vec<String>,
-    songs: Vec<Track>,
+    seeds: Vec<String>,
+    at: usize,
 ) -> Result<(Vec<Track>, Option<String>)> {
-    let rest = seeds.split_off(BLEND_WIDTH.min(seeds.len()));
+    let round = seeds
+        .get(at..(at + BLEND_WIDTH).min(seeds.len()))
+        .unwrap_or_default();
     let radios = futures::future::join_all(
-        seeds
+        round
             .iter()
             .map(|seed| async move { client.track_radio(seed, None).await }),
     )
     .await;
     let mut failure = None;
     let mut lanes = Vec::new();
-    for (seed, radio) in seeds.iter().zip(radios) {
-        let tracks = match radio {
-            Ok((tracks, _)) => tracks,
+    for (seed, radio) in round.iter().zip(radios) {
+        match radio {
+            Ok((mut tracks, _)) => {
+                tracks.retain(|track| !seeded(track, &seeds));
+                lanes.push(tracks);
+            }
             Err(error) => {
                 log::warn!("station: no radio of {seed} to blend: {error:#}");
                 failure.get_or_insert(error);
-                continue;
             }
-        };
-        let head = songs
-            .iter()
-            .find(|song| song.id.as_ref() == Some(seed))
-            .cloned();
-        lanes.push(head.into_iter().chain(tracks).collect::<Vec<_>>());
+        }
     }
     if let (true, Some(error)) = (lanes.is_empty(), failure) {
         return Err(error);
     }
-    let next = (!rest.is_empty()).then(|| format!("{BLEND_MARK}\n{}", rest.join("\n")));
+    let after = at + round.len();
+    let next = (after < seeds.len()).then(|| continuation(&seeds, after));
     Ok((deal(lanes), next))
+}
+
+/// The continuation of a blended radio of `seeds` whose next stretch starts at seed `at`.
+fn continuation(seeds: &[String], at: usize) -> String {
+    format!("{BLEND_MARK}\n{at}\n{}", seeds.join("\n"))
+}
+
+/// Whether `track` is one of the collection's songs the radio grew from.
+fn seeded(track: &Track, seeds: &[String]) -> bool {
+    track.id.as_ref().is_some_and(|id| seeds.contains(id))
 }
 
 /// Deals the tracks of `lanes` out in turn, first of each, then second of each, leaving out any
