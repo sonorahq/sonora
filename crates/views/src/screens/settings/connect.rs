@@ -11,7 +11,8 @@ const CONNECT_NAME: &str = "spotify-connect-name";
 impl SettingsView {
     /// The device list group, left out while the signed-in provider has no device list: Spotify
     /// Connect, whose name rows only stand while the device is on, which it never is while
-    /// Soloist plays, or Jellyfin's remote control, named by the sign-in.
+    /// Soloist plays, Jellyfin's remote control, named by the sign-in, or YouTube's Cast devices,
+    /// which never list Sonora at all.
     pub(super) fn connect_groups(&self, cx: &App) -> Vec<Group> {
         if !Sonora::global(cx).devices.read(cx).supported() {
             return Vec::new();
@@ -19,6 +20,12 @@ impl SettingsView {
         if jellyfin(cx) {
             return vec![
                 Group::new("settings-group-jellyfin-remote", "icons/speaker.svg")
+                    .rows([Slot::SpotifyConnect]),
+            ];
+        }
+        if youtube(cx) {
+            return vec![
+                Group::new("settings-group-youtube-cast", "icons/tv.svg")
                     .rows([Slot::SpotifyConnect]),
             ];
         }
@@ -40,9 +47,10 @@ impl SettingsView {
         let unavailable = self.soloist_plays(cx);
         let on = self.settings.read(cx).spotify_connect();
 
-        let label = match jellyfin(cx) {
-            true => t!("settings-jellyfin-remote"),
-            false => t!("settings-spotify-connect"),
+        let label = match () {
+            () if jellyfin(cx) => t!("settings-jellyfin-remote"),
+            () if youtube(cx) => t!("settings-youtube-cast"),
+            () => t!("settings-spotify-connect"),
         };
         self.soloist_row_for(
             label.clone(),
@@ -101,4 +109,10 @@ impl SettingsView {
 /// takes its device name from the sign-in.
 pub(super) fn jellyfin(cx: &App) -> bool {
     Sonora::global(cx).session.read(cx).provider_slug() == Some("jellyfin")
+}
+
+/// Whether the signed-in provider is YouTube, whose device list is the Cast devices on the
+/// network that playback can be handed to.
+pub(super) fn youtube(cx: &App) -> bool {
+    Sonora::global(cx).session.read(cx).provider_slug() == Some("youtube")
 }

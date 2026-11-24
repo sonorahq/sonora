@@ -28,6 +28,8 @@ pub struct Picker {
     tint: Option<Hsla>,
     /// The colour of the status dot over the trigger's icon, `None` for no dot.
     status: Option<Hsla>,
+    /// How far the trigger's icon is turned, in turns.
+    turn: f32,
     selected: bool,
     small: bool,
     /// Draws a labelled trigger without its outline, like the icon buttons around it.
@@ -60,6 +62,7 @@ impl Picker {
             above: false,
             tint: None,
             status: None,
+            turn: 0.,
             selected: false,
             small: true,
             ghost: false,
@@ -123,6 +126,13 @@ impl Picker {
     /// Marks the trigger with a dot of `color` over its icon's top left corner.
     pub fn status(mut self, color: Hsla) -> Self {
         self.status = Some(color);
+        self
+    }
+
+    /// Rotates the trigger's icon by `turn` of a full turn, for an owner that animates it with
+    /// `Spin`.
+    pub fn turned(mut self, turn: f32) -> Self {
+        self.turn = turn;
         self
     }
 
@@ -214,6 +224,7 @@ impl RenderOnce for Picker {
             above,
             tint,
             status,
+            turn,
             selected,
             small,
             ghost,
@@ -257,6 +268,7 @@ impl RenderOnce for Picker {
             })
             .when_some(tint, Button::tint)
             .when_some(status, Button::status)
+            .turned(turn)
             .disabled(disabled);
 
         // The menu always scrolls, so a long list stops at the window's edge rather than past it.

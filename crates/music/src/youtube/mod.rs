@@ -1,8 +1,10 @@
 mod accounts;
 mod auth;
+mod cast;
 mod client;
 mod genres;
 mod links;
+mod lounge;
 mod lyrics;
 mod playback;
 mod radio;
@@ -93,6 +95,9 @@ pub struct YouTubeProvider {
     cookies: PathBuf,
     resolved: PathBuf,
     player: PathBuf,
+    /// The id this install binds to a cast screen with, kept so a new launch takes over its old
+    /// place on the screen rather than leaving it there beside the new one.
+    remote: PathBuf,
 }
 
 impl YouTubeProvider {
@@ -104,6 +109,7 @@ impl YouTubeProvider {
             cookies: account.join("cookies.json"),
             resolved: cache.join("resolved.json"),
             player: cache.join("player.json"),
+            remote: cache.join("remote"),
         }
     }
 
@@ -146,10 +152,24 @@ impl YouTubeProvider {
 
     /// A signed-in session over `api`. It starts the loop that keeps the cookies rotated, so it
     /// must be called on the tokio runtime.
-    fn authenticated_session(&self, api: Arc<YtMusic>, profile: UserProfile) -> ProviderSession {
+    fn authenticated_session(
+        &self,
+        api: Arc<YtMusic>,
+        profile: UserProfile,
+        cookies: &str,
+    ) -> ProviderSession {
         let since = self.rotated_at().unwrap_or_else(SystemTime::now);
         keep_fresh(Arc::downgrade(&api), since);
-        let client = YouTubeClient::new(api.clone()).owned_by(profile.display_name.clone());
+        let client = YouTubeClient::new(api.clone())
+            .owned_by(profile.display_name.clone())
+            .with_remote(cast::start(
+                self.remote_id(),
+                Some(lounge::Account {
+                    cookies: self.cookies.clone(),
+                    signed_in: cookies.to_owned(),
+                    authuser: api.authuser(),
+                }),
+            ));
         ProviderSession {
             profile,
             api: Arc::new(client),
@@ -176,7 +196,9 @@ impl YouTubeProvider {
                 display_name: "YouTube Music".to_string(),
                 avatar: None,
             },
-            api: Arc::new(YouTubeClient::new(api.clone())),
+            api: Arc::new(
+                YouTubeClient::new(api.clone()).with_remote(cast::start(self.remote_id(), None)),
+            ),
             playback: Arc::new(Factory::new(api)),
             shape: Shape::Saved,
             authenticated: false,
@@ -213,7 +235,7 @@ impl YouTubeProvider {
             "youtube: cookie sign-in succeeded for authuser {} page {page_id:?}",
             account.index
         );
-        Ok(self.authenticated_session(api, profile))
+        Ok(self.authenticated_session(api, profile, &cookies))
     }
 
     fn store_cookies(&self, cookies: &str, authuser: usize, page_id: Option<String>) -> Result<()> {
@@ -246,9 +268,11 @@ impl YouTubeProvider {
                 log::debug!(
                     "youtube: restored the session for authuser {authuser} page {page_id:?}"
                 );
-                Ok(Some(
-                    self.authenticated_session(api, wire::profile(profile)),
-                ))
+                Ok(Some(self.authenticated_session(
+                    api,
+                    wire::profile(profile),
+                    cookies,
+                )))
             }
             Err(error) if crate::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) if error.is::<ytmusic::NetworkBlocked>() => {
@@ -259,6 +283,27 @@ impl YouTubeProvider {
                 Ok(None)
             }
         }
+    }
+
+    /// The id this install's remote binds with, made and stored the first time. A screen keeps
+    /// a remote listed for a while after it leaves, and a speaker that lists a guest beside the
+    /// signed-in user plays nothing, so every launch has to come back as the same remote.
+    fn remote_id(&self) -> String {
+        if let Ok(id) = std::fs::read_to_string(&self.remote)
+            && !id.trim().is_empty()
+        {
+            return id.trim().to_owned();
+        }
+        let id = format!("{:032x}", fastrand::u128(..));
+        let stored = self
+            .remote
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&self.remote, &id));
+        if let Err(error) = stored {
+            log::warn!("youtube: cannot keep the cast remote id: {error}");
+        }
+        id
     }
 
     /// When the cookie store was last written, which is when Google last rotated the session.

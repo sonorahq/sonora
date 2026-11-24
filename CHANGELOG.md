@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
+- Cast YouTube Music to a TV or speaker with YouTube on your network from the devices menu. It keeps playing after you close Sonora or your laptop, and you can still pause, skip and seek from Sonora. A speaker plays only while you are signed in.
+- The devices button turns and the device shows Connecting… while Sonora hands playback to it.
 
 ### Changed
 
@@ -58,6 +60,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
+- Play, pause and volume on another device show at once, and the volume slider no longer jumps back and replays your drag while the device catches up. A drag sets the device's volume once you let go.
+- Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
+- Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
 
 ### Fixed
 

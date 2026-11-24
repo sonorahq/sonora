@@ -35,6 +35,7 @@ lofty.workspace = true
 kakasi.workspace = true
 log.workspace = true
 md-5.workspace = true
+mdns-sd.workspace = true
 oauth2.workspace = true
 open.workspace = true
 opensubsonic.workspace = true
@@ -57,6 +58,7 @@ rodio = { workspace = true, features = [
 ] }
 rtrb.workspace = true
 rusqlite.workspace = true
+rustls = { workspace = true, features = ["tls12"] }
 rusty_aac.workspace = true
 rustfft.workspace = true
 serde.workspace = true
@@ -66,6 +68,7 @@ storage.workspace = true
 symphonia.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
 widevine.workspace = true
 ytmusic.workspace = true
@@ -93,7 +96,6 @@ windows.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
-rustls.workspace = true
 
 [lints]
 workspace = true
