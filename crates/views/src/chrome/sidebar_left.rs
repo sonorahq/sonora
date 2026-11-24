@@ -76,8 +76,8 @@ const VACANCY_HEIGHT: Pixels = px(88.);
 const PIN_MARK: f32 = 0.7;
 /// The space between two pinned entries, the same as the `gap_1` between the rows above them.
 const ROW_GAP: Pixels = px(4.);
-/// The rail's side padding in rem, matching its `px_2`.
-const RAIL_INSET: f32 = 0.5;
+/// The rail's side padding in rem.
+const RAIL_INSET: f32 = 0.3125;
 const BORDER: Pixels = px(1.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
 /// the regular `ui::Button`.
@@ -890,7 +890,7 @@ impl Render for SidebarLeft {
                                     .pt(theme.metrics.pad)
                                     .pb_3()
                                     .map(|column| match rail {
-                                        true => column.px_2(),
+                                        true => column.px(window.rem_size() * RAIL_INSET),
                                         false => column.px_3(),
                                     })
                                     // Leave the last row somewhere to go, clear of the
