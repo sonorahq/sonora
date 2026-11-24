@@ -79,6 +79,9 @@ const ROW_GAP: Pixels = px(4.);
 /// The rail's side padding in rem.
 const RAIL_INSET: f32 = 0.5;
 const BORDER: Pixels = px(1.);
+/// How far the scrollbar's thumb stands in from the sidebar's edge, which sets it about midway
+/// between the rows and the sheet's edge.
+const BAR_INSET: Pixels = px(2.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
 /// the regular `ui::Button`.
 const ROW_INSET: Pixels = px(12.);
@@ -135,6 +138,7 @@ impl SidebarLeft {
         let scrollbar = cx.new(|_| {
             ui::Scrollbar::new(ScrollHandle::new())
                 .passive()
+                .edge_inset(BAR_INSET)
                 .watching(me)
         });
         let width = sidebar_width(settings.read(cx));
@@ -836,11 +840,16 @@ impl Render for SidebarLeft {
 
         let overlaid = self.overlays();
         let rail = self.folded();
+        // The rail is too narrow to give the bar a strip of its own, so there it only marks
+        // where the rows are while they scroll.
+        self.scrollbar
+            .update(cx, |scrollbar, cx| scrollbar.set_passive(rail, cx));
         // The edge drags past the rail to zero, so a drag can close the sidebar.
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
             .reach(self.ceiling(window, cx))
             .grip_above(super::Chrome::bottom(cx))
+            .clears_scrollbar(!rail)
             .on_resize(cx.listener(|this, width: &Pixels, _, cx| this.resize(*width, cx)))
             .on_drag_move(cx.listener(|this, _: &DragMoveEvent<DraggedPin>, _, cx| {
                 if this.dropping {
@@ -893,6 +902,12 @@ impl Render for SidebarLeft {
                             // The rows start right under the title bar, so they fade out there
                             // as they scroll away instead of being cut off at its edge.
                             .fade_scrolled(theme.metrics.inset)
+                            // Above an opaque player bar they end at its edge, so they fade out
+                            // there too. A translucent one lets them pass under it instead.
+                            .fade_remaining(match super::Chrome::bottom(cx) > Pixels::ZERO {
+                                true => Pixels::ZERO,
+                                false => theme.metrics.inset,
+                            })
                             .size_full()
                             .child(
                                 div()
