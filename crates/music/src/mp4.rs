@@ -211,6 +211,7 @@ impl Prepared {
             reader: stream.reader(),
             tail: self.tail.clone(),
             total: stream.total(),
+            seekable: self.seekable(stream.total(), stream),
             at: 0,
         }
     }
@@ -222,6 +223,7 @@ pub(crate) struct Input {
     reader: Reader,
     tail: Option<Arc<Tail>>,
     total: Option<u64>,
+    seekable: bool,
     at: u64,
 }
 
@@ -233,6 +235,7 @@ impl Input {
             reader,
             tail: None,
             total: None,
+            seekable: false,
             at: 0,
         }
     }
@@ -272,7 +275,7 @@ impl Seek for Input {
 
 impl MediaSource for Input {
     fn is_seekable(&self) -> bool {
-        self.total.is_some()
+        self.seekable
     }
 
     fn byte_len(&self) -> Option<u64> {
