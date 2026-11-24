@@ -108,6 +108,8 @@ pub struct Scrubber {
     bubble: Option<(f32, SharedString)>,
     ranges: Vec<(f32, f32, Hsla)>,
     lift: Pixels,
+    /// How thick the track draws, as a multiple of its usual thickness.
+    thickness: f32,
     on_move: Option<Slide>,
     on_release: Option<Release>,
 }
@@ -129,9 +131,17 @@ impl Scrubber {
             bubble: None,
             ranges: Vec::new(),
             lift: LIFT,
+            thickness: 1.,
             on_move: None,
             on_release: None,
         }
+    }
+
+    /// Draws the track `scale` times as thick as usual. The hit area stays as tall as it was, so
+    /// a track that swells under the pointer never moves the pointer off itself.
+    pub fn thickness(mut self, scale: f32) -> Self {
+        self.thickness = scale;
+        self
     }
 
     pub fn bubble(mut self, fraction: f32, text: impl Into<SharedString>) -> Self {
@@ -219,7 +229,6 @@ impl Styled for Scrubber {
 impl RenderOnce for Scrubber {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let pad = cx.theme().metrics.pad;
-        let line = track(pad);
         let pin = thumb(pad);
         let reach = hit(pad);
         let bubble_width = px((pad / px(1.) * BUBBLE).round());
@@ -243,9 +252,11 @@ impl RenderOnce for Scrubber {
             bubble,
             ranges,
             lift,
+            thickness,
             on_move,
             on_release,
         } = self;
+        let line = track(pad) * thickness;
         let overrides = std::mem::take(base.style());
 
         let state = Rc::new(ScrubberState {

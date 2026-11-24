@@ -106,6 +106,7 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
     let bar = height
         * match layout {
             PlayerBarLayout::Compact => 0.26,
+            PlayerBarLayout::Island => 0.36,
             PlayerBarLayout::Classic | PlayerBarLayout::Centered => 0.44,
         };
     let gap = height * 0.06;
@@ -149,17 +150,24 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
             .child(stroke(width, line, muted, radius))
     };
 
+    // The island floats clear of the thumbnail's edges as a pill; every other bar spans it.
     let panel = div()
         .absolute()
-        .bottom_0()
-        .w_full()
         .h(bar)
         .flex()
         .items_center()
         .gap(gap)
         .px(gap)
-        .border_t_1()
         .border_color(theme.border)
+        .map(|panel| match layout {
+            PlayerBarLayout::Island => panel
+                .bottom(gap)
+                .left(gap * 3.)
+                .right(gap * 3.)
+                .rounded(bar / 2.)
+                .border_1(),
+            _ => panel.bottom_0().w_full().border_t_1(),
+        })
         .map(|panel| match transparent {
             true => ui::popover_surface(panel, cx),
             false => panel.bg(theme.secondary),
@@ -215,6 +223,26 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
             .child(transport(height, cx))
             .child(div().flex_1().child(seek))
             .child(sound(1.).w(relative(0.12))),
+        PlayerBarLayout::Island => panel
+            .child(transport(height, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(title)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(gap)
+                            .child(cover)
+                            .child(details(false).flex_1().min_w_0()),
+                    )
+                    .child(seek),
+            )
+            .child(sound(1.).w(relative(0.08))),
     };
 
     div()

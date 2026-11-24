@@ -1402,7 +1402,7 @@ impl FullscreenView {
             .occlude()
             .absolute()
             .bottom(-drop)
-            .right_5()
+            .right(PlayerBar::fullscreen_inset(window, cx))
             .h(snapped(theme.metrics.player_bar, window))
             .flex()
             .items_center()

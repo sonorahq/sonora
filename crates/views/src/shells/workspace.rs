@@ -219,7 +219,9 @@ impl Render for Workspace {
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
-        let underlap = self.settings.read(cx).player_bar_translucent();
+        // A floating island has no bar to stop the page at, so it runs under it too.
+        let underlap =
+            self.settings.read(cx).player_bar_translucent() || PlayerBar::floating(window, cx);
         let bottom = match underlap {
             true => bar_height,
             false => Pixels::ZERO,
