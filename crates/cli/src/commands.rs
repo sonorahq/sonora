@@ -156,6 +156,9 @@ pub enum QueueCommand {
     Add(Vec<Item>),
     /// Queues items right after the current track. Stands for `sonora play-next <items>`
     PlayNext(Vec<Item>),
+    /// Queues items at a 1-based position in the upcoming queue: 1 plays next. Stands for
+    /// `sonora add --at N <items>`
+    At { items: Vec<Item>, position: usize },
     /// Plays items at once, right after the current track so the rest of the queue follows
     /// them. Stands for `sonora play <items>`
     Play(Vec<Item>),

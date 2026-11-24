@@ -276,6 +276,15 @@ impl Control {
             }
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
+            QueueCommand::At { items, position } => {
+                // A position is 1-based, so the first one is the gap right after the current
+                // track. Refuse zero rather than wrapping it into a huge gap.
+                let Some(gap) = position.checked_sub(1) else {
+                    reply.send(Reply::Failed(Failure::Malformed)).ok();
+                    return;
+                };
+                (items, Place::Queue(QueuePlacement::Gap(gap)))
+            }
             QueueCommand::Play(items) => (items, Place::Now),
         };
         if let [Item::Local { text, kind }] = items.as_slice() {
