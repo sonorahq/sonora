@@ -192,6 +192,12 @@ pub(crate) fn bleed<S: TableSource>(table: Table<S>, framed: bool, cx: &App) -> 
         }))
 }
 
+/// How far below the top of a page holding a full-page table its scrollbar starts, which is
+/// under the table's head that sticks to the top of the page as it scrolls.
+pub(crate) fn below_head(window: &Window, cx: &App) -> Pixels {
+    ui::snapped(cx.theme().metrics.header, window)
+}
+
 /// Moves a viewport measured from a framed table's outer edge onto its rows, past the border.
 pub(crate) fn past_border(viewport: Viewport) -> Viewport {
     Viewport {

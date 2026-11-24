@@ -1278,6 +1278,7 @@ impl Render for LibraryView {
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
@@ -1288,6 +1289,7 @@ impl Render for LibraryView {
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
                 .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .top_inset(page::below_head(window, cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
                 .when(framed, |this| this.pt(inset))
                 .pb(inset)

@@ -25,6 +25,8 @@ pub struct Scroller {
     present_surface: bool,
     owns_scroll: bool,
     bottom_inset: Pixels,
+    /// How far below the region's top its scrollbar starts, when the caller sets it.
+    top_inset: Option<Pixels>,
     /// How tall the band along the top is where content fades out as it scrolls away.
     fade_top: Pixels,
     /// How tall the bands are where content fades at whichever end still has more to scroll to.
@@ -49,6 +51,7 @@ impl Scroller {
             present_surface: true,
             owns_scroll: true,
             bottom_inset: Pixels::ZERO,
+            top_inset: None,
             fade_top: Pixels::ZERO,
             fade_ends: Pixels::ZERO,
             hold: None,
@@ -111,6 +114,13 @@ impl Scroller {
         self
     }
 
+    /// Starts the scrollbar `inset` below the region's top, clear of a header pinned there.
+    /// Only the bar moves and the content still scrolls up to the top.
+    pub fn top_inset(mut self, inset: Pixels) -> Self {
+        self.top_inset = Some(inset.max(Pixels::ZERO));
+        self
+    }
+
     /// Fades content out across a band of `height` along the top, so what scrolls up under a
     /// control above the region melts away instead of being cut off at a hard line. The content
     /// starts below the band, so nothing is faded while the region is at rest.
@@ -155,6 +165,7 @@ impl RenderOnce for Scroller {
             present_surface,
             owns_scroll,
             bottom_inset,
+            top_inset,
             fade_top,
             fade_ends,
             hold,
@@ -172,7 +183,12 @@ impl RenderOnce for Scroller {
         };
         let held_id = id.clone();
 
-        bar.update(cx, |bar, cx| bar.set_track_bottom(bottom_inset, cx));
+        bar.update(cx, |bar, cx| {
+            bar.set_track_bottom(bottom_inset, cx);
+            if let Some(top) = top_inset {
+                bar.set_track_top(top, cx);
+            }
+        });
         let scroll = bar.read(cx).scroll().clone();
         // The offset runs negative as the content moves up, so it sits between minus the furthest
         // it can go and zero. Half a pixel of slack keeps a rounded offset from fading an end.
