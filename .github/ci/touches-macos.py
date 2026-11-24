@@ -32,7 +32,7 @@ ALWAYS = re.compile(
 # Apple Music.
 MACOS = re.compile(
     r'macos|apple-darwin|target_vendor\s*=\s*"apple"|target_os\s*=\s*"ios"'
-    r'|not\((any\()?target_os\s*=\s*"linux"',
+    r'|not\(\s*(any\(\s*)?target_os\s*=\s*"linux"',
     re.IGNORECASE,
 )
 

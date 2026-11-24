@@ -3,8 +3,8 @@
 # cancelled for want of a hosted runner. Such a job never ran a step, so running it again is all a
 # person would do. A run that also failed for real is left alone, since its fix brings a new run,
 # and so is the run of a pull request that has since closed. Only the newest run of its workflow
-# for its branch and event is rerun: an older one would rejoin the concurrency group and cancel or
-# replace the run that superseded it. DRY_RUN=1 only reports.
+# in its concurrency group is rerun: an older one would rejoin the group and cancel or replace the
+# run that superseded it. DRY_RUN=1 only reports.
 set -euo pipefail
 
 # A run is tried three times in all, so a pool that stays empty does not keep it going all day.
@@ -21,9 +21,13 @@ if (( attempt >= max_attempts )); then
   exit 0
 fi
 
-# The run's own list of pull requests is empty for a fork, so the commit is looked up instead.
+# The run's own list of pull requests is empty for a fork, so the open pull request is found by
+# its head branch and commit instead.
 if [[ $event == pull_request ]]; then
-  open=$(gh pr list --state open --search "$sha" --json number -q '.[].number')
+  open=$(
+    gh pr list --state open --head "$branch" --json headRefOid \
+      -q ".[] | select(.headRefOid == \"$sha\") | .headRefOid"
+  )
   if [[ -z $open ]]; then
     echo "rerun: the pull request of run $RUN_ID is closed, leaving it"
     exit 0
@@ -46,10 +50,12 @@ for job in $jobs; do
   fi
 done
 
-# Checked last, so a push that lands while the rest is looked up is still seen.
+# Checked last, so a push that lands while the rest is looked up is still seen. A pull request's
+# runs and a branch's own runs never share a concurrency group, so each is compared with its kind.
+case $event in pull_request) pr=true ;; *) pr=false ;; esac
 newest=$(
-  gh api -X GET "repos/$GH_REPO/actions/workflows/$workflow/runs" \
-    -f branch="$branch" -f event="$event" -F per_page=1 -q '.workflow_runs[0].id'
+  gh api -X GET "repos/$GH_REPO/actions/workflows/$workflow/runs" -f branch="$branch" -F per_page=30 \
+    -q "[.workflow_runs[] | select((.event == \"pull_request\") == $pr)][0].id"
 )
 if [[ $newest != "$RUN_ID" ]]; then
   echo "rerun: run $newest on $branch superseded run $RUN_ID, leaving it"
