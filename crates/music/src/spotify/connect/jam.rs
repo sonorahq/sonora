@@ -8,12 +8,11 @@ use crate::spotify::{auth::sign_in_error, session::Session};
 use spotifyapis::dealer::Message;
 use spotifyapis::proto::social_connect::{SessionUpdate, SessionUpdateReason, SocialSession};
 
-/// Where a Jam's token goes to make a link that opens in Spotify's apps and on the web.
+/// Base URL for shareable Jam invites.
 pub(in crate::spotify) const INVITE: &str = "https://open.spotify.com/socialsession/";
 
 impl Worker {
-    /// Joins the group session a shared link names, as a listener on this device. Spotify then
-    /// moves the host's playback here the way it does for any transfer.
+    /// Joins the linked Jam and lets Spotify transfer playback to this device.
     pub(super) async fn join(&mut self, link: &str) {
         if self.mode != Mode::Publish || !self.dealer_ready() {
             return self.jam_failed("cannot join a jam while not listed as a device");
@@ -21,7 +20,7 @@ impl Worker {
         let Some(token) = jam_token(link).await else {
             return self.jam_failed("no jam token in the link");
         };
-        let connection = self.session.connection_id().to_owned();
+        let connection = self.session.connection_id();
         let result = self
             .session
             .api()
@@ -60,13 +59,11 @@ impl Worker {
         Ok(())
     }
 
-    /// The group session the account is in. Spotify answers 404 when there is none, which is
-    /// `Ok(None)`, unlike a request that failed.
+    /// Reads current membership, treating HTTP 404 as no active Jam.
     async fn current_session(session: &Session) -> anyhow::Result<Option<Read>> {
-        let connection = session.connection_id().to_owned();
         match session
             .api()
-            .current_jam(&connection)
+            .current_jam(&session.connection_id())
             .await
             .map_err(sign_in_error)
         {
@@ -79,8 +76,7 @@ impl Worker {
         }
     }
 
-    /// Reads the group session a link names without joining it, and says what it found in an
-    /// `Event::Invite`, which is `None` when the link names none or it cannot be read.
+    /// Reports invite details without joining.
     pub(super) async fn peek(&mut self, link: &str) {
         if self.mode == Mode::Publish && !self.dealer_ready() && self.dealer.is_some() {
             self.held = Some(link.to_owned());
@@ -99,11 +95,10 @@ impl Worker {
             log::warn!("connect: no jam token in the link");
             return None;
         };
-        let connection = self.session.connection_id().to_owned();
         let session = self
             .session
             .api()
-            .jam_invite(&token, &connection)
+            .jam_invite(&token, &self.session.connection_id())
             .await
             .inspect_err(|error| log::warn!("connect: cannot look up the jam: {error}"))
             .ok()??;
@@ -113,17 +108,15 @@ impl Worker {
         })
     }
 
-    /// Starts a group session with this device as the one playing, or finds the one that runs.
-    /// The link to invite others with comes back in the `Event::Jam`.
+    /// Starts or resumes a Jam and reports its invite in `Event::Jam`.
     pub(super) async fn start_jam(&mut self) {
         if self.mode != Mode::Publish || !self.dealer_ready() {
             return self.jam_failed("cannot start a jam while not listed as a device");
         }
-        let connection = self.session.connection_id().to_owned();
         let result = self
             .session
             .api()
-            .start_jam(self.session.device_id(), &connection)
+            .start_jam(self.session.device_id(), &self.session.connection_id())
             .await;
         self.enter_jam(result);
     }
@@ -145,8 +138,7 @@ impl Worker {
         }
     }
 
-    /// Leaves the group session. The owner ends it for everyone instead, since leaving would
-    /// only hand it on. A session that cannot be read is left as it is, since it may be owned.
+    /// Ends a hosted Jam or leaves a guest Jam once membership is known.
     pub(super) async fn leave(&mut self) {
         if self.mode != Mode::Publish {
             self.out.send(Event::LeaveFailed).ok();
@@ -154,53 +146,55 @@ impl Worker {
         }
         if let Err(error) = self.ensure_jam().await {
             log::warn!("connect: cannot read the jam to leave it: {error}");
-            self.out.send(Event::LeaveFailed).ok();
-            self.begin_jam_read();
+            self.refresh_after_leave_failure();
             return;
         }
         if matches!(self.jam, Some(None)) {
             self.out.send(Event::Jam(None)).ok();
             return;
         }
-        let Some((id, owner)) = self
+        let Some(read) = self
             .jam
             .as_ref()
             .and_then(Option::as_ref)
             .filter(|read| is_path_id(&read.id, "_-"))
-            .map(|read| (read.id.clone(), read.jam.owner))
         else {
-            self.jam = None;
-            self.out.send(Event::LeaveFailed).ok();
-            self.begin_jam_read();
+            self.refresh_after_leave_failure();
             return;
         };
-        let connection = self.session.connection_id().to_owned();
+        let connection = self.session.connection_id();
         match self
             .session
             .api()
-            .leave_jam(&id, owner, self.session.device_id(), &connection)
+            .leave_jam(
+                &read.id,
+                read.jam.owner,
+                self.session.device_id(),
+                &connection,
+            )
             .await
             .map_err(sign_in_error)
         {
-            Ok(_) => {
-                self.set_jam(None);
-            }
+            Ok(_) => self.set_jam(None),
             Err(error) => {
                 log::warn!("connect: cannot leave the jam: {error}");
-                self.jam = None;
-                self.out.send(Event::LeaveFailed).ok();
-                self.begin_jam_read();
+                self.refresh_after_leave_failure();
             }
         }
     }
 
-    /// Removes `member` from the group session, which only its owner may do, and then reports
-    /// who is left without waiting for the dealer to.
+    fn refresh_after_leave_failure(&mut self) {
+        self.jam = None;
+        self.out.send(Event::LeaveFailed).ok();
+        self.begin_jam_read();
+    }
+
+    /// Removes a member as host and reports the updated roster immediately.
     pub(super) async fn kick(&mut self, member: &str) {
         if self.mode != Mode::Publish {
             return;
         }
-        // the id goes into the path, so nothing else than what an id is made of is let through
+        // Validate the member ID before putting it in the URL path.
         if !is_path_id(member, "._-") {
             return log::warn!("connect: not a member id to remove");
         }
@@ -212,15 +206,15 @@ impl Worker {
             .as_ref()
             .and_then(Option::as_ref)
             .filter(|read| read.jam.owner && is_path_id(&read.id, "_-"))
-            .map(|read| read.id.clone())
+            .map(|read| read.id.as_str())
         else {
             return log::warn!("connect: only the owner of a jam can remove a member");
         };
-        let connection = self.session.connection_id().to_owned();
+        let connection = self.session.connection_id();
         let answer = self
             .session
             .api()
-            .kick_jam_member(&id, member, self.session.device_id(), &connection)
+            .kick_jam_member(id, member, self.session.device_id(), &connection)
             .await
             .map_err(sign_in_error);
         match answer {
@@ -283,9 +277,7 @@ impl Worker {
     }
 }
 
-/// The token of a group session in a shared link. Only an https `spotify.link` short link is
-/// fetched, and then its address or its page names the session; no other text makes the app
-/// fetch anything.
+/// Extracts a Jam token, fetching only HTTPS `spotify.link` short links.
 async fn jam_token(link: &str) -> Option<String> {
     let link = link.trim();
     let short = crate::link::address(link)
@@ -293,14 +285,12 @@ async fn jam_token(link: &str) -> Option<String> {
     if !short {
         return token_in(link);
     }
-    // a short link sometimes answers with a page that names the session instead of redirecting
+    // Short links can carry the token in the page body.
     let followed = crate::link::follow(link).await?;
     token_in(&followed.address).or_else(|| token_in(&followed.page))
 }
 
-/// The token that follows `socialsession/` in a link or a page, or `sessions/join/` in the
-/// address Spotify itself gives a session. It is letters and digits only, since it goes into a
-/// request.
+/// Extracts a path-safe token from an invite or join URL.
 fn token_in(text: &str) -> Option<String> {
     let rest = ["socialsession/", "sessions/join/"]
         .into_iter()
@@ -309,8 +299,7 @@ fn token_in(text: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_owned())
 }
 
-/// The link that invites others to the session at `url`, which Spotify gives as an address only
-/// its own apps open.
+/// Converts Spotify's app-only join address into a shareable invite.
 fn invite(url: &str) -> Option<String> {
     match token_in(url) {
         Some(token) => Some(format!("{INVITE}{token}")),
@@ -318,8 +307,7 @@ fn invite(url: &str) -> Option<String> {
     }
 }
 
-/// A group session as Spotify answers for it: what the app shows, the id to end it by, and
-/// whether the account owns it.
+/// Jam details and the session ID needed for membership changes.
 #[derive(PartialEq, Eq)]
 pub(super) struct Read {
     jam: Jam,
@@ -377,8 +365,7 @@ fn read_social(session: SocialSession, own: &str) -> Read {
     }
 }
 
-/// Whether `id` is non-empty and made only of letters, digits and the `extra` characters, which
-/// makes it safe to put in a URL path.
+/// Checks that a nonempty ID contains only allowed URL path characters.
 fn is_path_id(id: &str, extra: &str) -> bool {
     !id.is_empty()
         && id

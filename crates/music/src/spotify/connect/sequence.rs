@@ -13,14 +13,6 @@ pub(in crate::spotify) async fn resolve(session: &Session, uri: &str) -> Result<
         .map_err(sign_in_error)
 }
 
-/// Resolves and hydrates a track station in Spotify's playback order.
-pub(in crate::spotify) async fn track_radio(
-    session: &Session,
-    id: &str,
-) -> Result<Vec<crate::Track>> {
-    radio(session, "track", id).await
-}
-
 pub(in crate::spotify) fn radio_kind(seed: crate::RadioSeed) -> &'static str {
     match seed {
         crate::RadioSeed::Album => "album",

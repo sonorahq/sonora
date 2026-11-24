@@ -10,9 +10,13 @@ use spotifyapis::proto::searchview::{AlbumType, Entity, SearchKind};
 
 const LIMIT: usize = 20;
 
-/// Runs one ranked search for a catalogue type. SearchView's limit is shared
-/// across types in a blended response.
-async fn hits(session: &Session, term: &str, kind: SearchKind) -> Result<Vec<Entity>> {
+/// Searches one catalogue type with its own result limit.
+async fn hits<T>(
+    session: &Session,
+    term: &str,
+    kind: SearchKind,
+    convert: impl FnMut(Entity) -> Option<T>,
+) -> Result<Vec<T>> {
     let term = term.trim();
     if term.is_empty() {
         return Ok(Vec::new());
@@ -23,17 +27,20 @@ async fn hits(session: &Session, term: &str, kind: SearchKind) -> Result<Vec<Ent
         .search(term, kind, LIMIT)
         .await
         .map_err(sign_in_error)?;
-    Ok(response.hits.into_iter().take(LIMIT).collect())
+    Ok(response
+        .hits
+        .into_iter()
+        .take(LIMIT)
+        .filter_map(convert)
+        .collect())
 }
 
 /// Hydrates ranked track URIs with core catalogue metadata in one batch.
 pub(super) async fn tracks(session: &Session, term: &str) -> Result<Vec<Track>> {
-    let uris: Vec<_> = hits(session, term, SearchKind::Track)
-        .await?
-        .into_iter()
-        .map(|hit| hit.uri)
-        .filter(|uri| uri.starts_with("spotify:track:"))
-        .collect();
+    let uris = hits(session, term, SearchKind::Track, |hit| {
+        hit.uri.starts_with("spotify:track:").then_some(hit.uri)
+    })
+    .await?;
     collection::ordered_tracks(
         session,
         &uris,
@@ -44,65 +51,51 @@ pub(super) async fn tracks(session: &Session, term: &str) -> Result<Vec<Track>> 
 
 /// Reads recording identifiers and credits for lyric matching directly from SearchView.
 pub(super) async fn lyric_tracks(session: &Session, term: &str) -> Result<Vec<Track>> {
-    Ok(hits(session, term, SearchKind::Track)
-        .await?
-        .into_iter()
-        .filter_map(|hit| {
-            let track = hit.track?;
-            let duration = track.duration.and_then(|duration| {
-                let seconds = u64::try_from(duration.seconds).ok()?;
-                let nanos = u32::try_from(duration.nanos).ok()?;
-                (nanos < 1_000_000_000).then(|| Duration::new(seconds, nanos))
-            });
-            Some(Track {
-                id: Some(id(&hit.uri, "spotify:track:")?),
-                name: hit.name,
-                artists: wire::join_names(
-                    track
-                        .track_artists
-                        .iter()
-                        .map(|artist| artist.name.as_str()),
-                ),
-                album: track
-                    .track_album
-                    .map(|album| album.name)
-                    .unwrap_or_default(),
-                duration: duration.unwrap_or_default(),
-                ..Default::default()
-            })
+    hits(session, term, SearchKind::Track, |hit| {
+        let track = hit.track?;
+        let duration = track.duration.and_then(|duration| {
+            let seconds = u64::try_from(duration.seconds).ok()?;
+            let nanos = u32::try_from(duration.nanos).ok()?;
+            (nanos < 1_000_000_000).then(|| Duration::new(seconds, nanos))
+        });
+        Some(Track {
+            id: Some(id(&hit.uri, "spotify:track:")?),
+            name: hit.name,
+            artists: wire::join_names(
+                track
+                    .track_artists
+                    .iter()
+                    .map(|artist| artist.name.as_str()),
+            ),
+            album: track
+                .track_album
+                .map(|album| album.name)
+                .unwrap_or_default(),
+            duration: duration.unwrap_or_default(),
+            ..Default::default()
         })
-        .collect())
+    })
+    .await
 }
 
 pub(super) async fn albums(session: &Session, term: &str) -> Result<Vec<Album>> {
-    Ok(hits(session, term, SearchKind::Album)
-        .await?
-        .into_iter()
-        .filter_map(album)
-        .collect())
+    hits(session, term, SearchKind::Album, album).await
 }
 
 pub(super) async fn artists(session: &Session, term: &str) -> Result<Vec<SavedArtist>> {
-    Ok(hits(session, term, SearchKind::Artist)
-        .await?
-        .into_iter()
-        .filter_map(|hit| {
-            Some(SavedArtist {
-                id: id(&hit.uri, "spotify:artist:")?,
-                name: hit.name,
-                cover: wire::playlist_image(&hit.image_uri),
-                added_at: None,
-            })
+    hits(session, term, SearchKind::Artist, |hit| {
+        Some(SavedArtist {
+            id: id(&hit.uri, "spotify:artist:")?,
+            name: hit.name,
+            cover: wire::playlist_image(&hit.image_uri),
+            added_at: None,
         })
-        .collect())
+    })
+    .await
 }
 
 pub(super) async fn playlists(session: &Session, term: &str) -> Result<Vec<Playlist>> {
-    Ok(hits(session, term, SearchKind::Playlist)
-        .await?
-        .into_iter()
-        .filter_map(playlist)
-        .collect())
+    hits(session, term, SearchKind::Playlist, playlist).await
 }
 
 /// Searches each catalogue type concurrently so each section has its own result limit.

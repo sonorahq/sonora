@@ -70,13 +70,12 @@ pub(crate) async fn metadata(session: &Session, uris: &[String]) -> Result<HashM
     project(session, uris, album_from).await
 }
 
-/// Projects each album while its protobuf is available, so playback can reuse its track list.
+/// Projects album metadata and any requested track data in one pass.
 pub(super) async fn project<T>(
     session: &Session,
     uris: &[String],
-    project: impl FnMut(&str, &AlbumMessage) -> T,
+    mut project: impl FnMut(&str, &AlbumMessage) -> T,
 ) -> Result<HashMap<String, T>> {
-    let mut project = project;
     collection::project(
         session,
         uris,
@@ -108,10 +107,7 @@ pub(super) fn album_from(uri: &str, album: &AlbumMessage) -> Album {
             .flat_map(|disc| &disc.track)
             .filter(|track| track.gid().len() == 16)
             .count() as u32,
-        release_date: album
-            .date
-            .as_ref()
-            .and_then(|date| crate::ReleaseDate::from_parts(date.year(), date.month(), date.day())),
+        release_date: release_date(album),
         label: album.label().to_owned(),
         copyrights: album
             .copyright
@@ -128,17 +124,23 @@ pub(super) fn album_from(uri: &str, album: &AlbumMessage) -> Album {
     }
 }
 
+pub(super) fn release_date(album: &AlbumMessage) -> Option<crate::ReleaseDate> {
+    let date = album.date.as_ref()?;
+    crate::ReleaseDate::from_parts(date.year(), date.month(), date.day())
+}
+
 /// Projects a single album in one metadata read.
 pub(super) async fn read_album<T>(
     session: &Session,
     album_id: &str,
-    project_album: impl FnMut(&str, &AlbumMessage) -> T,
+    project_album: impl FnOnce(&str, &AlbumMessage) -> T,
 ) -> Result<T> {
     let uri = format!("{ALBUM_PREFIX}{album_id}");
-    project(session, std::slice::from_ref(&uri), project_album)
-        .await?
-        .remove(&uri)
-        .context("Spotify omitted the album metadata")
+    let album = collection::read(session, &uri, ExtensionKind::AlbumV4)
+        .await
+        .context("cannot read album metadata")?
+        .context("Spotify omitted the album metadata")?;
+    Ok(project_album(&uri, &album))
 }
 
 fn release_type(kind: AlbumType) -> ReleaseType {

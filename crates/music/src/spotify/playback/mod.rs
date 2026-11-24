@@ -18,7 +18,7 @@ use crate::{engine, soloist};
 
 use super::session::Session;
 
-/// The starting interval between Spotify downloads, adjusted as requests succeed or are refused.
+/// Initial interval for adaptive Spotify download pacing.
 pub(crate) const DOWNLOAD_GAP: Duration = Duration::from_secs(2);
 /// Spotify's Vorbis levels, best first. Each is shared with Soloist.
 pub(crate) const QUALITIES: &[Offer] = &[VORBIS_HIGH, VORBIS_NORMAL, VORBIS_LOW];

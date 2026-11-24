@@ -4,14 +4,13 @@ use crate::spotify::session::Session;
 use anyhow::{Context as _, Result};
 use futures::{StreamExt as _, stream};
 use spotifyapis::proto::extended_metadata::{
-    AlbumGroup, Artist as ArtistMessage, Image, RelatedCreators, RelatedEntities, Reputation,
-    VisualIdentity,
+    AlbumGroup, AlbumType, Artist as ArtistMessage, Image, RelatedCreators, RelatedEntities,
+    Reputation, VisualIdentity,
 };
 
 use crate::spotify::{albums, collection, collection::take, wire};
 use crate::{
-    Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SUGGESTIONS,
-    SavedArtist, Track,
+    Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, SUGGESTIONS, SavedArtist, Track,
 };
 use spotifyapis::proto::extended_metadata::{ExtensionKind, MetadataKey, MetadataPayload};
 
@@ -108,12 +107,8 @@ fn catalogue_from(
     known: &HashMap<String, Album>,
     top_tracks: Vec<Track>,
 ) -> ArtistCatalogue {
-    let sorted = |uris: &[String]| {
-        newest_first(
-            uris.iter().filter_map(|uri| known.get(uri).cloned()),
-            |album| album,
-        )
-    };
+    let sorted =
+        |uris: &[String]| newest_first(uris.iter().filter_map(|uri| known.get(uri).cloned()));
     ArtistCatalogue {
         albums: sorted(releases),
         appears_on: sorted(appearances),
@@ -126,11 +121,14 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
     let artist = metadata(session, artist_id).await?;
     let mut ranked = ranked_tracks(session, &artist).await;
     let uris = release_uris(&artist);
-    let (mut known, mut release_error) = match albums::project(session, &uris, |uri, album| {
-        (
-            albums::album_from(uri, album),
-            albums::track_uris(album).collect::<Vec<_>>(),
-        )
+    let (mut known, mut release_error) = match albums::project(session, &uris, |_, album| {
+        let group = match album.album_type() {
+            AlbumType::Album | AlbumType::Ep => 0,
+            AlbumType::Single => 1,
+            _ => 2,
+        };
+        let order = (group, std::cmp::Reverse(albums::release_date(album)));
+        (order, albums::track_uris(album).collect::<Vec<_>>())
     })
     .await
     {
@@ -139,14 +137,7 @@ pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
         Err(error) => return Err(error),
     };
     let mut releases: Vec<_> = uris.iter().filter_map(|uri| known.remove(uri)).collect();
-    releases.sort_by_key(|(album, _)| {
-        let group = match album.release_type {
-            ReleaseType::Album | ReleaseType::Ep => 0,
-            ReleaseType::Single => 1,
-            _ => 2,
-        };
-        (group, std::cmp::Reverse(album.release_date))
-    });
+    releases.sort_by_key(|(order, _)| *order);
 
     let mut seen: HashSet<_> = ranked.iter().cloned().collect();
     let ranked_count = ranked.len();
@@ -246,7 +237,7 @@ async fn overview_cards(
         .iter()
         .filter_map(|uri| collection::take_track(&mut data, uri))
         .collect();
-    let albums = newest_first(release_cards(releases, &mut data), |album| album);
+    let albums = newest_first(release_cards(releases, &mut data));
     Ok((ranked, albums))
 }
 
@@ -324,31 +315,21 @@ pub(super) async fn album_catalogue(
 }
 
 /// Keeps one edition per title and release type, in newest-first order.
-fn newest_first<T>(releases: impl Iterator<Item = T>, model: impl Fn(&T) -> &Album) -> Vec<T> {
+fn newest_first(releases: impl Iterator<Item = Album>) -> Vec<Album> {
     let mut seen = HashSet::new();
     let mut releases: Vec<_> = releases
-        .filter(|entry| {
-            let album = model(entry);
-            seen.insert((album.name.to_lowercase(), album.release_type))
-        })
+        .filter(|album| seen.insert((album.name.to_lowercase(), album.release_type)))
         .collect();
 
-    releases.sort_by_key(|release| std::cmp::Reverse(model(release).release_date));
+    releases.sort_by_key(|release| std::cmp::Reverse(release.release_date));
     releases
 }
 
 async fn metadata(session: &Session, artist_id: &str) -> Result<ArtistMessage> {
     let uri = format!("{ARTIST_PREFIX}{artist_id}");
-    collection::project(
-        session,
-        std::slice::from_ref(&uri),
-        ExtensionKind::ArtistV4,
-        1,
-        |_, artist| Some(artist),
-    )
-    .await?
-    .remove(&uri)
-    .context("Spotify omitted the artist metadata")
+    collection::read(session, &uri, ExtensionKind::ArtistV4)
+        .await?
+        .context("Spotify omitted the artist metadata")
 }
 
 pub async fn saved_artists(session: &Session) -> Result<Vec<SavedArtist>> {
@@ -437,33 +418,26 @@ fn profile_from(artist: &ArtistMessage) -> ArtistProfile {
     }
 }
 
-fn plain_text(html: &str) -> String {
+/// Strips biography markup, keeping a space at paragraph and line breaks.
+fn plain_text(mut html: &str) -> String {
     let mut text = String::with_capacity(html.len());
-    let mut tag = String::new();
-    let mut inside_tag = false;
-
-    for character in html.chars() {
-        match character {
-            '<' if !inside_tag => {
-                inside_tag = true;
-                tag.clear();
-            }
-            '>' if inside_tag => {
-                inside_tag = false;
-                let tag = tag.trim().to_ascii_lowercase();
-                if (tag.starts_with("br")
-                    || tag.starts_with("/p")
-                    || tag.starts_with("/li")
-                    || tag.starts_with("/div"))
-                    && !text.ends_with(char::is_whitespace)
-                {
-                    text.push(' ');
-                }
-            }
-            _ if inside_tag => tag.push(character),
-            _ => text.push(character),
+    while let Some((before, tagged)) = html.split_once('<') {
+        text.push_str(before);
+        let Some((tag, rest)) = tagged.split_once('>') else {
+            html = "";
+            break;
+        };
+        let tag = tag.trim().to_ascii_lowercase();
+        if ["br", "/p", "/li", "/div"]
+            .iter()
+            .any(|prefix| tag.starts_with(prefix))
+            && !text.ends_with(char::is_whitespace)
+        {
+            text.push(' ');
         }
+        html = rest;
     }
+    text.push_str(html);
 
     let decoded = text
         .replace("&nbsp;", " ")
@@ -513,6 +487,7 @@ fn portraits(artist: &ArtistMessage) -> impl Iterator<Item = &Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ReleaseType;
 
     #[test]
     fn editions_keep_their_type_and_sort_by_date() {
@@ -529,7 +504,7 @@ mod tests {
             ..Album::default()
         });
         assert_eq!(
-            newest_first(releases.into_iter(), |album| album)
+            newest_first(releases.into_iter())
                 .into_iter()
                 .map(|album| album.release_date.unwrap().year())
                 .collect::<Vec<_>>(),

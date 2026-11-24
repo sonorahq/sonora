@@ -229,7 +229,8 @@ pub(super) async fn project<M: MetadataMessage, T>(
     .await
 }
 
-async fn project_batch<T>(
+/// Projects replies into models and optionally keeps successful batches after read errors.
+pub(super) async fn project_batch<T>(
     session: &Session,
     uris: &[String],
     kinds: &[ExtensionKind],
@@ -250,7 +251,7 @@ async fn project_batch<T>(
         let (requests, mut values) = match result {
             Ok(batch) => batch,
             Err(error) if allow_partial => {
-                log::warn!("spotify: cannot read a track metadata batch: {error:#}");
+                log::warn!("spotify: cannot read a metadata batch: {error:#}");
                 continue;
             }
             Err(error) => return Err(error),
@@ -292,12 +293,26 @@ pub(super) async fn extended_batch(
         .await
 }
 
+/// Reads a single catalogue entity with one extension.
+pub(super) async fn read<M: MetadataMessage>(
+    session: &Session,
+    uri: &str,
+    kind: ExtensionKind,
+) -> Result<Option<M>> {
+    let mut data = session
+        .api()
+        .extended_metadata([(uri, kind)])
+        .await
+        .map_err(sign_in_error)?;
+    Ok(take(&mut data, kind, uri))
+}
+
 pub(super) type MetadataBatch<'a> = (
     &'a [(&'a str, &'a [ExtensionKind])],
     HashMap<MetadataKey, MetadataPayload>,
 );
 
-/// Reads batches in order with two requests in flight and releases replies as callers consume them.
+/// Yields metadata batches in order with two requests in flight.
 pub(super) fn metadata_batches<'a>(
     session: &'a Session,
     requests: &'a [(&'a str, &'a [ExtensionKind])],
@@ -478,10 +493,9 @@ pub(super) async fn set_saved(session: &Session, set: &str, uri: &str, saved: bo
             std::process::id()
         ),
     };
-    let connection = session.connection_id().to_owned();
     session
         .api()
-        .update_collection(&request, &connection)
+        .update_collection(&request, &session.connection_id())
         .await
         .map_err(sign_in_error)
         .context("cannot update the saved collection")?;

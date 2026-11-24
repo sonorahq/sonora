@@ -13,15 +13,15 @@ const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const PLAYLISTS: u32 = 50;
 const PROFILE_BATCH: usize = 100;
 
-pub fn username(uri: &str) -> String {
-    uri.strip_prefix(USER_PREFIX).unwrap_or(uri).to_owned()
+pub(super) fn username(uri: &str) -> &str {
+    uri.strip_prefix(USER_PREFIX).unwrap_or(uri)
 }
 
 pub async fn profile(session: &Session, user_id: &str) -> Result<UserDetail> {
     let id = username(user_id);
     let found = session
         .api()
-        .profile(&id, PLAYLISTS)
+        .profile(id, PLAYLISTS)
         .await
         .map_err(sign_in_error)
         .with_context(|| format!("cannot read the profile of {id}"))?;
@@ -33,7 +33,7 @@ pub async fn profile(session: &Session, user_id: &str) -> Result<UserDetail> {
 
     Ok(UserDetail {
         name: if found.name.is_empty() {
-            id.clone()
+            id.to_owned()
         } else {
             found.name
         },
@@ -41,12 +41,11 @@ pub async fn profile(session: &Session, user_id: &str) -> Result<UserDetail> {
         followers: found.followers_count,
         following: found.following_count,
         playlists,
-        id,
+        id: id.to_owned(),
     })
 }
 
-/// The signed-in account, named and pictured from its own profile. Signing in calls this, so a
-/// profile Spotify will not hand over falls back to the bare username rather than failing.
+/// Uses the username when the signed-in profile is unavailable.
 pub async fn own(session: &Session) -> UserProfile {
     let id = session.username();
     let found = contributors(session, HashSet::from([id.to_owned()]))
@@ -72,26 +71,15 @@ pub async fn contributors(session: &Session, ids: HashSet<String>) -> HashMap<St
         .filter(|id| !id.is_empty())
         .map(|id| format!("{USER_PREFIX}{id}"))
         .collect();
-    let mut contributors = HashMap::new();
-    for batch in uris.chunks(PROFILE_BATCH) {
-        match collection::project(
-            session,
-            batch,
-            ExtensionKind::UserProfile,
-            PROFILE_BATCH,
-            |uri, profile| Some(contributor(uri, profile)),
-        )
-        .await
-        {
-            Ok(profiles) => contributors.extend(
-                profiles
-                    .into_values()
-                    .map(|profile| (profile.id.clone(), profile)),
-            ),
-            Err(error) => log::debug!("profiles: cannot read contributor batch: {error:#}"),
-        }
-    }
-    contributors
+    let kind = ExtensionKind::UserProfile;
+    collection::project_batch(session, &uris, &[kind], PROFILE_BATCH, true, |data, uri| {
+        Some(contributor(uri, collection::take(data, kind, uri)?))
+    })
+    .await
+    .unwrap_or_default()
+    .into_values()
+    .map(|profile| (profile.id.clone(), profile))
+    .collect()
 }
 
 /// Projects the compact profile shared by playlist owners and contributors.
@@ -102,7 +90,7 @@ pub(super) fn contributor(uri: &str, profile: IdentityProfile) -> Contributor {
         .as_ref()
         .map(|name| name.value.as_str())
         .filter(|name| !name.is_empty())
-        .unwrap_or(&id)
+        .unwrap_or(id)
         .to_owned();
     let avatar = profile
         .images
@@ -110,7 +98,11 @@ pub(super) fn contributor(uri: &str, profile: IdentityProfile) -> Contributor {
         .filter_map(|image| Some((image.width, wire::playlist_image(&image.url)?)))
         .max_by_key(|(width, _)| *width)
         .map(|(_, url)| url);
-    Contributor { id, name, avatar }
+    Contributor {
+        id: id.to_owned(),
+        name,
+        avatar,
+    }
 }
 
 /// Resolves the displayed owner from the same profiles used for contributor credits.
@@ -149,11 +141,11 @@ fn listed(found: PublicPlaylist) -> Option<Playlist> {
         id: id.to_owned(),
         name: found.name,
         owner: if found.owner_name.is_empty() {
-            owner_id.clone()
+            owner_id.to_owned()
         } else {
             found.owner_name
         },
-        owner_id,
+        owner_id: owner_id.to_owned(),
         owned: false,
         collaborative: false,
         blend: false,

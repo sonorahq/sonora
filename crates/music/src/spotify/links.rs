@@ -1,5 +1,4 @@
-//! Spotify's links: `spotify:` and `spotify://` URIs, open.spotify.com pages and spotify.link short
-//! links.
+//! Spotify URI, web, and short-link handling.
 
 use crate::link::{self, Linked};
 use crate::spotify::connect::INVITE;
@@ -7,10 +6,10 @@ use crate::spotify::connect::INVITE;
 const SCHEME: &str = "spotify:";
 const HOST: &str = "open.spotify.com";
 const SHORT_HOST: &str = "spotify.link";
-/// The prefix of the locale part some page addresses carry before the kind, as in `intl-de`.
+/// Prefix for optional locale segments such as `intl-de`.
 const REGION: &str = "intl-";
 
-/// What a Spotify link points at.
+/// Entity referenced by a Spotify link.
 pub(super) fn read(text: &str) -> Option<Linked> {
     let text = text.trim();
     if let Some(rest) = text.strip_prefix(SCHEME) {

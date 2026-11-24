@@ -328,12 +328,13 @@ pub struct PlaylistModificationInfo {
     // pub modified_at: Option<prost_types::Timestamp>,
 }
 
+/// The first two fields of both Dealer rootlist notification layouts.
 #[derive(prost::Message)]
 struct RootlistModificationInfo {
     #[prost(bytes = "bytes", tag = "1")]
-    pub new_revision: Bytes,
-    // #[prost(bytes = "bytes", tag = "2")]
-    // pub parent_revision: Bytes,
+    revision_or_uri: Bytes,
+    #[prost(bytes = "bytes", tag = "2")]
+    parent_or_revision: Bytes,
     // #[prost(message, repeated, tag = "3")]
     // pub ops: Vec<Op>,
     // #[prost(message, optional, tag = "4")]
@@ -474,16 +475,18 @@ impl Session {
 /// Reads the revision from either form of Dealer root-list notification.
 impl crate::dealer::Message {
     pub fn rootlist_revision(self, username: &str) -> Option<Bytes> {
-        let bytes = self.into_protobuf()?;
-        let notice = RootlistModificationInfo::decode(bytes.clone()).ok()?;
-        if !notice.new_revision.starts_with(b"spotify:") {
-            return (!notice.new_revision.is_empty()).then_some(notice.new_revision);
-        }
-        let update = PlaylistModificationInfo::decode(bytes).ok()?;
-        let root = format!("spotify:user:{username}:rootlist");
-        (update.uri() == root)
-            .then_some(update.new_revision)
-            .flatten()
+        let notice = RootlistModificationInfo::decode(self.into_protobuf()?).ok()?;
+        let revision = if notice.revision_or_uri.starts_with(b"spotify:") {
+            let root = format!("spotify:user:{username}:rootlist");
+            if notice.revision_or_uri != root.as_bytes() {
+                return None;
+            }
+            notice.parent_or_revision
+        } else {
+            notice.revision_or_uri
+        };
+        (!revision.is_empty())
+            .then_some(revision)
             .filter(|revision| !revision.is_empty())
     }
 }

@@ -363,7 +363,7 @@ pub(super) fn home_paged(session: Session) -> crate::Feed {
     tokio::spawn(async move {
         let result = tokio::select! {
             () = send.closed() => return,
-            result = home(&session, |feed| { let _ = send.try_send(Ok(feed.clone())); }) => result,
+            result = read_home(&session, |feed| send.try_send(Ok(feed.clone())).is_ok()) => result,
         };
         if let Some(lot) = result.transpose() {
             let _ = send.send(lot).await;
@@ -372,8 +372,16 @@ pub(super) fn home_paged(session: Session) -> crate::Feed {
     feed
 }
 
-/// Resolves the main feed while the supplemental page and its sections are fetched.
-async fn home(session: &Session, publish: impl FnOnce(&HomeFeed)) -> Result<Option<HomeFeed>> {
+/// Reads the finished feed without a preview task or channel.
+pub(super) async fn home(session: &Session) -> Result<HomeFeed> {
+    Ok(read_home(session, |_| false).await?.unwrap_or_default())
+}
+
+/// Loads Home sources concurrently and skips a duplicate update after the preview.
+async fn read_home(
+    session: &Session,
+    preview: impl FnOnce(&HomeFeed) -> bool,
+) -> Result<Option<HomeFeed>> {
     let main = async {
         let (shortcuts, sections) = casita(session).await?;
         let uris = shortcuts
@@ -391,16 +399,16 @@ async fn home(session: &Session, publish: impl FnOnce(&HomeFeed)) -> Result<Opti
             !feed.listen_again.is_empty() || !feed.sections.is_empty(),
             "Spotify Home has no readable cards"
         );
-        publish(&feed);
-        Ok::<_, anyhow::Error>((feed, cards))
+        let sent = preview(&feed);
+        Ok::<_, anyhow::Error>((feed, cards, sent))
     };
     let (main, made) = tokio::join!(
         main,
         page_sections(session, MADE_FOR_YOU, Some(ITEMS_PER_SHELF))
     );
-    let (mut feed, mut known, main_error) = match main {
-        Ok((feed, known)) => (feed, known, None),
-        Err(error) => (HomeFeed::default(), HashMap::new(), Some(error)),
+    let (mut feed, mut known, sent, main_error) = match main {
+        Ok((feed, known, sent)) => (feed, known, sent, None),
+        Err(error) => (HomeFeed::default(), HashMap::new(), false, Some(error)),
     };
     let supplement = async {
         let BrowsePage {
@@ -426,7 +434,7 @@ async fn home(session: &Session, publish: impl FnOnce(&HomeFeed)) -> Result<Opti
     if feed.sections.len() > count {
         Ok(Some(feed))
     } else {
-        main_error.map_or(Ok(None), Err)
+        main_error.map_or_else(|| Ok((!sent).then_some(feed)), Err)
     }
 }
 
@@ -492,8 +500,7 @@ fn title(heading: Heading) -> String {
         })
 }
 
-/// Puts `sections` after the feed's own shelves, leaving out every item a shelf already shows
-/// and every shelf whose title is already on the page or that ends up empty.
+/// Appends nonempty shelves with new titles and items.
 fn appended(feed: &mut HomeFeed, sections: Vec<GenreSection>) {
     let mut titles: HashSet<String> = feed
         .sections
@@ -520,7 +527,7 @@ fn appended(feed: &mut HomeFeed, sections: Vec<GenreSection>) {
     }
 }
 
-/// What tells two shelf items apart, unique across kinds.
+/// Unique shelf item key across media types.
 fn shelf_key(item: &GenreItem) -> Option<String> {
     match item {
         GenreItem::Playlist(playlist) => Some(format!("playlist:{}", playlist.id)),

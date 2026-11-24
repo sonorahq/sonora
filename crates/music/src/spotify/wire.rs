@@ -76,9 +76,7 @@ pub(super) fn playlist_image(address: &str) -> Option<String> {
     fetchable(address).then(|| address.to_owned())
 }
 
-/// An album cover from `image_url` at another size. Album cover ids are `ab67616d0000`, a
-/// two-byte size code and a hash shared by every size, and `82c1` asks the CDN for the original
-/// upload, up to 2000 pixels where the listed sizes stop at 640.
+/// Replaces the cover's size code while preserving its hash.
 pub fn cover_at(url: &str, size: models::CoverSize) -> Option<String> {
     let code = match size {
         models::CoverSize::Large => LARGE,
@@ -121,8 +119,7 @@ fn sized_image_id<'a>(url: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
     Some(id.split_at(4))
 }
 
-/// An image's width in pixels, taken from its size class when the metadata leaves the width
-/// out.
+/// Uses the size class when the image has no explicit width.
 pub fn image_width(image: &Image) -> i32 {
     if image.width() > 0 {
         return image.width();
@@ -222,9 +219,7 @@ fn playlist_label(name: &str) -> String {
     }
 }
 
-/// A copyright line as a release page prints it, led by ℗ for the sound recording or © for
-/// the work. Spotify keeps the symbol out of the text and names the kind beside it, so a
-/// line that already carries a symbol is left as it is.
+/// Adds the recording or work copyright symbol when missing.
 pub fn copyright(recording: bool, text: &str) -> String {
     match text.starts_with(['©', '℗']) {
         true => text.to_owned(),

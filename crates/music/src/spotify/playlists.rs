@@ -20,9 +20,9 @@ use crate::{Contributor, Playlist, PlaylistDetail, PlaylistPreview, Track};
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const COVER_SLACK: usize = 4;
-/// Membership returns every track URI, so keep these batches smaller than cover slices.
+/// Use smaller batches for full membership reads than for cover previews.
 const MEMBERSHIP_BATCH: usize = 8;
-/// Spotify shows a playlist cover at 640 pixels at most, and its public API caps one at 256 KB.
+/// Playlist cover limits are 640 px and 256 KiB.
 const COVER_LIMITS: CoverLimits = CoverLimits {
     side: 640,
     bytes: 256 * 1024,
@@ -30,10 +30,9 @@ const COVER_LIMITS: CoverLimits = CoverLimits {
 
 pub async fn create(session: &Session, name: &str) -> Result<String> {
     let body = playlist_v2::changes(None, [playlist_v2::rename(name)]);
-    let connection = session.connection_id().to_owned();
     let reply = session
         .api()
-        .create_playlist(&body, &connection)
+        .create_playlist(&body, &session.connection_id())
         .await
         .map_err(sign_in_error)
         .context("cannot create the playlist")?;
@@ -83,13 +82,12 @@ pub async fn edit_appearance(
                 .await
                 .map_err(sign_in_error)
                 .context("cannot upload the cover")?;
-            let connection = session.connection_id().to_owned();
             let registered = session
                 .api()
                 .register_playlist_image(
                     playlist_id,
                     &RegisterPlaylistImageRequest { upload_token },
-                    &connection,
+                    &session.connection_id(),
                 )
                 .await
                 .map_err(sign_in_error)
@@ -112,26 +110,17 @@ pub async fn edit_appearance(
 
 /// Removes the rootlist entry at the revision and index Spotify returned.
 pub async fn remove_from_library(session: &Session, playlist_id: &str) -> Result<()> {
-    let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
-    let (rootlist, index) = rootlist(session, &uri).await?;
-
-    let body = playlist_v2::changes(Some(&rootlist.revision), [playlist_v2::remove(&uri, index)]);
-    rootlist_edit(session, &body)
+    edit_rootlist_entry(session, playlist_id, playlist_v2::remove)
         .await
         .context("cannot remove the playlist from the library")
 }
 
 pub async fn set_public(session: &Session, playlist_id: &str, public: bool) -> Result<()> {
-    let uri = format!("{PLAYLIST_PREFIX}{playlist_id}");
-    let (rootlist, index) = rootlist(session, &uri).await?;
-
-    let body = playlist_v2::changes(
-        Some(&rootlist.revision),
-        [playlist_v2::visibility(index, public)],
-    );
-    rootlist_edit(session, &body)
-        .await
-        .context("cannot change playlist visibility")
+    edit_rootlist_entry(session, playlist_id, |_, index| {
+        playlist_v2::visibility(index, public)
+    })
+    .await
+    .context("cannot change playlist visibility")
 }
 
 pub async fn add_tracks(session: &Session, playlist_id: &str, track_ids: &[String]) -> Result<()> {
@@ -158,11 +147,7 @@ pub async fn remove_track(session: &Session, playlist_id: &str, track_id: &str) 
         .context("cannot remove the track from the playlist")
 }
 
-/// Puts the listed tracks in the order `wanted` with one change on the revision it was read at,
-/// once that listing is confirmed to be the one the listener saw, so an edit made elsewhere
-/// before or after the read fails rather than moving the wrong rows. The listing leaves out
-/// episodes and tracks with no metadata, as `tracks_from` does, so the moves are counted among
-/// the listed tracks and placed among all the items.
+/// Reorders visible tracks only after confirming their order and playlist revision.
 pub async fn reorder(
     session: &Session,
     playlist_id: &str,
@@ -372,7 +357,7 @@ async fn hydrate_tracks(
         if let Some(name) = own_name {
             name.clone_into(&mut playlist.owner);
         } else if !playlist.owner_id.is_empty() {
-            ids.insert(playlist.owner_id.clone());
+            ids.insert(&playlist.owner_id);
         }
     }
     let profile_uris: Vec<_> = ids
@@ -426,14 +411,21 @@ async fn hydrate_tracks(
             let Some(track) = known.get(item.uri.as_str()) else {
                 continue;
             };
-            let mut track = listed_track(track, item);
-            if !show_contributors {
-                track.added_by = None;
-            } else if let Some(added) = track.added_by.as_mut()
-                && let Some(found) = profiles.get(&added.id)
-            {
-                *added = found.clone();
-            }
+            let mut track = track.clone();
+            track.added_at = item
+                .added_at
+                .as_ref()
+                .map(|stamp| stamp.seconds)
+                .filter(|&seconds| seconds > 0);
+            track.added_by = show_contributors
+                .then(|| profiles::username(item.added_by_username.as_deref().unwrap_or_default()))
+                .filter(|id| !id.is_empty())
+                .map(|id| {
+                    profiles
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| Arc::new(Contributor::unnamed(id)))
+                });
             tracks.push(track);
         }
         if !pending.is_empty()
@@ -468,7 +460,7 @@ pub async fn playlist_tracks(session: &Session, playlist_id: &str) -> Result<Vec
         .context("cannot read track metadata")
 }
 
-/// Reads every track, including lists whose covers are already known.
+/// Reads full playlist membership with optional cover candidates.
 pub(super) async fn memberships(
     session: &Session,
     requests: &[(String, usize)],
@@ -572,26 +564,13 @@ async fn track_lists<'a>(
     results
 }
 
-/// Only catalogue track entries can be hydrated into a playlist's track model.
+/// Filters playlist entries to catalogue tracks.
 fn track_items(content: &ListEntity) -> impl Iterator<Item = &Attributes> + Clone {
     content
         .items
         .iter()
         .filter_map(|item| item.attributes.as_ref())
         .filter(|item| item.uri.starts_with(TRACK_PREFIX))
-}
-
-/// Copies a catalogue track into a specific occurrence in a playlist.
-fn listed_track(track: &Track, item: &Attributes) -> Track {
-    let mut track = track.clone();
-    track.added_at = item
-        .added_at
-        .as_ref()
-        .filter(|stamp| stamp.seconds > 0)
-        .map(|stamp| stamp.seconds);
-    let added_by = profiles::username(item.added_by_username.as_deref().unwrap_or_default());
-    track.added_by = (!added_by.is_empty()).then(|| Arc::new(Contributor::unnamed(added_by)));
-    track
 }
 
 async fn snapshot(
@@ -644,35 +623,42 @@ async fn projected_snapshot(session: &Session, uri: String) -> Result<Snapshot> 
 }
 
 async fn edit(session: &Session, playlist_id: &str, body: &ListChanges) -> Result<()> {
-    let connection = session.connection_id().to_owned();
     session
         .api()
-        .edit_playlist(playlist_id, body, &connection)
+        .edit_playlist(playlist_id, body, &session.connection_id())
         .await
         .map_err(sign_in_error)
 }
 
-async fn rootlist(session: &Session, uri: &str) -> Result<(Snapshot, i32)> {
-    let rootlist_uri = format!("spotify:user:{}:rootlist", session.username());
-    let rootlist = projected_snapshot(session, rootlist_uri).await?;
-    let index = position(&rootlist, uri)
-        .ok_or_else(|| anyhow!("cannot find the playlist in the rootlist"))?;
-
-    Ok((rootlist, index))
+/// Writes an edit against the rootlist entry's position and revision from the same read.
+async fn edit_rootlist_entry(
+    session: &Session,
+    id: &str,
+    op: impl FnOnce(&str, i32) -> Op,
+) -> Result<()> {
+    let uri = format!("{PLAYLIST_PREFIX}{id}");
+    let rootlist = projected_snapshot(
+        session,
+        format!("spotify:user:{}:rootlist", session.username()),
+    )
+    .await?;
+    let index = position(&rootlist, &uri).context("cannot find the playlist in the rootlist")?;
+    rootlist_edit(
+        session,
+        &playlist_v2::changes(Some(&rootlist.revision), [op(&uri, index)]),
+    )
+    .await
 }
 
 async fn rootlist_edit(session: &Session, body: &ListChanges) -> Result<()> {
-    let connection = session.connection_id().to_owned();
     session
         .api()
-        .edit_rootlist(body, &connection)
+        .edit_rootlist(body, &session.connection_id())
         .await
         .map_err(sign_in_error)
 }
 
-/// The moves that put the listed rows in the order `wanted`, where `held` gives each listed
-/// row's index among the items. Spotify applies them in turn and counts each `to_index` in the
-/// items before that move, as the place the moved item goes in front of.
+/// Maps visible track moves to Spotify's indices before each move.
 fn move_ops(
     content: &Snapshot,
     held: &[usize],
@@ -725,7 +711,7 @@ const DETAIL_ITEMS: &[AttributeKind] = &[
 ];
 
 impl Snapshot {
-    /// Keeps missing item URIs as empty slots so edit indices stay aligned.
+    /// Preserves edit indices by keeping a slot for each missing URI.
     fn from_read(entity: ListEntity, revision: Bytes) -> Self {
         Self {
             items: entity
@@ -827,7 +813,7 @@ pub(super) async fn browse_sections(
                 .into_iter()
                 .filter_map(|(uri, meta)| {
                     let card = playlist_card(uri.strip_prefix(PLAYLIST_PREFIX)?, meta.attributes?)?;
-                    // Incomplete projections still get the same direct read as other cards.
+                    // Fetch incomplete cards separately.
                     (!card.owner_id.is_empty() && card.cover.is_some()).then_some((uri, card))
                 })
                 .collect();

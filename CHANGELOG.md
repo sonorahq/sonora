@@ -17,8 +17,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
-- Song details can show a track’s own release date, tempo, moods and ISRC where available. Song details and track tables distinguish genres from tags.
-- Spotify artist pages can show follower counts and Appears On releases. Spotify album pages can show related albums and artists.
+- Song details show more track metadata, including release dates, tempo, moods and ISRCs. Song details and track tables distinguish genres from tags.
+- Spotify artist pages show follower counts and Appears On releases, and album pages show related albums and artists where available.
 
 ### Changed
 
@@ -39,14 +39,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
-- Sign in to Spotify once after upgrading from the previous player. Sonora renews the new sign-in in the background.
-- Spotify Browse focuses on music, with a category grid and links to more categories.
-- Spotify Home can show its main shelves before Made For You. Large playlists, artist discographies and Browse pages can show results while the rest loads, and wide Search can show each result column as it arrives.
-- Reopening a playlist or Browse category reads its latest contents.
-- Signing out of Spotify keeps Soloist paired for the same account.
-- Built-in Spotify playback uses Sonora’s audio cache. A complete cached track at the requested quality can be saved offline without downloading it again.
-- Spotify adjusts the pace of downloads as requests succeed or Spotify asks it to slow down.
-- Older Spotify playlist links that include the owner need to be replaced with a current playlist link.
+- Sign in to Spotify once after upgrading. Sonora renews the sign-in automatically and keeps Soloist paired when you sign out.
+- Spotify Browse focuses on music. Home, Browse, large playlists, artist discographies and wide Search can show results as they load.
+- Reopening a Spotify playlist or Browse category fetches its latest contents.
+- Built-in Spotify playback can reuse cached tracks for offline downloads. Spotify downloads adjust their pace when the service asks them to slow down.
+- Use current Spotify playlist links in place of older links that include the owner.
 
 ### Fixed
 
@@ -74,19 +71,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 
+### Fixed
+
 - The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
-- Seek ahead in a Spotify track while it is still downloading with Soloist off.
-- Jump directly to songs in the history or upcoming queue on another Spotify device, including duplicate tracks.
-- Sonora picks up Spotify Connect playback and its queue on startup with Soloist and follows changes from there. Switching players keeps the current position, and shuffled albums and playlists retain their context.
-- Spotify Home shows the account name on Liked Songs and marks the playlist playing on the active device.
-- Spotify sidebar pins can include items outside the main library list, and removing a playlist no longer reports a false failure.
-- A Spotify Jam stays visible if ending or leaving it fails.
-- Album pages keep their cover visible while higher-resolution artwork loads.
-- Sonora cleans up its instance socket on a normal exit on Unix.
 
 ### Fixed
 
 - On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
+- With Soloist off, you can seek ahead in Spotify tracks while they download.
+- Spotify Connect follows Soloist playback and queue changes, keeps your position when switching players, and lets you jump to a specific queue entry on another device, including duplicates. Shuffled albums and playlists keep their context.
+- Spotify Home credits Liked Songs to your account and marks the playlist playing on the active device.
+- Spotify sidebar pins can include items outside the main library. Deleting a playlist no longer reports a false failure, and a Jam stays visible if ending or leaving it fails.
+- Album covers stay visible while higher-resolution artwork loads, and Sonora cleans up its instance socket on normal exit on Unix.
 
 ## [0.50.3] - 2026-11-20
 

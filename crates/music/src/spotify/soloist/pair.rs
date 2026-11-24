@@ -1,9 +1,4 @@
-//! Pairing the program with the listener's account.
-//!
-//! Soloist never takes a password or opens a browser. Started with `--pair` it lists itself as
-//! a Spotify Connect device on the local network, waits for one of Spotify's own apps to pick
-//! it, stores the sign-in that app hands over and exits. The API key is only checked at that
-//! sign-in, so a wrong key shows up after the listener has picked the device, not before.
+//! Pairs Soloist through Spotify Connect on the local network.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -17,44 +12,32 @@ use super::{
     binary, clear, data, enable, home, keep_key, paired_in, pairing, recheck, same_account,
 };
 
-/// How long the listener gets to pick the device before pairing gives up.
+/// Deadline for selecting the pairing device.
 const PATIENCE: Duration = Duration::from_secs(10 * 60);
 
-/// How long a program that is still playing gets to let go of the data folder.
+/// Deadline for the current daemon to release its data folder.
 const BUSY: Duration = Duration::from_secs(5);
 
-/// Held while the pairing folder is emptied or takes the place of the data folder. Both run as
-/// blocking work that outlives a pairing the listener gives up, so the lock that covers the
-/// pairing itself cannot keep them apart.
+/// Serializes blocking folder changes that can outlive a cancelled pairing.
 static ADOPTING: Mutex<()> = Mutex::new(());
 
-/// What the program prints, with all its logs on, once it listens for the app that picks it.
-/// The port follows.
+/// Log prefix for the TCP pairing port.
 const LISTENING: &str = "Started ZeroConf service on port ";
 
 /// Why pairing did not finish.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trouble {
-    /// Spotify turned the sign-in down, which a wrong or revoked API key does.
+    /// Spotify rejected the API key.
     Key,
-    /// The device was picked from an app signed into another account, the one named here.
+    /// Username of the account that selected the device instead.
     Account(String),
     /// Nobody picked the device in time.
     Waited,
-    /// Anything else, in words for the log and the dialog's detail line.
+    /// Error detail for the log and dialog.
     Failed(String),
 }
 
-/// Pairs the program with whichever account picks it, then stores `key`. The pairing is made
-/// in a folder of its own and only replaces the one before it once it has gone through, so a
-/// pairing that fails or is given up costs the listener nothing they had. With `account` given,
-/// a pairing from any other account is thrown away and reported, since the library and the
-/// sound would otherwise belong to two different people. Dropping the future stops the program.
-///
-/// `listening` is told the TCP port the program waits on, a new one every run. The app that
-/// picks the device connects to it from the network, so a firewall has to let it in, along with
-/// mDNS on UDP 5353. The program only names the port with all its logs on, which is why it runs
-/// that way here.
+/// Pairs the expected account, reports the TCP port, and replaces saved credentials on success.
 pub async fn pair(
     key: String,
     account: Option<String>,
@@ -118,15 +101,13 @@ pub async fn pair(
     Ok(())
 }
 
-/// The port in the line that says where the program listens, or `None` for any other line.
+/// Parses the TCP port from a listening log line.
 fn port_in(line: &str) -> Option<u16> {
     let (_, rest) = line.split_once(LISTENING)?;
     rest.split_whitespace().next()?.parse().ok()
 }
 
-/// Empties the pairing folder, so the program starts in it with no sign-in and a new device
-/// identity, and leaves it readable by the owner alone. It waits for an adoption still under
-/// way, which a pairing given up at its last moment leaves running.
+/// Waits for adoption to finish before creating a clean, private pairing folder.
 fn fresh() -> Result<(), Trouble> {
     let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
     let folder = pairing();
@@ -135,9 +116,7 @@ fn fresh() -> Result<(), Trouble> {
     private(&folder).map_err(failed)
 }
 
-/// Puts the pairing just made in the place of the one before it and stores `key`. The old
-/// pairing is moved aside first and put back if the new one cannot take its place, so the
-/// listener is never left with neither.
+/// Installs the new pairing and restores the old one if the move fails.
 fn adopt(key: &str) -> Result<(), Trouble> {
     let _held = ADOPTING.lock().unwrap_or_else(PoisonError::into_inner);
     let (data, aside) = (data(), home().join("replaced"));
@@ -154,7 +133,7 @@ fn adopt(key: &str) -> Result<(), Trouble> {
         return Err(failed(error));
     }
     std::fs::remove_dir_all(&aside).ok();
-    // a setup the listener just went through is one they want on
+    // Enable Soloist after pairing.
     keep_key(key).and_then(|()| enable(true)).map_err(failed)
 }
 

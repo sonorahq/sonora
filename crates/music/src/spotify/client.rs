@@ -228,7 +228,10 @@ impl MusicApi for SpotifyClient {
         track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        Ok((sequence::track_radio(&self.session, track_id).await?, None))
+        Ok((
+            sequence::radio(&self.session, "track", track_id).await?,
+            None,
+        ))
     }
 
     async fn collection_radio(
@@ -268,12 +271,7 @@ impl MusicApi for SpotifyClient {
     }
 
     async fn home(&self) -> Result<HomeFeed> {
-        let mut pages = self.home_paged().await?;
-        let mut feed = HomeFeed::default();
-        while let Some(page) = pages.recv().await {
-            feed = page?;
-        }
-        Ok(feed)
+        super::feeds::home(&self.session).await
     }
 
     async fn home_paged(&self) -> Result<crate::Feed> {

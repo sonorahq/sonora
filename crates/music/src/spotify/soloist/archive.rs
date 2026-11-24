@@ -1,18 +1,16 @@
-//! Reading the one program out of a Soloist release archive. Spotify ships a gzipped tar for
-//! Linux and macOS and a zip for Windows, each holding the program beside a changelog and
-//! licenses.
+//! Extracts the Soloist executable from release archives.
 
 use std::io::Read as _;
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-/// The most an archive may unpack to, well above the program's real size.
+/// Maximum decompressed archive size.
 const LIMIT: usize = 256 * 1024 * 1024;
 
-/// The size of a tar header and the unit file contents are padded to.
+/// Tar header size and file alignment.
 const BLOCK: usize = 512;
 
-/// The file called `wanted` out of `archive`, whose `name` says which of the two formats it is.
+/// Extracts the named file using the format indicated by the archive name.
 pub(crate) fn extract(archive: &[u8], name: &str, wanted: &str) -> Result<Vec<u8>> {
     if name.ends_with(".zip") {
         unzip(archive, wanted)
@@ -48,8 +46,7 @@ fn untar(archive: &[u8], wanted: &str) -> Result<Vec<u8>> {
     bail!("{wanted} is not in the soloist archive")
 }
 
-/// One file out of a zip, by its name without folders. Stored and deflated entries are
-/// understood.
+/// Reads a named ZIP entry stored or compressed with deflate.
 fn unzip(zip: &[u8], wanted: &str) -> Result<Vec<u8>> {
     const END: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
     const CENTRAL: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];

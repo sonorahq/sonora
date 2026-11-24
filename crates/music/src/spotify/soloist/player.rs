@@ -27,44 +27,42 @@ pub(crate) fn start(
     let thread = std::thread::Builder::new()
         .name("soloist".into())
         .spawn(move || {
-            let result = tokio::runtime::Builder::new_current_thread()
+            let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .map(|runtime| {
-                    runtime.block_on(async move {
-                        let mut stopped = stopped;
-                        let _running = tokio::select! {
-                            biased;
-                            _ = &mut stopped => return,
-                            running = RUNNING.lock() => running,
-                        };
-                        let Some(key) = key().filter(|_| super::set_up_for(&username)) else {
-                            recheck();
-                            failure.send(PlaybackEvent::Refused).ok();
-                            return;
-                        };
-                        let data = data();
-                        if let Err(error) = prefs::write(&data, normalisation, gapless, quality) {
-                            log::warn!("soloist: cannot write the audio settings: {error:#}");
-                        }
-                        let flags =
-                            ["--cache-size", "512", "--initial-volume", &volume].map(OsStr::new);
-                        let mut child = None;
-                        tokio::select! {
-                            biased;
-                            _ = &mut stopped => {}
-                            () = supervise(&key, &data, &flags, &mut child) => {
-                                failure.send(PlaybackEvent::Refused).ok();
-                            }
-                        }
-                        if let Some(mut child) = child {
-                            child.stop().await;
-                        }
-                    });
-                });
-            if let Err(error) = result {
-                log::error!("soloist: cannot build its runtime: {error}");
-            }
+            {
+                Ok(runtime) => runtime,
+                Err(error) => return log::error!("soloist: cannot build its runtime: {error}"),
+            };
+            runtime.block_on(async move {
+                let mut stopped = stopped;
+                let _running = tokio::select! {
+                    biased;
+                    _ = &mut stopped => return,
+                    running = RUNNING.lock() => running,
+                };
+                let Some(key) = key().filter(|_| super::set_up_for(&username)) else {
+                    recheck();
+                    failure.send(PlaybackEvent::Refused).ok();
+                    return;
+                };
+                let data = data();
+                if let Err(error) = prefs::write(&data, normalisation, gapless, quality) {
+                    log::warn!("soloist: cannot write the audio settings: {error:#}");
+                }
+                let flags = ["--cache-size", "512", "--initial-volume", &volume].map(OsStr::new);
+                let mut child = None;
+                tokio::select! {
+                    biased;
+                    _ = &mut stopped => {}
+                    () = supervise(&key, &data, &flags, &mut child) => {
+                        failure.send(PlaybackEvent::Refused).ok();
+                    }
+                }
+                if let Some(mut child) = child {
+                    child.stop().await;
+                }
+            });
         });
     if let Err(error) = thread {
         log::error!("soloist: cannot start its thread: {error}");

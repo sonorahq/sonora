@@ -1,9 +1,4 @@
-//! Sonora as a Spotify Connect device. It tells Spotify what plays, so Spotify's apps and
-//! Discord show it, takes the commands their controls send, and lists and drives the account's
-//! other devices.
-//!
-//! The worker keeps Sonora's queue authoritative and exchanges state with Spotify's Dealer and
-//! Connect endpoints.
+//! Publishes Sonora playback and handles Spotify Connect commands and device state.
 
 mod jam;
 pub(super) mod sequence;
@@ -70,7 +65,7 @@ const BACKOFF_FIRST: Duration = Duration::from_secs(2);
 const BACKOFF_LAST: Duration = Duration::from_secs(60);
 const TRANSIENT_PUT_RETRIES: u8 = 3;
 
-/// Starts one worker on the session runtime; it stays idle until device discovery is enabled.
+/// Starts the worker, idle until device discovery is enabled.
 pub fn open(session: Session) -> Connect {
     let (connection, requests, events) = Connect::new(session.device_id().to_owned());
     tokio::spawn(Worker::new(session, events).run(requests));
@@ -90,27 +85,23 @@ struct Worker {
     paused_soloist: Option<Elsewhere>,
     seen_connection: bool,
     clock_offset_ms: i64,
-    /// A Jam link asked about before the dealer connected, looked up once it has.
+    /// Jam invite waiting for Dealer to connect.
     held: Option<String>,
     now: Option<Arc<Snapshot>>,
-    /// The id of the run of tracks being reported, new whenever another collection starts, and
-    /// the id of the current track's play, new for every track. Spotify's apps name both, and
-    /// listeners of a Jam tell a new track from a seek by them.
+    /// Playback IDs distinguish context changes, track changes, and seeks in Jam.
     run: String,
     play: String,
-    /// The uids Spotify itself gives the tracks of the collection being played. Its apps find a
-    /// track in a collection by them, so a track reported under any other uid is one they cannot
-    /// place, and a listener of a Jam then plays the collection from its top.
+    /// Spotify's occurrence IDs let other clients locate tracks in the shared context.
     uids: Uids,
     uid_read: Option<BoxFuture<'static, anyhow::Result<ResolvedSequence>>>,
     play_read: Option<(BoxFuture<'static, Option<Start>>, Reply)>,
-    /// The last state received on this Dealer connection, including a known absence.
+    /// Jam state for this connection, including confirmed absence.
     jam: Option<Option<Read>>,
     /// The initial Jam snapshot, which a complete Dealer update can supersede.
     jam_read: Option<BoxFuture<'static, anyhow::Result<Option<Read>>>>,
     active_since: Option<SystemTime>,
     claimed_at: Option<Instant>,
-    /// The id and sender of the last command handled, which the next state echoes back.
+    /// Command ID and sender echoed in the next state update.
     last_command: (u32, String),
     ack_at: Option<Instant>,
     rename_at: Option<Instant>,
@@ -351,8 +342,7 @@ impl Worker {
                 return;
             }
         }
-        // Spotify answers a move here only once this device has answered the command it sends
-        // for it, which the loop can give only if it is not waiting on the move itself
+        // Keep Dealer responsive while Spotify waits for the transfer acknowledgement.
         if inbound {
             let session = self.session.clone();
             tokio::spawn(async move {
@@ -390,8 +380,7 @@ impl Worker {
         self.soloist_device = None;
         self.local_control = None;
         self.paused_soloist = None;
-        // A registration belongs to its Dealer connection. Start the new role on a
-        // fresh connection after unregistering the previous device.
+        // Changing roles requires a fresh Dealer connection after unregistering.
         self.disconnected();
         self.dealer = (mode != Mode::Off).then(|| Dealer::start(self.session.api().clone()));
     }
@@ -518,8 +507,7 @@ impl Worker {
         }
     }
 
-    /// The dealer's first message carries the connection id Spotify files this session under,
-    /// and the device can only be announced once it is known.
+    /// Register only after Dealer supplies a connection ID.
     async fn connection_id(&mut self, id: String) {
         self.confirmed_transfer_state = None;
         self.reset_jam();
@@ -563,7 +551,7 @@ impl Worker {
         self.sync(before).await;
     }
 
-    /// Reads the uids of the collection now playing, unless they are known or being read.
+    /// Fetches occurrence IDs once per playback context.
     fn read_uids(&mut self) {
         let Some(context) = self.now.as_deref().and_then(shared) else {
             self.uid_read = None;
@@ -602,9 +590,7 @@ impl Worker {
         }
     }
 
-    /// Gives what plays now new ids where it is not what played `before`: the track's play for
-    /// another track, and the run as well for another collection, or for another track when
-    /// there is no collection and each track is its own.
+    /// Renew play IDs on track changes and run IDs on context changes or standalone track changes.
     fn identify(&mut self, before: Option<&Snapshot>) {
         let Some(now) = self.now.as_deref() else {
             return;
@@ -620,7 +606,7 @@ impl Worker {
         }
     }
 
-    /// Puts the state the device is in now, given what it reported `before`.
+    /// Publishes playback changes relative to the previous snapshot.
     async fn sync(&mut self, before: Option<Arc<Snapshot>>) {
         if self.mode != Mode::Publish || !self.dealer_ready() {
             return;
@@ -628,7 +614,7 @@ impl Worker {
         let Some(now) = &self.now else {
             if self.active_since.take().is_some()
                 && let Err(error) = {
-                    let connection = self.session.connection_id().to_owned();
+                    let connection = self.session.connection_id();
                     self.session
                         .api()
                         .deactivate_device(self.session.device_id(), &connection)
@@ -688,7 +674,7 @@ impl Worker {
         }
     }
 
-    /// Puts the device's state and returns the account's devices as Spotify answers it.
+    /// Publishes device state and returns the account cluster.
     async fn put(&mut self, reason: PutStateReason) -> Option<Cluster> {
         let request = self.request_for(reason);
         let active = request.is_active && self.now.as_ref().is_some_and(|now| now.track.is_some());
@@ -825,7 +811,7 @@ impl Worker {
             state.session_id = self.run.clone();
         }
         state.playback_id = self.play.clone();
-        // a device taking over finds the track by where it sits as well as by its uri
+        // Send the context index so transfers can distinguish duplicate tracks.
         state.index = now.index.map(|track| ContextIndex {
             page: 0,
             track: track as u32,
@@ -937,7 +923,7 @@ impl Worker {
         else {
             return;
         };
-        let connection = self.session.connection_id().to_owned();
+        let connection = self.session.connection_id();
         let device =
             self.session
                 .api()
@@ -954,7 +940,7 @@ impl Worker {
         }
     }
 
-    /// Uses Connect's server clock so transfers and remote positions share the same time base.
+    /// Aligns transfer and position timestamps with Spotify's clock.
     fn observe_clock(&mut self, cluster: &Cluster) {
         if cluster.server_timestamp_ms > 0 {
             self.clock_offset_ms = cluster
@@ -963,7 +949,7 @@ impl Worker {
         }
     }
 
-    /// Uses a matching fresh player report to preserve queue order that transfer contexts can omit.
+    /// Uses a recent player report to recover queue order omitted by a transfer.
     fn transferred(&self, state: TransferState) -> Start {
         let now = (unix_millis() as i64).saturating_add(self.clock_offset_ms);
         let recent = self
@@ -1155,8 +1141,7 @@ impl Worker {
         (!uid.is_empty()).then(|| Command::SelectQueue(uid.clone()))
     }
 
-    /// What a command from Spotify asks of the app, or `None` for one this device does not
-    /// know.
+    /// Translates supported Connect commands into local playback actions.
     fn translate(&mut self, command: Wire) -> Option<Vec<Command>> {
         Some(match command {
             Wire::Transfer { data } => {
@@ -1205,7 +1190,7 @@ impl Worker {
             Wire::SetQueue {
                 next_tracks: tracks,
             } => {
-                // an edit that added songs runs past the window it was shown, and all of it counts
+                // Keep the entire edited queue, including entries beyond the published window.
                 let mut upcoming = listed(&tracks, tracks.len(), false);
                 if let Some(now) = self.now.as_deref().filter(|now| shared(now).is_none())
                     && let Some(current) = &now.track
@@ -1215,9 +1200,7 @@ impl Worker {
                         self.uids.at(&context, track, None, standalone)
                     });
                 }
-                // Acknowledge the edit with its new queue while the host resolves missing metadata.
-                // The history an edit carries is left alone: a phone sends its own or none at
-                // all, and no app can edit it, so taking it would only wipe what played here.
+                // Acknowledge the new queue before metadata loads and keep local playback history.
                 if let Some(now) = self.now.as_mut().filter(|now| now.upcoming != upcoming) {
                     Arc::make_mut(now).upcoming.clone_from(&upcoming);
                     self.confirmed_transfer_state = None;
@@ -1229,8 +1212,7 @@ impl Worker {
         })
     }
 
-    /// The repeat mode after a request to switch the context or the track repeat, each of which
-    /// leaves the other as it is.
+    /// Updates one repeat flag while preserving the other.
     fn repeat(&self, context: Option<bool>, track: Option<bool>) -> Repeat {
         let current = self
             .now
@@ -1259,7 +1241,7 @@ fn initial_player_state(session: &Session) -> PlayerState {
 
 /// Sends a Connect state update and decodes the account cluster returned by Spotify.
 async fn put_state(session: &Session, request: PutStateRequest) -> anyhow::Result<Cluster> {
-    let connection = session.connection_id().to_owned();
+    let connection = session.connection_id();
     session
         .api()
         .put_device_state(session.device_id(), &connection, &request)
@@ -1269,7 +1251,7 @@ async fn put_state(session: &Session, request: PutStateRequest) -> anyhow::Resul
 
 /// Asks Spotify to move playback from one device to another, restoring a paused state.
 async fn move_playback(session: &Session, from: &str, to: &str) -> anyhow::Result<()> {
-    let connection = session.connection_id().to_owned();
+    let connection = session.connection_id();
     session
         .api()
         .connect_device(from, to, &connection)
@@ -1280,7 +1262,7 @@ async fn move_playback(session: &Session, from: &str, to: &str) -> anyhow::Resul
 
 /// Sends a control to the remote device without changing the local queue.
 async fn control(session: &Session, device: &str, command: Command) {
-    let connection = session.connection_id().to_owned();
+    let connection = session.connection_id();
     let remote = session
         .api()
         .connect_device(session.device_id(), device, &connection);
@@ -1306,7 +1288,7 @@ async fn control(session: &Session, device: &str, command: Command) {
     }
 }
 
-/// How much a put matters when two are due at once: the stronger one goes out.
+/// Prioritizes registration and playback changes over routine updates.
 fn rank(reason: PutStateReason) -> u8 {
     match reason {
         PutStateReason::NewDevice => 3,
@@ -1327,7 +1309,7 @@ async fn when_ready<T>(future: Option<impl Future<Output = T>>) -> T {
     }
 }
 
-/// The name the device goes by in Spotify's device list.
+/// Display name shown in the Connect device list.
 fn device_name(naming: &Naming) -> String {
     let host = gethostname::gethostname();
     let host = host.to_string_lossy();
@@ -1459,7 +1441,7 @@ async fn play_history(
         .await
 }
 
-/// The repeat mode a player state's two flags name, when it says either.
+/// Maps optional Spotify repeat flags to a repeat mode.
 fn repeat_mode(track: Option<bool>, context: Option<bool>) -> Option<Repeat> {
     match (track, context) {
         (Some(true), _) => Some(Repeat::One),
@@ -1469,9 +1451,7 @@ fn repeat_mode(track: Option<bool>, context: Option<bool>) -> Option<Repeat> {
     }
 }
 
-/// The collection `now` plays from when another app reads the same songs from it. A radio is not
-/// one: Spotify draws it afresh for whoever asks, so the songs this app got are told as a list
-/// of their own, the way a song from no collection is.
+/// Share stable contexts and publish radio as an explicit queue.
 fn shared(now: &Snapshot) -> Option<&Collection> {
     now.context.as_ref().filter(|context| {
         !matches!(
@@ -1481,7 +1461,7 @@ fn shared(now: &Snapshot) -> Option<&Collection> {
     })
 }
 
-/// The uri Spotify knows a collection by.
+/// Builds the Spotify URI for a playback context.
 fn collection_uri(collection: &Collection, username: &str) -> String {
     match collection {
         Collection::Album(id) => format!("spotify:album:{id}"),
@@ -1542,8 +1522,7 @@ impl<'a> Occurrence<'a> {
         }
     }
 
-    /// Prefers a matching position, then a unique UID or track ID. A partial list
-    /// cannot establish uniqueness by track ID alone.
+    /// Prefer position, then UID, and require a complete list for track-ID uniqueness.
     fn resolve(
         &self,
         entries: impl IntoIterator<Item = Self>,
@@ -1658,7 +1637,7 @@ impl Uids {
     }
 }
 
-/// The uid Spotify's apps give a track listed without one: the start of the SHA-1 of its uri.
+/// Derives a missing UID from the track URI's SHA-1 prefix.
 fn derived_uid(id: &str) -> String {
     let mut hash = Sha1::new();
     hash.update(TRACK_PREFIX);
@@ -1704,7 +1683,7 @@ fn track_id(uri: &str) -> Option<String> {
     uri_id(uri).map(str::to_owned)
 }
 
-/// The first tracks of a player state's queue, with who queued each when the state says.
+/// Reads queue entries with contributor attribution when available.
 fn listed(tracks: &[ProvidedTrack], limit: usize, soloist: bool) -> Vec<QueuedTrack> {
     tracks
         .iter()
@@ -1740,8 +1719,7 @@ fn context_entry(track: &ContextTrack, queued: bool) -> Option<QueuedTrack> {
     Some(entry)
 }
 
-/// The album, playlist or saved tracks a context uri names. Anything else, such as an artist or
-/// a radio, has no collection to read back.
+/// Extracts album, playlist, or saved-track contexts.
 fn collection(uri: &str) -> Option<Collection> {
     let mut parts = uri.strip_prefix("spotify:")?.split(':');
     let kind = parts.next()?;
@@ -1895,7 +1873,7 @@ fn started_by_transfer(state: TransferState, now: i64, remote: Option<&Snapshot>
     }
 }
 
-/// What a play command from another device asks for.
+/// Builds local playback state from a remote Play command.
 fn started_by_play(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start> {
     let context_uri = play.context.uri.as_deref().filter(|uri| !uri.is_empty());
     let skip = play.options.skip_to.as_ref();
@@ -1960,7 +1938,7 @@ fn started_by_play(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start>
     })
 }
 
-/// A fresh id for a run of tracks or one track's play, in the 32 hex digits Spotify's apps use.
+/// Generates a 32-digit hexadecimal playback ID.
 fn play_id() -> String {
     format!("{:032x}", fastrand::u128(..))
 }

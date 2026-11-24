@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex as SyncMutex, RwLock, RwLockReadGuard};
+use std::sync::{Arc, Mutex as SyncMutex, RwLock};
 
 use bytes::Bytes;
 use tokio::sync::OnceCell;
@@ -17,7 +17,7 @@ struct Inner {
     audio_keys: AudioKeys,
     device_id: String,
     session_id: String,
-    connection_id: RwLock<String>,
+    connection_id: RwLock<Arc<str>>,
     display_name: OnceCell<String>,
     rootlist_revision: SyncMutex<Option<Bytes>>,
 }
@@ -83,20 +83,21 @@ impl Session {
         &self.0.session_id
     }
 
-    pub(super) fn connection_id(&self) -> RwLockReadGuard<'_, String> {
+    /// Takes a Dealer ID snapshot without holding its lock during a request.
+    pub(super) fn connection_id(&self) -> Arc<str> {
         self.0
             .connection_id
             .read()
             .expect("Spotify Dealer identity lock poisoned")
+            .clone()
     }
 
     pub(super) fn set_connection_id(&self, id: &str) {
-        let mut connection = self
+        *self
             .0
             .connection_id
             .write()
-            .expect("Spotify Dealer identity lock poisoned");
-        id.clone_into(&mut connection);
+            .expect("Spotify Dealer identity lock poisoned") = id.into();
     }
 
     pub(super) fn api(&self) -> &Arc<spotifyapis::Session> {

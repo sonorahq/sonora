@@ -1,10 +1,4 @@
-//! Spotify tracks downloaded for offline play, kept the way Spotify's own clients keep theirs:
-//! the file as the CDN sent it, still encrypted, with its key and metadata beside it. The vault
-//! seals all of that again under the vault's master key, so a download plays outside Sonora
-//! only for someone who holds that key, and for them it is as easy to play as any file.
-//!
-//! A track streaming from the CDN is decrypted as it lands, and a seek past what has arrived
-//! starts a second download near the target through [`ranged`].
+//! Spotify CDN streams and vault-sealed offline downloads.
 
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::sync::Arc;
@@ -37,13 +31,13 @@ const MEDIA_COUNTER: [u8; 16] = [
     0x72, 0xe0, 0x67, 0xfb, 0xdd, 0xcb, 0xcf, 0x77, 0xeb, 0xe8, 0xbc, 0x64, 0x3f, 0x63, 0x0d, 0x93,
 ];
 
-/// The most one request to the CDN asks for.
+/// Maximum CDN range size.
 const MAX_RANGE: u64 = 2 * 1024 * 1024;
 const MAX_DOWNLOAD: u64 = 256 * 1024 * 1024;
 
 type Cipher = ctr::Ctr128BE<aes::Aes128>;
 
-/// The existing vault format for an encrypted Spotify file and its playback facts.
+/// Vault metadata for an encrypted Spotify download.
 #[derive(Serialize, Deserialize)]
 struct Facts {
     /// The track's `TRACK_V4` metadata, in base64.
@@ -85,20 +79,17 @@ pub(super) struct Loaded {
     loudness: Option<Loudness>,
     encoding: Option<Encoding>,
     arriving: Option<Stream<Unlocked>>,
-    /// What a seek past the download fetches the file through. `None` for a track from the
-    /// vault, which is whole.
+    /// Range reader for seeks beyond buffered data, absent for complete downloads.
     reach: Option<Arc<Reach<Unlocked>>>,
     format: i32,
 }
 
-/// Decrypts a file from the CDN as it lands, so the spool holds it in the clear, Spotify's own
-/// header included. The keystream counts from the file's first byte, so a body for a download
-/// that starts part way has to know where.
+/// Decrypts CDN data using the keystream offset for the first byte received.
 pub(super) struct Unlocked {
     cipher: Cipher,
 }
 
-/// What a download asks Spotify for a fresh CDN url of the file it is fetching with.
+/// Identifies the file when renewing its signed CDN URL.
 struct Renewal {
     session: Session,
     file_id: String,
@@ -260,10 +251,7 @@ impl Fetch for Audio {
         Some(decoder)
     }
 
-    /// Opens a track still arriving part way at `at`, from a download started near `at` when
-    /// the main one is far from it, so a seek past the download waits for one short stretch.
-    /// Otherwise the decoder waits for the main download to get there, as
-    /// [`open`](Fetch::open) does.
+    /// Opens a range near the seek target when the main stream is too far behind.
     fn open_near(
         &self,
         id: &str,
@@ -294,8 +282,7 @@ impl Fetch for Audio {
 }
 
 impl Loaded {
-    /// Primes either the cached or CDN stream before opening a decoder, decrypting it on the
-    /// way into the spool.
+    /// Primes the stream and decrypts its bytes into the spool.
     async fn streaming(
         facts: &Facts,
         source: impl Source,
@@ -394,13 +381,9 @@ impl Media {
         }
         self.seek_raw(VORBIS_GAIN_OFFSET).ok()?;
         let mut values = [0; 8];
-        let mut read = 0;
-        while read < values.len() {
-            let count = self.read_raw(&mut values[read..]).ok()?;
-            if count == 0 {
-                return None;
-            }
-            read += count;
+        self.file.read_exact(&mut values).ok()?;
+        if let Some(cipher) = &mut self.cipher {
+            cipher.apply_keystream(&mut values);
         }
         let gain = f32::from_le_bytes(values[..4].try_into().ok()?);
         let peak = f32::from_le_bytes(values[4..].try_into().ok()?);
@@ -534,7 +517,7 @@ async fn resolve_media(session: &Session, id: &str, quality: Quality) -> Result<
     })
 }
 
-/// Resolves the file's signed CDN urls and opens it at the first that answers, and says where.
+/// Opens the first working signed CDN URL and returns its address.
 async fn open_file(session: &Session, file_id: &str) -> Result<(Resuming, Address)> {
     let http = spotifyapis::media_client()?;
     let renewal: Arc<dyn ranged::Renew> = Arc::new(Renewal {
@@ -607,7 +590,7 @@ fn vorbis(track: &TrackMessage, quality: Quality) -> Option<(i32, [u8; 20])> {
 }
 
 impl Unlocked {
-    /// A body for a download that starts at byte `start` of the file.
+    /// Creates a decryptor at the requested file offset.
     fn at(key: &[u8; 16], start: u64) -> Self {
         let mut cipher = Cipher::new(&(*key).into(), &MEDIA_COUNTER.into());
         cipher.seek(start);

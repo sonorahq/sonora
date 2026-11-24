@@ -176,8 +176,7 @@ pub(super) fn sign_in_error(error: anyhow::Error) -> anyhow::Error {
     error.context(SignInFailure(problem))
 }
 
-/// The id this install goes by on Spotify's device list. A new one each launch would leave a
-/// stale Sonora behind every time, so the first one is kept next to the credentials.
+/// Persists the Connect device ID so it survives app restarts.
 fn device_id(dir: &Path) -> Result<String> {
     let file = dir.join("device-id");
     let kept = std::fs::read_to_string(&file)
