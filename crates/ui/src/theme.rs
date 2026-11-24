@@ -544,7 +544,7 @@ impl Theme {
             popover_foreground: rgb(0x171717).into(),
             progress_bar: rgb(0x262626).into(),
             selection: rgb(0x2563eb).into(),
-            sidebar: rgb(0xf5f5f5).into(),
+            sidebar: rgb(0xededed).into(),
             sidebar_accent: rgba(0xcdcdcd66).into(),
             sidebar_border: rgb(0xd4d4d4).into(),
             title_bar_border: rgb(0xd4d4d4).into(),

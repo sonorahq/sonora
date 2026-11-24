@@ -198,16 +198,16 @@ impl Render for Workspace {
         let right_target = self.sidebar_right.read(cx).occupied_width(window);
         let left = self.left_slide.follow(left_target, window, cx);
         let right = self.right_slide.follow(right_target, window, cx);
-        // While a sidebar slides the page is laid out once at the width it lands at and held
-        // against the side that stays put, so the sheet's moving edge uncovers or covers it
-        // instead of the page reflowing on every frame.
+        // While a sidebar slides the page is laid out once at the width it lands at and rides
+        // along with the sheet's moving edge, so it is pushed aside rather than covered and never
+        // reflows on the frames in between.
         let sliding = left != left_target || right != right_target;
         let landed = (window.viewport_size().width - left_target - right_target).max(Pixels::ZERO);
-        let held_right = left != left_target;
-        let place = move |this: Div| match (sliding, held_right) {
+        let from_left = left != left_target;
+        let place = move |this: Div| match (sliding, from_left) {
             (false, _) => this.left(-overlay_width).right_0(),
-            (true, true) => this.right_0().w(landed),
-            (true, false) => this.left(-overlay_width).w(landed + overlay_width),
+            (true, true) => this.left(-overlay_width).w(landed + overlay_width),
+            (true, false) => this.right_0().w(landed),
         };
         let left_breadth = self.sidebar.read(cx).breadth();
         let right_breadth = self.sidebar_right.read(cx).breadth();

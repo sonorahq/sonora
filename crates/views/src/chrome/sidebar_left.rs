@@ -77,7 +77,7 @@ const PIN_MARK: f32 = 0.7;
 /// The space between two pinned entries, the same as the `gap_1` between the rows above them.
 const ROW_GAP: Pixels = px(4.);
 /// The rail's side padding in rem.
-const RAIL_INSET: f32 = 0.3125;
+const RAIL_INSET: f32 = 0.5;
 const BORDER: Pixels = px(1.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
 /// the regular `ui::Button`.
@@ -437,7 +437,10 @@ impl SidebarLeft {
 
         let held = pinned.len();
         let count = held + rest.len();
-        let row = ui::snapped(cx.theme().metrics.list_row, window);
+        let row = match self.folded() {
+            true => ui::Card::glance_size(window, cx),
+            false => ui::snapped(cx.theme().metrics.list_row, window),
+        };
         Some(
             Deck::new("sidebar-pins-deck")
                 .rows((0..count).map(|_| row))
@@ -942,10 +945,13 @@ pub(crate) fn sidebar_width(settings: &AppSettings) -> Pixels {
     px(settings.sidebar_width()).clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
-/// One pinned row's width plus the rail's padding and border.
+/// One pinned cover's glance plus the rail's padding and border.
 fn rail_width(window: &Window, cx: &App) -> Pixels {
-    let row = cx.theme().metrics.list_row;
-    ui::snapped(row + window.rem_size() * (RAIL_INSET * 2.) + BORDER, window)
+    let glance = ui::Card::glance_size(window, cx);
+    ui::snapped(
+        glance + window.rem_size() * (RAIL_INSET * 2.) + BORDER,
+        window,
+    )
 }
 
 /// The kind of an entry, behind a dimmed pin when it is one of the pinned ones.

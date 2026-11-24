@@ -157,6 +157,13 @@ impl Card {
         )
     }
 
+    /// How tall and wide a glance card stands: its cover with half the usual room round it.
+    pub fn glance_size(window: &Window, cx: &App) -> Pixels {
+        let theme = cx.theme();
+        let height = snapped(theme.metrics.list_row, window);
+        snapped(height - theme.metrics.pad * 2., window) + theme.metrics.pad
+    }
+
     pub fn play(
         mut self,
         playing: bool,
@@ -648,14 +655,26 @@ impl RenderOnce for Card {
             .when_else(
                 tile.is_some(),
                 |this| this.flex_col().gap_2().w(art),
-                |this| this.items_center().gap_3().px(inset),
+                |this| {
+                    this.items_center().gap_3().px(match glance {
+                        true => inset / 2.,
+                        false => inset,
+                    })
+                },
             )
             .rounded(match tucked {
                 true => crate::metrics::tucked(theme.radius, window),
                 false => theme.radius,
             })
-            .when(listed, |this| {
+            .when(listed && !glance, |this| {
                 this.flex_none().h(height).py(inset).w_full().min_w_0()
+            })
+            .when(listed && glance, |this| {
+                this.flex_none()
+                    .h(Self::glance_size(window, cx))
+                    .py(inset / 2.)
+                    .w_full()
+                    .min_w_0()
             })
             .when(glance, |this| {
                 this.justify_center()
