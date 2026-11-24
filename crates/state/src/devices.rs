@@ -50,6 +50,8 @@ pub struct Devices {
     io: Io,
     link: Option<Arc<Connect>>,
     mode: Mode,
+    /// The last transport intent sent to Soloist before it reported a current track.
+    local_intent: Option<bool>,
     /// The name last handed to the link.
     named: Option<Naming>,
     roster: Roster,
@@ -138,6 +140,7 @@ impl Devices {
             io,
             link: None,
             mode: Mode::Off,
+            local_intent: None,
             named: None,
             roster: Roster::default(),
             jam: None,
@@ -454,8 +457,20 @@ impl Devices {
         self.mode == Mode::Observe
     }
 
-    pub(crate) fn control_local_device(&self, command: Command) {
+    /// Whether pending playback should begin when Soloist becomes ready.
+    pub(crate) fn local_playing_intent(&self) -> Option<bool> {
+        self.local_intent
+    }
+
+    /// Sends a command to Soloist and remembers its transport intent until a track is reported.
+    pub(crate) fn control_local_device(&mut self, command: Command) {
         if let Some(link) = &self.link {
+            self.local_intent = match &command {
+                Command::Start(start) => Some(start.state.playing),
+                Command::Play => Some(true),
+                Command::Pause => Some(false),
+                _ => self.local_intent,
+            };
             link.send(Request::ControlLocal(command));
         }
     }
@@ -590,6 +605,7 @@ impl Devices {
     fn reset(&mut self, link: Option<Arc<Connect>>) {
         self.link = link;
         self.mode = Mode::Off;
+        self.local_intent = None;
         self.named = None;
         self.roster = Roster::default();
         self.jam = None;
@@ -657,6 +673,7 @@ impl Devices {
         }
         self.sent = None;
         self.mode = wanted;
+        self.local_intent = None;
         link.send(Request::Mode(wanted));
         if wanted == Mode::Publish {
             self.publish(cx);
@@ -780,6 +797,12 @@ impl Devices {
                         before.state.playing && before.device.id == now.device.id
                     })
             });
+        if let (Some(local), Some(remote)) = (&roster.local, &roster.elsewhere)
+            && local.id == remote.device.id
+            && remote.state.track.is_some()
+        {
+            self.local_intent = None;
+        }
         self.roster = roster;
         if let Some((device, level)) = reported_volume {
             self.playback.update(cx, |playback, _| {

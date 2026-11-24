@@ -170,21 +170,46 @@ struct PageResult {
 pub struct ResolvedSequence {
     pub tracks: Vec<ContextTrack>,
     pub complete: bool,
+    known_prefix: usize,
 }
 
 impl ResolvedSequence {
     /// Flattens pages embedded in Connect messages and detects an unresolved continuation.
     pub fn from_context_pages(pages: Vec<ContextPage>) -> Self {
-        let complete = pages.iter().all(|page| {
-            !page.loading.unwrap_or_default()
-                && (!page.tracks.is_empty() || page.page_url.as_deref().is_none_or(str::is_empty))
-        }) && pages
-            .last()
-            .is_none_or(|page| page.next_page_url.as_deref().is_none_or(str::is_empty));
+        let unresolved = |page: &ContextPage| {
+            page.loading.unwrap_or_default()
+                || (page.tracks.is_empty()
+                    && page.page_url.as_deref().is_some_and(|url| !url.is_empty()))
+        };
+        let complete = pages.iter().all(|page| !unresolved(page))
+            && pages
+                .last()
+                .is_none_or(|page| page.next_page_url.as_deref().is_none_or(str::is_empty));
+        let mut known_prefix = 0;
+        let mut next = None;
+        for page in &pages {
+            if next
+                .zip(page.page_url.as_deref().filter(|url| !url.is_empty()))
+                .is_some_and(|(expected, actual)| expected != actual)
+            {
+                break;
+            }
+            known_prefix += page.tracks.len();
+            if unresolved(page) {
+                break;
+            }
+            next = page.next_page_url.as_deref().filter(|url| !url.is_empty());
+        }
         Self {
             complete,
             tracks: pages.into_iter().flat_map(|page| page.tracks).collect(),
+            known_prefix,
         }
+    }
+
+    /// Returns the row only when every preceding position is accounted for.
+    pub fn track_at(&self, index: usize) -> Option<&ContextTrack> {
+        self.tracks.get(..self.known_prefix)?.get(index)
     }
 }
 
@@ -231,6 +256,7 @@ impl Session {
             anyhow::bail!("Spotify context has no sequence");
         };
 
+        let known_prefix = children.len();
         Ok(ResolvedSequence {
             tracks: children
                 .into_iter()
@@ -245,6 +271,7 @@ impl Session {
                 })
                 .collect(),
             complete,
+            known_prefix,
         })
     }
 }

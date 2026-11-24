@@ -8,12 +8,18 @@
 //! on Soloist. `music::soloist` runs the pairing, and
 //! this entity keeps track of where it stands.
 
+use std::time::Duration;
+
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::soloist::{self, Build, Trouble};
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
 use crate::{Io, Outcome, Session, SessionEvent, SessionState, Toasts};
+
+/// How long pairing waits before it says a firewall may be in the way. Picking the device in a
+/// Spotify app takes less when the app can see it.
+const BLOCKED_AFTER: Duration = Duration::from_secs(20);
 
 /// A step of the setup dialog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,8 +77,11 @@ pub struct Soloist {
     session: Entity<Session>,
     io: Io,
     task: Option<Task<()>>,
-    /// TCP port reported by the pairing daemon.
-    pairing_port: Option<u16>,
+    /// The port the pairing program listens on, once pairing has waited `BLOCKED_AFTER`. A
+    /// firewall that keeps the Spotify app off it is the usual reason nobody picks the device.
+    blocked: Option<u16>,
+    /// Waits for that port and that long.
+    hint: Option<Task<()>>,
     /// The download the listener asked for, kept apart from `task` so closing the dialog or
     /// looking at the disk again does not lose what it brings.
     download: Option<Task<()>>,
@@ -118,7 +127,8 @@ impl Soloist {
             session,
             io,
             task: None,
-            pairing_port: None,
+            blocked: None,
+            hint: None,
             download: None,
             denied: false,
             asked: false,
@@ -146,9 +156,10 @@ impl Soloist {
         self.build.is_some()
     }
 
-    /// The TCP listener announced by the pairing daemon.
-    pub fn pairing_port(&self) -> Option<u16> {
-        self.pairing_port
+    /// The TCP port a firewall has to let in for pairing, along with mDNS, once pairing has
+    /// waited long enough for that to be worth saying.
+    pub fn blocked_port(&self) -> Option<u16> {
+        self.blocked
     }
 
     /// Whether the setup dialog came up by itself, for an account Spotify denies audio keys.
@@ -315,27 +326,30 @@ impl Soloist {
             SessionState::SignedIn(profile) => Some(profile.id.clone()),
             _ => None,
         };
-        let (listening, mut port) = oneshot::channel();
-        let mut pairing = self.io.spawn(soloist::pair(key, account, listening));
+        let (listening, port) = oneshot::channel();
+        let pairing = self.io.spawn(soloist::pair(key, account, listening));
         let cancel = CancelPairing(pairing.abort_handle());
+        self.hint = Some(cx.spawn(async move |this, cx| {
+            let Ok(port) = port.await else {
+                return;
+            };
+            cx.background_executor().timer(BLOCKED_AFTER).await;
+            this.update(cx, |this, cx| {
+                if this.state == SoloistState::Setup(SoloistStep::Pairing) {
+                    this.blocked = Some(port);
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
         self.task = Some(cx.spawn(async move |this, cx| {
             let _cancel = cancel;
-            let paired = tokio::select! {
-                result = &mut pairing => result,
-                announced = &mut port => {
-                    if let Ok(port) = announced {
-                        this.update(cx, |this, cx| {
-                            this.pairing_port = Some(port);
-                            cx.notify();
-                        }).ok();
-                    }
-                    pairing.await
-                }
-            };
+            let paired = pairing.await;
             let paired = paired.unwrap_or_else(|error| Err(Trouble::Failed(error.to_string())));
             this.update(cx, |this, cx| {
                 this.task = None;
-                this.pairing_port = None;
+                this.hint = None;
+                this.blocked = None;
                 match paired {
                     Ok(()) => {
                         // A pairing that replaces one already in use changes nothing `settle`
@@ -477,7 +491,8 @@ impl Soloist {
     fn stop_pairing(&mut self) {
         if self.state == SoloistState::Setup(SoloistStep::Pairing) {
             self.task = None;
-            self.pairing_port = None;
+            self.hint = None;
+            self.blocked = None;
         }
     }
 

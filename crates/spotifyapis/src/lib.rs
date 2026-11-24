@@ -15,5 +15,5 @@ pub mod player_command;
 pub mod proto;
 mod session;
 
-pub use http::{media_client, reachable, status as http_status};
+pub use http::{media_client, reachable, status as http_status, transient as transient_http};
 pub use session::Session;

@@ -43,7 +43,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Spotify Browse focuses on music, with a category grid and links to more categories.
 - Spotify Home can show its main shelves before Made For You. Large playlists, artist discographies and Browse pages can show results while the rest loads, and wide Search can show each result column as it arrives.
 - Reopening a playlist or Browse category reads its latest contents.
-- Set up and toggle Soloist on the Spotify provider row. The pairing dialog shows copyable network ports, and signing out keeps the pairing for the same account.
+- Signing out of Spotify keeps Soloist paired for the same account.
 - Built-in Spotify playback uses Sonora’s audio cache. A complete cached track at the requested quality can be saved offline without downloading it again.
 - Spotify adjusts the pace of downloads as requests succeed or Spotify asks it to slow down.
 - Older Spotify playlist links that include the owner need to be replaced with a current playlist link.

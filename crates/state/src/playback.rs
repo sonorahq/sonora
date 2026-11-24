@@ -992,26 +992,31 @@ impl Playback {
         true
     }
 
-    /// Resumes the external engine even while Connect has no active device to steer.
-    fn resume_soloist(&self, cx: &App) -> bool {
+    /// Sends a transport command to Soloist even while it has no active device to steer.
+    fn control_soloist(&self, command: Command, cx: &mut Context<Self>) -> bool {
         if self.local || self.local_active() {
             return false;
         }
         let Some(devices) = self.devices.as_ref().and_then(|devices| devices.upgrade()) else {
             return false;
         };
-        let devices = devices.read(cx);
-        if !devices.controls_local_device() {
+        if !devices.read(cx).controls_local_device() {
             return false;
         }
-        devices.control_local_device(Command::Play);
+        devices.update(cx, |devices, _| devices.control_local_device(command));
         true
     }
 
     /// Has the other device that has playback start the track at `index` of `tracks`, from the
     /// collection `origin` names, and says whether it did. A local file has no place there and
     /// plays here.
-    fn hand_over(&self, tracks: &[Track], index: usize, origin: Option<&Origin>, cx: &App) -> bool {
+    fn hand_over(
+        &self,
+        tracks: &[Track],
+        index: usize,
+        origin: Option<&Origin>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(id) = tracks
             .get(index)
             .and_then(|track| track.id.clone())
@@ -1039,7 +1044,7 @@ impl Playback {
     }
 
     /// Sends one start to the active device, or to the paired player when the account is idle.
-    fn start_elsewhere(&self, state: connect::Snapshot, cx: &App) -> bool {
+    fn start_elsewhere(&self, state: connect::Snapshot, cx: &mut Context<Self>) -> bool {
         let Some(devices) = self
             .devices
             .as_ref()
@@ -1048,7 +1053,6 @@ impl Playback {
         else {
             return false;
         };
-        let devices = devices.read(cx);
         let command = || {
             Command::Start(connect::Start {
                 state: Arc::new(state),
@@ -1056,10 +1060,10 @@ impl Playback {
                 ..Default::default()
             })
         };
-        if let Some(remote) = devices.steered() {
-            devices.control(&remote.device.id, command());
-        } else if devices.controls_local_device() {
-            devices.control_local_device(command());
+        if let Some(remote) = devices.read(cx).steered() {
+            devices.read(cx).control(&remote.device.id, command());
+        } else if devices.read(cx).controls_local_device() {
+            devices.update(cx, |devices, _| devices.control_local_device(command()));
         } else {
             return false;
         }
@@ -1957,7 +1961,12 @@ impl Playback {
     }
 
     /// Lets the external player fetch and start the context without loading all its tracks here.
-    fn start_remote_collection(&self, origin: &Origin, shuffled: bool, cx: &App) -> bool {
+    fn start_remote_collection(
+        &self,
+        origin: &Origin,
+        shuffled: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if music::is_local_id(&origin.id) {
             return false;
         }
@@ -2508,7 +2517,7 @@ impl Playback {
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Play, cx) || self.resume_soloist(cx) {
+        if self.steer(|_| Command::Play, cx) || self.control_soloist(Command::Play, cx) {
             return;
         }
         self.intent = Intent::Play;
@@ -2621,7 +2630,7 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Pause, cx) {
+        if self.steer(|_| Command::Pause, cx) || self.control_soloist(Command::Pause, cx) {
             return;
         }
         self.intent = Intent::Pause;
@@ -2637,10 +2646,17 @@ impl Playback {
             true => Command::Pause,
             false => Command::Play,
         };
-        if self.steer(command, cx) || self.resume_soloist(cx) {
+        if self.steer(command, cx) {
             return;
         }
-        match self.wants_playing() {
+        let playing = self
+            .devices
+            .as_ref()
+            .and_then(|devices| devices.upgrade())
+            .filter(|_| !self.local && !self.local_active())
+            .and_then(|devices| devices.read(cx).local_playing_intent())
+            .unwrap_or_else(|| self.wants_playing());
+        match playing {
             true => self.pause(cx),
             false => self.resume(cx),
         }

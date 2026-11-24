@@ -4,12 +4,10 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{
-    AnyElement, App, ClipboardItem, Context, Entity, FocusHandle, Render, SharedString, Window, div,
-};
+use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
 use i18n::t;
 use music::soloist::{DASHBOARD, DEVICE, TERMS};
-use state::{Outcome, Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora, Toasts};
+use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
     Submit, Text,
@@ -190,51 +188,20 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                body.push(paragraph(
-                    "soloist-pair-firewall",
-                    t!("soloist-pair-firewall"),
-                    cx,
-                ));
-                let tcp = self.soloist.read(cx).pairing_port().map(|port| {
+                // said only once pairing has waited a while
+                if let Some(port) = self.soloist.read(cx).blocked_port() {
+                    // as text, so no locale groups the digits of a port number
                     let port = port.to_string();
-                    copy_port(
-                        "soloist-copy-tcp",
-                        t!("soloist-pair-tcp", port = port.as_str()),
-                        port,
-                    )
-                });
-                body.push(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(copy_port(
-                            "soloist-copy-udp",
-                            t!("soloist-pair-udp"),
-                            "5353".to_owned(),
-                        ))
-                        .children(tcp)
-                        .into_any_element(),
-                );
+                    body.push(paragraph(
+                        "soloist-pair-firewall",
+                        t!("soloist-pair-firewall", port = port.as_str()),
+                        cx,
+                    ));
+                }
             }
         }
         body
     }
-}
-
-/// Copies the number without its protocol label so it can be pasted into a firewall rule.
-fn copy_port(id: &'static str, label: SharedString, port: String) -> Button {
-    Button::new(id)
-        .label(label)
-        .name(t!("soloist-pair-copy-port"))
-        .tooltip("soloist-pair-copy-port")
-        .small()
-        .outline()
-        .rounded_full()
-        .on_click(move |_, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(port.clone()));
-            Toasts::show(Outcome::Done, "toast-port-copied", cx);
-        })
 }
 
 impl Render for SoloistSetup {

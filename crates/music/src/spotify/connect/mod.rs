@@ -68,6 +68,7 @@ const PUT_GAP: Duration = Duration::from_secs(1);
 const TRANSFER_STATE_AGE: Duration = Duration::from_secs(2);
 const BACKOFF_FIRST: Duration = Duration::from_secs(2);
 const BACKOFF_LAST: Duration = Duration::from_secs(60);
+const TRANSIENT_PUT_RETRIES: u8 = 3;
 
 /// Starts one worker on the session runtime; it stays idle until device discovery is enabled.
 pub fn open(session: Session) -> Connect {
@@ -118,6 +119,8 @@ struct Worker {
     last_put: Option<Instant>,
     confirmed_transfer_state: Option<Instant>,
     backoff: Option<(Instant, Duration)>,
+    /// Retries scheduled since the last success, terminal failure, or disconnect.
+    transient_put_retries: u8,
 }
 
 /// Playback from the latest cluster, with the last remote snapshot available for transfers.
@@ -169,6 +172,7 @@ impl Worker {
             last_put: None,
             confirmed_transfer_state: None,
             backoff: None,
+            transient_put_retries: 0,
         }
     }
 
@@ -212,9 +216,8 @@ impl Worker {
                     if self.mode == Mode::Publish
                         && self.dealer_ready()
                         && self.registration_retry.is_none()
-                        && let Some(cluster) = self.put(PutStateReason::NewDevice).await
                     {
-                        self.report_cluster(cluster).await;
+                        self.want_put(PutStateReason::NewDevice);
                     }
                 }
                 () = wait_until(self.registration_retry) => self.refresh_roster().await,
@@ -496,6 +499,7 @@ impl Worker {
         self.registration_retry = None;
         self.ack_at = None;
         self.pending = None;
+        self.transient_put_retries = 0;
         let was_ready = self.dealer_ready();
         self.session.set_connection_id("");
         self.playback = ClusterPlayback::default();
@@ -699,28 +703,49 @@ impl Worker {
                     self.confirmed_transfer_state = Some(sent);
                 }
                 self.backoff = None;
+                self.transient_put_retries = 0;
                 self.observe_clock(&cluster);
                 Some(cluster)
             }
             Err(error)
                 if spotifyapis::http_status(&error) == Some(StatusCode::TOO_MANY_REQUESTS) =>
             {
-                let delay = self
-                    .backoff
-                    .map_or(BACKOFF_FIRST, |(_, delay)| (delay * 2).min(BACKOFF_LAST));
-                self.backoff = Some((Instant::now() + delay, delay));
-                self.want_put(reason);
+                let delay = self.retry_put(reason);
                 log::warn!(
                     "connect: Spotify asked for fewer state updates, waiting {}s",
                     delay.as_secs()
                 );
                 None
             }
+            Err(error)
+                if self.transient_put_retries < TRANSIENT_PUT_RETRIES
+                    && spotifyapis::transient_http(&error) =>
+            {
+                self.transient_put_retries += 1;
+                let delay = self.retry_put(reason);
+                log::warn!(
+                    "connect: cannot put the state, retrying in {}s: {error:#}",
+                    delay.as_secs()
+                );
+                None
+            }
             Err(error) => {
+                self.transient_put_retries = 0;
+                self.backoff = None;
                 log::warn!("connect: cannot put the state: {error}");
                 None
             }
         }
+    }
+
+    /// Keeps a failed publication scheduled and increases the retry delay up to the cap.
+    fn retry_put(&mut self, reason: PutStateReason) -> Duration {
+        let delay = self
+            .backoff
+            .map_or(BACKOFF_FIRST, |(_, delay)| (delay * 2).min(BACKOFF_LAST));
+        self.backoff = Some((Instant::now() + delay, delay));
+        self.want_put(reason);
+        delay
     }
 
     fn request_for(&self, reason: PutStateReason) -> PutStateRequest {
@@ -1051,9 +1076,7 @@ impl Worker {
         self.ack_at = Some(Instant::now() + ACK_DELAY);
     }
 
-    /// Starts what another device asked to play. A phone names the song by its uid alone, and a
-    /// jam names a context Sonora cannot read itself. Both send no tracks along, so the context
-    /// is read back first to find the song and what follows it.
+    /// Rejects a pending Play when its context read is superseded or the connection closes.
     fn cancel_play(&mut self) {
         if let Some((_, reply)) = self.play_read.take() {
             reply.send(false);
@@ -1067,10 +1090,11 @@ impl Worker {
         self.ack_at = Some(Instant::now() + ACK_DELAY);
     }
 
-    fn play(&mut self, play: PlayCommand, reply: Reply) {
+    /// Starts from supplied rows when possible, resolving the context for missing occurrences.
+    fn play(&mut self, mut play: PlayCommand, reply: Reply) {
         self.cancel_play();
-        let session = self.session.clone();
-        let blind = play.context.pages.iter().all(|page| page.tracks.is_empty());
+        let rows = ResolvedSequence::from_context_pages(std::mem::take(&mut play.context.pages));
+        let supplied = started_by_play(&play, &rows);
         let occurrence = play.options.skip_to.as_ref().is_some_and(|skip| {
             skip.track_index.is_some()
                 || skip.track_uid.as_deref().is_some_and(|uid| !uid.is_empty())
@@ -1080,19 +1104,25 @@ impl Worker {
             .uri
             .as_deref()
             .filter(|uri| {
-                blind && uri_id(uri).is_none() && (occurrence || collection(uri).is_none())
+                !uri.is_empty()
+                    && uri_id(uri).is_none()
+                    && ((occurrence && supplied.is_none())
+                        || (rows.tracks.is_empty() && collection(uri).is_none()))
             })
             .map(str::to_owned)
         else {
-            return self.finish_play(started_by_play(play, None), reply);
+            return self.finish_play(supplied, reply);
         };
+        let session = self.session.clone();
         self.play_read = Some((
             Box::pin(async move {
-                let resolved = sequence::resolve(&session, &uri)
+                match sequence::resolve(&session, &uri)
                     .await
                     .inspect_err(|error| log::warn!("connect: cannot read {uri} back: {error}"))
-                    .ok();
-                started_by_play(play, resolved)
+                {
+                    Ok(rows) => started_by_play(&play, &rows),
+                    Err(_) => supplied,
+                }
             }),
             reply,
         ));
@@ -1188,8 +1218,10 @@ impl Worker {
                 // Acknowledge the edit with its new queue while the host resolves missing metadata.
                 // The history an edit carries is left alone: a phone sends its own or none at
                 // all, and no app can edit it, so taking it would only wipe what played here.
-                if let Some(now) = self.now.as_mut() {
+                if let Some(now) = self.now.as_mut().filter(|now| now.upcoming != upcoming) {
                     Arc::make_mut(now).upcoming.clone_from(&upcoming);
+                    self.confirmed_transfer_state = None;
+                    self.want_put(PutStateReason::PlayerStateChanged);
                 }
                 vec![Command::SetQueue { upcoming }]
             }
@@ -1781,6 +1813,11 @@ fn started_by_transfer(state: TransferState, now: i64, remote: Option<&Snapshot>
         .current_track
         .as_ref()
         .and_then(|track| sequence_position(&rows, Occurrence::from_context(track), None));
+    let queued = queue
+        .tracks
+        .iter()
+        .skip(usize::from(from_queue))
+        .filter_map(|track| context_entry(track, true));
     let mut snapshot = if let Some(remote) = remote.filter(|remote| {
         origin
             .as_ref()
@@ -1791,6 +1828,11 @@ fn started_by_transfer(state: TransferState, now: i64, remote: Option<&Snapshot>
     }) {
         let mut snapshot = remote.clone();
         snapshot.index = snapshot.index.or(place);
+        // The transfer owns the explicit queue. Only the context order comes from the report.
+        snapshot.upcoming = queued
+            .chain(snapshot.upcoming.into_iter().filter(|track| !track.queued))
+            .take(CARRIED)
+            .collect();
         snapshot
     } else {
         let mut previous: Vec<_> = state
@@ -1815,11 +1857,6 @@ fn started_by_transfer(state: TransferState, now: i64, remote: Option<&Snapshot>
                 .collect();
         }
         previous.drain(..previous.len().saturating_sub(PREVIOUS));
-        let queued = queue
-            .tracks
-            .iter()
-            .skip(from_queue as usize)
-            .filter_map(|track| context_entry(track, true));
         Snapshot {
             context: origin,
             track,
@@ -1859,15 +1896,15 @@ fn started_by_transfer(state: TransferState, now: i64, remote: Option<&Snapshot>
 }
 
 /// What a play command from another device asks for.
-fn started_by_play(play: PlayCommand, resolved: Option<ResolvedSequence>) -> Option<Start> {
-    let rows = resolved.unwrap_or_else(|| ResolvedSequence::from_context_pages(play.context.pages));
+fn started_by_play(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start> {
+    let context_uri = play.context.uri.as_deref().filter(|uri| !uri.is_empty());
     let skip = play.options.skip_to.as_ref();
     let uri = skip
         .and_then(|skip| skip.track_uri.as_deref())
         .filter(|uri| !uri.is_empty());
     let id = match uri {
         Some(uri) => Some(uri_id(uri)?),
-        None => play.context.uri.as_deref().and_then(uri_id),
+        None => context_uri.and_then(uri_id),
     };
     let uid = skip
         .and_then(|skip| skip.track_uid.as_deref())
@@ -1879,25 +1916,30 @@ fn started_by_play(play: PlayCommand, resolved: Option<ResolvedSequence>) -> Opt
     let requested = skip
         .and_then(|skip| skip.track_index)
         .map(|index| index as usize);
-    let context = play.context.uri.as_deref().and_then(collection);
+    let context = context_uri.and_then(collection);
     let index = if let Some(index) = requested.filter(|_| uid.is_none()) {
-        let row = Occurrence::from_context(rows.tracks.get(index)?);
-        (rows.complete && key.matches_id(row.id.as_ref().map(CatalogueId::as_bytes)))
-            .then_some(index)
+        rows.track_at(index)
+            .and_then(ContextTrack::track_id)
+            .filter(|id| key.matches_id(Some(id.as_bytes())))
+            .map(|_| index)
     } else if context.is_none() && uid.is_none() && id.is_none() {
         rows.tracks.iter().position(|row| row.track_id().is_some())
     } else {
-        sequence_position(&rows, key, requested)
+        sequence_position(rows, key, requested)
     };
     let track = match index {
         Some(index) => Some(context_entry(&rows.tracks[index], false)?),
-        None if uid.is_some() || requested.is_some() => return None,
+        None if context_uri.is_some_and(|uri| uri_id(uri).is_none())
+            && (uid.is_some() || requested.is_some()) =>
+        {
+            return None;
+        }
         None => id.map(|id| QueuedTrack::new(id.to_owned(), false)),
     };
     if context.is_none() && track.is_none() {
         return None;
     }
-    let upcoming = following(&rows, index).take(CARRIED).collect();
+    let upcoming = following(rows, index).take(CARRIED).collect();
     let overrides = play.options.player_options_override.as_ref();
     Some(Start {
         state: Arc::new(Snapshot {

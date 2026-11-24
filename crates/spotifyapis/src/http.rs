@@ -133,11 +133,7 @@ async fn read_hosts<'a, T, F: Future<Output = Result<T>>>(
         .context("Spotify discovery returned no API host")?;
     let mut result = read(first).await;
     for host in rest.iter().chain(rest.is_empty().then_some(first)) {
-        if !result.as_ref().is_err_and(|error| {
-            error
-                .downcast_ref::<reqwest::Error>()
-                .is_some_and(retryable)
-        }) {
+        if !result.as_ref().is_err_and(transient) {
             break;
         }
         result = read(host).await;
@@ -218,6 +214,13 @@ pub fn status(error: &anyhow::Error) -> Option<StatusCode> {
     error
         .downcast_ref::<reqwest::Error>()
         .and_then(reqwest::Error::status)
+}
+
+/// Whether an HTTP failure is likely to clear on retry. Callers handle throttling separately.
+pub fn transient(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .is_some_and(retryable)
 }
 
 /// Posts to a code-defined API endpoint on a dedicated Spotify host.

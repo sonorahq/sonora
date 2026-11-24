@@ -10,15 +10,14 @@ use gpui::{
 use i18n::t;
 use music::{AccountChoices, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
-use state::{Failure, Outcome, Scan, SessionState, SoloistState, Sonora, Toast, Toasts};
+use state::{Failure, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Perch, Radio, Skeleton,
-    Switch, Text, Theme, Tipped as _, mix,
+    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Radio, Skeleton, Text,
+    Theme, mix,
 };
 
 use super::rows::drill;
 use super::{Group, SettingsView, Slot};
-use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::device_code::device_code;
 use crate::shared::local;
 use crate::shared::popups::{AccountPicker, CookiePrompt, CredentialsPrompt};
@@ -678,11 +677,6 @@ impl SettingsView {
         if self.guest(cx).is_some() {
             names.push(t!("login-guest-title").to_string());
         }
-        if self.soloist.read(cx).shown(cx)
-            && matches!(self.session.read(cx).state(), SessionState::SignedIn(_))
-        {
-            names.push(t!("settings-soloist-label").to_string());
-        }
         names.join(" ")
     }
 
@@ -730,73 +724,6 @@ impl SettingsView {
             error,
         } = account;
         let status = active.then(|| t!("settings-provider-current"));
-        let soloist = (slug == "spotify"
-            && stored
-            && active
-            && self.soloist.read(cx).shown(cx)
-            && matches!(self.session.read(cx).state(), SessionState::SignedIn(_)))
-        .then(|| {
-            let player = self.soloist.read(cx);
-            let on = player.in_use();
-            let removable = player.installed() && !on;
-            let disabled = pending
-                || matches!(
-                    player.state(),
-                    SoloistState::Looking | SoloistState::Setup(_)
-                );
-            let connecting = on && Sonora::global(cx).devices.read(cx).local_device().is_none();
-            let status = match (on, connecting) {
-                (false, _) => "settings-soloist-label",
-                (true, true) => "settings-soloist-connecting",
-                (true, false) => "settings-soloist-connected",
-            };
-            let status = i18n::lookup(status, None);
-            div()
-                .id("provider-soloist")
-                .tip_label(
-                    t!("settings-soloist-tooltip", status = status.as_ref()),
-                    Perch::Below,
-                )
-                .flex()
-                .items_center()
-                .gap_2()
-                .when(removable && !disabled, |row| {
-                    row.child(
-                        Button::new("remove-soloist")
-                            .icon("icons/trash-2.svg")
-                            .tooltip("settings-soloist-remove-installation")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.stop_propagation();
-                                let soloist = this.soloist.clone();
-                                Confirm::ask(
-                                    Kind::Soloist,
-                                    move |cx| soloist.update(cx, |soloist, cx| soloist.remove(cx)),
-                                    cx,
-                                );
-                            })),
-                    )
-                })
-                .child(
-                    Switch::new("use-soloist", on)
-                        .label(t!("settings-soloist-label"))
-                        .name(status)
-                        .pending(connecting)
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.soloist.update(cx, |soloist, cx| {
-                                if matches!(soloist.state(), SoloistState::Ready(_)) {
-                                    soloist.set_used(!on, cx);
-                                } else {
-                                    soloist.begin(cx);
-                                }
-                            });
-                        })),
-                )
-                .into_any_element()
-        });
         let offer = match (cancel, stored) {
             (true, _) => Offer::Cancel(self.cancel_button(slug, cx)),
             (false, true) => Offer::Choice {
@@ -825,7 +752,6 @@ impl SettingsView {
             name: name.into(),
             status,
             offer,
-            soloist,
             press: press.filter(|_| !pending),
             error,
             place,
@@ -872,7 +798,6 @@ impl SettingsView {
             name: t!("login-guest-title"),
             status,
             offer: Offer::Choice { leave },
-            soloist: None,
             press: press.filter(|_| !pending),
             error: None,
             place,
@@ -1330,7 +1255,6 @@ pub(super) struct ProviderRow {
     name: SharedString,
     status: Option<SharedString>,
     offer: Offer,
-    soloist: Option<AnyElement>,
     press: Option<Press>,
     error: Option<Failure>,
     /// The row's index in the list and the list's length.
@@ -1347,7 +1271,6 @@ impl RenderOnce for ProviderRow {
             name,
             status,
             offer,
-            soloist,
             press,
             error,
             place: (position, count),
@@ -1387,7 +1310,6 @@ impl RenderOnce for ProviderRow {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .children(soloist)
                     .child(
                         div()
                             .flex()

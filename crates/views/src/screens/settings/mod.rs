@@ -117,6 +117,7 @@ enum Slot {
     StreamFormat,
     StreamBitrate,
     Widevine,
+    Soloist,
     OutputDevice,
     OutputFailure,
     SampleRate,
@@ -351,15 +352,6 @@ impl SettingsView {
         cx.observe(&drm, |this, _, cx| this.remeasure(cx)).detach();
         cx.observe(&soloist, |this, _, cx| this.remeasure(cx))
             .detach();
-        let devices = Sonora::global(cx).devices.clone();
-        let mut connected = devices.read(cx).local_device().is_some();
-        cx.observe(&devices, move |_, devices, cx| {
-            let online = devices.read(cx).local_device().is_some();
-            if std::mem::replace(&mut connected, online) != online {
-                cx.notify();
-            }
-        })
-        .detach();
         cx.observe(&equalizer, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&outputs, |this, _, cx| this.remeasure(cx))
@@ -974,6 +966,7 @@ impl SettingsView {
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
             Slot::Widevine => (t!("settings-widevine"), self.widevine_detail(cx)),
+            Slot::Soloist => (t!("settings-soloist"), t!("settings-soloist-detail")),
             Slot::OutputDevice => (
                 t!("settings-output-device"),
                 t!("settings-output-device-detail"),
@@ -1173,6 +1166,7 @@ impl SettingsView {
             Slot::Buffer => self.buffer_row(cx),
             Slot::MatchRate => self.match_rate_row(cx),
             Slot::Widevine => self.widevine_row(cx),
+            Slot::Soloist => self.soloist_row(cx),
             Slot::Equalizer => self.equalizer_row(cx),
             Slot::LyricsSources => self.lyrics_sources_row(cx),
             Slot::LyricsPriority => self.lyrics_priority(cx),
