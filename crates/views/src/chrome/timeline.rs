@@ -18,6 +18,13 @@ const ISLAND_THICK: f32 = 1.5;
 /// How far above the bottom of the seek row the island's clocks stand, in pads: just over the
 /// open line, whose middle is the row's.
 const CLOCK_LIFT: f32 = 2.25;
+/// The seek bar's track and thumb in pads and its bubble's padding either side of the time in
+/// rems, as `ui::Scrubber` draws them, and the air in pads the island keeps between the bubble
+/// and a clock before that clock gives way to it.
+const TRACK: f32 = 0.5;
+const THUMB: f32 = 1.5;
+const BUBBLE_PAD: f32 = 0.375;
+const BUBBLE_AIR: f32 = 0.5;
 
 /// The window y of the middle of the seek line as the player bar last painted it.
 #[derive(Default)]
@@ -125,6 +132,14 @@ impl Timeline {
         }
     }
 
+    /// Hides the bubble once the pointer is off the island, which can move out from under a
+    /// still pointer as the sheet slides and so hands on no last move to hide it by.
+    pub fn leave(&mut self, cx: &mut Context<Self>) {
+        if self.over.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// Redraws when what the timeline shows has changed since the last render.
     fn follow(&mut self, cx: &mut Context<Self>) {
         if self.drawn != Some(self.shown(cx)) {
@@ -191,6 +206,33 @@ impl Render for Timeline {
             .over
             .or(self.pending)
             .map(|at| (at, clock(total.mul_f32(at))));
+        // In the island a clock gives way to the bubble only once the two would touch, measured
+        // by the text each one sets rather than the room a clock keeps for a longer time. The
+        // bubble stands over the thumb, which travels a thumb short of the row.
+        let pad = theme.metrics.pad;
+        let travel = self.seek.travel(pad);
+        let thumb = pad * THUMB;
+        let row = travel + thumb;
+        let closing_text = match time_left {
+            true => end_clock(elapsed, total, time_left).text,
+            false => clock(total),
+        };
+        let (start_clear, end_clear) = match &bubble {
+            Some((at, text)) => {
+                let chip = set_width(text, theme.text(ui::Text::Tiny), window)
+                    + window.rem_size() * BUBBLE_PAD * 2.;
+                let reach = chip / 2. + pad * BUBBLE_AIR;
+                let x = thumb / 2. + travel * *at;
+                let start = set_width(&clock(elapsed), clock_text, window);
+                let end = set_width(&closing_text, clock_text, window);
+                (x - reach >= start, x + reach <= row - end)
+            }
+            None => (true, true),
+        };
+        let gives_way = |clear: bool| match clear {
+            true => 1.,
+            false => 0.,
+        };
 
         let clock_label = |id: &'static str, text: SharedString, align_end: bool| {
             ui::spoken(id, text)
@@ -212,13 +254,23 @@ impl Render for Timeline {
             }
             false => clock_label("player-duration", clock(total), align_end),
         };
-        // The island's line rests thin and bare, and swells with its clocks as it opens.
-        let (thickness, pin) = match self.spread {
-            Some(spread) => (
-                ISLAND_THIN + (ISLAND_THICK - ISLAND_THIN) * spread,
-                theme.foreground.opacity(spread),
-            ),
-            None => (1., theme.foreground),
+        // The island's line rests thin and bare, and swells with its clocks as it opens. Its
+        // thumb is part of the line rather than a dot of its own: at rest it is as thick as the
+        // line and its colour, and it grows and lightens to a full thumb as the line opens. While
+        // the line moves it is drawn off the pixel grid, so it swells smoothly rather than a
+        // pixel at a time.
+        let (thickness, pin, dot, moving) = match self.spread {
+            Some(spread) => {
+                let thickness = ISLAND_THIN + (ISLAND_THICK - ISLAND_THIN) * spread;
+                let flush = thickness * TRACK / THUMB;
+                (
+                    thickness,
+                    ui::mix(theme.progress_bar, theme.foreground, spread),
+                    flush + (1. - flush) * spread,
+                    spread > 0. && spread < 1.,
+                )
+            }
+            None => (1., theme.foreground, 1., false),
         };
 
         div()
@@ -239,6 +291,8 @@ impl Render for Timeline {
                         .name(t!("song-position"))
                         .value(clock(elapsed))
                         .thickness(thickness)
+                        .thumb_scale(dot)
+                        .when(moving, |this| this.pixel_snap(false))
                         .colors(theme.progress_bar, empty, pin)
                         .ranges(
                             Sonora::global(cx).sponsorblock.read(cx).ranges(cx),
@@ -267,9 +321,11 @@ impl Render for Timeline {
                         .bottom(theme.metrics.pad * CLOCK_LIFT)
                         .flex()
                         .justify_between()
-                        .opacity(spread)
-                        .child(clock_label("player-elapsed", clock(elapsed), false))
-                        .child(closing(true)),
+                        .child(
+                            clock_label("player-elapsed", clock(elapsed), false)
+                                .opacity(spread * gives_way(start_clear)),
+                        )
+                        .child(closing(true).opacity(spread * gives_way(end_clear))),
                 )
             })
             .child(
@@ -281,4 +337,10 @@ impl Render for Timeline {
                 .inset_0(),
             )
     }
+}
+
+/// How wide `text` sets at `size` in the window's font.
+fn set_width(text: &SharedString, size: Pixels, window: &Window) -> Pixels {
+    let base = window.text_style().font_size.to_pixels(window.rem_size());
+    ui::text_width(text.clone(), window) * (size / base)
 }

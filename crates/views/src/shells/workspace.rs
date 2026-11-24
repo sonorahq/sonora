@@ -6,12 +6,12 @@ use gpui::{
     AnyView, App, Context, Div, Entity, FocusHandle, Pixels, Render, SpringConfig, StyleRefinement,
     px,
 };
-use gpui::{Window, deferred, div};
+use gpui::{Window, deferred, div, linear_color_stop, linear_gradient};
 use input::WORKSPACE_CONTEXT;
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{
     Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, Sprung,
-    entering, shown_listing, veiled,
+    VeilEdge, entering, shown_listing, veil, veiled,
 };
 
 use crate::chrome::{
@@ -24,6 +24,13 @@ use crate::shells::Shell;
 const SLIDE_REST: f32 = 0.5;
 /// The spring a sidebar slides out and back on: quick and without overshoot.
 const SLIDE: SpringConfig = ui::spring(0.2, 0.);
+/// How close the island's shift between the sheet's centre and the window's has to come to its
+/// end to count as landed.
+const SHIFT_REST: f32 = 0.002;
+/// How tall the band the page fades out through under the island stands, as a multiple of the
+/// island's bar, and how far the page blurs at its foot.
+const ISLAND_FADE: f32 = 1.2;
+const ISLAND_BLUR: Pixels = px(6.);
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -45,6 +52,9 @@ pub(crate) struct Workspace {
     focus: FocusHandle,
     left_slide: Slide,
     right_slide: Slide,
+    /// Where the island stands between the sheet's centre, at 0, and the window's, at 1. It
+    /// springs there when the island stops or starts fitting on the sheet.
+    island_shift: Option<Sprung>,
 }
 
 /// How far a sidebar beside the page has slid out. It springs only when the listener opens or
@@ -100,6 +110,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             left_slide: Slide::default(),
             right_slide: Slide::default(),
+            island_shift: None,
         }
     }
 
@@ -218,9 +229,9 @@ impl Render for Workspace {
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
+        let floating = PlayerBar::floating(window, cx);
         // A floating island has no bar to stop the page at, so it runs under it too.
-        let underlap =
-            self.settings.read(cx).player_bar_translucent() || PlayerBar::floating(window, cx);
+        let underlap = self.settings.read(cx).player_bar_translucent() || floating;
         let bottom = match underlap {
             true => bar_height,
             false => Pixels::ZERO,
@@ -293,6 +304,28 @@ impl Render for Workspace {
                 .into_any_element(),
             false => header.into_any_element(),
         });
+        // An island stands over the sheet as it is this frame, sliding with it as a sidebar comes
+        // and goes, and reaches over a sidebar only when the sheet is too narrow for it. A bar
+        // runs along the window's whole foot.
+        let island = floating.then(|| {
+            let sheet = overlay_width + left;
+            let width = window.viewport_size().width - sheet - right;
+            let target = match PlayerBar::island_fits(width, window, cx) {
+                true => 0.,
+                false => 1.,
+            };
+            let shift = self
+                .island_shift
+                .get_or_insert_with(|| Sprung::at(target))
+                .follow(target, SLIDE, SHIFT_REST, window, cx);
+            PlayerBar::island_span(sheet, width, shift, window, cx)
+        });
+        // While the island stands on the sheet clear of the sidebars, their floating buttons
+        // stand at their foot rather than above a bar that is not there.
+        let viewport = window.viewport_size().width;
+        let (start, end) = (overlay_width + left, viewport - right);
+        let over = island.is_some_and(|(at, width)| at < start || at + width > end);
+        Chrome::set_island_clear(island.is_some() && !over, cx);
         let hidden = self.hidden(window, cx);
         // The scrim is what fades the outgoing page: it is the page's own colour at
         // full strength, so covering the content with it costs no layout and the
@@ -443,6 +476,9 @@ impl Render for Workspace {
                                         )
                                     }),
                             )
+                            .when(floating, |this| {
+                                this.child(island_fade(bar_height, window, cx))
+                            })
                             .child(self.swipe_cue.clone())
                             .child(sheet_frame(corners, edges, cx)),
                     )
@@ -452,7 +488,11 @@ impl Render for Workspace {
             .child(
                 div()
                     .relative()
-                    .when(underlap, |bar| bar.absolute().left_0().right_0().bottom_0())
+                    .map(|bar| match (island, underlap) {
+                        (Some((left, width)), _) => bar.absolute().bottom_0().left(left).w(width),
+                        (None, true) => bar.absolute().left_0().right_0().bottom_0(),
+                        (None, false) => bar,
+                    })
                     .child(
                         self.player_bar
                             .clone()
@@ -497,4 +537,42 @@ fn slid(
                 .child(sidebar),
         )
         .into_any_element()
+}
+
+/// The band at the foot of the sheet that the island floats over. The page blurs and fades into
+/// the sheet's colour towards the window's edge, so what scrolls under the island passes behind
+/// it rather than through it. The part as tall as the island's bar takes no hover or click, so
+/// nothing lights up around the pill, though the page still scrolls there.
+fn island_fade(bar: Pixels, window: &Window, cx: &App) -> Div {
+    let background = cx.theme().background;
+    let band = bar * ISLAND_FADE;
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .h(band)
+        .child(veil(
+            VeilEdge::Bottom,
+            band,
+            ISLAND_BLUR,
+            background,
+            None,
+            window,
+        ))
+        .child(div().absolute().inset_0().bg(linear_gradient(
+            180.,
+            linear_color_stop(background.opacity(0.), 0.),
+            linear_color_stop(background, 1.),
+        )))
+        .child(
+            div()
+                .id("island-guard")
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .h(bar)
+                .block_mouse_except_scroll(),
+        )
 }

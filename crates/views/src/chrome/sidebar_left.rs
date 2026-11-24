@@ -893,6 +893,11 @@ impl Render for SidebarLeft {
                             // The rows start right under the title bar, so they fade out there
                             // as they scroll away instead of being cut off at its edge.
                             .fade_scrolled(theme.metrics.inset)
+                            // Under a floating island the page fades out at its foot, and the
+                            // rows beside it fade there the way they do at the top.
+                            .when(super::PlayerBar::floating(window, cx), |this| {
+                                this.fade_bottom(theme.metrics.inset)
+                            })
                             .size_full()
                             .child(
                                 div()
@@ -917,9 +922,9 @@ impl Render for SidebarLeft {
                     )
                     .children(
                         ui::return_top("sidebar-return-top", &self.scrollbar, cx).map(|perch| {
-                            match super::Chrome::bottom(cx) > Pixels::ZERO {
-                                true => perch
-                                    .bottom(super::Chrome::bottom(cx) + theme.metrics.pad * 1.5),
+                            let bottom = super::Chrome::sidebar_bottom(cx);
+                            match bottom > Pixels::ZERO {
+                                true => perch.bottom(bottom + theme.metrics.pad * 1.5),
                                 false => perch,
                             }
                         }),
