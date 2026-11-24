@@ -69,6 +69,7 @@ impl LocalProvider {
             capabilities: Capabilities {
                 follow_artists: true,
                 radio: false,
+                collection_radio: &[],
                 playcounts: false,
                 pins: false,
                 transcode: false,
@@ -82,6 +83,7 @@ impl LocalProvider {
                 download_gap: Duration::ZERO,
                 song_arrival: None,
                 playlist_arrival: Some(Arrival::OldestFirst),
+                playlist_visibility: true,
             },
         })
     }

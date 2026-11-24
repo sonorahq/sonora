@@ -325,6 +325,9 @@ fn describe(failure: &Failure) -> String {
             "could not update the current track's favorite state".to_owned()
         }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
+        Failure::SteeredReadOnly => {
+            "another device has playback; its queue cannot be placed at a position".to_owned()
+        }
     }
 }
 

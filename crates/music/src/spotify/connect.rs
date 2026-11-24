@@ -41,6 +41,7 @@ use sha1::{Digest as _, Sha1};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::Instant;
 
+use crate::RadioSeed;
 use crate::connect::{
     Collection, Command, Connect, Device, DeviceKind, Elsewhere, Event, Invite, Jam, JamMember,
     Naming, QueuedTrack, Repeat, Request as Input, Roster, Snapshot, Start,
@@ -1816,9 +1817,12 @@ fn repeat_mode(track: Option<bool>, context: Option<bool>) -> Option<Repeat> {
 /// one: Spotify draws it afresh for whoever asks, so the songs this app got are told as a list
 /// of their own, the way a song from no collection is.
 fn shared(now: &Snapshot) -> Option<&Collection> {
-    now.context
-        .as_ref()
-        .filter(|context| !matches!(context, Collection::Radio(_)))
+    now.context.as_ref().filter(|context| {
+        !matches!(
+            context,
+            Collection::Radio(_) | Collection::CollectionRadio(..)
+        )
+    })
 }
 
 /// The uri Spotify knows a collection by.
@@ -1828,6 +1832,14 @@ fn collection_uri(collection: &Collection, username: &str) -> String {
         Collection::Playlist(id) => format!("spotify:playlist:{id}"),
         Collection::Saved => format!("spotify:user:{username}:collection"),
         Collection::Radio(id) => format!("spotify:station:track:{id}"),
+        Collection::CollectionRadio(seed, id) => {
+            let kind = match seed {
+                RadioSeed::Album => "album",
+                RadioSeed::Playlist => "playlist",
+                RadioSeed::Artist => "artist",
+            };
+            format!("spotify:station:{kind}:{id}")
+        }
     }
 }
 

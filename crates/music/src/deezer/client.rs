@@ -20,7 +20,8 @@ use crate::engine::Loudness;
 use crate::{
     AccountChoice, Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding,
     Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Offer, Playlist,
-    PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers, escape,
+    PlaylistDetail, Quality, RadioSeed, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -1626,6 +1627,20 @@ impl MusicApi for DeezerClient {
                 Ok((Vec::new(), None))
             }
         }
+    }
+
+    /// The artist's radio. Deezer keeps none for an album or a playlist, so theirs is blended.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let page = self
+            .public(&format!("/artist/{}/radio?limit=50", escape::component(id)))
+            .await
+            .context("cannot load the artist radio")?;
+        Ok((wire::track_list(&page), None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

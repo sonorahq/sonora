@@ -11,8 +11,8 @@ use crate::cover::{self, CoverLimits};
 use crate::youtube::{genres, radio, search, subscriptions, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Feed, Genre,
-    GenreDetail, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist,
-    Track, UserProfile, escape,
+    GenreDetail, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, RadioSeed, SUGGESTIONS,
+    SavedArtist, Track, UserProfile, escape,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -428,6 +428,24 @@ impl MusicApi for YouTubeClient {
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
         radio::station(&self.api, track_id, from).await
+    }
+
+    async fn collection_radio(
+        &self,
+        seed: RadioSeed,
+        id: &str,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let playlist = match seed {
+            RadioSeed::Playlist => format!("RDAMPL{}", id.strip_prefix("VL").unwrap_or(id)),
+            RadioSeed::Album => {
+                let album = self.api.album(id).await?.album;
+                let playlist = album.playlist_id.context("album has no playlist")?;
+                format!("RDAMPL{playlist}")
+            }
+            RadioSeed::Artist => radio::artist_seed(&self.api, id).await?,
+        };
+        radio::collection(&self.api, &playlist, from).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

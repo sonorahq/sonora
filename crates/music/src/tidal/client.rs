@@ -27,8 +27,8 @@ use crate::tidal::{lock, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Encoding, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Offer, Page, Pages,
-    Playlist, PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, SignInFailure, SignInProblem,
-    Track, UserProfile, distinct_covers, escape,
+    Playlist, PlaylistDetail, Quality, RadioSeed, SUGGESTIONS, SavedArtist, SignInFailure,
+    SignInProblem, Track, UserProfile, distinct_covers, escape,
 };
 
 const V1: &str = "https://api.tidal.com/v1";
@@ -1615,6 +1615,23 @@ impl MusicApi for TidalClient {
             }),
         };
         Ok((tracks, None))
+    }
+
+    /// The artist's station. Tidal keeps none for an album or a playlist, so theirs is blended.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let page = self
+            .get(
+                &format!("/artists/{}/radio", escape::component(id)),
+                &[("limit", RADIO)],
+            )
+            .await
+            .context("cannot load the artist radio")?;
+        Ok((wire::track_list(&page), None))
     }
 
     /// Leaves out what cannot play, which in a search is mostly Atmos copies listed beside the

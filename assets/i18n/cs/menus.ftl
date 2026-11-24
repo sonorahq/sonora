@@ -18,7 +18,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = Stáhnout
 menu-remove-download = Odebrat ze stažených
 menu-downloading = Stahuje se. Kliknutím zastavíš
-menu-song-radio = Přejít na rádio skladby
 menu-go-to-album = Přejít na album
 menu-go-to-artist = Přejít na interpreta
 menu-view-details = Zobrazit podrobnosti

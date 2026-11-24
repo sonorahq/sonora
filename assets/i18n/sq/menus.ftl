@@ -16,7 +16,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = Shkarko
 menu-remove-download = Hiq shkarkimin
 menu-downloading = Duke shkarkuar. Kliko për ta ndalur
-menu-song-radio = Shko te radio e këngës
 menu-go-to-album = Shko te albumi
 menu-go-to-artist = Shko te artisti
 menu-view-details = Shiko detajet
