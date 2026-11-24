@@ -355,7 +355,7 @@ pub enum Failure {
     FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
-    /// Another device has playback, and its queue cannot be edited at a position.
+    /// Another device has playback, and its queue is read-only here.
     SteeredReadOnly,
     /// No row in the queue carries this id.
     UnknownQueueEntry(String),

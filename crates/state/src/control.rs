@@ -294,7 +294,7 @@ impl Control {
             QueueCommand::Remove { uid } => {
                 let steered = self.playback.read(cx).steered(cx).is_some();
                 if steered {
-                    reply.send(Reply::Failed(Failure::Unsupported)).ok();
+                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
                     return;
                 }
                 let removed = self
@@ -310,7 +310,7 @@ impl Control {
             QueueCommand::Move { uid, gap } => {
                 let steered = self.playback.read(cx).steered(cx).is_some();
                 if steered {
-                    reply.send(Reply::Failed(Failure::Unsupported)).ok();
+                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
                     return;
                 }
                 let moved = self
@@ -326,7 +326,7 @@ impl Control {
             QueueCommand::ClearUpcoming => {
                 let steered = self.playback.read(cx).steered(cx).is_some();
                 let answer = match steered {
-                    true => Reply::Failed(Failure::Unsupported),
+                    true => Reply::Failed(Failure::SteeredReadOnly),
                     false => {
                         self.playback
                             .update(cx, |playback, cx| playback.clear_queued(cx));
