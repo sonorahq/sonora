@@ -24,8 +24,13 @@ const KEY_REFUSED: &str = "settings-scrobble-key-refused";
 
 /// One state report on its way to the provider that served the track.
 type Reported = (Arc<dyn MusicApi>, String, Report, Duration);
-/// A service's id and whether its last answer refused the API key.
-type Verdict = (&'static str, bool);
+/// Whether one answer from a service refused the API key. It carries the session it was sent
+/// with, so an answer that arrives after the account was replaced is dropped.
+struct Verdict {
+    service: &'static str,
+    session: String,
+    refused: bool,
+}
 
 /// One service's link as the settings screen sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,8 +159,8 @@ impl Scrobbling {
 
         let (verdicts, mut heard) = mpsc::unbounded_channel::<Verdict>();
         let hearing = cx.spawn(async move |this, cx| {
-            while let Some((service, refused)) = heard.recv().await {
-                let applied = this.update(cx, |this, cx| this.judged(service, refused, cx));
+            while let Some(verdict) = heard.recv().await {
+                let applied = this.update(cx, |this, cx| this.judged(verdict, cx));
                 if applied.is_err() {
                     break;
                 }
@@ -340,11 +345,16 @@ impl Scrobbling {
 
     /// Applies what a service said about the stored key. The first refusal in a run of them
     /// posts a toast, since a listener rarely looks at the settings row while music plays.
-    fn judged(&mut self, service: &'static str, refused: bool, cx: &mut Context<Self>) {
+    fn judged(&mut self, verdict: Verdict, cx: &mut Context<Self>) {
+        let Verdict {
+            service,
+            session,
+            refused,
+        } = verdict;
         let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) else {
             return;
         };
-        if row.refused == refused || !row.account.linked() {
+        if row.refused == refused || !row.account.linked() || row.account.session != session {
             return;
         }
         row.refused = refused;
@@ -400,7 +410,7 @@ impl Scrobbling {
                         service.id()
                     );
                 }
-                judge(&verdicts, service.id(), &answer);
+                judge(&verdicts, service.id(), &account, &answer);
             });
         }
     }
@@ -478,7 +488,7 @@ impl Scrobbling {
                         service.id()
                     );
                 }
-                judge(&verdicts, service.id(), &answer);
+                judge(&verdicts, service.id(), &account, &answer);
             });
         }
     }
@@ -522,6 +532,7 @@ impl Scrobbling {
 fn judge(
     verdicts: &mpsc::UnboundedSender<Verdict>,
     service: &'static str,
+    account: &Account,
     answer: &anyhow::Result<()>,
 ) {
     let refused = match answer {
@@ -529,7 +540,14 @@ fn judge(
         Err(error) if KeyRefused::in_error(error) => true,
         Err(_) => return,
     };
-    verdicts.send((service, refused)).ok();
+    let session = account.session.clone();
+    verdicts
+        .send(Verdict {
+            service,
+            session,
+            refused,
+        })
+        .ok();
 }
 
 /// Turns a track into a listen. A track with no artist or no title is not submittable anywhere.
