@@ -1712,8 +1712,10 @@ impl<S: TableSource> Render for TableState<S> {
         // head's own alpha has always been mixed against.
         let frosted = blurring(cx);
         let backdrop = (!frosted && !cx.theme().transparent).then(|| cx.theme().background);
+        // A content mask is a plain rectangle, so rows frosted behind a rounded head would show
+        // past its curve. They pass behind it only below the band its corners round across.
         let masked = match frosted {
-            true => pinned,
+            true => pinned + top.top_left.max(top.top_right).min(head),
             false => pinned + head,
         };
         let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
