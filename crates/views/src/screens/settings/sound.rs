@@ -30,9 +30,8 @@ impl SettingsView {
             }
         };
         vec![
-            Group::new("settings-group-output", "icons/volume-2.svg").rows(output),
-            Group::new("settings-equalizer", "icons/sliders-horizontal.svg")
-                .rows([Slot::Equalizer]),
+            Group::new("settings-group-output").rows(output),
+            Group::new("settings-equalizer").rows([Slot::Equalizer]),
         ]
     }
 

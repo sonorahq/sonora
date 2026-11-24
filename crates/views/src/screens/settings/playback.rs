@@ -38,34 +38,24 @@ impl SettingsView {
             playing.push(Slot::SponsorBlock);
         }
         playing.extend([Slot::Sleep, Slot::StayAwake]);
-        let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
+        let mut groups = vec![Group::new("settings-group-playing").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
         match capabilities.qualities.len() {
             0 => {}
-            1 => groups.push(
-                Group::new("settings-stream-quality", "icons/disc-3.svg")
-                    .rows([Slot::StreamQuality]),
-            ),
-            _ => groups.push(
-                Group::new("settings-stream-quality", "icons/disc-3.svg")
-                    .cards(Slot::StreamQuality),
-            ),
+            1 => groups.push(Group::new("settings-stream-quality").rows([Slot::StreamQuality])),
+            _ => groups.push(Group::new("settings-stream-quality").cards(Slot::StreamQuality)),
         }
         if capabilities.transcode {
             groups.push(
-                Group::new("settings-group-streaming", "icons/refresh-cw.svg")
+                Group::new("settings-group-streaming")
                     .rows([Slot::StreamFormat, Slot::StreamBitrate]),
             );
         }
         if self.drm.read(cx).shown(cx) {
-            groups.push(
-                Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
-            );
+            groups.push(Group::new("settings-group-protected").rows([Slot::Widevine]));
         }
         if self.soloist.read(cx).shown(cx) {
-            groups.push(
-                Group::new("settings-group-soloist", "icons/headphones.svg").rows([Slot::Soloist]),
-            );
+            groups.push(Group::new("settings-group-soloist").rows([Slot::Soloist]));
         }
         groups.extend(self.sessions_groups(cx));
         groups.extend(self.connect_groups(cx));

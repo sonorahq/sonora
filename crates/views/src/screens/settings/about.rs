@@ -9,7 +9,7 @@ use state::{Channel, UpdateState};
 use ui::{ActiveTheme as _, Avatar, Button, Glowing as _, Switch, Text};
 
 use super::rows::{Row, outward, segmented};
-use super::{Group, SettingsView, Slot, group_heading};
+use super::{Group, SettingsView, Slot, beside, group_label};
 use crate::shared::cells::relative_stamp;
 
 /// How large the app icon stands, in covers.
@@ -70,13 +70,9 @@ impl SettingsView {
             .into_iter()
             .flatten();
         vec![
-            Group::new("settings-group-updates", "icons/refresh-cw.svg")
+            Group::new("settings-group-updates")
                 .rows([Slot::Version, Slot::Updates].into_iter().chain(itself)),
-            Group::new("settings-group-project", "icons/info.svg").rows([
-                Slot::Log,
-                Slot::License,
-                Slot::Source,
-            ]),
+            Group::new("settings-group-project").rows([Slot::Log, Slot::License, Slot::Source]),
         ]
     }
 
@@ -281,20 +277,15 @@ impl SettingsView {
             .child(t!("settings-notice"))
     }
 
-    /// The people behind Sonora, each opening their GitHub profile.
-    pub(super) fn team(&self, cx: &Context<Self>) -> impl IntoElement {
+    /// The people behind Sonora, each opening their GitHub profile, beside the name of the list
+    /// as a group of the page stands beside its name.
+    pub(super) fn team(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
+        let heading = group_label("settings-team".into(), t!("settings-team"), cx);
 
-        div()
+        let members = div()
             .flex()
             .flex_col()
-            .child(
-                group_heading(t!("settings-team"), Some("icons/user-round.svg"), cx)
-                    .id("settings-team")
-                    .role(gpui::accesskit::Role::Heading)
-                    .aria_level(2)
-                    .aria_label(t!("settings-team")),
-            )
             .children(MEMBERS.into_iter().enumerate().map(|(index, member)| {
                 div()
                     .id(("team-member", index))
@@ -329,7 +320,15 @@ impl SettingsView {
                             .child(member.role.label()),
                     )
                     .glowed(theme.secondary_hover)
-            }))
+            }));
+        beside(
+            Some(heading.into_any_element()),
+            true,
+            true,
+            members,
+            window,
+            cx,
+        )
     }
 }
 

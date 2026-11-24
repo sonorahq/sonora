@@ -12,8 +12,8 @@ use music::{AccountChoices, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
 use state::{Failure, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Radio, Skeleton, Text,
-    Theme, mix,
+    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Radio, Room, Skeleton,
+    Text, Theme, mix,
 };
 
 use super::rows::drill;
@@ -25,10 +25,20 @@ use crate::shared::text;
 
 /// The icon beside a provider's sign-in error.
 const ERROR_ICON: Pixels = px(14.);
-/// How large a provider's mark draws, and how long it takes to turn to its brand colour under
-/// the pointer.
-const MARK: Pixels = px(22.);
+/// How large a provider's mark draws on its card, and how long it takes to turn to its brand
+/// colour under the pointer.
+const MARK: Pixels = px(24.);
 const MARK_FADE: Duration = Duration::from_millis(160);
+/// How many list rows tall a provider's card stands, before an error adds to it.
+const CARD_HEIGHT: f32 = 1.25;
+/// How strongly the brand colour takes the border of the provider in use.
+const BRAND_EDGE: f32 = 0.55;
+/// How faint the mark of a provider with no account stands on its card.
+const FAINT_MARK: f32 = 0.45;
+/// How large a service's mark draws in the row that opens the streaming services page, and
+/// how faint it stands there while it has no account.
+const STRIP_MARK: Pixels = px(16.);
+const UNUSED_MARK: f32 = 0.3;
 /// How many buttons tall the sign-in choice stands, however few it lists.
 const CHOICES: f32 = 3.;
 /// What the guest row answers to, where a provider row answers to its slug.
@@ -69,10 +79,7 @@ fn offered(method: &SignIn, stored: bool) -> bool {
 
 impl SettingsView {
     pub(super) fn accounts_groups(&self) -> Vec<Group> {
-        vec![
-            Group::new("settings-group-library", "icons/library-big.svg")
-                .rows([Slot::AccountsLink, Slot::LocalFolder]),
-        ]
+        vec![Group::new("settings-group-library").rows([Slot::AccountsLink, Slot::LocalFolder])]
     }
 
     /// The streaming services page: a card per provider and guest mode, then the library
@@ -87,19 +94,51 @@ impl SettingsView {
         ]
     }
 
-    /// The row that opens the streaming services page, naming the service in use, or guest
-    /// mode when that is what plays.
+    /// The row that opens the streaming services page. It ends in the mark of every service:
+    /// the one in use in its brand colour, the others with an account in the foreground, and
+    /// the rest faint. Screen readers hear the service in use, or guest mode when that is what
+    /// plays, as the row's description.
     pub(super) fn accounts_link_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let value = match self.guest(cx).filter(|guest| guest.active) {
+        let theme = *cx.theme();
+        let providers = self.providers(cx);
+        let guest = self.guest(cx);
+        let faint = theme.muted_foreground.opacity(UNUSED_MARK);
+        let current = match guest.filter(|guest| guest.active) {
             Some(_) => Some(t!("login-guest-title")),
-            None => self
-                .providers(cx)
-                .into_iter()
+            None => providers
+                .iter()
                 .find(|account| account.active)
                 .map(|account| SharedString::from(account.name)),
         };
+        let marks = providers
+            .iter()
+            .map(|account| {
+                let color = match (account.active, account.stored) {
+                    (true, _) => crate::shared::provider_brand(account.slug, cx),
+                    (false, true) => theme.foreground,
+                    (false, false) => faint,
+                };
+                (crate::shared::provider_logo(account.slug), color)
+            })
+            .chain(guest.map(|guest| {
+                let color = match guest.active || guest.stored {
+                    true => theme.foreground,
+                    false => faint,
+                };
+                ("icons/hat-glasses.svg", color)
+            }))
+            .map(|(logo, color)| {
+                svg()
+                    .path(icons::path(logo))
+                    .size(STRIP_MARK)
+                    .flex_none()
+                    .text_color(color)
+            })
+            .collect::<Vec<_>>();
 
-        drill("accounts", t!("settings-accounts"), value, cx)
+        drill("accounts", t!("settings-accounts"), None, cx)
+            .aside(div().flex().items_center().gap_2().children(marks))
+            .when_some(current, |row, current| row.aria_description(current))
             .on_click(|_, _, cx| navigate(Destination::Settings(SettingsPage::Accounts), cx))
             .into_any_element()
     }
@@ -680,33 +719,37 @@ impl SettingsView {
         names.join(" ")
     }
 
-    /// One row per provider, then the guest row when a provider offers guest mode, with a
-    /// small gap between them so each row's fill stands on its own.
-    pub(super) fn accounts_rows(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// One card per provider, then the guest card when a provider offers guest mode, two to a
+    /// line, or one where the page is tight.
+    pub(super) fn accounts_cards(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let pending = self.session.read(cx).is_pending();
         let providers = self.providers(cx);
         let guest = self.guest(cx);
         let count = providers.len() + usize::from(guest.is_some());
-        let mut rows = Vec::new();
+        let mut cards = Vec::new();
         for (place, account) in providers.into_iter().enumerate() {
-            rows.push(self.account_row(account, pending, (place, count), cx));
+            cards.push(self.account_card(account, pending, (place, count), cx));
         }
         if let Some(guest) = guest {
-            rows.push(self.guest_row(guest, pending, (count - 1, count), cx));
+            cards.push(self.guest_card(guest, pending, (count - 1, count), cx));
         }
+        let columns = match super::Layout::of(window, cx).room() {
+            Room::Tight => 1,
+            _ => 2,
+        };
 
         div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .children(rows)
+            .grid()
+            .grid_cols(columns)
+            .gap_2()
+            .children(cards)
             .into_any_element()
     }
 
-    /// A provider's row at `place`, its index and the length of the list. Clicking a provider
+    /// A provider's card at `place`, its index and the length of the list. Clicking a provider
     /// that is signed in but not in use switches to it, clicking one signed out starts its
     /// sign-in, and one being signed in offers to stop.
-    pub(super) fn account_row(
+    pub(super) fn account_card(
         &self,
         account: Account,
         pending: bool,
@@ -723,7 +766,11 @@ impl SettingsView {
             cancel,
             error,
         } = account;
-        let status = active.then(|| t!("settings-provider-current"));
+        let status = match (active, stored) {
+            (true, _) => Some(t!("settings-provider-current")),
+            (false, true) => Some(t!("settings-provider-signed-in")),
+            (false, false) => None,
+        };
         let offer = match (cancel, stored) {
             (true, _) => Offer::Cancel(self.cancel_button(slug, cx)),
             (false, true) => Offer::Choice {
@@ -744,11 +791,12 @@ impl SettingsView {
             }))),
         };
 
-        ProviderRow {
+        ProviderCard {
             id: SharedString::from(format!("account-{slug}")),
             logo: crate::shared::provider_logo(slug),
             brand: crate::shared::provider_brand(slug, cx),
             active,
+            stored,
             name: name.into(),
             status,
             offer,
@@ -759,10 +807,10 @@ impl SettingsView {
         .into_any_element()
     }
 
-    /// The guest row. It is always a choice, since guest mode needs no account, and its sign
+    /// The guest card. It is always a choice, since guest mode needs no account, and its sign
     /// out button drives the provider the anonymous session belongs to, so it carries an id of
-    /// its own rather than that provider's, which has a row too.
-    pub(super) fn guest_row(
+    /// its own rather than that provider's, which has a card too.
+    pub(super) fn guest_card(
         &self,
         guest: Guest,
         pending: bool,
@@ -790,11 +838,12 @@ impl SettingsView {
             }))
         });
 
-        ProviderRow {
+        ProviderCard {
             id: SharedString::from("account-guest"),
             logo: "icons/hat-glasses.svg",
             brand: cx.theme().foreground,
             active,
+            stored: true,
             name: t!("login-guest-title"),
             status,
             offer: Offer::Choice { leave },
@@ -1227,47 +1276,50 @@ fn line(theme: &Theme, step: Text) -> Pixels {
     px((theme.text(step) / px(1.) * LEADING).round())
 }
 
-/// What a provider row ends with.
+/// What a provider card ends with.
 pub(super) enum Offer {
-    /// The radio saying whether the row is the one in use, with the sign out button before it
-    /// when there is an account to leave.
+    /// The card is a choice between accounts, with the sign out button at its end when there
+    /// is an account to leave.
     Choice { leave: Option<AnyElement> },
-    /// A quiet "Sign in" for a provider with no account yet. The row's own click answers it.
+    /// A quiet "Sign in" for a provider with no account yet. The card's own click answers it.
     SignIn,
     /// The button that stops a sign-in in flight.
     Cancel(AnyElement),
 }
 
-/// One provider as a soft borderless row: its mark, the name over a muted status, and the
-/// `offer` at the end. Only the provider in use (`active`) sits on a fill and shows its `brand`
-/// colour. The others are muted and warm to their
-/// colour and a lighter fill under the pointer. The sign out button keeps a slot of its own on
-/// every row, shown on hover and always on the active row, so nothing moves as it comes and
-/// goes. A sign-in error wraps under the name on a line of its own. Screen readers hear the
-/// row as one node named after the provider, a radio button for an account to switch to and a
-/// button for one to sign in to, with the status, hint and error as its description.
+/// One provider as a card: its mark, the name over a muted status, and the `offer` at the end.
+/// The provider in use (`active`) has its mark and status in its `brand` colour and a border of
+/// it. One with an account (`stored`) shares its secondary fill with a muted mark, and one
+/// without has only a dashed outline and a faint mark. Under the pointer the mark warms to its colour
+/// and the fill lightens. The sign out button keeps a slot of its own, shown on hover and always
+/// on the active card, so nothing moves as it comes and goes. A sign-in error wraps under the
+/// name on a line of its own. Screen readers hear the card as one node named after the
+/// provider, a radio button for an account to switch to and a button for one to sign in to,
+/// with the status, hint and error as its description.
 #[derive(IntoElement)]
-pub(super) struct ProviderRow {
+pub(super) struct ProviderCard {
     id: SharedString,
     logo: &'static str,
     brand: Hsla,
     active: bool,
+    stored: bool,
     name: SharedString,
     status: Option<SharedString>,
     offer: Offer,
     press: Option<Press>,
     error: Option<Failure>,
-    /// The row's index in the list and the list's length.
+    /// The card's index in the list and the list's length.
     place: (usize, usize),
 }
 
-impl RenderOnce for ProviderRow {
+impl RenderOnce for ProviderCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let ProviderRow {
+        let ProviderCard {
             id,
             logo,
             brand,
             active,
+            stored,
             name,
             status,
             offer,
@@ -1294,36 +1346,34 @@ impl RenderOnce for ProviderRow {
             HoverFade::new(MARK_FADE)
         });
         let hover = fade.update(cx, |fade, cx| fade.level(window, cx));
+        let hover = match press.is_some() {
+            true => hover,
+            false => 0.,
+        };
+        let rest = match stored {
+            true => theme.muted_foreground,
+            false => theme.muted_foreground.opacity(FAINT_MARK),
+        };
         let mark = match active {
             true => brand,
-            false => mix(theme.muted_foreground, brand, hover),
+            false => mix(rest, brand, hover),
         };
-        let fill = match (active, press.is_some()) {
-            (true, _) => theme.secondary_active,
-            (false, true) => theme.secondary_hover.opacity(hover),
-            (false, false) => theme.secondary_hover.opacity(0.),
+        let (fill, edge) = match (active, stored) {
+            (true, _) => (theme.secondary, brand.opacity(BRAND_EDGE)),
+            (false, true) => (mix(theme.secondary, theme.muted, hover), theme.border),
+            (false, false) => (theme.secondary.opacity(hover), theme.border),
         };
         let trailing = match offer {
-            Offer::Choice { leave } => {
-                let shown = active || hover > 0.;
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .justify_center()
-                            .w(theme.metrics.control_small)
-                            .opacity(match active {
-                                true => 1.,
-                                false => hover,
-                            })
-                            .children(leave.filter(|_| shown)),
-                    )
-                    .child(Radio::new(SharedString::from(format!("{id}-radio")), active).silent())
-                    .into_any_element()
-            }
+            Offer::Choice { leave } => div()
+                .flex()
+                .justify_center()
+                .w(theme.metrics.control_small)
+                .opacity(match active {
+                    true => 1.,
+                    false => hover,
+                })
+                .children(leave.filter(|_| active || hover > 0.))
+                .into_any_element(),
             Offer::SignIn => div()
                 .text_size(theme.text(Text::Label))
                 .text_color(mix(theme.muted_foreground, theme.foreground, hover))
@@ -1346,9 +1396,13 @@ impl RenderOnce for ProviderRow {
             .aria_size_of_set(count)
             .flex()
             .flex_col()
-            .mx_neg_3()
-            .px_3()
+            .justify_center()
+            .min_h(theme.metrics.list_row * CARD_HEIGHT)
+            .px_5()
             .rounded(theme.radius)
+            .border_1()
+            .border_color(edge)
+            .when(!stored, |this| this.border_dashed())
             .bg(fill)
             .on_hover(move |hovered, window, cx| {
                 fade.update(cx, |fade, _| fade.set(*hovered));
@@ -1363,16 +1417,12 @@ impl RenderOnce for ProviderRow {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .h(theme.metrics.list_row)
                     .child(
-                        div().relative().flex_none().size(MARK).child(
-                            svg()
-                                .path(icons::path(logo))
-                                .absolute()
-                                .inset_0()
-                                .size(MARK)
-                                .text_color(mark),
-                        ),
+                        svg()
+                            .path(icons::path(logo))
+                            .flex_none()
+                            .size(MARK)
+                            .text_color(mark),
                     )
                     .child(
                         div()
@@ -1386,6 +1436,13 @@ impl RenderOnce for ProviderRow {
                                     .line_height(relative(LEADING))
                                     .text_size(theme.text(Text::Body))
                                     .font_weight(FontWeight::MEDIUM)
+                                    .when(!stored && !active, |this| {
+                                        this.text_color(mix(
+                                            theme.muted_foreground,
+                                            theme.foreground,
+                                            hover,
+                                        ))
+                                    })
                                     .child(name),
                             )
                             .children(status.map(|status| {
@@ -1393,7 +1450,10 @@ impl RenderOnce for ProviderRow {
                                     .truncate()
                                     .line_height(relative(LEADING))
                                     .text_size(theme.text(Text::Small))
-                                    .text_color(theme.muted_foreground)
+                                    .text_color(match active {
+                                        true => brand,
+                                        false => theme.muted_foreground,
+                                    })
                                     .child(status)
                             })),
                     )
@@ -1410,7 +1470,8 @@ impl RenderOnce for ProviderRow {
                     div()
                         .flex()
                         .gap_3()
-                        .pb_3()
+                        .pt_1()
+                        .pb_2()
                         .child(div().flex_none().w(MARK))
                         .child(div().flex_1().min_w_0().child(notice)),
                 )

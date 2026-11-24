@@ -11,15 +11,13 @@ use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
 impl SettingsView {
-    /// The Player bar page: layout cards, the bar's material and its clock.
+    /// The Player bar page: the layout cards under the page's own title, then the bar's
+    /// material and its clock, all in one group.
     pub(super) fn player_bar_groups(&self) -> Vec<Group> {
         vec![
-            Group::new("settings-player-bar-layout", "icons/layout-grid.svg")
-                .cards(Slot::PlayerBarLayout),
-            Group::new("settings-player-bar-surface", "icons/blend.svg")
-                .rows([Slot::PlayerBarTransparent]),
-            Group::new("settings-player-bar-time", "icons/rotate-ccw-clock.svg")
-                .rows([Slot::PlayerBarTimeLeft]),
+            Group::untitled()
+                .cards(Slot::PlayerBarLayout)
+                .rows([Slot::PlayerBarTransparent, Slot::PlayerBarTimeLeft]),
         ]
     }
 

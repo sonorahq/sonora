@@ -11,6 +11,12 @@ use super::SettingsView;
 /// What a segmented control does with the option picked in it.
 type Pick<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
 
+/// How strongly a chip that is on fills with the accent, under the pointer and at rest, and
+/// how strongly its border takes it.
+const CHIP_FILL: f32 = 0.12;
+const CHIP_HOVER: f32 = 0.2;
+const CHIP_EDGE: f32 = 0.55;
+
 /// One row of a group: the label and optional explanation at the start, the control at the end.
 /// It stands at least one list row tall, with no inset, so labels line up with group headings.
 /// The label and explanation are text in the accessibility tree, but nothing ties them to the
@@ -207,6 +213,43 @@ pub(super) fn segmented<T: Copy + PartialEq + 'static>(
                         .on_click(move |_, window, cx| pick(&option, window, cx))
                 }),
         )
+}
+
+/// One setting that turns on and off, drawn as a chip: its icon and short `label` in a bordered
+/// button, washed and edged with the accent while `on` and muted while off. A few stand side by
+/// side at the end of one row, so related switches share it. Screen readers hear a toggle
+/// button called `name`, the setting's full name, since the short label leans on the row's.
+pub(super) fn chip(
+    id: impl Into<ElementId>,
+    icon: &'static str,
+    label: SharedString,
+    name: SharedString,
+    on: bool,
+    cx: &App,
+) -> Button {
+    let theme = cx.theme();
+
+    Button::new(id)
+        .outline()
+        .small()
+        .icon(icon)
+        .label(label)
+        .name(name)
+        .toggled(on)
+        .map(|chip| match on {
+            true => chip
+                .fill(
+                    theme.primary.opacity(CHIP_FILL),
+                    theme.primary.opacity(CHIP_HOVER),
+                )
+                .border_color(theme.primary.opacity(CHIP_EDGE)),
+            false => chip.tint(theme.muted_foreground),
+        })
+}
+
+/// Chips set side by side at the end of a row.
+pub(super) fn chips(chips: impl IntoIterator<Item = Button>) -> Div {
+    div().flex().items_center().gap_2().children(chips)
 }
 
 /// A row that opens a page of its own: the label, the value chosen there in muted text, and a
