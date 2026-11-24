@@ -68,8 +68,9 @@ given. `play` puts them right after the current track and skips to them, as `pla
 - Everything is fetched before anything is queued. When one item fails, nothing is queued and the
   command says which item it was.
 - `add --at N` puts the items at a 1-based position in the upcoming queue: `1` is the same as
-  `play-next`, `2` leaves one upcoming track ahead, and a position past the end appends. It works
-  with `-s` too, as in `sonora add -s "one more time" --at 2`.
+  `play-next`, `2` leaves one upcoming track ahead, and a position past the end appends. Suggested
+  tracks do not count, so a position never lands among them. It works with `-s` too, as in
+  `sonora add -s "one more time" --at 2`.
 
 ### Seeking
 

@@ -321,9 +321,8 @@ impl Control {
         });
     }
 
-    /// Where a 1-based queue position puts its items. The first position is the `Next` placement
-    /// rather than a gap at zero, so it always lands in the hand-queued run, even when replayed
-    /// history tracks sit ahead of that run. Positions past the end are capped by the queue.
+    /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same
+    /// as `play-next`, and a later one is a gap the queue caps ahead of the suggested tracks.
     fn placement_for(position: usize) -> Option<QueuePlacement> {
         match position.checked_sub(1) {
             None => None,

@@ -118,7 +118,8 @@ enum Sub {
         items: Vec<Item>,
         #[command(flatten)]
         searched: Searched,
-        /// Queue at this 1-based position: 1 plays next, 2 leaves one track ahead.
+        /// Queue at this 1-based position: 1 plays next, 2 leaves one track ahead. Suggested
+        /// tracks do not count.
         #[arg(long, allow_hyphen_values = true, value_parser = position)]
         at: Option<usize>,
     },
