@@ -104,6 +104,14 @@ impl Timeline {
         }
     }
 
+    /// Forgets where the pointer rested over the seek bar once it has left the player bar, so the
+    /// bubble does not outlive it. A drag keeps its own place in `pending`.
+    pub fn leave(&mut self, cx: &mut Context<Self>) {
+        if self.over.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// Whether the pointer rests over the seek bar, as of the last move the player bar handed on.
     pub fn over_seek(&self) -> bool {
         self.over.is_some()

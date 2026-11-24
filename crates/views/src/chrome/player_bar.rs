@@ -939,6 +939,7 @@ impl Render for PlayerBar {
                             if !*hovered {
                                 this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
                                 this.aim_seek(false, cx);
+                                this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
                             }
                         }))
                         .flex()
@@ -967,6 +968,12 @@ impl Render for PlayerBar {
                                         .items_center()
                                         .gap(rems(COVER_GAP))
                                         .opacity(1. - opened.unwrap_or_default())
+                                        // Opacity leaves the row under the pointer, so once it
+                                        // has faded all the way it is hidden for good measure and
+                                        // a click on the clocks cannot reach its links.
+                                        .when(opened.is_some_and(|open| open >= 1.), |this| {
+                                            this.invisible()
+                                        })
                                         .child(self.artwork(window, cx))
                                         .child(
                                             track_details(
