@@ -1,11 +1,12 @@
 //! Running the Soloist program: starting it, reading what it prints and stopping it.
 
 use std::ffi::OsStr;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -33,18 +34,20 @@ const RELEASE_POLL: Duration = Duration::from_millis(100);
 /// its successor asks.
 pub(super) static RUNNING: Mutex<()> = Mutex::const_new(());
 
-/// Starts the program on the data folder `data` with `flags` after the ones every run takes. Its
-/// output is piped, since anything it inherits would print the command line, key included, to
-/// Sonora's own terminal. The key travels on the command line because the program takes it no
-/// other way.
+/// Starts the program on the data folder `data` with `flags` after the ones every run takes. The
+/// key is stored in the folder first, which keeps it off the command line, where every process
+/// on the computer could read it. A build before 1.4.0 cannot store one and takes it no other
+/// way. The output is piped for `follow`.
 pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> {
     let path = binary::path();
+    reap(data, &path);
     let mut command = Command::from(binary::command(&path));
+    command.arg("--device-name").arg(DEVICE);
+    if let Err(error) = entrust(&path, key, data) {
+        log::warn!("soloist: {error:#}, so the key goes on the command line");
+        command.arg("--api-key").arg(key);
+    }
     command
-        .arg("--device-name")
-        .arg(DEVICE)
-        .arg("--api-key")
-        .arg(key)
         .arg("--data-dir")
         .arg(data)
         .arg("--cache-dir")
@@ -55,7 +58,6 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     tie(&mut command);
-    reap(data, &path);
     let child = command
         .spawn()
         .with_context(|| format!("cannot start {}", path.display()))?;
@@ -65,6 +67,36 @@ pub(super) fn launch(key: &str, data: &Path, flags: &[&OsStr]) -> Result<Child> 
         log::warn!("soloist: cannot record the program's pid: {error}");
     }
     Ok(child)
+}
+
+/// Has the program store `key` in the data folder `data`, where its runs on that folder read it.
+/// The key goes over its standard input, which no other process sees. This blocks for the few
+/// milliseconds the program takes.
+fn entrust(program: &Path, key: &str, data: &Path) -> Result<()> {
+    let mut child = binary::command(program)
+        .arg("setup-api-key")
+        .arg("--data-dir")
+        .arg(data)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("cannot start {}", program.display()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // a program that left early says why below
+        writeln!(stdin, "{key}").ok();
+    }
+    let output = child.wait_with_output()?;
+    ensure!(
+        output.status.success(),
+        "soloist did not store the api key: {}",
+        String::from_utf8_lossy(&output.stderr)
+            .replace(key, "<key>")
+            .lines()
+            .next()
+            .unwrap_or_default()
+    );
+    Ok(())
 }
 
 /// Ends a program a Sonora that crashed left running on `data`. It keeps the folder, and the

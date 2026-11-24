@@ -55,6 +55,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
 - Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
 - Escape closes the search suggestions and leaves the search field in one press.
+- Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 
 ### Fixed
 
