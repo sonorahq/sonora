@@ -227,12 +227,14 @@ impl Queue {
         self.edit(cx, |order| order.move_upcoming_to_gap(from, gap));
     }
 
-    /// Removes an upcoming song or suggestion, retaining its position for Undo.
-    pub fn remove(&mut self, position: QueuePosition, cx: &mut Context<Self>) {
+    /// Removes an upcoming song or suggestion, retaining its position for Undo. Says whether a
+    /// row was actually removed: a current or past position has nothing to take.
+    pub fn remove(&mut self, position: QueuePosition, cx: &mut Context<Self>) -> bool {
         let Some(taken) = self.edit(cx, |order| order.remove(position)) else {
-            return;
+            return false;
         };
         self.report_removal(taken, cx);
+        true
     }
 
     /// Adds a removed track to the toast that reports removals, or posts a new one once the

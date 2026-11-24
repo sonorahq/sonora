@@ -1380,8 +1380,7 @@ impl Playback {
             return false;
         };
         self.queue
-            .update(cx, |queue, cx| queue.remove(position, cx));
-        true
+            .update(cx, |queue, cx| queue.remove(position, cx))
     }
 
     /// Moves the upcoming row with `uid` to `gap`, saying whether it could be moved.
@@ -1407,6 +1406,10 @@ impl Playback {
         if self.steered(cx).is_some() {
             return false;
         }
+        // A station top-up already in flight would otherwise append its tracks to the queue we
+        // just emptied, and could even start playback again. Cancel it; the station stays active
+        // and may fetch again once the queue runs low.
+        self.topping = None;
         self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
         true
     }
