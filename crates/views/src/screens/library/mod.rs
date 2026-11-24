@@ -958,22 +958,30 @@ impl LibraryView {
         let gap = deck_gap(window);
         let tile = Card::tile_height(card, window, cx);
         let heading = head_height(window, cx);
-        let depth = (scrolled(&scroll) - inset).max(Pixels::ZERO);
+        // A letter heading brings room of its own above its title, so a deck that opens on one
+        // starts that much higher and the title lines up with the cards' side inset.
+        let lead = match self.card_rows.first() {
+            Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
+            _ => inset,
+        };
+        let depth = (scrolled(&scroll) - lead).max(Pixels::ZERO);
 
         let repacked = self.card_columns != columns
             || (self.card_tile - tile).abs() >= px(0.5)
             || (self.card_heading - heading).abs() >= px(0.5);
-        let anchor = (repacked && self.card_columns != 0 && !self.cards_dirty)
-            .then(|| {
-                let heights = deck_heights(&self.card_rows, self.card_tile, self.card_heading);
-                let (index, offset) = Deck::at(&heights, gap, depth);
-                let share = match heights.get(index) {
-                    Some(height) if *height > Pixels::ZERO => offset / *height,
-                    _ => 0.,
-                };
-                deck_key(&self.card_rows, index).map(|key| (key, share))
-            })
-            .flatten();
+        // A deck still at its top stays there, since only a row scrolled into needs holding.
+        let anchor =
+            (repacked && self.card_columns != 0 && !self.cards_dirty && depth > Pixels::ZERO)
+                .then(|| {
+                    let heights = deck_heights(&self.card_rows, self.card_tile, self.card_heading);
+                    let (index, offset) = Deck::at(&heights, gap, depth);
+                    let share = match heights.get(index) {
+                        Some(height) if *height > Pixels::ZERO => offset / *height,
+                        _ => 0.,
+                    };
+                    deck_key(&self.card_rows, index).map(|key| (key, share))
+                })
+                .flatten();
 
         if self.card_columns != columns {
             self.card_columns = columns;
@@ -1001,7 +1009,7 @@ impl LibraryView {
                 .copied()
                 .unwrap_or(Pixels::ZERO);
             let into = heights.get(index).copied().unwrap_or(Pixels::ZERO) * share;
-            scroll.set_offset(point(Pixels::ZERO, -(top + into + inset)));
+            scroll.set_offset(point(Pixels::ZERO, -(top + into + lead)));
         }
 
         let rows = self.card_rows.clone();
@@ -1014,7 +1022,8 @@ impl LibraryView {
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
             .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
-            .py(inset)
+            .pt(lead)
+            .pb(inset)
             .child(
                 Deck::new("library-deck")
                     .rows(heights)
@@ -1506,7 +1515,12 @@ fn head(display: usize, label: SharedString, cx: &App) -> AnyElement {
 fn head_height(window: &Window, cx: &App) -> Pixels {
     let title = px((cx.theme().text(Text::Title) / px(1.) * LEADING).round());
 
-    snapped(window.rem_size() * 0.5 + title, window)
+    snapped(head_lead(window) + title, window)
+}
+
+/// The room a letter heading keeps above its title, which `head` pads with `pt_2`.
+fn head_lead(window: &Window) -> Pixels {
+    snapped(window.rem_size() * 0.5, window)
 }
 
 fn deck_gap(window: &Window) -> Pixels {

@@ -2,13 +2,16 @@ use std::time::Duration;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyView, App, Context, Entity, FocusHandle, Pixels, Render, StyleRefinement, px};
+use gpui::{
+    AnyView, App, Context, Div, Entity, FocusHandle, Pixels, Render, SpringConfig, StyleRefinement,
+    px,
+};
 use gpui::{Window, deferred, div};
 use input::WORKSPACE_CONTEXT;
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{
-    Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, Springs,
-    Sprung, entering, shown_listing, veiled,
+    Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, Sprung,
+    entering, shown_listing, veiled,
 };
 
 use crate::chrome::{
@@ -19,6 +22,8 @@ use crate::shells::Shell;
 
 /// How close in pixels a sliding sidebar has to come to its width to count as landed.
 const SLIDE_REST: f32 = 0.5;
+/// The spring a sidebar slides out and back on: quick and without overshoot.
+const SLIDE: SpringConfig = ui::spring(0.2, 0.);
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -61,9 +66,7 @@ impl Slide {
             spring.jump(target);
         }
         self.open = open;
-        px(spring
-            .follow(target, Springs::FLIGHT, SLIDE_REST, window, cx)
-            .max(0.))
+        px(spring.follow(target, SLIDE, SLIDE_REST, window, cx).max(0.))
     }
 }
 
@@ -191,21 +194,28 @@ impl Render for Workspace {
             .update(cx, |sidebar, cx| sidebar.adapt(reserved, window, cx));
         let overlay_width = self.sidebar.read(cx).overlay_width();
         // Each sidebar beside the page slides out and back, and the page gives way as it goes.
-        let left = self
-            .left_slide
-            .follow(self.sidebar.read(cx).occupied_width(), window, cx);
-        let right = self.right_slide.follow(
-            self.sidebar_right.read(cx).occupied_width(window),
-            window,
-            cx,
-        );
+        let left_target = self.sidebar.read(cx).occupied_width();
+        let right_target = self.sidebar_right.read(cx).occupied_width(window);
+        let left = self.left_slide.follow(left_target, window, cx);
+        let right = self.right_slide.follow(right_target, window, cx);
+        // While a sidebar slides the page is laid out once at the width it lands at and held
+        // against the side that stays put, so the sheet's moving edge uncovers or covers it
+        // instead of the page reflowing on every frame.
+        let sliding = left != left_target || right != right_target;
+        let landed = (window.viewport_size().width - left_target - right_target).max(Pixels::ZERO);
+        let held_right = left != left_target;
+        let place = move |this: Div| match (sliding, held_right) {
+            (false, _) => this.left(-overlay_width).right_0(),
+            (true, true) => this.right_0().w(landed),
+            (true, false) => this.left(-overlay_width).w(landed + overlay_width),
+        };
         let left_breadth = self.sidebar.read(cx).breadth();
         let right_breadth = self.sidebar_right.read(cx).breadth();
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.linger(left > Pixels::ZERO, cx));
         self.sidebar_right
             .update(cx, |sidebar, cx| sidebar.linger(right > Pixels::ZERO, cx));
-        Chrome::publish(left, right, reserved, cx);
+        Chrome::publish(left_target, right_target, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
@@ -372,12 +382,11 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .min_h_0()
-                                    .when(hidden > 0., |this| this.overflow_hidden())
+                                    .when(hidden > 0. || sliding, |this| this.overflow_hidden())
                                     .child(
                                         div()
                                             .absolute()
-                                            .left(-overlay_width)
-                                            .right_0()
+                                            .map(place)
                                             .top_0()
                                             .bottom_0()
                                             .flex()
@@ -405,12 +414,7 @@ impl Render for Workspace {
                                     // beneath an overlaid sidebar.
                                     .when_some(header, |this, header| {
                                         this.child(
-                                            div()
-                                                .absolute()
-                                                .left(-overlay_width)
-                                                .right_0()
-                                                .top_0()
-                                                .child(header),
+                                            div().absolute().map(place).top_0().child(header),
                                         )
                                     }),
                             )
