@@ -127,6 +127,7 @@ search-recent = Recent searches
 search-forget = Remove from history
 genre-empty = Nothing to show here yet
 search-best-match = Best match
+search-add-best-to-queue = Add to queue
 search-no-matches = No matches
 search-results = Results
 search-artists = Artists

@@ -16,7 +16,8 @@ use ui::Input;
 use crate::chrome::Chrome;
 use crate::shared::menus::{ItemMenu, album_menu, artist_menu, playlist_menu};
 use state::{
-    AlbumHit, ArtistHit, Genres, Hit, Kind, Network, Playback, PlaylistHit, Search, Sonora,
+    AlbumHit, ArtistHit, Genres, Hit, Kind, Network, Playback, PlaylistHit, QueuePlacement, Search,
+    Sonora,
 };
 use ui::ActiveTheme as _;
 use ui::{
@@ -908,6 +909,33 @@ impl SearchView {
         };
 
         let me = cx.entity().downgrade();
+        let queue = match hit {
+            Hit::Song(track) if track.playable => {
+                let track = (**track).clone();
+                let playback = self.playback.clone();
+                Some(
+                    Button::new(SharedString::from(format!(
+                        "best-add-to-queue:{}",
+                        hit.key()
+                    )))
+                    .ghost()
+                    .small()
+                    .icon("icons/list-plus.svg")
+                    .tooltip("search-add-best-to-queue")
+                    .on_click(move |_, _, cx| {
+                        playback.update(cx, |playback, cx| {
+                            playback.enqueue_tracks(
+                                vec![track.clone()],
+                                None,
+                                QueuePlacement::End,
+                                cx,
+                            );
+                        });
+                    }),
+                )
+            }
+            _ => None,
+        };
         let card = Card::new("best", title)
             .art(theme.metrics.cover * 0.45)
             .cover(cover(hit))
@@ -943,6 +971,7 @@ impl SearchView {
             .when_some(HitMenu::of(hit), |card, target| {
                 card.on_mouse_down(MouseButton::Right, menu(target, &me))
             })
+            .when_some(queue, |card, queue| card.action(queue))
             .aria_description(noun(kind))
             .into_any_element();
 
