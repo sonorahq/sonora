@@ -22,7 +22,7 @@ pub use lyrics::JellyfinLyrics;
 use crate::jellyfin::playback::Factory;
 use crate::{
     Capabilities, Catalog, MusicApi as _, MusicProvider, PlaybackFactory, PromptSink,
-    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt,
+    ProviderSession, RadioSeed, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt,
 };
 
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
@@ -30,8 +30,9 @@ use crate::{
 pub(crate) const NAME: &str = "Jellyfin";
 
 /// Everything a streaming service offers, with the server converting on request and keeping
-/// playlist pictures of its own, and downloads as plain files.
+/// playlist pictures of its own, downloads as plain files and an instant mix of any collection.
 const CAPABILITIES: Capabilities = Capabilities {
+    collection_radio: &[RadioSeed::Album, RadioSeed::Playlist, RadioSeed::Artist],
     transcode: true,
     playlist_covers: true,
     plain_downloads: true,

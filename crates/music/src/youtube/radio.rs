@@ -1,6 +1,6 @@
 //! A track's station, in the order YouTube ranks it and as far as YouTube goes on serving it.
 //! `ytmusic::track_radio` asks for the first panel alone, and the continuation that keeps a
-//! station running past it is only in the raw answer, so the request is made here. The mixes
+//! station running past it is only in the raw answer, so the request is made here. The radios
 //! of a playlist, an album or an artist come through the same panel.
 
 use anyhow::{Context as _, Result};
@@ -35,7 +35,7 @@ pub(crate) async fn station(
 /// The radio YouTube Music starts from a whole collection, paged like `station`. `seed` is the
 /// radio's playlist id: `RDAMPL` before a playlist's or an album's own id, or the `RDEM…` id an
 /// artist page offers.
-pub(crate) async fn mix(
+pub(crate) async fn collection(
     api: &YtMusic,
     seed: &str,
     from: Option<&str>,

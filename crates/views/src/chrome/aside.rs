@@ -13,7 +13,7 @@ use gpui::{
     ease_in_out, px, relative, size, svg, uniform_list,
 };
 use i18n::t;
-use music::{Contributor, Mix, Shape, Track, Voice};
+use music::{Contributor, RadioSeed, Shape, Track, Voice};
 use router::{Destination, LibraryTab, Link as _};
 use state::{
     AppSettings, Lyrics, LyricsState, Network, Playback, PlaybackState, Queue, QueuePosition,
@@ -2045,9 +2045,9 @@ impl Aside {
             Whence::Playlist => Destination::Playlist(id),
             Whence::Artist => Destination::Artist(id),
             Whence::Radio => Destination::Song(id),
-            Whence::Mix(Mix::Album) => Destination::Album(id),
-            Whence::Mix(Mix::Playlist) => Destination::Playlist(id),
-            Whence::Mix(Mix::Artist) => Destination::Artist(id),
+            Whence::CollectionRadio(RadioSeed::Album) => Destination::Album(id),
+            Whence::CollectionRadio(RadioSeed::Playlist) => Destination::Playlist(id),
+            Whence::CollectionRadio(RadioSeed::Artist) => Destination::Artist(id),
             Whence::Saved | Whence::Local => Destination::Library(LibraryTab::Songs),
         };
         let name = match origin.whence {
@@ -2056,8 +2056,9 @@ impl Aside {
                 Shape::Catalog(_) => t!("nav-songs"),
             },
             Whence::Local => t!("nav-local"),
-            Whence::Radio => t!("queue-from-radio", name = origin.name.as_deref()?),
-            Whence::Mix(_) => t!("queue-from-mix", name = origin.name.as_deref()?),
+            Whence::Radio | Whence::CollectionRadio(_) => {
+                t!("queue-from-radio", name = origin.name.as_deref()?)
+            }
             Whence::Album | Whence::Playlist | Whence::Artist => origin.name.clone()?,
         };
 

@@ -409,16 +409,16 @@ pub trait MusicApi: Send + Sync {
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)>;
 
-    /// The mix seeded by the `kind` collection `id`, which keeps going with songs like it. It
-    /// pages the way `track_radio` does. Only a provider that lists `kind` in
-    /// [`Capabilities::mixes`] is ever asked.
-    async fn mix(
+    /// The radio the provider builds from the whole `seed` collection `id`, paged the way
+    /// `track_radio` is. Only a provider that lists `seed` in [`Capabilities::collection_radio`]
+    /// is asked, and the app blends track radios of the collection's songs for any other.
+    async fn collection_radio(
         &self,
-        _kind: Mix,
+        _seed: RadioSeed,
         _id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        anyhow::bail!("mixes are not supported")
+        anyhow::bail!("this provider builds no radio from a collection")
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>>;
@@ -908,10 +908,10 @@ impl Shape {
     }
 }
 
-/// A collection a mix can be started from, the way a track seeds a radio.
+/// A collection a radio can be started from, the way a track seeds one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Mix {
+pub enum RadioSeed {
     Album,
     Playlist,
     Artist,
@@ -942,8 +942,10 @@ pub struct Capabilities {
     pub follow_artists: bool,
     /// A track can seed a station, which is what fills the queue behind it.
     pub radio: bool,
-    /// The collections that can start a mix through `MusicApi::mix`. Empty hides the item.
-    pub mixes: &'static [Mix],
+    /// The collections the provider builds a radio from itself, through
+    /// `MusicApi::collection_radio`. Any other collection's radio is blended from the track
+    /// radios of a few of its songs, so this only picks the better source where `radio` is on.
+    pub collection_radio: &'static [RadioSeed],
     /// Tracks carry a play count worth a column of its own.
     pub playcounts: bool,
     /// The provider keeps sidebar pins of its own, listed by `pin_targets` and changed
@@ -997,7 +999,7 @@ impl Capabilities {
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
-        mixes: &[],
+        collection_radio: &[],
         playcounts: true,
         pins: false,
         transcode: false,
@@ -1018,7 +1020,7 @@ impl Capabilities {
     pub const NONE: Self = Self {
         follow_artists: false,
         radio: false,
-        mixes: &[],
+        collection_radio: &[],
         playcounts: false,
         pins: false,
         transcode: false,

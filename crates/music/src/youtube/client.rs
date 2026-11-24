@@ -11,7 +11,7 @@ use crate::cover::{self, CoverLimits};
 use crate::youtube::{genres, radio, search, subscriptions, wire};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Feed, Genre,
-    GenreDetail, HomeFeed, MediaKind, Mix, MusicApi, Playlist, PlaylistDetail, SUGGESTIONS,
+    GenreDetail, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, RadioSeed, SUGGESTIONS,
     SavedArtist, Track, UserProfile, escape,
 };
 
@@ -430,22 +430,22 @@ impl MusicApi for YouTubeClient {
         radio::station(&self.api, track_id, from).await
     }
 
-    async fn mix(
+    async fn collection_radio(
         &self,
-        kind: Mix,
+        seed: RadioSeed,
         id: &str,
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        let seed = match kind {
-            Mix::Playlist => format!("RDAMPL{}", id.strip_prefix("VL").unwrap_or(id)),
-            Mix::Album => {
+        let playlist = match seed {
+            RadioSeed::Playlist => format!("RDAMPL{}", id.strip_prefix("VL").unwrap_or(id)),
+            RadioSeed::Album => {
                 let album = self.api.album(id).await?.album;
                 let playlist = album.playlist_id.context("album has no playlist")?;
                 format!("RDAMPL{playlist}")
             }
-            Mix::Artist => radio::artist_seed(&self.api, id).await?,
+            RadioSeed::Artist => radio::artist_seed(&self.api, id).await?,
         };
-        radio::mix(&self.api, &seed, from).await
+        radio::collection(&self.api, &playlist, from).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
