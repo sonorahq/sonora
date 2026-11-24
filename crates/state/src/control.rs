@@ -403,23 +403,36 @@ impl Control {
                             let wanted: HashSet<&str> =
                                 tracks.iter().map(String::as_str).collect();
                             let rows = match fetched {
-                                Ok(detail) => detail
-                                    .tracks
-                                    .into_iter()
-                                    .filter_map(|track| track.id)
-                                    .filter(|track_id| wanted.contains(track_id.as_str()))
-                                    .collect(),
+                                Ok(detail) => Some(
+                                    detail
+                                        .tracks
+                                        .into_iter()
+                                        .filter_map(|track| track.id)
+                                        .filter(|track_id| wanted.contains(track_id.as_str()))
+                                        .collect(),
+                                ),
                                 Err(error) => {
                                     log::warn!(
                                         "control: cannot read a playlist before removing tracks: {error:#}"
                                     );
-                                    tracks
+                                    None
                                 }
                             };
-                            this.library.update(cx, |library, cx| {
-                                library.remove_tracks_from_playlist(id, rows, cx)
-                            });
-                            reply.send(Reply::Done).ok();
+                            // Without the exact rows the library would miscount repeated tracks
+                            // and undo only one copy, so refuse the edit instead.
+                            let answer = match rows {
+                                Some(rows) => {
+                                    let started = this.library.update(cx, |library, cx| {
+                                        library.remove_tracks_from_playlist(id.clone(), rows, cx)
+                                    });
+                                    match started {
+                                        true => Reply::Done,
+                                        false => Reply::Failed(Failure::Busy),
+                                    }
+                                }
+                                None => Reply::Failed(Failure::Unfetched(id)),
+                            };
+                            reply.send(answer).ok();
                             this.pending.remove(&key);
                         })
                         .ok();

@@ -2795,7 +2795,8 @@ impl Library {
     }
 
     /// Takes tracks out of a playlist and reports it once the provider agrees, with an Undo that
-    /// adds them back at the end, the way every provider adds. Every copy of a named track goes,
+    /// adds them back at the end, the way every provider adds. Says whether the change started.
+    /// Every copy of a named track goes,
     /// the way the page drops every row of it, so `rows` names a track once for each copy the
     /// playlist holds and the count and the Undo follow it.
     pub fn remove_tracks_from_playlist(
@@ -2803,9 +2804,9 @@ impl Library {
         playlist_id: String,
         rows: Vec<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if rows.is_empty() {
-            return;
+            return true;
         }
         let mut seen = HashSet::new();
         let track_ids: Vec<String> = rows
@@ -2842,7 +2843,7 @@ impl Library {
                 this.note_removed(&emptied, gone, dropped_count, cx);
             },
             cx,
-        );
+        )
     }
 
     /// Takes the order the listener left a playlist's page in. `seen` is the order the page
