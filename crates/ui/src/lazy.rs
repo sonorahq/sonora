@@ -3,7 +3,7 @@ use std::panic::Location;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ElementId, GlobalElementId, InspectorElementId,
-    LayoutId, Pixels, Style, StyleRefinement, Window, relative, size,
+    LayoutId, Pixels, Style, StyleRefinement, Window, div, relative, size,
 };
 
 type Build = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
@@ -150,7 +150,13 @@ impl Element for Lazy {
         }
         let build = self.build.take()?;
 
-        let mut content = build(window, cx);
+        // Laid out on its own here, the content is held to the block's width, as the block
+        // holds it when it lays out in place. Left to itself it would shrink to fit its widest
+        // line, pulling every control at a row's end in next to its label.
+        let mut content = div()
+            .w(bounds.size.width)
+            .child(build(window, cx))
+            .into_any_element();
         let measured = content.layout_as_root(
             size(
                 AvailableSpace::Definite(bounds.size.width),
