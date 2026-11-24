@@ -10,10 +10,11 @@ set -euo pipefail
 # A run is tried three times in all, so a pool that stays empty does not keep it going all day.
 max_attempts=3
 
-IFS=$'\t' read -r workflow branch event sha attempt < <(
+run=$(
   gh api "repos/$GH_REPO/actions/runs/$RUN_ID" \
     -q '[.workflow_id, .head_branch, .event, .head_sha, .run_attempt] | @tsv'
 )
+IFS=$'\t' read -r workflow branch event sha attempt <<<"$run"
 if (( attempt >= max_attempts )); then
   echo "rerun: run $RUN_ID is on attempt $attempt already, leaving it"
   exit 0
