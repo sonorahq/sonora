@@ -291,6 +291,51 @@ impl Control {
                 (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
+            QueueCommand::Remove { uid } => {
+                let steered = self.playback.read(cx).steered(cx).is_some();
+                if steered {
+                    reply.send(Reply::Failed(Failure::Unsupported)).ok();
+                    return;
+                }
+                let removed = self
+                    .playback
+                    .update(cx, |playback, cx| playback.remove_queued(&uid, cx));
+                let answer = match removed {
+                    true => Reply::Done,
+                    false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
+                };
+                reply.send(answer).ok();
+                return;
+            }
+            QueueCommand::Move { uid, gap } => {
+                let steered = self.playback.read(cx).steered(cx).is_some();
+                if steered {
+                    reply.send(Reply::Failed(Failure::Unsupported)).ok();
+                    return;
+                }
+                let moved = self
+                    .playback
+                    .update(cx, |playback, cx| playback.move_queued(&uid, gap, cx));
+                let answer = match moved {
+                    true => Reply::Done,
+                    false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
+                };
+                reply.send(answer).ok();
+                return;
+            }
+            QueueCommand::ClearUpcoming => {
+                let steered = self.playback.read(cx).steered(cx).is_some();
+                let answer = match steered {
+                    true => Reply::Failed(Failure::Unsupported),
+                    false => {
+                        self.playback
+                            .update(cx, |playback, cx| playback.clear_queued(cx));
+                        Reply::Done
+                    }
+                };
+                reply.send(answer).ok();
+                return;
+            }
         };
         if let [Item::Local { text, kind }] = items.as_slice() {
             let (text, kind) = (text.clone(), *kind);
@@ -894,6 +939,7 @@ fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
         view.track(position, cx).map(|track| QueueEntry {
             track: wire_track(&track),
             kind: wire_kind(view.kind(position, cx)),
+            uid: playback.queue_uid(position, cx),
         })
     };
     let previous = (0..view.sections.past)

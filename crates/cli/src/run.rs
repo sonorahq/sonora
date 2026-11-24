@@ -328,6 +328,7 @@ fn describe(failure: &Failure) -> String {
         Failure::SteeredReadOnly => {
             "another device has playback; its queue cannot be placed at a position".to_owned()
         }
+        Failure::UnknownQueueEntry(uid) => format!("no queue row with id '{uid}'"),
     }
 }
 
@@ -347,6 +348,7 @@ mod tests {
                 duration: 125,
             },
             kind,
+            uid: None,
         }
     }
 

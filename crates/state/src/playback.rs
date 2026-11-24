@@ -1362,6 +1362,55 @@ impl Playback {
         }
     }
 
+    /// The occurrence id of a queue row, for callers that address edits by id. A queue shown by
+    /// another device has no local ids to give out.
+    pub fn queue_uid(&self, position: QueuePosition, cx: &App) -> Option<String> {
+        if self.steered(cx).is_some() {
+            return None;
+        }
+        self.queue.read(cx).uid(position).map(str::to_owned)
+    }
+
+    /// Removes the queue row with `uid`, saying whether it was there.
+    pub fn remove_queued(&mut self, uid: &str, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(position) = self.queue.read(cx).position(uid) else {
+            return false;
+        };
+        self.queue
+            .update(cx, |queue, cx| queue.remove(position, cx));
+        true
+    }
+
+    /// Moves the upcoming row with `uid` to `gap`, saying whether it could be moved.
+    pub fn move_queued(&mut self, uid: &str, gap: usize, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(from) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
+            return false;
+        };
+        self.queue
+            .update(cx, |queue, cx| queue.move_upcoming_to_gap(from, gap, cx));
+        true
+    }
+
+    /// Drops everything queued after the current track, saying whether the queue was editable.
+    pub fn clear_queued(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
+        true
+    }
+
     /// Puts tracks into the queue at `placement` without a word, or starts playing them when
     /// nothing is queued. While another device has playback they go to the end of its queue
     /// instead. Returns where they went, for the toast, or `None` when they started playback or
