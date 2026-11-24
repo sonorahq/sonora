@@ -477,7 +477,7 @@ impl Global for Transition {}
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            background: rgb(0x0a0a0a).into(),
+            background: rgb(0x0c0c0c).into(),
             foreground: rgb(0xfafafa).into(),
             border: rgba(0x50505066).into(),
             muted: rgb(0x262626).into(),
@@ -497,7 +497,7 @@ impl Theme {
             popover_foreground: rgb(0xfafafa).into(),
             progress_bar: rgb(0xf5f5f5).into(),
             selection: rgb(0x1d4ed8).into(),
-            sidebar: rgb(0x000000).into(),
+            sidebar: rgb(0x060606).into(),
             sidebar_accent: rgba(0x50505066).into(),
             sidebar_border: rgb(0x262626).into(),
             title_bar_border: rgb(0x262626).into(),
