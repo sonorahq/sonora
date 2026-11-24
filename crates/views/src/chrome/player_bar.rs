@@ -13,7 +13,7 @@ use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
-use ui::{Artwork, Button, Flight, HoverFade, Pinnable, Popup, Room, Scrollbar, ScrubberState};
+use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState, Sprung};
 
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::timeline::{Released, Timeline};
@@ -72,9 +72,12 @@ const ISLAND_INSET: f32 = 1.;
 const SEEK_HIT: f32 = 3.;
 /// How long the pointer rests on the island's seek line before the line opens.
 const SEEK_DWELL: Duration = Duration::from_millis(40);
-/// How long the seek line takes to open, and as long to shut, with the cover and title fading
-/// out and back as it goes.
-const SEEK_FADE: Duration = Duration::from_millis(320);
+/// How long the spring that opens and shuts the seek line takes, with the cover and title fading
+/// out and back as it goes, and how far it swells past open before it settles.
+const SEEK_SPRING: Duration = Duration::from_millis(420);
+const SEEK_BOUNCE: f32 = 0.2;
+/// How close to open or shut the seek line's spring has to come to count as landed.
+const SEEK_REST: f32 = 1e-3;
 
 /// How the bar draws its volume control.
 #[derive(Clone, Copy)]
@@ -113,9 +116,10 @@ pub(crate) struct PlayerBar {
     /// over the button where the bar has no room for one beside it.
     rising: RisingVolume,
     over_volume: Option<f32>,
-    /// How far the island's seek line has opened, 0 shut and 1 open, and whether it is headed
-    /// for open. It opens once the pointer has rested on the line and shuts when it leaves.
-    seek_open: HoverFade,
+    /// How far the island's seek line has opened on its spring, 0 shut and 1 open with a little
+    /// swing past either end, and whether it is headed for open. It opens once the pointer has
+    /// rested on the line and shuts when it leaves.
+    seek_open: Sprung,
     opening: bool,
     /// The wait before the line opens, kept so the pointer leaving the line drops it.
     dwell: Option<Task<()>>,
@@ -166,7 +170,7 @@ impl PlayerBar {
             volume: ScrubberState::new("volume"),
             over_volume: None,
             rising: RisingVolume::new("volume-rise"),
-            seek_open: HoverFade::new(ui::paced(SEEK_FADE)),
+            seek_open: Sprung::at(0.),
             opening: false,
             dwell: None,
         }
@@ -840,13 +844,14 @@ impl Render for PlayerBar {
         // for the island, starts it shut the next time.
         let opened = match Self::floating(window, cx) {
             true => {
-                self.seek_open.set(self.opening);
-                Some(self.seek_open.level(window, cx))
+                let spring = ui::spring(ui::paced(SEEK_SPRING).as_secs_f32(), SEEK_BOUNCE);
+                let target = f32::from(u8::from(self.opening));
+                Some(self.seek_open.follow(target, spring, SEEK_REST, window, cx))
             }
             false => {
                 self.opening = false;
                 self.dwell = None;
-                self.seek_open = HoverFade::new(ui::paced(SEEK_FADE));
+                self.seek_open.jump(0.);
                 None
             }
         };
@@ -966,7 +971,7 @@ impl Render for PlayerBar {
                                         .flex()
                                         .items_center()
                                         .gap(rems(COVER_GAP))
-                                        .opacity(1. - opened.unwrap_or_default())
+                                        .opacity((1. - opened.unwrap_or_default()).clamp(0., 1.))
                                         // Opacity leaves the row under the pointer, so once it
                                         // has faded all the way it is hidden for good measure and
                                         // a click on the clocks cannot reach its links.

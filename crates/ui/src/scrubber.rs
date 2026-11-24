@@ -112,6 +112,9 @@ pub struct Scrubber {
     thickness: f32,
     /// How big the thumb draws, as a multiple of its usual size.
     thumb_scale: f32,
+    /// Whether the line and thumb lay out off the device pixel grid, for a frame where their size
+    /// animates.
+    off_grid: bool,
     on_move: Option<Slide>,
     on_release: Option<Release>,
 }
@@ -135,6 +138,7 @@ impl Scrubber {
             lift: LIFT,
             thickness: 1.,
             thumb_scale: 1.,
+            off_grid: false,
             on_move: None,
             on_release: None,
         }
@@ -152,6 +156,14 @@ impl Scrubber {
     /// never moves the track.
     pub fn thumb_scale(mut self, scale: f32) -> Self {
         self.thumb_scale = scale.max(0.);
+        self
+    }
+
+    /// Lays the line, its fill and the thumb out off the device pixel grid while `off` holds, so a
+    /// thickness or thumb size that animates moves smoothly rather than a pixel at a time. Leave it
+    /// off at rest, where the grid keeps their edges crisp.
+    pub fn off_grid(mut self, off: bool) -> Self {
+        self.off_grid = off;
         self
     }
 
@@ -265,12 +277,16 @@ impl RenderOnce for Scrubber {
             lift,
             thickness,
             thumb_scale,
+            off_grid,
             on_move,
             on_release,
         } = self;
         let line = track(pad) * thickness;
         let dot = pin * thumb_scale;
         let overrides = std::mem::take(base.style());
+        // gpui rounds the lengths of every node that keeps the grid, so each node of the line has
+        // to leave it, not only the root.
+        let lay = move |node: Div| node.when(off_grid, |node| node.pixel_snap(false));
 
         let state = Rc::new(ScrubberState {
             id: id.clone(),
@@ -351,21 +367,21 @@ impl RenderOnce for Scrubber {
             .collect();
 
         let bar = match vertical {
-            true => div()
+            true => lay(div())
                 .relative()
                 .h_full()
                 .w(line)
                 .rounded_full()
                 .bg(empty)
                 .child(
-                    div()
+                    lay(div())
                         .absolute()
                         .left_0()
                         .right_0()
                         .top(inset)
                         .bottom(inset)
                         .child(
-                            div()
+                            lay(div())
                                 .absolute()
                                 .left_0()
                                 .right_0()
@@ -375,7 +391,7 @@ impl RenderOnce for Scrubber {
                                 .bg(filled),
                         )
                         .children(ranges.into_iter().map(|(start, end, color)| {
-                            div()
+                            lay(div())
                                 .absolute()
                                 .left_0()
                                 .right_0()
@@ -386,7 +402,7 @@ impl RenderOnce for Scrubber {
                         }))
                         .when(enabled, |this| {
                             this.child(
-                                div()
+                                lay(div())
                                     .absolute()
                                     .left((line - dot) / 2.)
                                     .bottom(relative(fraction))
@@ -427,21 +443,21 @@ impl RenderOnce for Scrubber {
                             )
                         }),
                 ),
-            false => div()
+            false => lay(div())
                 .relative()
                 .w_full()
                 .h(line)
                 .rounded_full()
                 .bg(empty)
                 .child(
-                    div()
+                    lay(div())
                         .absolute()
                         .top_0()
                         .bottom_0()
                         .left(inset)
                         .right(inset)
                         .child(
-                            div()
+                            lay(div())
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
@@ -451,7 +467,7 @@ impl RenderOnce for Scrubber {
                                 .bg(filled),
                         )
                         .children(ranges.into_iter().map(|(start, end, color)| {
-                            div()
+                            lay(div())
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
@@ -462,7 +478,7 @@ impl RenderOnce for Scrubber {
                         }))
                         .when(enabled, |this| {
                             this.child(
-                                div()
+                                lay(div())
                                     .absolute()
                                     .top((line - dot) / 2.)
                                     .left(relative(fraction))
@@ -505,6 +521,7 @@ impl RenderOnce for Scrubber {
         };
 
         let mut scrubber = base
+            .when(off_grid, |this| this.pixel_snap(false))
             .role(gpui::accesskit::Role::Slider)
             .aria_numeric_value(f64::from(fraction))
             .aria_min_numeric_value(0.)
