@@ -123,14 +123,6 @@ pub fn scrolled(scroll: &ScrollHandle) -> Pixels {
     (-scroll.offset().y).clamp(Pixels::ZERO, scroll.max_offset().y)
 }
 
-pub fn quantize(scroll: &ScrollHandle, window: &Window) {
-    let offset = scroll.offset();
-    let snapped = crate::metrics::snapped(offset.y, window);
-    if snapped != offset.y {
-        scroll.set_offset(point(offset.x, snapped));
-    }
-}
-
 pub struct Scrollbar {
     scroll: ScrollHandle,
     list: Option<ListState>,
@@ -153,6 +145,9 @@ pub struct Scrollbar {
     following: bool,
     nudges: u64,
     middle_scroll: Option<MiddleScroll>,
+    /// The part of the offset `quantize` rounded off, which the next frame adds back so motion
+    /// smaller than a device pixel per frame still adds up.
+    remainder: Slot<Pixels>,
 }
 
 impl Scrollbar {
@@ -177,6 +172,7 @@ impl Scrollbar {
             following: false,
             nudges: 0,
             middle_scroll: None,
+            remainder: Slot::new(Pixels::ZERO),
         }
     }
 
@@ -349,6 +345,27 @@ impl Scrollbar {
         match &self.list {
             Some(list) => self.glide.sync(list),
             None => self.glide.sync(&self.scroll),
+        }
+    }
+
+    /// Rounds the region's offset to whole device pixels, so a header pinned against it holds
+    /// still. What the rounding takes off is added back on the next call, otherwise a touchpad
+    /// moving less than half a pixel per frame would stall and a fling would stop short of the top.
+    /// Both stay inside the scroll range, since gpui clamps a rounded offset past the far end
+    /// back to its fractional end and the remainder has to follow what is actually applied.
+    pub fn quantize(&self, window: &Window) {
+        let offset = self.scroll.offset();
+        let max = self.scroll.max_offset().y;
+        // Before the first layout there is no range yet, so only the top is a bound.
+        let bounded = |y: Pixels| match max > Pixels::ZERO {
+            true => y.clamp(-max, Pixels::ZERO),
+            false => y.min(Pixels::ZERO),
+        };
+        let wanted = bounded(offset.y + self.remainder.get());
+        let placed = bounded(crate::metrics::snapped(wanted, window));
+        self.remainder.set(wanted - placed);
+        if placed != offset.y {
+            self.scroll.set_offset(point(offset.x, placed));
         }
     }
 

@@ -136,8 +136,7 @@ pub use response_graph::{
 };
 pub use response_sketch::ResponseSketch;
 pub use scrollbar::{
-    Scrollbar, cancel_middle_scroll, quantize, release_middle_scroll, scrolled,
-    update_middle_scroll,
+    Scrollbar, cancel_middle_scroll, release_middle_scroll, scrolled, update_middle_scroll,
 };
 pub use scroller::{Scroller, middle_scroll, perch_room, perched, return_to, return_top};
 pub use scrubber::{Scrubber, ScrubberState};
