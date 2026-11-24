@@ -15,8 +15,8 @@ use crate::plex::wire::{Container, Envelope, Item, Stream, Tag};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, Playlist,
-    PlaylistDetail, ReleaseType, Report, SUGGESTIONS, SavedArtist, SignInFailure, SignInProblem,
-    Track, UserProfile, distinct_covers, escape,
+    PlaylistDetail, RadioSeed, ReleaseType, Report, SUGGESTIONS, SavedArtist, SignInFailure,
+    SignInProblem, Track, UserProfile, distinct_covers, escape,
 };
 
 /// Plex's own name for the library every client reads and writes ratings and plays through.
@@ -623,15 +623,40 @@ impl PlexClient {
             })
     }
 
-    /// A station seeded by `track_id` that needs no Plex Pass. It plays one track of the seed's
-    /// artist after every two of related artists: those Plex calls similar or that share a style
-    /// with the seed's, or failing both, those that share a genre.
+    /// The station `picked` makes, without repeats or anything in `seen`, filled up to a station's
+    /// worth with random tracks of the library.
+    async fn filled(&self, mut picked: Vec<Item>, mut seen: HashSet<String>) -> Result<Vec<Track>> {
+        picked.retain(|item| seen.insert(item.rating_key.clone()));
+        if picked.len() < RADIO_SIZE {
+            let random = self
+                .ordered(TRACKS, "random", RADIO_COUNT)
+                .await
+                .context("cannot load a radio fallback")?;
+            picked.extend(
+                random
+                    .into_iter()
+                    .filter(|item| seen.insert(item.rating_key.clone())),
+            );
+        }
+        picked.truncate(RADIO_SIZE);
+        Ok(picked.into_iter().map(|item| self.track(item)).collect())
+    }
+
+    /// A station seeded by `track_id` that needs no Plex Pass, the station of the seed's artist.
     async fn kin_tracks(&self, track_id: &str) -> Result<Vec<Item>> {
         let seed = self.metadata(track_id).await?;
         let artist_id = seed
             .grandparent_rating_key
             .filter(|id| !id.is_empty())
             .context("the track has no artist")?;
+        self.artist_kin(&artist_id).await
+    }
+
+    /// The station of `artist_id` that needs no Plex Pass. It plays one track of the artist after
+    /// every two of related artists: those Plex calls similar or that share a style with the
+    /// artist's, or failing both, those that share a genre.
+    async fn artist_kin(&self, artist_id: &str) -> Result<Vec<Item>> {
+        let artist_id = artist_id.to_owned();
         let similar_path = format!(
             "/library/metadata/{}/similar",
             escape::component(&artist_id)
@@ -1228,28 +1253,28 @@ impl MusicApi for PlexClient {
                 None,
             ));
         }
-        let mut picked = self.kin_tracks(track_id).await.unwrap_or_else(|error| {
+        let picked = self.kin_tracks(track_id).await.unwrap_or_else(|error| {
             log::info!("plex: cannot mix a station for {track_id}: {error:#}");
             Vec::new()
         });
-        let mut seen = HashSet::from([track_id.to_owned()]);
-        picked.retain(|item| seen.insert(item.rating_key.clone()));
-        if picked.len() < RADIO_SIZE {
-            let random = self
-                .ordered(TRACKS, "random", RADIO_COUNT)
-                .await
-                .context("cannot load a radio fallback")?;
-            picked.extend(
-                random
-                    .into_iter()
-                    .filter(|item| seen.insert(item.rating_key.clone())),
-            );
+        let seen = HashSet::from([track_id.to_owned()]);
+        Ok((self.filled(picked, seen).await?, None))
+    }
+
+    /// The artist's station, which mixes the artist with related artists the way a track's
+    /// station does without Plex Pass. Plex keeps none for an album or a playlist, so theirs is
+    /// blended, and an artist with no related tracks at all is blended too.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let picked = self.artist_kin(id).await?;
+        if picked.is_empty() {
+            return Ok((Vec::new(), None));
         }
-        picked.truncate(RADIO_SIZE);
-        Ok((
-            picked.into_iter().map(|item| self.track(item)).collect(),
-            None,
-        ))
+        Ok((self.filled(picked, HashSet::new()).await?, None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
