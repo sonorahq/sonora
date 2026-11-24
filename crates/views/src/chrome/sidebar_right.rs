@@ -21,6 +21,8 @@ pub(crate) struct SidebarRight {
     width: Pixels,
     open: bool,
     tab: SideTab,
+    /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
+    lingering: bool,
 }
 
 impl SidebarRight {
@@ -61,11 +63,25 @@ impl SidebarRight {
             width,
             open,
             tab,
+            lingering: false,
         }
     }
 
     pub(crate) fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// How wide the sidebar is when it shows, whether or not it shows now.
+    pub(crate) fn breadth(&self) -> Pixels {
+        self.width
+    }
+
+    /// Keeps a closed sidebar drawn while it slides away beside the page.
+    pub(crate) fn linger(&mut self, lingering: bool, cx: &mut Context<Self>) {
+        if self.lingering != lingering {
+            self.lingering = lingering;
+            cx.notify();
+        }
     }
 
     pub(crate) fn available(window: &Window) -> bool {
@@ -156,7 +172,7 @@ impl SidebarRight {
 
 impl Render for SidebarRight {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.open || !Self::available(window) {
+        if !(self.open && Self::available(window)) && !self.lingering {
             return div().into_any_element();
         }
 

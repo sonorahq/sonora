@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyView, App, Context, Entity, FocusHandle, Pixels, Render, StyleRefinement};
+use gpui::{AnyView, App, Context, Entity, FocusHandle, Pixels, Render, StyleRefinement, px};
 use gpui::{Window, deferred, div};
 use input::WORKSPACE_CONTEXT;
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{
-    Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, entering,
-    shown_listing, veiled,
+    Activate, ActiveTheme as _, Deselect, Entrance, Remove, SelectNext, SelectPrevious, Springs,
+    Sprung, entering, shown_listing, veiled,
 };
 
 use crate::chrome::{
@@ -16,6 +16,9 @@ use crate::chrome::{
 };
 use crate::shared::menus::CardMenu;
 use crate::shells::Shell;
+
+/// How close in pixels a sliding sidebar has to come to its width to count as landed.
+const SLIDE_REST: f32 = 0.5;
 
 pub(crate) struct Workspace {
     sidebar: Entity<SidebarLeft>,
@@ -35,6 +38,33 @@ pub(crate) struct Workspace {
     cached: bool,
     transition: Option<Entrance>,
     focus: FocusHandle,
+    left_slide: Slide,
+    right_slide: Slide,
+}
+
+/// How far a sidebar beside the page has slid out. It springs when the sidebar opens or closes
+/// and follows at once when an open sidebar only changes width, so an edge drag never lags.
+#[derive(Default)]
+struct Slide {
+    spring: Option<Sprung>,
+    open: bool,
+}
+
+impl Slide {
+    /// Steps towards `width` and answers how wide the sidebar shows this frame. The first call
+    /// lands at once, so the window opens with its sidebars already out.
+    fn follow(&mut self, width: Pixels, window: &Window, cx: &App) -> Pixels {
+        let target = width / px(1.);
+        let open = target > 0.;
+        let spring = self.spring.get_or_insert_with(|| Sprung::at(target));
+        if open == self.open && spring.resting() {
+            spring.jump(target);
+        }
+        self.open = open;
+        px(spring
+            .follow(target, Springs::FLIGHT, SLIDE_REST, window, cx)
+            .max(0.))
+    }
 }
 
 impl Workspace {
@@ -63,6 +93,8 @@ impl Workspace {
             cached: true,
             transition: None,
             focus: cx.focus_handle(),
+            left_slide: Slide::default(),
+            right_slide: Slide::default(),
         }
     }
 
@@ -154,12 +186,25 @@ impl Shell for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let right = self.sidebar_right.read(cx).occupied_width(window);
         let reserved = self.sidebar_right.read(cx).reserved_width();
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.adapt(reserved, window, cx));
-        let left = self.sidebar.read(cx).occupied_width();
         let overlay_width = self.sidebar.read(cx).overlay_width();
+        // Each sidebar beside the page slides out and back, and the page gives way as it goes.
+        let left = self
+            .left_slide
+            .follow(self.sidebar.read(cx).occupied_width(), window, cx);
+        let right = self.right_slide.follow(
+            self.sidebar_right.read(cx).occupied_width(window),
+            window,
+            cx,
+        );
+        let left_breadth = self.sidebar.read(cx).breadth();
+        let right_breadth = self.sidebar_right.read(cx).breadth();
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.linger(left > Pixels::ZERO, cx));
+        self.sidebar_right
+            .update(cx, |sidebar, cx| sidebar.linger(right > Pixels::ZERO, cx));
         Chrome::publish(left, right, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
@@ -170,26 +215,43 @@ impl Render for Workspace {
             false => Pixels::ZERO,
         };
         Chrome::set_bottom(bottom, cx);
-        // The sheet meets the window's edge wherever no chrome lies beside it, and its bottom
-        // runs under a translucent player bar to the window's foot.
-        Chrome::set_sheet(
-            left + overlay_width == Pixels::ZERO,
-            right == Pixels::ZERO,
-            underlap,
-            cx,
-        );
+        // The sheet meets the window's edge wherever no chrome lies beside it, rounding into a
+        // sidebar as it slides out, and its bottom runs under a translucent player bar to the
+        // window's foot.
+        let beside = |shown: Pixels, breadth: Pixels| match breadth > Pixels::ZERO {
+            true => shown / breadth,
+            false => 0.,
+        };
+        let left_beside = match overlay_width > Pixels::ZERO {
+            true => 1.,
+            false => beside(left, left_breadth),
+        };
+        Chrome::set_sheet(left_beside, beside(right, right_breadth), underlap, cx);
         // A cached view is laid out from the style given here and its own root
         // style is never consulted, so it can only be cached while it is in the
         // flow at a width this knows: an overlaid sidebar places itself, and a
-        // closed one hides itself and takes no space at all.
-        let sidebar_width = self.sidebar.read(cx).occupied_width();
-        let sidebar = match overlay || sidebar_width == gpui::Pixels::ZERO {
+        // closed one hides itself and takes no space at all. A sliding one keeps its
+        // full width and shows only the part that has slid out.
+        let sidebar = match overlay || left == Pixels::ZERO {
             true => self.sidebar.clone().into_any_element(),
-            false => self
-                .sidebar
-                .clone()
-                .cached(StyleRefinement::default().w(sidebar_width).h_full())
-                .into_any_element(),
+            false => slid(
+                self.sidebar
+                    .clone()
+                    .cached(StyleRefinement::default().w(left_breadth).h_full())
+                    .into_any_element(),
+                left,
+                left_breadth,
+                true,
+            ),
+        };
+        let sidebar_right = match right == Pixels::ZERO {
+            true => self.sidebar_right.clone().into_any_element(),
+            false => slid(
+                self.sidebar_right.clone().into_any_element(),
+                right,
+                right_breadth,
+                false,
+            ),
         };
         // The header is cached at the height it last measured, so a page that redraws every
         // frame leaves it be. Until it has measured itself it is laid out as it is.
@@ -355,7 +417,7 @@ impl Render for Workspace {
                             .child(self.swipe_cue.clone())
                             .child(sheet_frame(cx)),
                     )
-                    .child(self.sidebar_right.clone())
+                    .child(sidebar_right)
                     .when(overlay, |this| this.child(self.sidebar.clone())),
             )
             .child(
@@ -373,4 +435,37 @@ impl Render for Workspace {
             .child(deferred(self.notice.clone()))
             .child(self.card_menu.clone())
     }
+}
+
+/// Shows `shown` of a sidebar `breadth` wide, cut along the side facing the page so it seems to
+/// slide in from the window's edge, `leading` for the left one. A sidebar all the way out is laid
+/// out as it is, so its edge grip can reach over the page.
+fn slid(
+    sidebar: gpui::AnyElement,
+    shown: Pixels,
+    breadth: Pixels,
+    leading: bool,
+) -> gpui::AnyElement {
+    if shown >= breadth {
+        return sidebar;
+    }
+    div()
+        .relative()
+        .flex_none()
+        .h_full()
+        .w(shown)
+        .overflow_hidden()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(breadth)
+                .map(|this| match leading {
+                    true => this.right_0(),
+                    false => this.left_0(),
+                })
+                .child(sidebar),
+        )
+        .into_any_element()
 }

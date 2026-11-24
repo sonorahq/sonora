@@ -100,6 +100,8 @@ pub(crate) struct SidebarLeft {
     grabbed: Option<(Pixels, bool)>,
     /// Whether an edge drag is held below half the rail, which closes the sidebar on release.
     closing: bool,
+    /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
+    lingering: bool,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -158,6 +160,7 @@ impl SidebarLeft {
             cramped: false,
             grabbed: None,
             closing: false,
+            lingering: false,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -207,7 +210,16 @@ impl SidebarLeft {
         self.rail || self.squeezed()
     }
 
-    fn breadth(&self) -> Pixels {
+    /// Keeps a closed sidebar drawn while it slides away beside the page.
+    pub fn linger(&mut self, lingering: bool, cx: &mut Context<Self>) {
+        if self.lingering != lingering {
+            self.lingering = lingering;
+            cx.notify();
+        }
+    }
+
+    /// How wide the sidebar is when it shows, whether or not it shows now.
+    pub fn breadth(&self) -> Pixels {
         match (self.closing, self.folded()) {
             (true, _) => Pixels::ZERO,
             (false, true) => self.rail_width,
@@ -840,7 +852,7 @@ impl Render for SidebarLeft {
                 }
                 cx.notify();
             }))
-            .when(!self.is_open(), |this| this.hidden())
+            .when(!self.is_open() && !self.lingering, |this| this.hidden())
             .when(!theme.transparent, |this| this.bg(sidebar_bg))
             // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
             // the page and keeps its own.

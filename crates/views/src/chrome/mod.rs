@@ -154,29 +154,32 @@ impl Chrome {
         Self::get(cx).sheet_edges
     }
 
-    /// Publishes which of the sheet's sides lie against the window's edge rather than the
-    /// chrome. Those sides draw no edge and their corners stay square.
-    pub(crate) fn set_sheet(left: bool, right: bool, bottom: bool, cx: &mut App) {
+    /// Publishes how much of a sidebar lies beside each side of the sheet, from 0 where the side
+    /// meets the window's edge to 1 where the sidebar has slid all the way out, and whether the
+    /// bottom runs to the window's foot. A corner rounds in step with its side and a side with
+    /// nothing beside it draws no edge.
+    pub(crate) fn set_sheet(left: f32, right: f32, bottom: bool, cx: &mut App) {
         let radius = cx.theme().radius * 1.5;
-        let round = |against: bool| match against {
-            true => Pixels::ZERO,
-            false => radius,
+        let round = |beside: f32| radius * beside.clamp(0., 1.);
+        let edge = |beside: f32| match beside > 0. {
+            true => SHEET_EDGE,
+            false => Pixels::ZERO,
         };
-        let edge = |against: bool| match against {
-            true => Pixels::ZERO,
-            false => SHEET_EDGE,
+        let below = match bottom {
+            true => 0.,
+            false => 1.,
         };
         let corners = Corners {
             top_left: round(left),
             top_right: round(right),
-            bottom_left: round(left || bottom),
-            bottom_right: round(right || bottom),
+            bottom_left: round(left.min(below)),
+            bottom_right: round(right.min(below)),
         };
         let edges = Edges {
             top: SHEET_EDGE,
             left: edge(left),
             right: edge(right),
-            bottom: edge(bottom),
+            bottom: edge(below),
         };
         Self::entity(cx).update(cx, |chrome, cx| {
             if chrome.sheet_corners != corners || chrome.sheet_edges != edges {
