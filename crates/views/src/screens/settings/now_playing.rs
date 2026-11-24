@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, div, svg};
@@ -90,8 +92,8 @@ impl SettingsView {
     /// How the spectrum is drawn behind the fullscreen artwork, off included, as a picker,
     /// which keeps the row narrow enough to stand beside the preview in every language. The
     /// preview beside it shows the style chosen. While Soloist plays Spotify a red warning
-    /// stands before the picker, saying on hover that the visualizer follows local files only,
-    /// since Soloist's sound never passes through Sonora.
+    /// stands before the picker, saying the moment the pointer reaches it that the visualizer
+    /// follows local files only, since Soloist's sound never passes through Sonora.
     pub(super) fn visualizer_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let chosen = self.settings.read(cx).visualizer_style();
@@ -110,6 +112,8 @@ impl SettingsView {
                         .text_color(theme.status_error),
                 )
                 .tip_label(note, Perch::Below)
+                // the mark is small and says nothing by itself, so its words come at once
+                .tooltip_show_delay(Duration::ZERO)
         });
 
         let picker = Picker::new(VISUALIZER, &self.popovers, chosen.label())
