@@ -382,7 +382,7 @@ impl ItemMenu {
             (false, true) => {
                 let track = track.clone();
                 Some(
-                    MenuItem::new("song-radio", t!("menu-song-radio"))
+                    MenuItem::new("song-radio", t!("menu-start-radio"))
                         .icon("icons/radio.svg")
                         .on_click(move |_, _, cx| {
                             let playback = Sonora::global(cx).playback.clone();
@@ -391,7 +391,7 @@ impl ItemMenu {
                 )
             }
             (false, false) => Some(
-                MenuItem::new("song-radio", t!("menu-song-radio"))
+                MenuItem::new("song-radio", t!("menu-start-radio"))
                     .icon("icons/radio.svg")
                     .disabled(),
             ),
@@ -1399,7 +1399,7 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuI
             let playing = playback.clone();
             let origin = played.clone();
             let (label, icon) = match pin.kind {
-                PinKind::Song => ("menu-song-radio", "icons/radio.svg"),
+                PinKind::Song => ("menu-start-radio", "icons/radio.svg"),
                 _ => ("menu-play-artist", "icons/play.svg"),
             };
             vec![

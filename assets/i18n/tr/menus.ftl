@@ -10,7 +10,6 @@ menu-remove-tracks-from-history = { $count } parçayı geçmişten kaldır
 menu-download = İndir
 menu-remove-download = İndirmeyi kaldır
 menu-downloading = İndiriliyor. Durdurmak için tıkla
-menu-song-radio = Şarkı radyosuna git
 menu-go-to-album = Albüme git
 menu-go-to-artist = Sanatçıya git
 menu-view-details = Ayrıntıları gör
