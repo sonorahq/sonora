@@ -1964,7 +1964,7 @@ impl SubsonicClient {
 }
 
 /// Reads a Subsonic file format and its figures without inventing missing metadata.
-fn subsonic_encoding(
+pub(super) fn subsonic_encoding(
     content_type: Option<&str>,
     suffix: Option<&str>,
     bit_rate: Option<i32>,
@@ -1998,9 +1998,7 @@ fn subsonic_encoding(
         {
             Some(Encoding::Aac { kbps })
         }
-        (content_type, suffix)
-            if content_type.contains("mp4") || matches!(suffix, "m4a" | "mp4") =>
-        {
+        (content_type, suffix) if content_type.contains("alac") || suffix == "alac" => {
             Some(Encoding::Alac { depth: depth? })
         }
         (content_type, suffix)
@@ -2156,6 +2154,18 @@ mod tests {
         assert_eq!(
             subsonic_encoding(Some("audio/mp4"), Some("m4a"), None, None, None),
             None
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/mp4"), Some("m4a"), None, Some(16), None),
+            None
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/alac"), Some("m4a"), None, Some(16), None),
+            Some(Encoding::Alac { depth: 16 })
+        );
+        assert_eq!(
+            subsonic_encoding(None, Some("alac"), None, Some(24), None),
+            Some(Encoding::Alac { depth: 24 })
         );
         assert_eq!(
             subsonic_encoding(Some("audio/ogg"), Some("ogg"), None, None, None),

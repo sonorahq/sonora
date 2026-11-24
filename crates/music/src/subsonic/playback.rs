@@ -8,7 +8,7 @@
 //! download to get there. It starts a second download at the target through a
 //! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -20,7 +20,7 @@ use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
 use crate::ranged;
 use crate::stream::{Plain, Stream};
-use crate::subsonic::client::{Details, SubsonicClient};
+use crate::subsonic::client::{Details, SubsonicClient, subsonic_encoding};
 use crate::vault::{Recording, Shelf};
 use crate::{Codec, Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 
@@ -75,8 +75,23 @@ struct Subsonic {
     shelf: Option<Shelf>,
 }
 
+/// Identifies the bytes the server actually returned, using the requested codec only when the
+/// response type is ambiguous. The catalog encoding is not evidence about a converted stream.
+fn served_encoding(transcode: Transcode, content_type: Option<&str>) -> Option<Encoding> {
+    let response = subsonic_encoding(content_type, None, None, None, None);
+    response.or_else(|| {
+        let kbps = transcode.bitrate.unwrap_or_default();
+        match transcode.codec {
+            Some(Codec::Mp3) => Some(Encoding::Mp3 { kbps }),
+            Some(Codec::Opus) => Some(Encoding::Opus { kbps }),
+            Some(Codec::Aac) => Some(Encoding::Aac { kbps }),
+            None => None,
+        }
+    })
+}
+
 /// What the server said about a track, kept beside it in the vault.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Facts {
     duration_ms: Option<u64>,
     lufs: Option<f32>,
@@ -85,29 +100,7 @@ struct Facts {
     encoding: Option<Encoding>,
 }
 
-impl From<Details> for Facts {
-    fn from(details: Details) -> Self {
-        Self {
-            duration_ms: details.duration.map(|duration| duration.as_millis() as u64),
-            lufs: details.loudness.map(|loudness| loudness.lufs),
-            peak: details.loudness.and_then(|loudness| loudness.peak),
-            encoding: details.encoding,
-        }
-    }
-}
-
 impl Subsonic {
-    /// What the server is asked to send, falling back to the original file's reported encoding.
-    fn stream_encoding(&self, original: Option<Encoding>) -> Option<Encoding> {
-        match (self.transcode.codec, self.transcode.bitrate) {
-            (Some(Codec::Mp3), _) => Some(Encoding::Mp3 { kbps: 0 }),
-            (Some(Codec::Opus), _) => Some(Encoding::Opus { kbps: 0 }),
-            (Some(Codec::Aac), _) => Some(Encoding::Aac { kbps: 0 }),
-            (None, Some(_)) => None,
-            (None, None) => original,
-        }
-    }
-
     /// What tells two kept copies of one track id apart: the server it came from and the
     /// conversion it was asked for.
     fn variant(&self) -> String {
@@ -129,7 +122,7 @@ impl Subsonic {
             .ok()?;
         let prepared = Prepared::load(&mut stream, None).await.ok()?;
         log::debug!("playback: {id} started from the vault");
-        let mut details = facts.map_or_else(Details::default, |facts| Details {
+        let details = facts.map_or_else(Details::default, |facts| Details {
             duration: facts.duration_ms.map(Duration::from_millis),
             loudness: facts.lufs.map(|lufs| Loudness {
                 lufs,
@@ -138,7 +131,6 @@ impl Subsonic {
             encoding: facts.encoding,
             label: None,
         });
-        details.encoding = self.stream_encoding(details.encoding);
         Some(Loaded {
             stream,
             details,
@@ -168,8 +160,8 @@ impl Fetch for Subsonic {
         if let Some(loaded) = self.recall(id).await {
             return Ok(loaded);
         }
-        let told = Arc::new(OnceLock::new());
-        let (stream, mut details) = tokio::join!(
+        let facts = Arc::new(Mutex::new(Facts::default()));
+        let (stream, details) = tokio::join!(
             async {
                 let original = self.transcode == Transcode::default();
                 let http = match original {
@@ -177,17 +169,45 @@ impl Fetch for Subsonic {
                     false => &self.client.http,
                 };
                 let response = self.client.open_stream(http, id, self.transcode).await?;
+                let encoding = served_encoding(
+                    self.transcode,
+                    response
+                        .headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|content_type| content_type.to_str().ok()),
+                );
+                match facts.lock() {
+                    Ok(mut facts) => facts.encoding = encoding,
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
+                    }
+                }
                 let total = response.content_length();
                 let remote = Remote::new(&response);
                 let seekable = original && ranged::ranges(&response);
                 let body = match &self.shelf {
                     Some(shelf) => {
-                        let told = told.clone();
-                        let facts = move || {
-                            let facts = told.get().cloned().map(Facts::from);
-                            serde_json::to_vec(&facts).ok()
+                        let facts = facts.clone();
+                        let fact_id = id.to_owned();
+                        let serialize_facts = move || {
+                            let facts = match facts.lock() {
+                                Ok(facts) => facts.clone(),
+                                Err(error) => {
+                                    log::warn!(
+                                        "playback: cannot read the kept facts for {fact_id}: {error}"
+                                    );
+                                    return None;
+                                }
+                            };
+                            serde_json::to_vec(&Some(facts))
+                                .inspect_err(|error| {
+                                    log::warn!(
+                                        "playback: cannot serialize the kept facts for {fact_id}: {error}"
+                                    )
+                                })
+                                .ok()
                         };
-                        shelf.keep(id, &self.variant(), facts, response)
+                        shelf.keep(id, &self.variant(), serialize_facts, response)
                     }
                     None => Recording::through(response),
                 };
@@ -200,16 +220,27 @@ impl Fetch for Subsonic {
                 let file = remote
                     .filter(|_| seekable)
                     .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
-                anyhow::Ok((stream, prepared, file))
+                anyhow::Ok((stream, prepared, file, encoding))
             },
             async {
                 let details = self.client.details(id).await;
-                told.set(details.clone()).ok();
+                match facts.lock() {
+                    Ok(mut facts) => {
+                        facts.duration_ms =
+                            details.duration.map(|duration| duration.as_millis() as u64);
+                        facts.lufs = details.loudness.map(|loudness| loudness.lufs);
+                        facts.peak = details.loudness.and_then(|loudness| loudness.peak);
+                    }
+                    Err(error) => {
+                        log::warn!("playback: cannot retain track details for {id}: {error}")
+                    }
+                }
                 details
             },
         );
-        let (stream, prepared, file) = stream?;
-        details.encoding = self.stream_encoding(details.encoding);
+        let (stream, prepared, file, encoding) = stream?;
+        let mut details = details;
+        details.encoding = encoding;
         Ok(Loaded {
             stream,
             details,
@@ -295,5 +326,65 @@ impl Fetch for Subsonic {
     /// every seek starts a fresh one that knows the length if the download has ended by then.
     fn reopen_to_seek(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_the_served_encoding_instead_of_the_catalog_encoding() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Opus),
+                    bitrate: Some(160),
+                },
+                Some("audio/mpeg"),
+            ),
+            Some(Encoding::Mp3 { kbps: 0 })
+        );
+        assert_eq!(
+            served_encoding(Transcode::default(), Some("audio/flac")),
+            Some(Encoding::Flac { depth: 0, rate: 0 })
+        );
+    }
+
+    #[test]
+    fn unknown_served_container_does_not_inherit_the_original_encoding() {
+        assert_eq!(
+            served_encoding(Transcode::default(), Some("audio/mp4")),
+            None
+        );
+        assert_eq!(served_encoding(Transcode::default(), None), None);
+    }
+
+    #[test]
+    fn requested_codec_identifies_an_ambiguous_served_container() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Aac),
+                    bitrate: Some(256),
+                },
+                Some("audio/mp4"),
+            ),
+            Some(Encoding::Aac { kbps: 256 })
+        );
+    }
+
+    #[test]
+    fn cached_facts_keep_the_served_encoding() {
+        let facts = Facts {
+            encoding: served_encoding(Transcode::default(), Some("audio/mpeg")),
+            ..Facts::default()
+        };
+        let saved = serde_json::to_vec(&Some(facts)).unwrap();
+        let restored: Option<Facts> = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            restored.and_then(|facts| facts.encoding),
+            Some(Encoding::Mp3 { kbps: 0 })
+        );
     }
 }
