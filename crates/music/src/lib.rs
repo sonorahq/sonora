@@ -409,6 +409,18 @@ pub trait MusicApi: Send + Sync {
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)>;
 
+    /// The radio the provider builds from the whole `seed` collection `id`, paged the way
+    /// `track_radio` is. Only a provider that lists `seed` in [`Capabilities::collection_radio`]
+    /// is asked, and the app blends track radios of the collection's songs for any other.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        _id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        anyhow::bail!("this provider builds no radio from a collection")
+    }
+
     async fn search(&self, query: &str) -> Result<Vec<Track>>;
 
     async fn search_albums(&self, _query: &str) -> Result<Vec<Album>> {
@@ -896,6 +908,15 @@ impl Shape {
     }
 }
 
+/// A collection a radio can be started from, the way a track seeds one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RadioSeed {
+    Album,
+    Playlist,
+    Artist,
+}
+
 /// Whether the listener can change what a catalog holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Catalog {
@@ -921,6 +942,10 @@ pub struct Capabilities {
     pub follow_artists: bool,
     /// A track can seed a station, which is what fills the queue behind it.
     pub radio: bool,
+    /// The collections the provider builds a radio from itself, through
+    /// `MusicApi::collection_radio`. Any other collection's radio is blended from the track
+    /// radios of a few of its songs, so this only picks the better source where `radio` is on.
+    pub collection_radio: &'static [RadioSeed],
     /// Tracks carry a play count worth a column of its own.
     pub playcounts: bool,
     /// The provider keeps sidebar pins of its own, listed by `pin_targets` and changed
@@ -974,6 +999,7 @@ impl Capabilities {
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
+        collection_radio: &[],
         playcounts: true,
         pins: false,
         transcode: false,
@@ -994,6 +1020,7 @@ impl Capabilities {
     pub const NONE: Self = Self {
         follow_artists: false,
         radio: false,
+        collection_radio: &[],
         playcounts: false,
         pins: false,
         transcode: false,

@@ -286,7 +286,14 @@ pub enum OriginKind {
     Playlist,
     /// An artist's top tracks.
     Artist,
+    /// The radio of the track the id names.
     Radio,
+    /// The radio of the album the id names.
+    AlbumRadio,
+    /// The radio of the playlist the id names.
+    PlaylistRadio,
+    /// The radio of the artist the id names.
+    ArtistRadio,
     /// The liked songs of the library.
     Liked,
     /// The local library.

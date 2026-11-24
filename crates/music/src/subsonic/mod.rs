@@ -15,12 +15,16 @@ pub use lyrics::SubsonicLyrics;
 use crate::subsonic::playback::Factory;
 use crate::{
     Capabilities, Catalog, Library, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession,
-    Shape, SignIn,
+    RadioSeed, Shape, SignIn,
 };
 
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
 /// cache, so it must not change.
 pub(crate) const NAME: &str = "Subsonic";
+
+/// The collections `getSimilarSongs` takes the id of. A playlist is not one, so its radio is
+/// blended from the radios of its songs.
+const RADIO_SEEDS: &[RadioSeed] = &[RadioSeed::Album, RadioSeed::Artist];
 
 pub struct SubsonicProvider;
 
@@ -64,6 +68,7 @@ impl SubsonicProvider {
             shape: Shape::Catalog(Catalog::Fixed),
             authenticated: true,
             capabilities: Capabilities {
+                collection_radio: RADIO_SEEDS,
                 transcode: true,
                 playlist_covers: covers,
                 smart_playlists: smart,
@@ -95,6 +100,7 @@ impl SubsonicProvider {
         match client.profile().await {
             Ok(profile) => Ok(Some(ProviderSession {
                 capabilities: Capabilities {
+                    collection_radio: RADIO_SEEDS,
                     transcode: true,
                     playlist_covers: client.takes_playlist_covers().await,
                     smart_playlists: client.takes_smart_playlists().await,

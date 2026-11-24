@@ -19,8 +19,8 @@ use crate::plex::playback::Factory;
 use crate::plex::wire::Resource;
 use crate::{
     AccountChoice, AccountChoices, AccountKind, Capabilities, Catalog, InputSource, MusicApi as _,
-    MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInFailure,
-    SignInProblem, SignInPrompt,
+    MusicProvider, PlaybackFactory, PromptSink, ProviderSession, RadioSeed, Shape, SignIn,
+    SignInFailure, SignInProblem, SignInPrompt,
 };
 
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
@@ -266,6 +266,7 @@ fn session(client: PlexClient, profile: crate::UserProfile) -> ProviderSession {
         shape: Shape::Catalog(Catalog::Fixed),
         authenticated: true,
         capabilities: Capabilities {
+            collection_radio: &[RadioSeed::Artist],
             playlist_visibility: false,
             ..Capabilities::ALL
         },

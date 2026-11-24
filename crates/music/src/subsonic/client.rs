@@ -25,8 +25,8 @@ use crate::subsonic::wire;
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
-    Report, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode, UserProfile,
-    distinct_covers, iso_8601_to_epoch,
+    RadioSeed, Report, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode,
+    UserProfile, distinct_covers, iso_8601_to_epoch,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
@@ -246,6 +246,26 @@ impl SubsonicClient {
         let albums = Arc::new(self.scoped_album_ids(&folder).await?);
         *scope = Some((Instant::now(), albums.clone()));
         Ok(Some(albums))
+    }
+
+    /// The songs of a similar-songs answer that are in the chosen library, since those endpoints
+    /// take no library. `None` when the library's albums cannot be read.
+    async fn held(&self, songs: Vec<Child>) -> Option<Vec<Track>> {
+        let held = self.library_albums().await.ok()?;
+        Some(
+            songs
+                .into_iter()
+                .map(|song| self.song(song))
+                .filter(|track| {
+                    held.as_ref().is_none_or(|held| {
+                        track
+                            .album_id
+                            .as_deref()
+                            .is_some_and(|album| held.contains(album))
+                    })
+                })
+                .collect(),
+        )
     }
 
     /// Every album id in the given library, paged through the empty-query search that every
@@ -1483,27 +1503,13 @@ impl MusicApi for SubsonicClient {
             .get_similar_songs2(track_id, Some(RADIO_COUNT))
             .await
             .map_err(bare);
-        // getSimilarSongs2 takes no library, so its answer keeps only the chosen library's songs,
-        // and a membership that cannot be read leaves the answer to the scoped fallback.
+        // a membership that cannot be read leaves the answer to the scoped fallback
         if let Ok(songs) = similar
             && !songs.is_empty()
-            && let Ok(held) = self.library_albums().await
+            && let Some(songs) = self.held(songs).await
+            && !songs.is_empty()
         {
-            let songs: Vec<Track> = songs
-                .into_iter()
-                .map(|song| self.song(song))
-                .filter(|track| {
-                    held.as_ref().is_none_or(|held| {
-                        track
-                            .album_id
-                            .as_deref()
-                            .is_some_and(|album| held.contains(album))
-                    })
-                })
-                .collect();
-            if !songs.is_empty() {
-                return Ok((songs, None));
-            }
+            return Ok((songs, None));
         }
         let random = self
             .client
@@ -1519,6 +1525,23 @@ impl MusicApi for SubsonicClient {
                 .collect(),
             None,
         ))
+    }
+
+    /// The songs `getSimilarSongs` finds like a whole album or artist, kept to the chosen
+    /// library. An answer with nothing in it leaves the radio to be blended.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let songs = self
+            .client
+            .get_similar_songs(id, Some(RADIO_COUNT))
+            .await
+            .map_err(bare)
+            .context("cannot load similar songs")?;
+        Ok((self.held(songs).await.unwrap_or_default(), None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {
