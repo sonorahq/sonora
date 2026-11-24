@@ -44,8 +44,11 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/201001
 
 const GTK_WINDOW_TOPLEVEL: c_int = 0;
 const GTK_WIN_POS_CENTER: c_int = 1;
+const GTK_WIN_POS_CENTER_ON_PARENT: c_int = 4;
 const G_SOURCE_REMOVE: Bool = 0;
 const G_SOURCE_CONTINUE: Bool = 1;
+/// `G_CONNECT_SWAPPED`: the handler is called with its data first and the instance second.
+const G_CONNECT_SWAPPED: c_int = 2;
 /// `WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS`. WebKitGTK alone defaults to `ACCEPT_NO_THIRD_PARTY`;
 /// the other two backends take every cookie, and a session that dies with the window has no third
 /// party worth keeping out.
@@ -118,6 +121,14 @@ symbols! {
     gtk_window_set_title: unsafe extern "C" fn(Ptr, *const c_char),
     gtk_window_set_default_size: unsafe extern "C" fn(Ptr, c_int, c_int),
     gtk_window_set_position: unsafe extern "C" fn(Ptr, c_int),
+    gtk_window_get_title: unsafe extern "C" fn(Ptr) -> *const c_char,
+    gtk_window_set_transient_for: unsafe extern "C" fn(Ptr, Ptr),
+    gtk_window_get_transient_for: unsafe extern "C" fn(Ptr) -> Ptr,
+    gtk_window_list_toplevels: unsafe extern "C" fn() -> *mut Node,
+    gtk_bin_get_child: unsafe extern "C" fn(Ptr) -> Ptr,
+    g_list_free: unsafe extern "C" fn(*mut Node),
+    gtk_window_set_destroy_with_parent: unsafe extern "C" fn(Ptr, Bool),
+    gtk_widget_get_toplevel: unsafe extern "C" fn(Ptr) -> Ptr,
     gtk_widget_set_size_request: unsafe extern "C" fn(Ptr, c_int, c_int),
     gtk_container_add: unsafe extern "C" fn(Ptr, Ptr),
     gtk_widget_show_all: unsafe extern "C" fn(Ptr),
@@ -125,11 +136,13 @@ symbols! {
     g_signal_connect_data: unsafe extern "C" fn(Ptr, *const c_char, Callback, Ptr, Option<Notify>, c_int) -> c_ulong,
     g_timeout_add: unsafe extern "C" fn(c_uint, Source, Ptr) -> c_uint,
     g_object_unref: unsafe extern "C" fn(Ptr),
+    g_object_ref: unsafe extern "C" fn(Ptr) -> Ptr,
     g_list_free_full: unsafe extern "C" fn(*mut Node, Notify),
     g_error_free: unsafe extern "C" fn(*mut Fault),
     webkit_web_context_new_ephemeral: unsafe extern "C" fn() -> Ptr,
     webkit_web_context_get_cookie_manager: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_new_with_context: unsafe extern "C" fn(Ptr) -> Ptr,
+    webkit_web_view_new_with_related_view: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_get_settings: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_web_view_get_user_content_manager: unsafe extern "C" fn(Ptr) -> Ptr,
     webkit_user_content_manager_add_script: unsafe extern "C" fn(Ptr, Ptr),
@@ -139,6 +152,8 @@ symbols! {
     webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_web_view_run_javascript: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Option<Ready>, Ptr),
     webkit_web_view_terminate_web_process: unsafe extern "C" fn(Ptr),
+    webkit_web_view_get_type: unsafe extern "C" fn() -> usize,
+    g_type_check_instance_is_a: unsafe extern "C" fn(Ptr, usize) -> Bool,
     webkit_settings_set_user_agent: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_cookie_manager_set_accept_policy: unsafe extern "C" fn(Ptr, c_int),
     webkit_cookie_manager_get_cookies: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ready, Ptr),
@@ -421,12 +436,7 @@ impl Live {
             unsafe { (api.webkit_settings_set_user_agent)(settings, agent.as_ptr()) };
         }
 
-        unsafe { (api.gtk_window_set_title)(window, title.as_ptr()) };
-        unsafe { (api.gtk_window_set_default_size)(window, WIDTH, HEIGHT) };
-        unsafe { (api.gtk_window_set_position)(window, GTK_WIN_POS_CENTER) };
-        unsafe { (api.gtk_widget_set_size_request)(window, MIN_WIDTH, MIN_HEIGHT) };
-        // The view is floating until the window takes it, and dies with the window.
-        unsafe { (api.gtk_container_add)(window, view) };
+        frame(api, window, view, title.as_ptr(), GTK_WIN_POS_CENTER);
 
         // The handler holds one reference; `release` gives it back when the window goes.
         let held = Arc::into_raw(session.clone()) as Ptr;
@@ -446,8 +456,10 @@ impl Live {
             inject(api, view, source);
         }
         // A scripted window is never looked at. GTK only needs it mapped for the user to see it,
-        // and WebKit loads a page into an unmapped view all the same, so it stays hidden.
+        // and WebKit loads a page into an unmapped view all the same, so it stays hidden. Nor does
+        // it ever need a popup.
         if !session.target.scripted() {
+            popups(api, view);
             unsafe { (api.gtk_widget_show_all)(window) };
         }
         unsafe { (api.webkit_web_view_load_uri)(view, url.as_ptr()) };
@@ -476,8 +488,8 @@ impl Live {
             // Destroying the widget and dropping the context is not enough: WebKit keeps the web
             // process alive afterwards, and with it the whole page it had loaded, which for the
             // minting page is most of a gigabyte. Killing it is the only thing that gives that
-            // back, and the view is on its way out anyway.
-            unsafe { (api.webkit_web_view_terminate_web_process)(self.view) };
+            // back, and the view is on its way out anyway. A popup may run in a process of its own.
+            terminate(api, self.window);
             unsafe { (api.gtk_widget_destroy)(self.window) };
             return true;
         }
@@ -693,6 +705,117 @@ fn adopt(api: &'static Api, host: &'static Host) {
 unsafe extern "C" fn destroyed(_window: Ptr, data: Ptr) {
     let session = unsafe { &*(data as *const Session) };
     session.state.lock().unwrap().closed = true;
+}
+
+/// Lets `view` open popups. "Continue with Google" and the like run the account's page in a
+/// `window.open` popup that posts the answer back to its opener, and WebKitGTK refuses every
+/// `window.open` that no `create` handler answers, so the button did nothing.
+fn popups(api: &'static Api, view: Ptr) {
+    let handler = created as unsafe extern "C" fn(Ptr, Ptr, Ptr) -> Ptr;
+    unsafe {
+        (api.g_signal_connect_data)(
+            view,
+            c"create".as_ptr(),
+            std::mem::transmute::<unsafe extern "C" fn(Ptr, Ptr, Ptr) -> Ptr, Callback>(handler),
+            ptr::from_ref(api) as Ptr,
+            None,
+            0,
+        )
+    };
+}
+
+/// Answers a page's `window.open` with a view in a window of its own. The view is related to its
+/// opener, so it shares the throwaway context, the settings and the scripts, and `window.opener`
+/// reaches back. The window stays hidden until WebKit says the page is ready, goes when the page
+/// calls `window.close()`, and goes with the window that opened it.
+unsafe extern "C" fn created(opener: Ptr, _action: Ptr, api: Ptr) -> Ptr {
+    // SAFETY: `popups` hands over the table, which lives as long as the process.
+    let api: &'static Api = unsafe { &*(api as *const Api) };
+    let view = unsafe { (api.webkit_web_view_new_with_related_view)(opener) };
+    if view.is_null() {
+        return ptr::null_mut();
+    }
+    let window = unsafe { (api.gtk_window_new)(GTK_WINDOW_TOPLEVEL) };
+    let parent = unsafe { (api.gtk_widget_get_toplevel)(opener) };
+    unsafe { (api.gtk_window_set_transient_for)(window, parent) };
+    unsafe { (api.gtk_window_set_destroy_with_parent)(window, 1) };
+    let title = unsafe { (api.gtk_window_get_title)(parent) };
+    frame(api, window, view, title, GTK_WIN_POS_CENTER_ON_PARENT);
+    let (show, hide) = (
+        api.gtk_widget_show_all as unsafe extern "C" fn(Ptr),
+        api.gtk_widget_destroy as unsafe extern "C" fn(Ptr),
+    );
+    for (signal, handler) in [(c"ready-to-show", show), (c"close", hide)] {
+        // Swapped, so GTK's own show and destroy are handed the window as their one argument.
+        unsafe {
+            (api.g_signal_connect_data)(
+                view,
+                signal.as_ptr(),
+                std::mem::transmute::<unsafe extern "C" fn(Ptr), Callback>(handler),
+                window,
+                None,
+                G_CONNECT_SWAPPED,
+            )
+        };
+    }
+    // A popup may open one of its own.
+    popups(api, view);
+    view
+}
+
+/// Frames `view` in `window` at the sign-in size, titled `title` and placed at `position`. The view
+/// is floating until the window takes it, and dies with the window.
+fn frame(api: &Api, window: Ptr, view: Ptr, title: *const c_char, position: c_int) {
+    unsafe { (api.gtk_window_set_title)(window, title) };
+    unsafe { (api.gtk_window_set_default_size)(window, WIDTH, HEIGHT) };
+    unsafe { (api.gtk_window_set_position)(window, position) };
+    unsafe { (api.gtk_widget_set_size_request)(window, MIN_WIDTH, MIN_HEIGHT) };
+    unsafe { (api.gtk_container_add)(window, view) };
+}
+
+/// Kills the web process of the view in `window`, and of every popup it opened, popups first.
+/// GTK lists the popups for us: each is a toplevel kept transient for the window that opened it.
+/// Every popup is found and held before any process dies, since WebKit may destroy windows of its
+/// own when a process goes.
+fn terminate(api: &Api, window: Ptr) {
+    let mut windows = vec![window];
+    let mut next = 0;
+    while next < windows.len() {
+        popups_of(api, windows[next], &mut windows);
+        next += 1;
+    }
+    for &window in windows.iter().rev() {
+        let view = unsafe { (api.gtk_bin_get_child)(window) };
+        if is_web_view(api, view) {
+            unsafe { (api.webkit_web_view_terminate_web_process)(view) };
+        }
+    }
+    for &popup in &windows[1..] {
+        unsafe { (api.g_object_unref)(popup) };
+    }
+}
+
+/// Appends to `windows`, with a reference held, every toplevel kept transient for `window` that
+/// frames a web view. GTK keeps its tooltip windows transient for a window too, which this leaves
+/// out.
+fn popups_of(api: &Api, window: Ptr, windows: &mut Vec<Ptr>) {
+    let toplevels = unsafe { (api.gtk_window_list_toplevels)() };
+    let mut node = toplevels;
+    while !node.is_null() {
+        let other = unsafe { (*node).data };
+        if unsafe { (api.gtk_window_get_transient_for)(other) } == window
+            && is_web_view(api, unsafe { (api.gtk_bin_get_child)(other) })
+        {
+            windows.push(unsafe { (api.g_object_ref)(other) });
+        }
+        node = unsafe { (*node).next };
+    }
+    unsafe { (api.g_list_free)(toplevels) };
+}
+
+fn is_web_view(api: &Api, widget: Ptr) -> bool {
+    let kind = unsafe { (api.webkit_web_view_get_type)() };
+    !widget.is_null() && unsafe { (api.g_type_check_instance_is_a)(widget, kind) } != 0
 }
 
 /// A cookie read came back. Runs on the GTK thread, out of its main loop.
