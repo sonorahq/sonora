@@ -136,6 +136,7 @@ symbols! {
     g_signal_connect_data: unsafe extern "C" fn(Ptr, *const c_char, Callback, Ptr, Option<Notify>, c_int) -> c_ulong,
     g_timeout_add: unsafe extern "C" fn(c_uint, Source, Ptr) -> c_uint,
     g_object_unref: unsafe extern "C" fn(Ptr),
+    g_object_ref: unsafe extern "C" fn(Ptr) -> Ptr,
     g_list_free_full: unsafe extern "C" fn(*mut Node, Notify),
     g_error_free: unsafe extern "C" fn(*mut Fault),
     webkit_web_context_new_ephemeral: unsafe extern "C" fn() -> Ptr,
@@ -151,6 +152,8 @@ symbols! {
     webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_web_view_run_javascript: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Option<Ready>, Ptr),
     webkit_web_view_terminate_web_process: unsafe extern "C" fn(Ptr),
+    webkit_web_view_get_type: unsafe extern "C" fn() -> usize,
+    g_type_check_instance_is_a: unsafe extern "C" fn(Ptr, usize) -> Bool,
     webkit_settings_set_user_agent: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_cookie_manager_set_accept_policy: unsafe extern "C" fn(Ptr, c_int),
     webkit_cookie_manager_get_cookies: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ready, Ptr),
@@ -772,21 +775,47 @@ fn frame(api: &Api, window: Ptr, view: Ptr, title: *const c_char, position: c_in
 
 /// Kills the web process of the view in `window`, and of every popup it opened, popups first.
 /// GTK lists the popups for us: each is a toplevel kept transient for the window that opened it.
+/// Every popup is found and held before any process dies, since WebKit may destroy windows of its
+/// own when a process goes.
 fn terminate(api: &Api, window: Ptr) {
+    let mut windows = vec![window];
+    let mut next = 0;
+    while next < windows.len() {
+        popups_of(api, windows[next], &mut windows);
+        next += 1;
+    }
+    for &window in windows.iter().rev() {
+        let view = unsafe { (api.gtk_bin_get_child)(window) };
+        if is_web_view(api, view) {
+            unsafe { (api.webkit_web_view_terminate_web_process)(view) };
+        }
+    }
+    for &popup in &windows[1..] {
+        unsafe { (api.g_object_unref)(popup) };
+    }
+}
+
+/// Appends to `windows`, with a reference held, every toplevel kept transient for `window` that
+/// frames a web view. GTK keeps its tooltip windows transient for a window too, which this leaves
+/// out.
+fn popups_of(api: &Api, window: Ptr, windows: &mut Vec<Ptr>) {
     let toplevels = unsafe { (api.gtk_window_list_toplevels)() };
     let mut node = toplevels;
     while !node.is_null() {
         let other = unsafe { (*node).data };
-        if unsafe { (api.gtk_window_get_transient_for)(other) } == window {
-            terminate(api, other);
+        if unsafe { (api.gtk_window_get_transient_for)(other) } == window
+            && is_web_view(api, unsafe { (api.gtk_bin_get_child)(other) })
+        {
+            windows.push(unsafe { (api.g_object_ref)(other) });
         }
         node = unsafe { (*node).next };
     }
     unsafe { (api.g_list_free)(toplevels) };
-    let view = unsafe { (api.gtk_bin_get_child)(window) };
-    if !view.is_null() {
-        unsafe { (api.webkit_web_view_terminate_web_process)(view) };
-    }
+}
+
+fn is_web_view(api: &Api, widget: Ptr) -> bool {
+    let kind = unsafe { (api.webkit_web_view_get_type)() };
+    !widget.is_null() && unsafe { (api.g_type_check_instance_is_a)(widget, kind) } != 0
 }
 
 /// A cookie read came back. Runs on the GTK thread, out of its main loop.
