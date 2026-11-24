@@ -192,8 +192,8 @@ impl SettingsView {
 
         ProviderCard {
             id: SharedString::from(format!("scrobble-{service}")),
-            logo: None,
-            brand: theme.primary,
+            logo: Some(crate::shared::scrobbler_logo(service)),
+            brand: crate::shared::scrobbler_brand(service, cx),
             active: linked && enabled,
             stored: linked || linking,
             name: title,

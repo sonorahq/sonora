@@ -27,6 +27,8 @@ The binary embeds:
 - Remix Icon 4.8.0 — Apache License 2.0, `assets/icons/remix/LICENSE`
 - Solar Icon Set, Linear style — CC BY 4.0 by 480 Design, `assets/icons/solar/LICENSE`
 - Simple Icons brand marks — CC0 1.0, `assets/icons/common/LICENSE`
+- ListenBrainz mark — CC BY-SA 4.0 by the MetaBrainz Foundation, `assets/icons/common/LICENSE`
+- Libre.fm, Maloja and teal.fm marks — redrawn from each project's own logo, `assets/icons/common/LICENSE`
 
 Several dependencies are covered by the Mozilla Public License 2.0 — notably the
 Symphonia decoders, `option-ext` and `priority-queue`. They are used unmodified;
