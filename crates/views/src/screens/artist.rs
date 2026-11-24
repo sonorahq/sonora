@@ -1384,7 +1384,7 @@ impl Render for ArtistView {
         let rails = self.recommended(window, &notify, cx);
         let page = Scroller::new("artist-page", &self.scrollbar)
             .bottom_inset(crate::chrome::Chrome::bottom(cx))
-            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
+            .top_inset(crate::chrome::Chrome::sheet_radius(cx))
             .px(inset)
             .pt(inset)
             .pb(inset)

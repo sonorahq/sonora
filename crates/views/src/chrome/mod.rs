@@ -26,7 +26,7 @@ pub(crate) use output_picker::OutputPicker;
 pub(crate) use player_bar::{BarParts, COVER_GAP, PlayerBar, Volume};
 pub(crate) use session::{SessionCode, SessionJoin};
 pub(crate) use sessions_button::SessionsButton;
-pub(crate) use sheet::{inner_corners, sheet_edge};
+pub(crate) use sheet::{inner_corners, sheet_frame};
 pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
 pub(crate) use swipe_cue::SwipeCue;
@@ -40,7 +40,7 @@ pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Corners, Div, Entity, Global, Pixels, SharedString, Window, div};
+use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use state::AppSettings;
 use state::{PageWidth, Sonora};
@@ -139,20 +139,15 @@ impl Chrome {
         Self::get(cx).reserved_right
     }
 
-    /// How round the page's top corners are. A corner rounds where a sidebar sits beside the
-    /// page and stays square against the window's edge.
-    pub fn sheet_corners(cx: &App) -> Corners<Pixels> {
-        let chrome = Self::get(cx);
-        let radius = cx.theme().radius;
-        let beside = |width: Pixels| match width > Pixels::ZERO {
-            true => radius,
-            false => Pixels::ZERO,
-        };
-        Corners {
-            top_left: beside(chrome.sidebar_left),
-            top_right: beside(chrome.sidebar_right),
-            ..Corners::default()
-        }
+    /// How round each corner of the sheet the page lies on is.
+    pub fn sheet_radius(cx: &App) -> Pixels {
+        cx.theme().radius * 1.5
+    }
+
+    /// The strip of chrome left between the sheet and the window's edges, the sidebars, the
+    /// title bar and an opaque player bar.
+    pub fn sheet_gap(cx: &App) -> Pixels {
+        cx.theme().metrics.pad
     }
 
     /// The extra scroll space needed to bring a page's last item above the player bar.

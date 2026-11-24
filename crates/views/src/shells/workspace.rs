@@ -12,7 +12,7 @@ use ui::{
 };
 
 use crate::chrome::{
-    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions, sheet_edge,
+    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions, sheet_frame,
 };
 use crate::shared::menus::CardMenu;
 use crate::shells::Shell;
@@ -143,8 +143,9 @@ impl Shell for Workspace {
             navigation: true,
             sidebar_open: self.sidebar.read(cx).is_open(),
             sidebar_right: Some(self.sidebar_right.read(cx).is_open()),
-            // The page draws this edge itself, so it can round into the sidebars.
+            // The page lies on the chrome as a sheet with its own edge.
             border: false,
+            sheet: true,
             content,
             transparent: false,
         }
@@ -159,7 +160,9 @@ impl Render for Workspace {
             .update(cx, |sidebar, cx| sidebar.adapt(reserved, window, cx));
         let left = self.sidebar.read(cx).occupied_width();
         let overlay_width = self.sidebar.read(cx).overlay_width();
-        Chrome::publish(left, right, reserved, cx);
+        // The sheet's gaps on either side belong to the chrome, so pages measure without them.
+        let gap = Chrome::sheet_gap(cx);
+        Chrome::publish(left + gap, right + gap, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
@@ -205,7 +208,8 @@ impl Render for Workspace {
             true => 0.,
             false => hidden,
         };
-        let backdrop = cx.theme().background;
+        let theme = *cx.theme();
+        let backdrop = theme.background;
         // That price has to be paid for real, not merely accepted: opacity is baked
         // into a primitive as it is painted, and a cached view replays its primitives
         // until something notifies it, so a fading page that stayed cached would be
@@ -270,6 +274,7 @@ impl Render for Workspace {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    .when(!theme.transparent, |this| this.bg(theme.sidebar))
                     .when(!overlay, |this| this.child(sidebar))
                     .child(
                         div()
@@ -279,7 +284,13 @@ impl Render for Workspace {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .ml(overlay_width)
+                            // The page lies on the chrome as a sheet, a gap clear of everything
+                            // around it.
+                            .ml(overlay_width + gap)
+                            .mt(gap)
+                            .mr(gap)
+                            .mb(gap)
+                            .when(!theme.transparent, |this| this.bg(theme.background))
                             .when(overlay, |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
                             // A two-finger swipe across the page steps through its history,
@@ -339,10 +350,10 @@ impl Render for Workspace {
                                         )
                                     }),
                             )
-                            .child(self.swipe_cue.clone()),
+                            .child(self.swipe_cue.clone())
+                            .child(sheet_frame(cx)),
                     )
                     .child(self.sidebar_right.clone())
-                    .child(sheet_edge(cx))
                     .when(overlay, |this| this.child(self.sidebar.clone())),
             )
             .child(

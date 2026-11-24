@@ -204,7 +204,7 @@ impl Render for UserView {
                 Scroller::new("user-page", &self.scrollbar)
                     .hold()
                     .bottom_inset(crate::chrome::Chrome::bottom(cx))
-                    .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
+                    .top_inset(crate::chrome::Chrome::sheet_radius(cx))
                     .py(pad)
                     .px(pad + crate::chrome::Chrome::margin(window, cx))
                     .child(

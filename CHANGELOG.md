@@ -30,7 +30,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
 - The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
-- The page sits in a sheet whose top corners round into the sidebars, and the title bar no longer draws a line above them.
+- The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it.
 
 ### Fixed

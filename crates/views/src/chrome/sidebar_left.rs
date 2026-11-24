@@ -842,8 +842,8 @@ impl Render for SidebarLeft {
             }))
             .when(!self.is_open(), |this| this.hidden())
             .when(!theme.transparent, |this| this.bg(sidebar_bg))
-            // Beside the page its edge is the page's, drawn by `sheet_edge` so it can round
-            // into the title bar. An overlaid sidebar floats over the page and keeps its own.
+            // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
+            // the page and keeps its own.
             .border_color(match overlaid {
                 true => sidebar_border,
                 false => gpui::transparent_black(),
@@ -874,8 +874,9 @@ impl Render for SidebarLeft {
                                     .flex_col()
                                     .gap_1()
                                     .w_full()
-                                    // The first row's fill starts level with the page's top
-                                    // edge beside it.
+                                    // The first row's fill starts level with the top edge of
+                                    // the page's sheet beside it.
+                                    .pt(super::Chrome::sheet_gap(cx))
                                     .pb_3()
                                     .map(|column| match rail {
                                         true => column.px_2(),

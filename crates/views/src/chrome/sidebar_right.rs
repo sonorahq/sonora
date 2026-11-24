@@ -171,9 +171,12 @@ impl Render for SidebarRight {
                 this.persist(cx);
                 cx.notify();
             }))
-            .when(!theme.transparent, |this| this.bg(theme.background))
-            // Its edge is the page's, drawn by `sheet_edge` so it can round into the title bar.
+            // It lies on the chrome beside the page's sheet, which draws the only edge between
+            // them.
+            .when(!theme.transparent, |this| this.bg(theme.sidebar))
             .border_color(gpui::transparent_black())
+            // Its title sits level with the top edge of the page's sheet.
+            .pt(super::Chrome::sheet_gap(cx))
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),
                 _ => self

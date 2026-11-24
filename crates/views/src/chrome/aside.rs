@@ -931,7 +931,7 @@ impl Aside {
             .pl_4()
             .pr_2()
             .when(self.titled, |this| {
-                this.border_b_1().border_color(theme.border).child(eyebrow(
+                this.child(eyebrow(
                     match self.tab {
                         SideTab::Queue => t!("queue-title"),
                         SideTab::Lyrics => t!("lyrics-title"),
