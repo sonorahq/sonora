@@ -22,7 +22,7 @@ use crate::ranged;
 use crate::stream::{Plain, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
 use crate::vault::{Recording, Shelf};
-use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
+use crate::{Codec, Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 
 /// A track downloading, and what the server says about its length and loudness.
 #[derive(Clone)]
@@ -81,6 +81,8 @@ struct Facts {
     duration_ms: Option<u64>,
     lufs: Option<f32>,
     peak: Option<f32>,
+    #[serde(default)]
+    encoding: Option<Encoding>,
 }
 
 impl From<Details> for Facts {
@@ -89,11 +91,23 @@ impl From<Details> for Facts {
             duration_ms: details.duration.map(|duration| duration.as_millis() as u64),
             lufs: details.loudness.map(|loudness| loudness.lufs),
             peak: details.loudness.and_then(|loudness| loudness.peak),
+            encoding: details.encoding,
         }
     }
 }
 
 impl Subsonic {
+    /// What the server is asked to send, falling back to the original file's reported encoding.
+    fn stream_encoding(&self, original: Option<Encoding>) -> Option<Encoding> {
+        match (self.transcode.codec, self.transcode.bitrate) {
+            (Some(Codec::Mp3), _) => Some(Encoding::Mp3 { kbps: 0 }),
+            (Some(Codec::Opus), _) => Some(Encoding::Opus { kbps: 0 }),
+            (Some(Codec::Aac), _) => Some(Encoding::Aac { kbps: 0 }),
+            (None, Some(_)) => None,
+            (None, None) => original,
+        }
+    }
+
     /// What tells two kept copies of one track id apart: the server it came from and the
     /// conversion it was asked for.
     fn variant(&self) -> String {
@@ -115,14 +129,16 @@ impl Subsonic {
             .ok()?;
         let prepared = Prepared::load(&mut stream, None).await.ok()?;
         log::debug!("playback: {id} started from the vault");
-        let details = facts.map_or_else(Details::default, |facts| Details {
+        let mut details = facts.map_or_else(Details::default, |facts| Details {
             duration: facts.duration_ms.map(Duration::from_millis),
             loudness: facts.lufs.map(|lufs| Loudness {
                 lufs,
                 peak: facts.peak,
             }),
+            encoding: facts.encoding,
             label: None,
         });
+        details.encoding = self.stream_encoding(details.encoding);
         Some(Loaded {
             stream,
             details,
@@ -153,7 +169,7 @@ impl Fetch for Subsonic {
             return Ok(loaded);
         }
         let told = Arc::new(OnceLock::new());
-        let (stream, details) = tokio::join!(
+        let (stream, mut details) = tokio::join!(
             async {
                 let original = self.transcode == Transcode::default();
                 let http = match original {
@@ -193,6 +209,7 @@ impl Fetch for Subsonic {
             },
         );
         let (stream, prepared, file) = stream?;
+        details.encoding = self.stream_encoding(details.encoding);
         Ok(Loaded {
             stream,
             details,
@@ -211,6 +228,10 @@ impl Fetch for Subsonic {
 
     fn loudness(&self, loaded: &Loaded) -> Option<Loudness> {
         loaded.details.loudness
+    }
+
+    fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
+        loaded.details.encoding
     }
 
     async fn downloaded(&self, loaded: &Loaded) {

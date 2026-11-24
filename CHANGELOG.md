@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The Player Bar settings can hide or show audio-quality badges.
+- The player shows a track's format and bitrate, or lossless bit depth and sample rate when available.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.

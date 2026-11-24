@@ -1,5 +1,6 @@
 use crate::Text;
 use crate::theme::ActiveTheme as _;
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     App, Div, FontWeight, IntoElement, RenderOnce, SharedString, StyleRefinement, Window, div,
@@ -18,6 +19,69 @@ const GLYPH: f32 = 0.75;
 pub struct Badge {
     base: Div,
     mark: Mark,
+}
+
+/// A compact, accessible label for player metadata that stays on one line.
+#[derive(IntoElement)]
+pub struct AudioQualityBadge {
+    base: Div,
+    id: &'static str,
+    text: SharedString,
+    aria_label: SharedString,
+    hi_res: bool,
+}
+
+impl AudioQualityBadge {
+    /// Creates a badge for audio quality, with a localized accessibility label.
+    pub fn new(
+        id: &'static str,
+        text: impl Into<SharedString>,
+        aria_label: impl Into<SharedString>,
+    ) -> Self {
+        Self {
+            base: div(),
+            id,
+            text: text.into(),
+            aria_label: aria_label.into(),
+            hi_res: false,
+        }
+    }
+
+    /// Marks audio at 24 bits and above CD sample rates as hi-res.
+    pub fn hi_res(mut self) -> Self {
+        self.hi_res = true;
+        self
+    }
+}
+
+impl RenderOnce for AudioQualityBadge {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = *cx.theme();
+
+        self.base
+            .id(self.id)
+            .role(Role::Label)
+            .aria_label(self.aria_label)
+            .h(rems(SIDE))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .whitespace_nowrap()
+            .px(theme.metrics.pad / 2.)
+            .bg(match self.hi_res {
+                true => theme.status_warning.opacity(0.08),
+                false => theme.muted,
+            })
+            .rounded_xs()
+            .text_size(theme.text(Text::Tiny))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(match self.hi_res {
+                true => theme.status_warning.opacity(0.7),
+                false => theme.muted_foreground,
+            })
+            .child(self.text)
+    }
 }
 
 /// What a badge shows.

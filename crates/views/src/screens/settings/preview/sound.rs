@@ -305,9 +305,9 @@ fn source(rate_hz: u32, encoding: Option<Encoding>) -> SharedString {
             | Encoding::Vorbis { kbps }
             | Encoding::Mp3 { kbps }
             | Encoding::Opus { kbps },
-        ) => Some(t!("unit-kbps", value = i64::from(kbps))),
+        ) => (kbps > 0).then(|| t!("unit-kbps", value = i64::from(kbps))),
         Some(Encoding::Flac { depth, .. } | Encoding::Alac { depth } | Encoding::Pcm { depth }) => {
-            Some(t!("settings-signal-bits", depth = i64::from(depth)))
+            (depth > 0).then(|| t!("settings-signal-bits", depth = i64::from(depth)))
         }
         Some(Encoding::Other) | None => None,
     };

@@ -393,9 +393,8 @@ impl PlayerBar {
         !Chrome::window_room(window).fits(room)
     }
 
-    /// How far below its place in a full-height bar the fullscreen button sits, which is where
-    /// a stacked or compact bar puts it. The fullscreen player drops its own corner by as
-    /// much, so the button stays under the pointer when the player opens and closes.
+    /// How far below the bar's middle the fullscreen button sits, which is where a stacked or
+    /// compact bar puts it. The fullscreen player drops its own corner by as much.
     pub(crate) fn fullscreen_drop(window: &Window, cx: &gpui::App) -> Pixels {
         let theme = *cx.theme();
         let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();

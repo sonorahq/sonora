@@ -8,13 +8,15 @@ use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
 impl SettingsView {
-    /// The Player bar page: layout cards, the bar's material and its clock.
+    /// The Player bar page: layout cards, the bar's material, details and clock.
     pub(super) fn player_bar_groups(&self) -> Vec<Group> {
         vec![
             Group::new("settings-player-bar-layout", "icons/layout-grid.svg")
                 .cards(Slot::PlayerBarLayout),
             Group::new("settings-player-bar-surface", "icons/blend.svg")
                 .rows([Slot::PlayerBarTransparent]),
+            Group::new("settings-player-bar-details", "icons/disc-3.svg")
+                .rows([Slot::PlayerBarBadge]),
             Group::new("settings-player-bar-time", "icons/rotate-ccw-clock.svg")
                 .rows([Slot::PlayerBarTimeLeft]),
         ]
@@ -34,6 +36,24 @@ impl SettingsView {
                 .into_any_element(),
         )
         .detail(t!("settings-player-bar-time-left-detail"))
+        .into_any_element()
+    }
+
+    /// Shows or hides audio-quality badges in the player and fullscreen metadata.
+    pub(super) fn player_bar_badge_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).player_bar_badge();
+        Row::new(
+            t!("settings-player-bar-badge"),
+            Switch::new("player-bar-badge", on)
+                .name(t!("settings-player-bar-badge"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_player_bar_badge(!on, cx);
+                    });
+                }))
+                .into_any_element(),
+        )
+        .detail(t!("settings-player-bar-badge-detail"))
         .into_any_element()
     }
 
