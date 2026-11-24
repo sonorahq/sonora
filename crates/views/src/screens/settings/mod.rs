@@ -1,14 +1,16 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Pixels, Render, ScrollHandle,
-    SharedString, Subscription, Task, Window, canvas, div, point, px,
+    AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, Pixels, Render, ScrollHandle, SharedString, Subscription, Task, Window, canvas,
+    div, point, px,
 };
 use i18n::{Language, t};
+use input::SEARCH_CONTEXT;
 use music::SignInPrompt;
 use router::{Destination, SettingsPage, SettingsTab, navigate};
 use state::{
@@ -16,8 +18,9 @@ use state::{
     Sleep, Soloist, Sonora, Updates,
 };
 use ui::{
-    Activate, ActiveTheme as _, Card, Deck, Dismiss, Input, Lazy, Popovers, Scrollbar,
-    ScrubberState, SelectNext, SelectPrevious, Spin, Vacancy, snapped,
+    Activate, ActiveTheme as _, Card, Cascade, Deck, Dismiss, Dropdown, Input, Lazy, Popovers,
+    Scrollbar, ScrubberState, SelectNext, SelectPrevious, Spin, Submit, Unfold, Vacancy,
+    ease_out_quad, paced, snapped,
 };
 
 use crate::chrome::{Chrome, OutputPicker};
@@ -54,6 +57,13 @@ pub(crate) use rows::Row;
 pub(super) const GROUPS: Pixels = px(40.);
 /// How much a query found in a setting's title counts over one found in its detail.
 const TITLE_WEIGHT: u32 = 2;
+/// How many settings the panel under the search field suggests.
+const SUGGESTED: usize = 6;
+/// How long the setting a search result opened stays lit, so the eye finds it once the page
+/// has moved to it.
+const MARK_HOLD: Duration = Duration::from_millis(1400);
+/// How long that light takes to fade once it has held, before the listener's pace stretches it.
+const MARK_FADE: Duration = Duration::from_millis(900);
 /// The picker keys the page's render watches, shared with the rows that open them.
 const LANGUAGES: &str = "languages";
 const TYPEFACES: &str = "typefaces";
@@ -64,7 +74,7 @@ const STORAGE_POLL: Duration = Duration::from_secs(2);
 
 /// One setting, named without building anything. Pages list their settings as slots in groups,
 /// a search scores slots by their title and detail, and only visible groups build their rows.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
     Accounts,
     AccountsLink,
@@ -251,11 +261,25 @@ pub struct SettingsView {
     /// The page the route names: a page of the tab on show, or a drill-in.
     page: SettingsPage,
     search: Entity<Input>,
-    /// The search field's text, trimmed. Empty means the page shows its own settings.
+    /// The search field's text, trimmed, which the panel under the field suggests settings for.
+    typed: String,
+    /// The query whose every match the page lists in place of its own settings, set by Enter in
+    /// the search field. Empty means the page shows its own settings.
     query: String,
+    /// Whether the panel under the search field is put away. Escape, Enter, a chosen result and
+    /// the field losing the keyboard put it away. A click in the field or typing brings it back.
+    dismissed: bool,
+    /// The panel row the arrow keys are on.
+    pick: Option<usize>,
+    /// The panel's rows surfacing one after another as the query changes.
+    cascade: Cascade,
+    /// The panel's box, stretching to fit as rows come and go.
+    unfold: Unfold,
     /// What the tab scrolls into view once it is laid out: the setting a search result opened,
     /// or the section a route named.
     reveal: Option<Reveal>,
+    /// The setting a search result opened and when, lit for a moment after the page moves to it.
+    marked: Option<(Slot, Instant)>,
     /// Where a lyrics source dragged over the priority list would land, as a gap between the
     /// enabled sources. `None` while the drop would leave the order as it is.
     lyrics_drop_gap: Option<usize>,
@@ -412,16 +436,17 @@ impl SettingsView {
             input::shown(OPEN_FILTER, settings.read(cx).keybinds()).map(SharedString::from);
         search.update(cx, |input, cx| input.set_shortcut(filter, cx));
         cx.observe(&search, |this, input, cx| {
-            let query = input.read(cx).text().trim().to_owned();
-            // A search swaps the page for hits from every page, so wherever the page was
-            // scrolled to answers for nothing once one starts.
-            if this.query.is_empty() != query.is_empty() {
-                this.scrollbar.update(cx, |bar, _| bar.place(Pixels::ZERO));
+            let typed = input.read(cx).text().trim().to_owned();
+            if typed == this.typed {
+                return;
             }
-            if !query.is_empty() {
-                this.reveal = None;
+            this.typed = typed;
+            this.dismissed = false;
+            this.pick = None;
+            // An emptied field goes back to the page rather than keeping the last results.
+            if this.typed.is_empty() {
+                this.list(String::new(), cx);
             }
-            this.query = query;
             cx.notify();
         })
         .detach();
@@ -474,8 +499,14 @@ impl SettingsView {
             output_picker,
             page: SettingsTab::General.lead(),
             search,
+            typed: String::new(),
             query: String::new(),
+            dismissed: false,
+            pick: None,
+            cascade: Cascade::default(),
+            unfold: Unfold::default(),
             reveal: None,
+            marked: None,
             lyrics_drop_gap: None,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             drilled_from: None,
@@ -598,14 +629,151 @@ impl SettingsView {
         !self.query.is_empty()
     }
 
-    /// The search field, which the header draws.
+    /// The search field, which the keyboard shortcut for the page's filter focuses.
     pub(crate) fn search(&self) -> Entity<Input> {
         self.search.clone()
+    }
+
+    /// The search field with the panel of the settings that best answer what is typed, which the
+    /// header draws. Enter opens the row the arrow keys are on, or else lists every match in
+    /// place of the page. Building it never redraws the view, since the header draws it.
+    pub(crate) fn search_field(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        // The field losing the keyboard puts the panel away, so focusing it again leaves the panel
+        // shut until a click or a key asks for it. A change of focus redraws every view, so the
+        // header always sees it. A blur listener would not do: the panel opening under the cached
+        // header reads to it as a blur while the field keeps the keyboard.
+        if !self.typing(window, cx) {
+            self.dismissed = true;
+            self.pick = None;
+        }
+        let open = self.panel_open(window, cx);
+        // A closed panel forgets its rows and height, so the next one unfolds from nothing.
+        if !open {
+            self.cascade.clear();
+            self.unfold.reset();
+        }
+        let panel = open.then(|| self.panel(window, cx));
+        let field = div()
+            // A click in the field asks for the panel. It listens in the capture phase because the
+            // field stops the press.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if event.button == MouseButton::Left && this.dismissed {
+                    this.dismissed = false;
+                    cx.notify();
+                }
+            }))
+            .child(self.search.clone());
+        let me = cx.entity().downgrade();
+
+        div()
+            .w_full()
+            .key_context(SEARCH_CONTEXT)
+            .on_action(cx.listener(Self::suggest_next))
+            .on_action(cx.listener(Self::suggest_previous))
+            .on_action(cx.listener(Self::submit_search))
+            .child(
+                Dropdown::new("settings-search-field", field)
+                    .w_full()
+                    .open(open)
+                    .on_close(move |_, cx| {
+                        me.update(cx, |this, cx| this.close_panel(cx)).ok();
+                    })
+                    .children(panel),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn clear_search(&mut self, cx: &mut Context<Self>) {
         if !self.search.read(cx).text().is_empty() {
             self.search.update(cx, |input, cx| input.set_text("", cx));
+        }
+    }
+
+    /// Lists every setting that answers `query` in place of the page, or brings the page back for
+    /// an empty one. A new list starts at the top, since where the page was scrolled to answers
+    /// for nothing there.
+    fn list(&mut self, query: String, cx: &mut Context<Self>) {
+        if self.query == query {
+            return;
+        }
+        self.scrollbar.update(cx, |bar, _| bar.place(Pixels::ZERO));
+        if !query.is_empty() {
+            self.reveal = None;
+        }
+        self.query = query;
+        cx.notify();
+    }
+
+    /// Whether the panel under the search field shows: the field has the keyboard and holds
+    /// something, and nothing put the panel away.
+    fn panel_open(&self, window: &Window, cx: &App) -> bool {
+        !self.dismissed && !self.typed.is_empty() && self.typing(window, cx)
+    }
+
+    /// Whether the search field has the keyboard.
+    fn typing(&self, window: &Window, cx: &App) -> bool {
+        self.search.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    fn close_panel(&mut self, cx: &mut Context<Self>) {
+        self.dismissed = true;
+        self.pick = None;
+        cx.notify();
+    }
+
+    /// The settings the panel under the search field suggests for what is typed, best first.
+    fn offers(&self, cx: &App) -> Vec<(SettingsPage, Slot)> {
+        let mut offers = self.found(&self.typed, cx);
+        offers.truncate(SUGGESTED);
+        offers
+    }
+
+    /// Down in the search field: the next row of the panel, or the panel back once it was put
+    /// away.
+    fn suggest_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.panel_open(window, cx) {
+            if self.dismissed && !self.typed.is_empty() {
+                self.dismissed = false;
+                cx.notify();
+            }
+            return;
+        }
+        let Some(last) = self.offers(cx).len().checked_sub(1) else {
+            return;
+        };
+        self.pick = Some(self.pick.map_or(0, |at| (at + 1).min(last)));
+        cx.notify();
+    }
+
+    /// Up in the search field: the row above in the panel, or back to the text from the first.
+    fn suggest_previous(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.panel_open(window, cx) {
+            return;
+        }
+        if let Some(at) = self.pick {
+            self.pick = at.checked_sub(1);
+            cx.notify();
+        }
+    }
+
+    /// Enter in the search field: opens the panel row the arrow keys are on, or else lists every
+    /// setting that answers what is typed in place of the page.
+    fn submit_search(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = self
+            .pick
+            .filter(|_| self.panel_open(window, cx))
+            .and_then(|at| self.offers(cx).get(at).copied());
+        match picked {
+            Some((page, slot)) => self.open_result(page, slot, window, cx),
+            None => {
+                self.list(self.typed.clone(), cx);
+                self.close_panel(cx);
+            }
         }
     }
 
@@ -620,7 +788,7 @@ impl SettingsView {
             cx.notify();
             return true;
         }
-        if self.searching() {
+        if !self.search.read(cx).text().is_empty() {
             self.clear_search(cx);
             return true;
         }
@@ -755,7 +923,7 @@ impl SettingsView {
     /// Every setting of every page that answers the query, best match first, with the page it
     /// lives on. Ties keep the order of the pages. Only titles and details are read and no row
     /// is built.
-    fn found(&self, cx: &App) -> Vec<(SettingsPage, Slot)> {
+    fn found(&self, query: &str, cx: &App) -> Vec<(SettingsPage, Slot)> {
         let mut hits: Vec<(u32, SettingsPage, Slot)> = SettingsPage::ALL
             .into_iter()
             .flat_map(|page| {
@@ -765,7 +933,7 @@ impl SettingsView {
                     .map(move |slot| (page, slot))
             })
             .filter_map(|(page, slot)| {
-                self.slot_score(slot, &self.query, cx)
+                self.slot_score(slot, query, cx)
                     .map(|score| (score, page, slot))
             })
             .collect();
@@ -1243,12 +1411,14 @@ impl SettingsView {
         let carded = cards.is_some();
         let cards = cards.map(|slot| {
             let cards = self.cards(slot, window, cx);
+            let cards = self.marking(slot, cards, window, cx);
             self.revealing(Reveal::Slot(slot), cards, cx)
         });
         let rows = rows
             .into_iter()
             .map(|slot| {
                 let row = self.slot_element(slot, window, cx);
+                let row = self.marking(slot, row, window, cx);
                 self.revealing(Reveal::Slot(slot), row, cx)
             })
             .collect::<Vec<_>>();
@@ -1267,6 +1437,54 @@ impl SettingsView {
             .children(cards)
             .children(rows)
             .into_any_element()
+    }
+
+    /// Lights `element` while it is the setting a search result just opened, in the fill the
+    /// result had while picked in the panel, and lets the light fade once it has held. The light
+    /// reaches a little past the column on both sides, as a drill row's hover does.
+    fn marking(&self, slot: Slot, element: AnyElement, window: &Window, cx: &App) -> AnyElement {
+        let level = self.mark_level(slot, window, cx);
+        if level <= 0. {
+            return element;
+        }
+        let theme = cx.theme();
+
+        div()
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .mx_neg_3()
+                    .rounded(theme.radius)
+                    .bg(theme.table_active.opacity(level)),
+            )
+            .child(element)
+            .into_any_element()
+    }
+
+    /// How lit `slot` stands: 1 while a search result has just opened it, easing to 0 once the
+    /// light has held, and 0 for any other setting. It asks for frames until the light is out.
+    /// Under reduced motion the light goes out at once rather than fading.
+    fn mark_level(&self, slot: Slot, window: &Window, cx: &App) -> f32 {
+        let Some((marked, since)) = self.marked else {
+            return 0.;
+        };
+        if marked != slot {
+            return 0.;
+        }
+        let level = match since.elapsed().checked_sub(MARK_HOLD) {
+            None => 1.,
+            Some(_) if cx.reduce_motion() => 0.,
+            Some(fading) => {
+                let span = paced(MARK_FADE).as_secs_f32().max(f32::EPSILON);
+                1. - ease_out_quad((fading.as_secs_f32() / span).min(1.))
+            }
+        };
+        if level > 0. {
+            window.request_animation_frame();
+        }
+        level
     }
 
     /// Wraps `element` so that, while it is what the tab waits to reveal, the tab keeps it just
@@ -1367,7 +1585,7 @@ impl SettingsView {
     /// page it lives on and opening it there.
     pub(crate) fn results(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let theme = *cx.theme();
-        let hits = self.found(cx);
+        let hits = self.found(&self.query, cx);
         if hits.is_empty() {
             let empty = t!("search-no-matches");
             return div().child(
@@ -1389,12 +1607,59 @@ impl SettingsView {
                     .rows(hits.iter().map(|_| row))
                     .draw(cx.processor(move |this: &mut Self, index: usize, _, cx| {
                         match hits.get(index) {
-                            Some((page, slot)) => this.result((index, count), *page, *slot, cx),
+                            Some((page, slot)) => this
+                                .result((index, count), *page, *slot, cx)
+                                .into_any_element(),
                             None => div().into_any_element(),
                         }
                     })),
             ),
         )
+    }
+
+    /// The panel under the search field: the settings that best answer what is typed, or a line
+    /// saying none do.
+    fn panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let offers = self.offers(cx);
+        let heading = t!("settings-search-results");
+        let none = offers
+            .is_empty()
+            .then(|| Vacancy::new(t!("search-no-matches")).spoken("settings-search-none"));
+
+        // New rows surface one after another and the panel stretches to fit them, the way the
+        // suggestions under the search page's field fill.
+        self.cascade.show(
+            offers
+                .iter()
+                .map(|(page, slot)| SharedString::from(result_key(*page, *slot))),
+        );
+        let count = offers.len();
+        let rows = offers
+            .iter()
+            .enumerate()
+            .map(|(at, (page, slot))| {
+                let level = self.cascade.level(&result_key(*page, *slot), window, cx);
+                let chosen = self.pick == Some(at);
+                let row = self
+                    .result((at, count), *page, *slot, cx)
+                    .tucked()
+                    .chosen(chosen)
+                    // The keyboard stays in the field, so the chosen card claims the active
+                    // descendant while every card reports its seat in the list.
+                    .when(chosen, |card| card.aria_active_descendant());
+                Cascade::surface(row, level)
+            })
+            .collect::<Vec<_>>();
+        let list = div()
+            .id("settings-search-offers")
+            .role(Role::ListBox)
+            .aria_label(heading)
+            .flex()
+            .flex_col()
+            .gap_px()
+            .children(none)
+            .children(rows);
+        self.unfold.wrap(list, false, window, cx).into_any_element()
     }
 
     /// One search result, placed by its rank and the number of results: the setting's name over
@@ -1405,7 +1670,7 @@ impl SettingsView {
         page: SettingsPage,
         slot: Slot,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Card {
         let title = self
             .slot_meta(slot, cx)
             .map(|(title, _)| title)
@@ -1420,22 +1685,30 @@ impl SettingsView {
             None => i18n::lookup(tab.key(), None),
         };
 
-        Card::new(
-            SharedString::from(format!("settings-result-{}-{title}", page.id())),
-            title,
-        )
-        .aria_description(place.clone())
-        .aria_position_in_set(index + 1)
-        .aria_size_of_set(count)
-        .fallback(tab.icon())
-        .meta(place)
-        .press(cx.listener(move |this, _, _, cx| this.open_result(page, slot, cx)))
-        .into_any_element()
+        Card::new(SharedString::from(result_key(page, slot)), title)
+            .aria_description(place.clone())
+            .aria_position_in_set(index + 1)
+            .aria_size_of_set(count)
+            .fallback(tab.icon())
+            .meta(place)
+            .press(cx.listener(move |this, _, window, cx| this.open_result(page, slot, window, cx)))
     }
 
-    /// Opens the page a result lives on and scrolls its setting into view.
-    fn open_result(&mut self, page: SettingsPage, slot: Slot, cx: &mut Context<Self>) {
+    /// Opens the page a result lives on and scrolls its setting into view. The search field lets
+    /// go of the keyboard, so the keys reach the page the result opened.
+    fn open_result(
+        &mut self,
+        page: SettingsPage,
+        slot: Slot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.reveal = Some(Reveal::Slot(slot));
+        self.marked = Some((slot, Instant::now()));
+        self.close_panel(cx);
+        if self.typing(window, cx) {
+            window.focus(&self.focus, cx);
+        }
         self.clear_search(cx);
         navigate(Destination::Settings(page), cx);
         cx.notify();
@@ -1615,6 +1888,12 @@ impl Render for SettingsView {
             this.child(self.library_modal(cx).into_any_element())
         })
     }
+}
+
+/// What tells one search result from another, as its element id and across the panel's frames.
+/// Two settings of a page may share a title, so the key names the setting itself.
+fn result_key(page: SettingsPage, slot: Slot) -> String {
+    format!("settings-result-{}-{slot:?}", page.id())
 }
 
 /// A group's heading: its icon, when it has one, before its name as an uppercase eyebrow.
