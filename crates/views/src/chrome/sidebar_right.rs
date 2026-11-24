@@ -175,8 +175,6 @@ impl Render for SidebarRight {
             // them.
             .when(!theme.transparent, |this| this.bg(theme.sidebar))
             .border_color(gpui::transparent_black())
-            // Its title sits level with the top edge of the page's sheet.
-            .pt(super::Chrome::sheet_gap(cx))
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),
                 _ => self

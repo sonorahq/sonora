@@ -1698,7 +1698,9 @@ impl<S: TableSource> Render for TableState<S> {
         let placeholders = self.placeholders(row, cx);
         let height = self.height(head, row, self.delegate.row_count().max(placeholders));
         let pinned = snapped(self.viewport.top.clamp(Pixels::ZERO, height - head), window);
-        let top = match self.viewport.top >= Pixels::ZERO {
+        // The head takes the page's corners only once it sticks to the top of the viewport,
+        // since anywhere lower it sits square in the middle of the page.
+        let top = match self.viewport.top > Pixels::ZERO {
             true => rounder(unpinned(self.corners, pinned), self.stuck),
             false => unpinned(self.corners, pinned),
         };

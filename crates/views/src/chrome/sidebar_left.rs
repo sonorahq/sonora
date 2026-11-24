@@ -874,9 +874,8 @@ impl Render for SidebarLeft {
                                     .flex_col()
                                     .gap_1()
                                     .w_full()
-                                    // The first row's fill starts level with the top edge of
-                                    // the page's sheet beside it.
-                                    .pt(super::Chrome::sheet_gap(cx))
+                                    // The first row keeps a little clear of the title bar.
+                                    .pt(theme.metrics.pad)
                                     .pb_3()
                                     .map(|column| match rail {
                                         true => column.px_2(),

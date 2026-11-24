@@ -160,9 +160,7 @@ impl Render for Workspace {
             .update(cx, |sidebar, cx| sidebar.adapt(reserved, window, cx));
         let left = self.sidebar.read(cx).occupied_width();
         let overlay_width = self.sidebar.read(cx).overlay_width();
-        // The sheet's gaps on either side belong to the chrome, so pages measure without them.
-        let gap = Chrome::sheet_gap(cx);
-        Chrome::publish(left + gap, right + gap, reserved, cx);
+        Chrome::publish(left, right, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
@@ -172,6 +170,14 @@ impl Render for Workspace {
             false => Pixels::ZERO,
         };
         Chrome::set_bottom(bottom, cx);
+        // The sheet meets the window's edge wherever no chrome lies beside it, and its bottom
+        // runs under a translucent player bar to the window's foot.
+        Chrome::set_sheet(
+            left + overlay_width == Pixels::ZERO,
+            right == Pixels::ZERO,
+            underlap,
+            cx,
+        );
         // A cached view is laid out from the style given here and its own root
         // style is never consulted, so it can only be cached while it is in the
         // flow at a width this knows: an overlaid sidebar places itself, and a
@@ -284,12 +290,8 @@ impl Render for Workspace {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            // The page lies on the chrome as a sheet, a gap clear of everything
-                            // around it.
-                            .ml(overlay_width + gap)
-                            .mt(gap)
-                            .mr(gap)
-                            .mb(gap)
+                            .ml(overlay_width)
+                            // The page lies on the chrome as a sheet.
                             .when(!theme.transparent, |this| this.bg(theme.background))
                             .when(overlay, |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())

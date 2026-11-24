@@ -8,21 +8,23 @@ use ui::ActiveTheme as _;
 use super::Chrome;
 
 /// The width of the sheet's edge, matching the sidebars' borders.
-const EDGE: Pixels = gpui::px(1.);
+pub(crate) const SHEET_EDGE: Pixels = gpui::px(1.);
 /// How many straight pieces the cut outside a corner's curve is made of.
 const SEGMENTS: usize = 16;
 
-/// Draws the page's frame as a sheet lying on the chrome: a rounded edge all the way round and,
-/// on an opaque window, the chrome's colour outside each rounded corner so whatever the page
-/// paints there is cut along the curve. Lay it over the page as its last child, filling it.
+/// Draws the page's frame as a sheet lying on the chrome: an edge with rounded corners wherever
+/// it meets the chrome and, on an opaque window, the chrome's colour outside each rounded corner
+/// so whatever the page paints there is cut along the curve. Lay it over the page as its last
+/// child, filling it.
 pub(crate) fn sheet_frame(cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let radius = Chrome::sheet_radius(cx);
+    let corners = Chrome::sheet_corners(cx);
+    let edges = Chrome::sheet_edges(cx);
     let edge = theme.sidebar_border;
     let backing = (!theme.transparent).then_some(theme.sidebar);
     canvas(
         |_, _, _| {},
-        move |bounds, _, window, _| paint(bounds, radius, edge, backing, window),
+        move |bounds, _, window, _| paint(bounds, corners, edges, edge, backing, window),
     )
     .absolute()
     .top_0()
@@ -34,40 +36,43 @@ pub(crate) fn sheet_frame(cx: &App) -> impl IntoElement {
 /// The corners a page's own fill takes where it meets the sheet's top corners: the sheet's
 /// radius less its edge, so the fill's curve runs along the inside of the edge's.
 pub(crate) fn inner_corners(cx: &App) -> Corners<Pixels> {
-    let inner = (Chrome::sheet_radius(cx) - EDGE).max(Pixels::ZERO);
+    let corners = Chrome::sheet_corners(cx);
     Corners {
-        top_left: inner,
-        top_right: inner,
+        top_left: (corners.top_left - SHEET_EDGE).max(Pixels::ZERO),
+        top_right: (corners.top_right - SHEET_EDGE).max(Pixels::ZERO),
         ..Corners::default()
     }
 }
 
-/// Cuts each corner with `backing` when there is one, then draws the rounded edge.
+/// Cuts each rounded corner with `backing` when there is one, then draws the edge.
 fn paint(
     bounds: Bounds<Pixels>,
-    radius: Pixels,
+    corners: Corners<Pixels>,
+    edges: Edges<Pixels>,
     edge: Hsla,
     backing: Option<Hsla>,
     window: &mut Window,
 ) {
-    if let Some(backing) = backing.filter(|_| radius > Pixels::ZERO) {
-        for (corner, toward) in [
-            (bounds.origin, point(1f32, 1.)),
-            (bounds.top_right(), point(-1., 1.)),
-            (bounds.bottom_left(), point(1., -1.)),
-            (bounds.bottom_right(), point(-1., -1.)),
+    if let Some(backing) = backing {
+        for (corner, toward, radius) in [
+            (bounds.origin, point(1f32, 1.), corners.top_left),
+            (bounds.top_right(), point(-1., 1.), corners.top_right),
+            (bounds.bottom_left(), point(1., -1.), corners.bottom_left),
+            (bounds.bottom_right(), point(-1., -1.), corners.bottom_right),
         ] {
-            cut(corner, toward, radius, backing, window);
+            if radius > Pixels::ZERO {
+                cut(corner, toward, radius, backing, window);
+            }
         }
     }
     window.paint_quad(quad(
         bounds,
-        Corners::all(radius),
+        corners,
         // Clear, but in the edge's own colour, so the border's inner antialiasing fades the edge
         // out instead of darkening it towards black, which made the curve look thinner and
         // dimmer than the straight edges it joins.
         edge.opacity(0.),
-        Edges::all(EDGE),
+        edges,
         edge,
         BorderStyle::Solid,
     ));
@@ -84,7 +89,7 @@ fn cut(
     window: &mut Window,
 ) {
     let centre = point(corner.x + radius * toward.x, corner.y + radius * toward.y);
-    let along = radius - EDGE / 2.;
+    let along = radius - SHEET_EDGE / 2.;
     let mut outline = vec![point(corner.x, centre.y), corner, point(centre.x, corner.y)];
     outline.extend((0..=SEGMENTS).rev().map(|step| {
         let angle = std::f32::consts::FRAC_PI_2 * step as f32 / SEGMENTS as f32;
