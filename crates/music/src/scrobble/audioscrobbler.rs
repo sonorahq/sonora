@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-use super::{Account, Link, Play, Secret, Service};
+use super::{Account, KeyRefused, Link, Play, Secret, Service};
 use crate::escape;
 
 /// The loopback address the browser hands the token back on.
@@ -18,6 +18,8 @@ const PATH: &str = "/scrobble";
 const WAIT: Duration = Duration::from_secs(300);
 /// How many listens last.fm's `track.scrobble` takes in one call.
 const LASTFM_BATCH: usize = 50;
+/// The error codes that refuse the key rather than the request: invalid, then suspended.
+const KEY_REFUSED: [u32; 2] = [10, 26];
 
 const PAGE: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
     <html><body>Sonora is connected. You can close this window.</body></html>";
@@ -203,7 +205,8 @@ async fn token(listener: TcpListener) -> Result<String> {
     }
 }
 
-/// Signs the form the way the protocol asks, posts it and turns a refusal into an error.
+/// Signs the form the way the protocol asks, posts it and turns a refusal into an error. A refused
+/// key comes back as [`KeyRefused`], so the caller can tell it from a passing failure.
 async fn post(endpoint: &str, secret: &str, mut form: Vec<(String, String)>) -> Result<Answer> {
     form.sort_by(|left, right| left.0.cmp(&right.0));
     form.push(("api_sig".to_owned(), signature(&form, secret)));
@@ -221,6 +224,9 @@ async fn post(endpoint: &str, secret: &str, mut form: Vec<(String, String)>) -> 
 
     if let Some(code) = answer.error {
         let message = answer.message.unwrap_or_default();
+        if KEY_REFUSED.contains(&code) {
+            return Err(KeyRefused { code, message }.into());
+        }
         bail!("the scrobbling service refused the request ({code}): {message}");
     }
     Ok(answer)
