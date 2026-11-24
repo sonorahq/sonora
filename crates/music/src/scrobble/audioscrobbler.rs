@@ -83,13 +83,18 @@ impl Service for AudioScrobbler {
             bail!("{} needs an api key and a secret", self.id);
         }
         // Last.fm refuses a bad key on its approval page and never calls back, so the key is
-        // checked here first, where a refusal still reaches the settings row.
+        // checked here first, where a refusal still reaches the settings row. Any other failure
+        // is left to the browser flow, which asks for a token of its own.
         if self.link == Link::Keys {
             let form = vec![
                 ("method".to_owned(), "auth.getToken".to_owned()),
                 ("api_key".to_owned(), key.clone()),
             ];
-            post(self.endpoint, &shared, form).await?;
+            if let Err(error) = post(self.endpoint, &shared, form).await
+                && KeyRefused::in_error(&error)
+            {
+                return Err(error);
+            }
         }
 
         let listener = TcpListener::bind(("127.0.0.1", PORT))
