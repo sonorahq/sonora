@@ -352,6 +352,8 @@ pub enum Failure {
     FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
+    /// Another device has playback, and its queue cannot be edited at a position.
+    SteeredReadOnly,
 }
 
 /// Why a line could not be read off the socket.

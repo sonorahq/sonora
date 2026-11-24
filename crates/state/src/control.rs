@@ -281,6 +281,13 @@ impl Control {
                     reply.send(Reply::Failed(Failure::Malformed)).ok();
                     return;
                 };
+                // A steered device only accepts an append. Refuse before fetching anything so
+                // no track lands at the end of a queue the listener never asked us to change.
+                let steered = self.playback.read(cx).steered(cx).is_some();
+                if steered {
+                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
+                    return;
+                }
                 (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
