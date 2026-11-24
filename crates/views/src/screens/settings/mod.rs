@@ -280,6 +280,9 @@ pub struct SettingsView {
     reveal: Option<Reveal>,
     /// The setting a search result opened and when, lit for a moment after the page moves to it.
     marked: Option<(Slot, Instant)>,
+    /// Whether the next route keeps the search, for the list Enter asks for on the equalizer,
+    /// which shares the header but not the page that lists it.
+    keep_search: bool,
     /// Where a lyrics source dragged over the priority list would land, as a gap between the
     /// enabled sources. `None` while the drop would leave the order as it is.
     lyrics_drop_gap: Option<usize>,
@@ -507,6 +510,7 @@ impl SettingsView {
             unfold: Unfold::default(),
             reveal: None,
             marked: None,
+            keep_search: false,
             lyrics_drop_gap: None,
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             drilled_from: None,
@@ -552,7 +556,7 @@ impl SettingsView {
     }
 
     /// Shows the tab a page belongs to and ends any search, so a route always lands on a plain
-    /// tab. A new route starts at the top of its tab, or at its section when that lies further
+    /// tab, unless the route is the one that carries a list asked for on the equalizer. A new route starts at the top of its tab, or at its section when that lies further
     /// down, and a route to the page already on show keeps the tab where it was scrolled. A
     /// drill-in going back to its tab returns to where the tab was scrolled when it opened.
     pub(crate) fn select(&mut self, page: SettingsPage, cx: &mut Context<Self>) {
@@ -609,7 +613,9 @@ impl SettingsView {
         if page.tab() == SettingsPage::Providers.tab() {
             self.selected_library = self.session.read(cx).library();
         }
-        self.clear_search(cx);
+        if !std::mem::take(&mut self.keep_search) {
+            self.clear_search(cx);
+        }
         cx.notify();
     }
 
@@ -773,6 +779,13 @@ impl SettingsView {
             None => {
                 self.list(self.typed.clone(), cx);
                 self.close_panel(cx);
+                // the equalizer draws the header over a page of its own, so the list opens on
+                // the settings page it came from
+                let shown = router::trail(cx).read(cx).current();
+                if self.searching() && !matches!(shown, Destination::Settings(_)) {
+                    self.keep_search = true;
+                    navigate(Destination::Settings(self.page), cx);
+                }
             }
         }
     }
