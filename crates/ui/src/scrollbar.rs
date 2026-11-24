@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use crate::glide::Glide;
-use crate::motion::Glowing as _;
+use crate::motion::{Glowing as _, Sprung, paced, spring};
 use crate::theme::ActiveTheme as _;
 
 const BAR: Pixels = px(6.);
@@ -19,7 +19,11 @@ const THUMB_INSET: Pixels = px(4.);
 const MIN_THUMB: Pixels = px(24.);
 const TRACK_INSET: Pixels = px(4.);
 const LINGER: Duration = Duration::from_secs(2);
-const IDLE: f32 = 0.;
+/// How long the spring takes to fade the bar in as the region scrolls and out once it settles,
+/// before the listener's pace stretches it.
+const FADE: Duration = Duration::from_millis(250);
+/// How close the fade may come to shown or hidden and still count as landed.
+const FADE_REST: f32 = 0.005;
 const RESTING: f32 = 0.35;
 const ACTIVE: f32 = 0.55;
 const MIDDLE_SCROLL_DEADZONE: Pixels = px(8.);
@@ -127,8 +131,14 @@ pub struct Scrollbar {
     scroll: ScrollHandle,
     list: Option<ListState>,
     seen: Pixels,
+    /// Whether the bar shows, from the moment the region scrolls until it has rested a while.
     awake: bool,
+    /// Whether the pointer is over the strip along the region's edge. With [`Self::on_thumb`]
+    /// it keeps a bar that shows from fading out, but never brings up a hidden one.
     hovered: bool,
+    /// Whether the pointer is over the thumb, which stands in from that strip and so hears the
+    /// pointer apart from it.
+    on_thumb: bool,
     always_visible: bool,
     /// Whether the bar only shows where the region is while it scrolls and takes no pointer.
     passive: bool,
@@ -141,6 +151,8 @@ pub struct Scrollbar {
     hover_guard: Option<HoverGuard>,
     scroll_guard: Option<ScrollGuard>,
     linger: Option<Task<()>>,
+    /// How far the bar has faded in, springing towards shown while it is awake.
+    fade: Sprung,
     glide: Glide,
     following: bool,
     nudges: u64,
@@ -158,6 +170,7 @@ impl Scrollbar {
             seen: Pixels::ZERO,
             awake: false,
             hovered: false,
+            on_thumb: false,
             always_visible: false,
             passive: false,
             track_inset: Pixels::ZERO,
@@ -168,6 +181,7 @@ impl Scrollbar {
             hover_guard: None,
             scroll_guard: None,
             linger: None,
+            fade: Sprung::at(0.),
             glide: Glide::default(),
             following: false,
             nudges: 0,
@@ -207,6 +221,7 @@ impl Scrollbar {
         if self.passive != passive {
             self.passive = passive;
             self.hovered = false;
+            self.on_thumb = false;
             cx.notify();
         }
     }
@@ -280,7 +295,7 @@ impl Scrollbar {
     /// Whether the pointer is parked on the bar. Fullscreen reads this to keep
     /// its chrome awake while the reader holds the scrollbar.
     pub fn hovered(&self) -> bool {
-        self.hovered
+        self.hovered || self.on_thumb
     }
 
     /// Records that the reader moved the view themselves. A precise scroll needs
@@ -522,17 +537,30 @@ impl Scrollbar {
         self.hover_guard = Some(Rc::new(guard));
     }
 
+    /// Shows the bar and lets it fade out once it has rested for `LINGER`. A bar under the
+    /// pointer stays, and the pointer leaving it starts the rest over.
     fn wake(&mut self, cx: &mut Context<Self>) {
         self.awake = true;
         cx.notify();
         self.linger = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(LINGER).await;
             this.update(cx, |this, cx| {
+                if this.hovered() {
+                    return;
+                }
                 this.awake = false;
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// Answers the pointer coming onto the bar or leaving it. It holds a bar that shows, even one
+    /// already fading out, and leaving starts its rest over, but it never brings up a hidden one.
+    fn pointed(&mut self, cx: &mut Context<Self>) {
+        if self.awake || self.fade.position() > 0. {
+            self.wake(cx);
+        }
     }
 
     fn moved(&mut self, offset: Pixels, cx: &mut Context<Self>) {
@@ -633,15 +661,21 @@ impl Render for Scrollbar {
             .max(Pixels::ZERO);
         let thumb = (track * (viewport / content)).max(MIN_THUMB).min(track);
         let travel = track - thumb;
-        let resting = match self.always_visible || self.awake || self.hovered {
-            true => RESTING,
-            false => IDLE,
+        let shown = match self.always_visible {
+            true => 1.,
+            false => {
+                let target = f32::from(u8::from(self.awake));
+                let config = spring(paced(FADE).as_secs_f32(), 0.);
+                self.fade.follow(target, config, FADE_REST, window, cx)
+            }
         };
+        let resting = RESTING * shown;
 
         let jump = target.clone();
         let drag = target.clone();
         let started = target.clone();
         let owner = cx.entity_id();
+        let bar = cx.weak_entity();
         let hover_guard = self.hover_guard.clone();
         let anchor = self.middle_scroll.map(|middle| middle.origin);
         let marker = theme.metrics.control;
@@ -695,7 +729,7 @@ impl Render for Scrollbar {
             .h(track)
             .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                 this.hovered = *hovered;
-                this.wake(cx);
+                this.pointed(cx);
                 if let Some(guard) = hover_guard.as_ref() {
                     guard(*hovered, window.window_handle(), cx);
                 }
@@ -725,8 +759,7 @@ impl Render for Scrollbar {
                     .h(thumb)
                     .rounded_full()
                     .bg(theme.muted_foreground.opacity(resting))
-                    .glow(theme.muted_foreground.opacity(ACTIVE), window, cx)
-                    .cursor_pointer()
+                    .when(shown > 0., |thumb| thumb.cursor_pointer())
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
@@ -773,7 +806,15 @@ impl Render for Scrollbar {
                             drag.set_offset(clamped);
                             this.moved(clamped, cx);
                         }),
-                    ),
+                    )
+                    .glowed(theme.muted_foreground.opacity(ACTIVE * shown))
+                    .on_hover(move |hovered, _, cx| {
+                        bar.update(cx, |this, cx| {
+                            this.on_thumb = *hovered;
+                            this.pointed(cx);
+                        })
+                        .ok();
+                    }),
             )
             .children(mark)
             .into_any_element()

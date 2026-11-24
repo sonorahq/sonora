@@ -38,6 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it, and above the player bar when the player bar is not transparent.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
+- Scrollbars fade in as you scroll and fade out once you stop, instead of popping in and out.
 - The settings search suggests matching settings in a panel under the field as you type, like the Search page does. Pick one with the arrow keys or a click to jump to it and light it up for a moment, or press Enter to list every match.
 - Settings name each group of options in a column beside it, with a thin line between groups instead of headings and wide gaps.
 - Window frame, animation and sidebar options moved from General to Appearance, and Page width left settings while settings.json keeps it.
