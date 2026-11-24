@@ -592,14 +592,30 @@ impl SettingsView {
         )
     }
 
+    /// Whether Sonora draws the window's controls itself, which the side and the traffic light
+    /// look only shape while it does. Server-side decorations leave them to the compositor.
+    #[cfg(not(target_os = "macos"))]
+    fn own_controls(&self, cx: &App) -> bool {
+        let settings = self.settings.read(cx);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let shown = !settings.server_side_decorations();
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let shown = settings.window_controls();
+        shown
+    }
+
+    /// The traffic light look of the window controls, off and held while Sonora draws no
+    /// controls of its own.
     #[cfg(not(target_os = "macos"))]
     pub(super) fn traffic_light_controls_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.settings.read(cx).traffic_light_controls();
+        let shown = self.own_controls(cx);
 
-        self.row(
+        super::Row::new(
             t!("settings-traffic-light-controls"),
-            Switch::new("traffic-light-controls", on)
+            Switch::new("traffic-light-controls", on && shown)
                 .name(t!("settings-traffic-light-controls"))
+                .disabled(!shown)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings.update(cx, |settings, cx| {
                         settings.set_traffic_light_controls(!on, cx)
@@ -607,6 +623,8 @@ impl SettingsView {
                 }))
                 .into_any_element(),
         )
+        .disabled(!shown)
+        .into_any_element()
     }
 
     /// The window's corners as one card per rounding, each showing a corner at that radius.
@@ -653,12 +671,8 @@ impl SettingsView {
 
     #[cfg(not(target_os = "macos"))]
     pub(super) fn side_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let settings = self.settings.read(cx);
-        let left = settings.controls_on_left();
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let shown = !settings.server_side_decorations();
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let shown = settings.window_controls();
+        let left = self.settings.read(cx).controls_on_left();
+        let shown = self.own_controls(cx);
 
         let sides = segmented(
             "controls-side",
@@ -675,10 +689,12 @@ impl SettingsView {
         )
         .when(!shown, |bar| bar.opacity(0.4));
 
-        self.row(
+        super::Row::new(
             t!("settings-controls-side"),
             sides.name(t!("settings-controls-side")).into_any_element(),
         )
+        .disabled(!shown)
+        .into_any_element()
     }
 
     pub(super) fn motion_row(&self, cx: &mut Context<Self>) -> AnyElement {
