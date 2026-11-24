@@ -27,10 +27,12 @@ ALWAYS = re.compile(
     r"|\.(c|cc|cpp|h|hpp|m|mm)$"
 )
 
-# How a Rust file names macOS: a cfg, a target triple, a module or a helper like `is_macos`.
-# Apple alone would also match Apple Music.
+# How a Rust file names macOS: a cfg, a target triple, a module, a helper like `is_macos`, or a
+# cfg that leaves Linux out, which a Unix one narrows to macOS. Apple alone would also match
+# Apple Music.
 MACOS = re.compile(
-    r'macos|apple-darwin|target_vendor\s*=\s*"apple"|target_os\s*=\s*"ios"',
+    r'macos|apple-darwin|target_vendor\s*=\s*"apple"|target_os\s*=\s*"ios"'
+    r'|not\((any\()?target_os\s*=\s*"linux"',
     re.IGNORECASE,
 )
 
