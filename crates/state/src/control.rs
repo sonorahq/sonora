@@ -277,13 +277,11 @@ impl Control {
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
             QueueCommand::At { items, position } => {
-                // A position is 1-based, so the first one is the gap right after the current
-                // track. Refuse zero rather than wrapping it into a huge gap.
-                let Some(gap) = position.checked_sub(1) else {
+                let Some(placement) = Self::placement_for(position) else {
                     reply.send(Reply::Failed(Failure::Malformed)).ok();
                     return;
                 };
-                (items, Place::Queue(QueuePlacement::Gap(gap)))
+                (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
         };
@@ -314,6 +312,17 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Where a 1-based queue position puts its items. The first position is the `Next` placement
+    /// rather than a gap at zero, so it always lands in the hand-queued run, even when replayed
+    /// history tracks sit ahead of that run. Positions past the end are capped by the queue.
+    fn placement_for(position: usize) -> Option<QueuePlacement> {
+        match position.checked_sub(1) {
+            None => None,
+            Some(0) => Some(QueuePlacement::Next),
+            Some(gap) => Some(QueuePlacement::Gap(gap)),
+        }
     }
 
     /// Plays or queues the best match of `text` and `kind` in the local library, ranked as the
@@ -1144,6 +1153,13 @@ mod tests {
     use music::{LyricsLine, RomanizedText};
 
     use super::*;
+
+    #[test]
+    fn queue_position_one_uses_the_next_placement() {
+        assert_eq!(Control::placement_for(1), Some(QueuePlacement::Next));
+        assert_eq!(Control::placement_for(2), Some(QueuePlacement::Gap(1)));
+        assert_eq!(Control::placement_for(0), None);
+    }
 
     fn hit(lyrics: Sheet) -> LyricsHit {
         LyricsHit {
