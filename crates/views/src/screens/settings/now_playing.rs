@@ -1,14 +1,11 @@
-use std::time::Duration;
-
-use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, div, svg};
+use gpui::{AnyElement, App, Context};
 use i18n::t;
 use state::{FullscreenControlsAutohide, SideTab};
-use ui::{ActiveTheme as _, MenuItem, Perch, Picker, Switch, Text, Tipped as _, VisualizerStyle};
+use ui::{MenuItem, Picker, Switch, VisualizerStyle};
 
 use super::rows::{chip, chips};
-use super::{Group, SettingsView, Slot};
+use super::{Group, Row, SettingsView, Slot};
 
 /// The views of the fullscreen player the visualizer can be drawn in, with the id each one's
 /// menu item goes by and the key of its name. `None` is the cover alone.
@@ -95,26 +92,7 @@ impl SettingsView {
     /// stands before the picker, saying the moment the pointer reaches it that the visualizer
     /// follows local files only, since Soloist's sound never passes through Sonora.
     pub(super) fn visualizer_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
         let chosen = self.settings.read(cx).visualizer_style();
-        let warning = self.local_only(cx).map(|note| {
-            div()
-                .id("settings-visualizer-soloist")
-                .role(Role::Image)
-                .aria_label(note.clone())
-                .flex_none()
-                .flex()
-                .items_center()
-                .child(
-                    svg()
-                        .path(icons::path("icons/triangle-alert.svg"))
-                        .size(theme.text(Text::Body))
-                        .text_color(theme.status_error),
-                )
-                .tip_label(note, Perch::Below)
-                // the mark is small and says nothing by itself, so its words come at once
-                .tooltip_show_delay(Duration::ZERO)
-        });
 
         let picker = Picker::new(VISUALIZER, &self.popovers, chosen.label())
             .width(Picker::NARROW)
@@ -129,16 +107,15 @@ impl SettingsView {
                     }))
             }));
 
-        self.row(
+        let row = Row::new(
             t!("settings-visualizer"),
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .children(warning)
-                .child(picker.name(t!("settings-visualizer")))
-                .into_any_element(),
-        )
+            picker.name(t!("settings-visualizer")).into_any_element(),
+        );
+        match self.local_only(cx) {
+            Some(note) => row.warning(note),
+            None => row,
+        }
+        .into_any_element()
     }
 
     /// Which views of the fullscreen player draw the visualizer. The menu stays open so several

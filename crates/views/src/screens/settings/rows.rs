@@ -1,10 +1,11 @@
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Div, ElementId, SharedString, Window, div};
+use gpui::{AnyElement, App, Div, ElementId, Hsla, SharedString, Stateful, Window, div, svg};
 use i18n::t;
-use ui::{ActiveTheme as _, Button, OptionCard, Room, TabBar};
+use ui::{ActiveTheme as _, Button, OptionCard, Perch, Room, TabBar, Tipped as _};
 
 use super::SettingsView;
 
@@ -17,14 +18,19 @@ const CHIP_FILL: f32 = 0.12;
 const CHIP_HOVER: f32 = 0.2;
 const CHIP_EDGE: f32 = 0.55;
 
-/// One row of a group: the label and optional explanation at the start, the control at the end.
-/// It stands at least one list row tall, with no inset, so labels line up with group headings.
-/// The label and explanation are text in the accessibility tree, but nothing ties them to the
-/// control, so the caller names a switch, picker or segmented control after the row as well.
+/// One row of a group: the label at the start and the control at the end. A description waits
+/// behind an info mark after the label, a warning behind a red mark before the control, and
+/// both show their words the moment the pointer reaches them. Only a live status, as the
+/// state of the update check, stays written under the label. It stands at least one list row
+/// tall, with no inset, so labels line up with group headings. The label is text in the
+/// accessibility tree and the marks are images named by their words, but nothing ties them to
+/// the control, so the caller names a switch, picker or segmented control after the row as well.
 #[derive(IntoElement)]
 pub(crate) struct Row {
     title: SharedString,
     detail: Option<SharedString>,
+    warning: Option<SharedString>,
+    status: Option<SharedString>,
     control: AnyElement,
     disabled: bool,
     yielding: bool,
@@ -35,6 +41,8 @@ impl Row {
         Self {
             title,
             detail: None,
+            warning: None,
+            status: None,
             control,
             disabled: false,
             yielding: false,
@@ -48,10 +56,23 @@ impl Row {
         self
     }
 
-    /// Adds a muted explanation below the label. It wraps well short of the control, so a long
-    /// one never runs up against a switch or picker.
+    /// Puts an explanation of the setting behind an info mark after the label.
     pub(crate) fn detail(mut self, detail: SharedString) -> Self {
         self.detail = Some(detail);
+        self
+    }
+
+    /// Puts a warning about the setting behind a red mark before the control, for a setting
+    /// something else takes out of use.
+    pub(crate) fn warning(mut self, warning: SharedString) -> Self {
+        self.warning = Some(warning);
+        self
+    }
+
+    /// Writes a live status in muted text under the label, for what the listener reads at a
+    /// glance rather than looks up.
+    pub(crate) fn status(mut self, status: SharedString) -> Self {
+        self.status = Some(status);
         self
     }
 
@@ -67,11 +88,31 @@ impl RenderOnce for Row {
         let Self {
             title,
             detail,
+            warning,
+            status,
             control,
             disabled,
             yielding,
         } = self;
         let theme = *cx.theme();
+        let info = detail.map(|detail| {
+            mark(
+                SharedString::from(format!("settings-row-detail-{title}")),
+                "icons/info.svg",
+                theme.muted_foreground,
+                detail,
+                cx,
+            )
+        });
+        let warning = warning.map(|warning| {
+            mark(
+                SharedString::from(format!("settings-row-warning-{title}")),
+                "icons/triangle-alert.svg",
+                theme.status_error,
+                warning,
+                cx,
+            )
+        });
 
         div()
             .flex()
@@ -90,21 +131,30 @@ impl RenderOnce for Row {
                     .flex_col()
                     .gap_1()
                     .child(
-                        ui::spoken(
-                            SharedString::from(format!("settings-row-{title}")),
-                            title.clone(),
-                        )
-                        .truncate(),
-                    )
-                    .children(detail.map(|detail| {
                         div()
-                            .id(SharedString::from(format!("settings-row-detail-{title}")))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .min_w_0()
+                            .child(
+                                ui::spoken(
+                                    SharedString::from(format!("settings-row-{title}")),
+                                    title.clone(),
+                                )
+                                .min_w_0()
+                                .truncate(),
+                            )
+                            .children(info),
+                    )
+                    .children(status.map(|status| {
+                        div()
+                            .id(SharedString::from(format!("settings-row-status-{title}")))
                             .role(Role::Paragraph)
-                            .aria_label(detail.clone())
+                            .aria_label(status.clone())
                             .pr_8()
                             .text_size(theme.text(ui::Text::Small))
                             .text_color(theme.muted_foreground)
-                            .child(detail)
+                            .child(status)
                     })),
             )
             .child(
@@ -113,9 +163,42 @@ impl RenderOnce for Row {
                         true => this.flex_1().min_w_0().flex().justify_end(),
                         false => this.flex_none(),
                     })
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .children(warning)
                     .child(control),
             )
     }
+}
+
+/// A small mark of `icon` in `color` that shows `words` the moment the pointer reaches it, for
+/// a description or a warning that would crowd the page written out. Screen readers hear it as
+/// an image named by its words.
+pub(crate) fn mark(
+    id: SharedString,
+    icon: &'static str,
+    color: Hsla,
+    words: SharedString,
+    cx: &App,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+
+    div()
+        .id(id)
+        .role(Role::Image)
+        .aria_label(words.clone())
+        .flex_none()
+        .flex()
+        .items_center()
+        .child(
+            svg()
+                .path(icons::path(icon))
+                .size(theme.text(ui::Text::Label))
+                .text_color(color),
+        )
+        .tip_label(words, Perch::Below)
+        .tooltip_show_delay(Duration::ZERO)
 }
 
 impl SettingsView {
@@ -132,8 +215,8 @@ impl SettingsView {
             .then(|| t!("settings-soloist-local-only"))
     }
 
-    /// A row for a setting Soloist takes out of use: muted, with the reason under its label,
-    /// while `unavailable`. The caller disables the control.
+    /// A row for a setting Soloist takes out of use: muted, with the reason behind a red mark
+    /// before its control, while `unavailable`. The caller disables the control.
     pub(super) fn soloist_row_for(
         &self,
         title: SharedString,
@@ -142,7 +225,7 @@ impl SettingsView {
     ) -> AnyElement {
         let row = Row::new(title, control).disabled(unavailable);
         match unavailable {
-            true => row.detail(t!("settings-soloist-unavailable")),
+            true => row.warning(t!("settings-soloist-unavailable")),
             false => row,
         }
         .into_any_element()

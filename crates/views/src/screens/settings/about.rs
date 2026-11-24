@@ -152,7 +152,7 @@ impl SettingsView {
             t!("settings-version-title", version = version.as_ref()),
             check.into_any_element(),
         )
-        .detail(status)
+        .status(status)
         .into_any_element()
     }
 

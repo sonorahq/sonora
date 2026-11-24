@@ -442,23 +442,12 @@ impl SettingsView {
                 )
             });
 
-        div()
-            .flex()
-            .flex_col()
-            .child(self.row(t!("settings-widevine"), action.into_any_element()))
-            .when(offerable, |row| {
-                row.child(
-                    div()
-                        .id("settings-widevine-detail")
-                        .role(Role::Paragraph)
-                        .aria_label(detail.clone())
-                        .pb_5()
-                        .text_color(theme.muted_foreground)
-                        .text_size(theme.text(Text::Label))
-                        .child(detail),
-                )
-            })
-            .into_any_element()
+        let row = super::Row::new(t!("settings-widevine"), action.into_any_element());
+        match offerable {
+            true => row.detail(detail),
+            false => row,
+        }
+        .into_any_element()
     }
 }
 
@@ -467,8 +456,8 @@ impl SettingsView {
     /// Soloist on this computer. Not set up, it offers the setup. Set up, it names the build and
     /// carries the switch that turns Soloist on and off without undoing the setup. Remove is
     /// offered whenever the program is on disk, a setup left halfway included. The explanation
-    /// wraps below the row either way, since it is where the listener learns what Soloist
-    /// changes before they turn it on and after.
+    /// waits behind the row's info mark either way, since it is where the listener learns what
+    /// Soloist changes before they turn it on and after.
     pub(super) fn soloist_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let state = self.soloist.read(cx).state().clone();
@@ -534,20 +523,8 @@ impl SettingsView {
                 )
             });
 
-        div()
-            .flex()
-            .flex_col()
-            .child(self.row(t!("settings-soloist"), action.into_any_element()))
-            .child(
-                div()
-                    .id("settings-soloist-detail")
-                    .role(Role::Paragraph)
-                    .aria_label(detail.clone())
-                    .pb_5()
-                    .text_color(theme.muted_foreground)
-                    .text_size(theme.text(Text::Label))
-                    .child(detail),
-            )
+        super::Row::new(t!("settings-soloist"), action.into_any_element())
+            .detail(detail)
             .into_any_element()
     }
 }

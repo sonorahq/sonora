@@ -1,10 +1,9 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, SharedString};
+use gpui::{AnyElement, Context, SharedString, div};
 use i18n::{Language, t};
 use router::Screen;
-use ui::{MenuItem, Picker, Saver, Switch};
+use ui::{Button, MenuItem, Picker, Saver, Switch};
 
-use super::rows::segmented;
 use super::{Group, LANGUAGES, SettingsView, Slot};
 use crate::shared::popups::matches_query;
 
@@ -161,27 +160,59 @@ impl SettingsView {
         self.row(t!("settings-language"), picker.into_any_element())
     }
 
+    /// The frame cap of a window in the background as a stepper: minus caps it lower, plus
+    /// lifts it towards no cap at all.
     pub(super) fn saver_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.settings.read(cx).saver();
+        let place = Saver::ALL
+            .iter()
+            .position(|saver| *saver == current)
+            .unwrap_or_default();
+        // the savers run from no cap to the lowest, so a lower cap is the next one along
+        let lower = Saver::ALL.get(place + 1).copied();
+        let higher = place
+            .checked_sub(1)
+            .and_then(|place| Saver::ALL.get(place))
+            .copied();
+        let step =
+            |id: &'static str, label: &'static str, name: &'static str, next: Option<Saver>| {
+                Button::new(id)
+                    .label(label)
+                    .name(i18n::lookup(name, None))
+                    .small()
+                    .outline()
+                    .disabled(next.is_none())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let Some(next) = next else { return };
+                        this.settings
+                            .update(cx, |settings, cx| settings.set_saver(next, cx));
+                        cx.notify();
+                    }))
+            };
 
-        let choices = segmented(
-            "saver",
-            Saver::ALL.map(|choice| (choice, choice.label())),
-            current,
-            cx.listener(|this, choice: &Saver, _, cx| {
-                let choice = *choice;
-                this.settings
-                    .update(cx, |settings, cx| settings.set_saver(choice, cx));
-                cx.notify();
-            }),
-        );
+        let stepper = div()
+            .id("settings-saver-stepper")
+            .role(gpui::accesskit::Role::Group)
+            .aria_label(t!("settings-saver"))
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(step(
+                "saver-lower",
+                "\u{2212}",
+                "settings-saver-lower",
+                lower,
+            ))
+            .child(ui::spoken_steady(
+                "settings-saver-value",
+                current.label(),
+                Saver::ALL.map(Saver::label),
+            ))
+            .child(step("saver-higher", "+", "settings-saver-higher", higher));
 
-        super::Row::new(
-            t!("settings-saver"),
-            choices.name(t!("settings-saver")).into_any_element(),
-        )
-        .detail(t!("settings-saver-detail"))
-        .into_any_element()
+        super::Row::new(t!("settings-saver"), stepper.into_any_element())
+            .detail(t!("settings-saver-detail"))
+            .into_any_element()
     }
 
     pub(super) fn adaptive_menu_row(&self, cx: &mut Context<Self>) -> AnyElement {
