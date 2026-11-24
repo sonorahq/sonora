@@ -11,13 +11,14 @@ use gpui::{
 };
 use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
-use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
-use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
+use input::ToggleFullscreen;
+use state::{AppSettings, Playback, PlayerBarLayout, Queue, Sonora, Tool, Zone};
 use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState, Sprung};
 
+use crate::chrome::Chrome;
+use crate::chrome::panels::{self, Customizing};
 use crate::chrome::sessions_button::SessionsButton;
 use crate::chrome::timeline::{Released, Timeline};
-use crate::chrome::{Chrome, SidebarRight};
 use crate::chrome::{jam, members};
 use crate::shared::menus::ItemMenu;
 use crate::shared::now_playing::track_details;
@@ -51,6 +52,8 @@ const SEEK_FLOOR: f32 = 220.;
 /// The room a side of the classic bar keeps for the track's title once the volume has folded,
 /// as a share of the cover metric.
 const TITLE_ROOM: f32 = 1.4;
+/// The width of the rule a separator draws among the bar's tools.
+const RULE: Pixels = px(1.);
 /// The stacked bar's `gap_2` between its two rows, in rems.
 const STACK_GAP: f32 = 0.5;
 /// The island's `gap_5` between its transport, its middle and its tools, in rems.
@@ -109,6 +112,8 @@ pub(crate) struct PlayerBar {
     track_menu: ItemMenu,
     sessions: Entity<SessionsButton>,
     context_menu: Option<(music::Track, Point<Pixels>)>,
+    /// Where a right click on the bar opened the menu that arranges the bars.
+    panels_menu: Option<Point<Pixels>>,
     /// The clocks and the seek bar, which follow the position without redrawing the bar.
     timeline: Entity<Timeline>,
     volume: ScrubberState,
@@ -147,6 +152,11 @@ impl PlayerBar {
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<ShellSwap>(|_, cx| cx.notify()).detach();
         cx.observe_global::<CoverRoom>(|_, cx| cx.notify()).detach();
+        let customizing = Customizing::entity(cx);
+        cx.observe(&customizing, |_, _, cx| cx.notify()).detach();
+        // Back, forward and the navigation tools can stand in the bar, and the bar is cached.
+        cx.observe(&router::trail(cx), |_, _, cx| cx.notify())
+            .detach();
 
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
@@ -166,6 +176,7 @@ impl PlayerBar {
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             sessions,
             context_menu: None,
+            panels_menu: None,
             timeline,
             volume: ScrubberState::new("volume"),
             over_volume: None,
@@ -253,59 +264,41 @@ impl PlayerBar {
         }
     }
 
-    fn side_buttons(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let (open, tab, lyrics) = {
-            let settings = self.settings.read(cx);
-            (
-                settings.sidebar_right_open(),
-                settings.sidebar_right_tab(),
-                settings.lyrics_enabled(),
-            )
-        };
-
-        let button = move |id: &'static str, icon: &'static str, hint: &'static str, side| {
-            let showing = open && tab == side;
-
-            Button::new(id)
-                .ghost()
-                .small()
-                .icon(icon)
-                .tooltip_above(hint)
-                .selected(showing)
-                .tint(match showing {
-                    true => theme.foreground,
-                    false => theme.muted_foreground,
-                })
-                .on_click(move |_, window, cx| {
-                    let action: Box<dyn gpui::Action> = match side {
-                        SideTab::Queue => Box::new(ToggleQueue),
-                        SideTab::Lyrics => Box::new(ToggleLyrics),
-                        SideTab::Members => Box::new(ShowMembers),
-                    };
-                    window.dispatch_action(action, cx);
-                })
-        };
-
-        div()
+    /// The bar's own tools in the order the listener arranged them, or their tiles while the
+    /// bars are arranged.
+    fn tools(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let group = div()
+            .id("player-tools")
             .flex()
             .flex_none()
             .items_center()
-            .gap_1()
-            .when(lyrics, |this| {
-                this.child(button(
-                    "player-lyrics",
-                    "icons/mic-vocal.svg",
-                    "lyrics-title",
-                    SideTab::Lyrics,
-                ))
+            .gap_1();
+        if Customizing::editing(cx) {
+            // An empty bar still leaves room to drop a tool into.
+            return panels::zone(Zone::PlayerBar, group, cx)
+                .min_w(cx.theme().metrics.control_small * 2.)
+                .min_h(cx.theme().metrics.control_small)
+                .children(panels::tiles(Zone::PlayerBar, false, window, cx))
+                .into_any_element();
+        }
+        let tools = self
+            .settings
+            .read(cx)
+            .panels()
+            .zone(Zone::PlayerBar)
+            .iter()
+            .filter_map(|&tool| {
+                let element = match tool {
+                    Tool::Sessions => panels::shown(tool, window, cx)
+                        .then(|| self.sessions.clone().into_any_element()),
+                    Tool::Separator => Some(separator(cx)),
+                    tool => panels::icon_tool(tool, Zone::PlayerBar, window, cx),
+                };
+                element.map(|element| (tool, element))
             })
-            .child(button(
-                "player-queue",
-                "icons/list-music.svg",
-                "queue-title",
-                SideTab::Queue,
-            ))
+            .collect();
+        group
+            .children(panels::tidy(tools, |_| false))
             .into_any_element()
     }
 
@@ -568,38 +561,44 @@ impl PlayerBar {
         ui::snapped(height, window)
     }
 
-    /// How many icon buttons stand before the volume: the sessions picker while it shows and
-    /// the panel buttons while the window has room for the right panel.
+    /// How many icon buttons stand before the volume: the tools of the bar with something to
+    /// show, or every tile and the gap a dragged tool would land in while the bars are arranged.
+    /// A separator is narrow enough to leave out.
     fn tool_count(window: &Window, cx: &App) -> usize {
-        usize::from(Self::picker_shown(cx)) + Self::panel_buttons(window, cx)
-    }
-
-    /// Whether the bar shows its Sessions picker.
-    fn picker_shown(cx: &App) -> bool {
-        Sonora::global(cx).settings.read(cx).sessions_button()
-            && (Sonora::global(cx).devices.read(cx).available()
-                || Sonora::global(cx).listening.read(cx).available(cx))
-    }
-
-    /// How many panel buttons the bar shows, none while the window has no room for the panel.
-    fn panel_buttons(window: &Window, cx: &App) -> usize {
-        match SidebarRight::available(window) {
-            true => 1 + usize::from(Sonora::global(cx).settings.read(cx).lyrics_enabled()),
-            false => 0,
+        let panels = Sonora::global(cx).settings.read(cx).panels();
+        let tools = panels.zone(Zone::PlayerBar);
+        match Customizing::editing(cx) {
+            true => tools.len() + 1,
+            false => tools
+                .iter()
+                .filter(|tool| **tool != Tool::Separator && panels::shown(**tool, window, cx))
+                .count(),
         }
     }
 
     /// The tools for a view below `Room::Wide` that copies the bar's layout: `sessions` where the
-    /// bar shows its picker. The bar has no panel buttons there, and its tools take their place
-    /// in the row even when they draw nothing, so the copy's do too and its seek bar ends where
-    /// the bar's does.
-    pub(crate) fn tools_like(sessions: Entity<SessionsButton>, cx: &App) -> Div {
+    /// bar shows its picker, and a button's room for each other tool the bar shows. The bar has no
+    /// panel buttons there, and its tools take their place in the row even when they draw
+    /// nothing, so the copy's do too and its seek bar ends where the bar's does.
+    pub(crate) fn tools_like(sessions: Entity<SessionsButton>, window: &Window, cx: &App) -> Div {
+        let tools: Vec<Tool> = Sonora::global(cx)
+            .settings
+            .read(cx)
+            .panels()
+            .zone(Zone::PlayerBar)
+            .iter()
+            .copied()
+            .filter(|tool| *tool != Tool::Separator && panels::shown(*tool, window, cx))
+            .collect();
         div()
             .flex()
             .flex_none()
             .items_center()
             .gap_1()
-            .when(Self::picker_shown(cx), |this| this.child(sessions))
+            .children(tools.into_iter().map(|tool| match tool {
+                Tool::Sessions => sessions.clone().into_any_element(),
+                _ => div().flex_none().size(px(ICON_BUTTON)).into_any_element(),
+            }))
     }
 
     /// How the bar draws its volume control at this width, in whatever layout it has.
@@ -829,20 +828,10 @@ impl Render for PlayerBar {
         let stacked = Self::stacked(window, layout);
         // Equal wings keep the title centered while reserving the original volume slider width.
         let centered_wing = theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.;
-        let sides = match SidebarRight::available(window) {
-            true => Some(self.side_buttons(cx)),
-            false => None,
-        };
-        // the Sessions button stands with the panel buttons, one gap apart like them, and takes no
-        // gap of its own while it draws nothing or the listener hid it
-        let picker = Self::picker_shown(cx);
-        let buttons = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .when(picker, |this| this.child(self.sessions.clone()))
-            .children(sides);
+        if Customizing::editing(cx) {
+            Customizing::animate(window, cx);
+        }
+        let buttons = self.tools(window, cx);
 
         // Only the island has a seek line that opens. Another layout, or a window too narrow
         // for the island, starts it shut the next time.
@@ -872,7 +861,17 @@ impl Render for PlayerBar {
             cx,
         )
         .occlude()
-        .on_mouse_move(cx.listener(Self::hover));
+        .on_mouse_move(cx.listener(Self::hover))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if window.default_prevented() || Customizing::editing(cx) {
+                    return;
+                }
+                this.panels_menu = Some(event.position);
+                cx.notify();
+            }),
+        );
 
         let context_menu = self.context_menu.clone().map(|(track, position)| {
             Popup::new(position, self.track_menu.for_track(&track, cx)).on_close(cx.listener(
@@ -1029,7 +1028,7 @@ impl Render for PlayerBar {
                         .child(transport(&self.playback, false, cx))
                         .into_any_element(),
                     seek: seek.into_any_element(),
-                    tools: Some(buttons.into_any_element()),
+                    tools: Some(buttons),
                     sound: self.sound(Self::volume(window, cx), cx),
                     corner: self.fullscreen_button(cx),
                 };
@@ -1037,8 +1036,30 @@ impl Render for PlayerBar {
             }
         };
 
+        let panels_menu = self.panels_menu.map(|at| {
+            Popup::new(at, panels::menu())
+                .above()
+                .on_close(cx.listener(|this, _, _, cx| {
+                    this.panels_menu = None;
+                    cx.notify();
+                }))
+        });
+
         content
             .relative()
             .when_some(context_menu, |this, menu| this.child(menu))
+            .children(panels_menu)
     }
+}
+
+/// The upright rule a separator draws among the bar's tools.
+fn separator(cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .flex_none()
+        .w(RULE)
+        .h(theme.metrics.control_small / 2.)
+        .mx_1()
+        .bg(theme.border)
+        .into_any_element()
 }

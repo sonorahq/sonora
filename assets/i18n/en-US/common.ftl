@@ -73,6 +73,24 @@ nav-sidebar-right = Show or hide lyrics and queue
 nav-pinned = Pinned
 nav-unpin = Unpin
 nav-pin-hint = Drop here to pin
+
+# arranging the title bar, sidebar and player bar
+panels-customize = Customize panels…
+panels-title = Customize panels
+panels-hint = Drag items into the title bar, sidebar or player. Drag one off its bar to take it out.
+panels-offers = Available items
+panels-add = Add { $name }
+panels-remove = Remove { $name }
+panels-anchored = Can move, but always stays in a bar
+panels-done = Done
+panels-restore = Restore defaults
+panels-zone-title-bar = Title bar
+panels-zone-sidebar = Sidebar
+panels-zone-player-bar = Player
+panels-spacer = Flexible space
+panels-separator = Separator
+panels-page-tools = Page tools
+panels-downloads = Downloads
 library-liked-songs = Favorites
 library-no-songs = No favorites yet
 library-no-albums = No saved albums yet

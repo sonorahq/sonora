@@ -2,22 +2,23 @@
 use gpui::Decorations;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, SharedString, Window, div, px};
+use gpui::{AnyElement, App, Point, SharedString, Window, div, px};
 use gpui::{
-    AnyView, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Render,
+    AnyView, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Render,
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Badge, Button, MenuItem, Picker, Popovers, Spin};
+use ui::{ActiveTheme as _, Badge, Button, MenuItem, Picker, Popovers, Popup, Spin};
 
 use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
+use crate::chrome::panels::{self, Customizing};
 use i18n::t;
-use input::Refresh;
+use input::{CustomizePanels, Refresh, ToggleSidebar};
 use music::SignIn;
 use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
-use state::{AppSettings, Sonora};
+use state::{AppSettings, Sonora, Tool, Zone};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
 /// The rule between the current screen's controls and the account and sidebar segment.
@@ -70,11 +71,6 @@ impl Default for TitleBarOptions {
     }
 }
 
-pub(crate) enum TitleBarEvent {
-    ToggleSidebar,
-    ToggleSidebarRight,
-}
-
 pub(crate) struct TitleBar {
     navigation: Entity<Navigation>,
     settings: Entity<AppSettings>,
@@ -88,9 +84,9 @@ pub(crate) struct TitleBar {
     downloads: Entity<DownloadsButton>,
     /// The account menu's group, so it closes when another of the bar's menus opens.
     popovers: Popovers,
+    /// Where a right click on the bar opened its menu.
+    menu_at: Option<Point<Pixels>>,
 }
-
-impl EventEmitter<TitleBarEvent> for TitleBar {}
 
 impl TitleBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -105,6 +101,8 @@ impl TitleBar {
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe(&Sonora::global(cx).session.clone(), |_, _, cx| cx.notify())
             .detach();
+        let customizing = Customizing::entity(cx);
+        cx.observe(&customizing, |_, _, cx| cx.notify()).detach();
         Self {
             navigation,
             settings,
@@ -114,6 +112,7 @@ impl TitleBar {
             spin: Spin::default(),
             downloads: cx.new(DownloadsButton::new),
             popovers: Popovers::default(),
+            menu_at: None,
         }
     }
 
@@ -131,107 +130,73 @@ impl TitleBar {
         cx.notify();
     }
 
-    fn history(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.busy.as_ref().is_some_and(|busy| !busy(cx)) {
-            self.busy = None;
-        }
-        match self.busy.is_some() {
-            true => self.spin.start(),
-            false => self.spin.stop(),
+    /// One of the history buttons, which lights up on hover like the sidebar's rows.
+    fn step(&self, tool: Tool, cx: &App) -> AnyElement {
+        let hover = cx.theme().sidebar_accent;
+        let navigation = self.navigation.read(cx);
+        let (id, icon, tip, can) = match tool {
+            Tool::Back => (
+                "history-back",
+                "icons/chevron-left.svg",
+                "nav-back",
+                navigation.can_go_back(),
+            ),
+            _ => (
+                "history-forward",
+                "icons/chevron-right.svg",
+                "nav-forward",
+                navigation.can_go_forward(),
+            ),
+        };
+        let trail = self.navigation.clone();
+
+        Button::new(id)
+            .ghost()
+            .icon(icon)
+            .tooltip(tip)
+            .disabled(!can)
+            .size_8()
+            .px_0()
+            .when(can, |button| {
+                button
+                    .hover(move |style| style.bg(hover))
+                    .active(move |style| style.bg(hover))
+            })
+            .on_click(move |_, _, cx| {
+                trail.update(cx, |navigation, cx| match tool {
+                    Tool::Back => navigation.back(cx),
+                    _ => navigation.forward(cx),
+                })
+            })
+            .into_any_element()
+    }
+
+    /// The refresh button while the page can reload, turning until the reload has its data.
+    fn refresh(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.navigation.read(cx).current().refreshes() {
+            return None;
         }
         let turn = self.spin.turn(window, cx);
         let hover = cx.theme().sidebar_accent;
-        let navigation = self.navigation.read(cx);
-        let (can_back, can_forward) = (navigation.can_go_back(), navigation.can_go_forward());
-        let refreshes = navigation.current().refreshes();
-        let back = self.navigation.clone();
-        let forward = self.navigation.clone();
 
-        div()
-            .id("titlebar-history")
-            .role(Role::Toolbar)
-            .aria_label(i18n::lookup("nav-trail", None))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Button::new("history-back")
-                    .ghost()
-                    .icon("icons/chevron-left.svg")
-                    .tooltip("nav-back")
-                    .disabled(!can_back)
-                    .size_8()
-                    .px_0()
-                    .when(can_back, |button| {
-                        button
-                            .hover(move |style| style.bg(hover))
-                            .active(move |style| style.bg(hover))
-                    })
-                    .on_click(move |_, _, cx| {
-                        back.update(cx, |navigation, cx| navigation.back(cx))
-                    }),
-            )
-            .child(
-                Button::new("history-forward")
-                    .ghost()
-                    .icon("icons/chevron-right.svg")
-                    .tooltip("nav-forward")
-                    .disabled(!can_forward)
-                    .size_8()
-                    .px_0()
-                    .when(can_forward, |button| {
-                        button
-                            .hover(move |style| style.bg(hover))
-                            .active(move |style| style.bg(hover))
-                    })
-                    .on_click(move |_, _, cx| {
-                        forward.update(cx, |navigation, cx| navigation.forward(cx))
-                    }),
-            )
-            .when(refreshes, |history| {
-                history.child(
-                    Button::new("history-refresh")
-                        .ghost()
-                        .icon("icons/refresh-cw.svg")
-                        .turned(turn)
-                        .tooltip("app-refresh")
-                        .size_8()
-                        .px_0()
-                        .hover(move |style| style.bg(hover))
-                        .active(move |style| style.bg(hover))
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(Refresh), cx)),
-                )
-            })
-    }
-
-    fn lyrics_toggle(&self, open: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Button::new("sidebar-right-toggle")
-                    .ghost()
-                    .small()
-                    .icon(match open {
-                        true => "icons/panel-right-close.svg",
-                        false => "icons/panel-right-open.svg",
-                    })
-                    .tooltip("nav-sidebar-right")
-                    .aria_expanded(open)
-                    .on_click(
-                        cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebarRight)),
-                    ),
-            )
+        Some(
+            Button::new("history-refresh")
+                .ghost()
+                .icon("icons/refresh-cw.svg")
+                .turned(turn)
+                .tooltip("app-refresh")
+                .size_8()
+                .px_0()
+                .hover(move |style| style.bg(hover))
+                .active(move |style| style.bg(hover))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(Refresh), cx))
+                .into_any_element(),
+        )
     }
 
     /// The account button and the menu it opens: the connected services to switch between,
-    /// guest mode when a provider offers it, a way to manage them, then History and Settings.
+    /// guest mode when a provider offers it, a way to manage them, then History, Settings and
+    /// the way into arranging the bars.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
         let guest = session.read(cx).providers().find(|info| {
@@ -284,42 +249,41 @@ impl TitleBar {
             );
         }
 
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Picker::icon("account", &self.popovers, "icons/circle-user-round.svg")
-                    .tooltip("tool-account")
-                    .width(Picker::REGULAR)
-                    .items(services)
-                    .item(MenuItem::separator("account-services"))
-                    .item(
-                        MenuItem::new("account-manage", t!("account-manage"))
-                            .icon("icons/user-round.svg")
-                            .on_click(|_, _, cx| {
-                                navigate(Destination::Settings(SettingsPage::Accounts), cx)
-                            }),
-                    )
-                    .item(MenuItem::separator("account-pages"))
-                    .item(
-                        MenuItem::new("account-history", t!("nav-history"))
-                            .icon("icons/rotate-ccw-clock.svg")
-                            .on_click(|_, _, cx| navigate(Destination::History, cx)),
-                    )
-                    .item(
-                        MenuItem::new("account-settings", t!("nav-settings"))
-                            .icon("icons/settings.svg")
-                            .on_click(|_, _, cx| open_settings(cx)),
-                    ),
+        Picker::icon("account", &self.popovers, "icons/circle-user-round.svg")
+            .tooltip("tool-account")
+            .width(Picker::REGULAR)
+            .items(services)
+            .item(MenuItem::separator("account-services"))
+            .item(
+                MenuItem::new("account-manage", t!("account-manage"))
+                    .icon("icons/user-round.svg")
+                    .on_click(|_, _, cx| {
+                        navigate(Destination::Settings(SettingsPage::Accounts), cx)
+                    }),
+            )
+            .item(MenuItem::separator("account-pages"))
+            .item(
+                MenuItem::new("account-history", t!("nav-history"))
+                    .icon("icons/rotate-ccw-clock.svg")
+                    .on_click(|_, _, cx| navigate(Destination::History, cx)),
+            )
+            .item(
+                MenuItem::new("account-settings", t!("nav-settings"))
+                    .icon("icons/settings.svg")
+                    .on_click(|_, _, cx| open_settings(cx)),
+            )
+            .item(
+                MenuItem::new("account-customize", t!("panels-customize"))
+                    .icon("icons/pencil.svg")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(CustomizePanels), cx)
+                    }),
             )
     }
 
     /// The thin upright rule that sets the account and sidebar segment apart from the controls
     /// of the current screen.
-    fn segment_rule(cx: &App) -> impl IntoElement {
+    fn segment_rule(cx: &App) -> AnyElement {
         let theme = cx.theme();
 
         div()
@@ -328,38 +292,104 @@ impl TitleBar {
             .h(theme.metrics.control_small / 2.)
             .mx_1()
             .bg(theme.border)
+            .into_any_element()
     }
 
-    fn toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn toggle(&self) -> AnyElement {
         let icon = match self.options.sidebar_open {
             true => "icons/panel-left-close.svg",
             false => "icons/panel-left-open.svg",
         };
 
-        div()
+        Button::new("sidebar-toggle")
+            .ghost()
             .flex()
-            .flex_none()
-            .items_center()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                Button::new("sidebar-toggle")
-                    .ghost()
-                    .flex()
-                    .small()
-                    .icon(icon)
-                    .tooltip("nav-sidebar")
-                    .aria_expanded(self.options.sidebar_open)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(TitleBarEvent::ToggleSidebar))),
-            )
+            .small()
+            .icon(icon)
+            .tooltip("nav-sidebar")
+            .aria_expanded(self.options.sidebar_open)
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleSidebar), cx))
+            .into_any_element()
+    }
+
+    /// The bar's tools in the order the listener arranged them, with the current screen's own
+    /// controls where the page tools stand.
+    fn tools(
+        &mut self,
+        content: Option<AnyView>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let panels = self.settings.read(cx).panels();
+        let mut content = content;
+        let mut badged = !cfg!(debug_assertions);
+        let mut tools: Vec<(Tool, AnyElement)> = Vec::new();
+        for &tool in panels.zone(Zone::TitleBar) {
+            let element = match tool {
+                Tool::SidebarToggle => Some(self.toggle()),
+                Tool::Back | Tool::Forward => Some(self.step(tool, cx)),
+                Tool::Refresh => self.refresh(window, cx),
+                Tool::Downloads => Some(self.downloads.clone().into_any_element()),
+                // The screen's controls handle their own presses, and a press between them
+                // still moves the window.
+                Tool::PageTools => {
+                    let content = content.take().map(|content| content.into_any_element());
+                    if let Some(content) = content {
+                        tools.push((tool, content));
+                    }
+                    continue;
+                }
+                Tool::Account => Some(self.account(cx).into_any_element()),
+                Tool::Separator => Some(Self::segment_rule(cx)),
+                Tool::Spacer => {
+                    // The debug tag stands where the bar's leading run ends. A spacer ends a
+                    // run anyway, so it never changes which separators show.
+                    if !badged {
+                        badged = true;
+                        tools.push((Tool::Spacer, dev_badge().into_any_element()));
+                    }
+                    tools.push((tool, div().flex_1().into_any_element()));
+                    continue;
+                }
+                tool => panels::icon_tool(tool, Zone::TitleBar, window, cx),
+            };
+            if let Some(element) = element {
+                tools.push((tool, held(element)));
+            }
+        }
+        if !badged {
+            tools.push((Tool::Spacer, dev_badge().into_any_element()));
+        }
+        // The downloads button draws nothing while nothing downloads, so it never earns a
+        // separator.
+        panels::tidy(tools, |tool| tool == Tool::Downloads)
+    }
+
+    fn open_menu(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if window.default_prevented() || !self.options.navigation || Customizing::editing(cx) {
+            return;
+        }
+        self.menu_at = Some(event.position);
+        cx.notify();
     }
 }
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.busy.as_ref().is_some_and(|busy| !busy(cx)) {
+            self.busy = None;
+        }
+        match self.busy.is_some() {
+            true => self.spin.start(),
+            false => self.spin.stop(),
+        }
+        let navigation = self.options.navigation;
+        let editing = navigation && Customizing::editing(cx);
+        if editing {
+            Customizing::animate(window, cx);
+        }
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
-        let navigation = self.options.navigation;
         let sidebar_right = self
             .options
             .sidebar_right
@@ -372,8 +402,8 @@ impl Render for TitleBar {
             matches!(window.window_decorations(), Decorations::Client { .. }) && !window_fullscreen;
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let controls = settings.window_controls() && !window_fullscreen;
-        // Fullscreen hides the traffic lights, so the toggle sits as far from the left edge as
-        // the right sidebar's toggle does from the right.
+        // Fullscreen hides the traffic lights, so the first tool sits as far from the left edge
+        // as the last one does from the right.
         let inset = traffic_lights_inset(settings, height).filter(|_| !window_fullscreen);
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
@@ -385,6 +415,60 @@ impl Render for TitleBar {
         let radius = crate::chrome::window_radius(settings, cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<Pixels> = None;
+        let background = match self.options.sheet {
+            true => theme.sidebar,
+            false => theme.background,
+        };
+        let transparent = self.options.transparent || theme.transparent;
+        let border = match self.options.border {
+            true => theme.title_bar_border,
+            false => gpui::transparent_black(),
+        };
+
+        let row = div()
+            .id("title-bar-tools")
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .gap_1()
+            .items_center()
+            // The outline of a bar being arranged keeps clear of the window's edges, so its tools
+            // keep their places and their badges stay inside the window.
+            .map(|this| match (editing, leading, inset) {
+                (false, true, _) => this.pl_1(),
+                (false, false, Some(inset)) => this.pl(inset),
+                (false, false, None) => this.pl_3(),
+                (true, true, _) => this.ml_1(),
+                (true, false, Some(inset)) => this.ml(inset),
+                (true, false, None) => this.ml_2(),
+            })
+            .map(|this| match editing {
+                true => this.mr_2().px_1(),
+                false => this.pr_3(),
+            });
+        let row = match (navigation, editing) {
+            (true, true) => panels::zone(Zone::TitleBar, row, cx)
+                .py_0p5()
+                .children(panels::tiles(Zone::TitleBar, false, window, cx)),
+            (true, false) => {
+                let tools = self.tools(content, window, cx);
+                row.children(tools)
+            }
+            (false, _) => row
+                .child(div().flex_1())
+                .children(content.map(|content| content.into_any_element()))
+                .children(
+                    sidebar_right
+                        .and_then(|_| panels::icon_tool(Tool::Panel, Zone::TitleBar, window, cx))
+                        .map(held),
+                ),
+        };
+        let menu = self.menu_at.map(|at| {
+            Popup::new(at, panels::menu()).on_close(cx.listener(|this, _, _, cx| {
+                this.menu_at = None;
+                cx.notify();
+            }))
+        });
 
         div()
             .id("title-bar")
@@ -395,21 +479,17 @@ impl Render for TitleBar {
             .h(height)
             .flex_none()
             .when_some(radius, |this, radius| this.rounded_t(radius))
-            .when(!self.options.transparent && !theme.transparent, |this| {
-                this.bg(match self.options.sheet {
-                    true => theme.sidebar,
-                    false => theme.background,
-                })
-            })
+            .when(!transparent, |this| this.bg(background))
             // The height is a border box, so a bar that drops its border centres its controls
             // one pixel lower than one that keeps it. The edge is always an edge; only its
             // colour goes, and fullscreen's controls land where the workspace's do.
             .border_b_1()
-            .border_color(match self.options.border {
-                true => theme.title_bar_border,
-                false => gpui::transparent_black(),
+            .border_color(border)
+            // While the bars are arranged a press on a tile drags the tile, so the platform must
+            // not take the bar for a caption it moves the window by.
+            .when(!editing, |this| {
+                this.window_control_area(gpui::WindowControlArea::Drag)
             })
-            .window_control_area(gpui::WindowControlArea::Drag)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(
@@ -420,6 +500,7 @@ impl Render for TitleBar {
                     },
                 ),
             )
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::open_menu))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, _| this.grabbed = false),
@@ -431,70 +512,17 @@ impl Render for TitleBar {
                     window.start_window_move();
                 }
             }))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .map(|this| match (leading, inset) {
-                        (true, _) => this.pl_2(),
-                        (false, Some(inset)) => this.pl(inset),
-                        (false, None) => this.pl_3(),
-                    })
-                    // The sidebar toggle sits as close to the history buttons as they sit to
-                    // each other.
-                    .map(|this| match navigation {
-                        true => this.pr_1(),
-                        false => this.pr_3(),
-                    })
-                    .gap_1()
-                    .when(leading, |this| {
-                        this.child(window_controls(true, traffic_light))
-                    })
-                    .when(navigation, |this| this.child(self.toggle(cx))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
-                    .items_center()
-                    .when(navigation, |this| this.child(self.history(window, cx)))
-                    .when(cfg!(debug_assertions), |this| this.child(dev_badge()))
-                    .child(div().flex_1())
-                    .when(navigation, |this| {
-                        this.child(
-                            div()
-                                .flex_none()
-                                .occlude()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .child(self.downloads.clone()),
-                        )
-                    })
-                    .map(|this| match (navigation, content) {
-                        (true, Some(content)) => this.child(content).child(Self::segment_rule(cx)),
-                        (_, content) => this.children(content),
-                    })
-                    .map(|this| match navigation || sidebar_right.is_some() {
-                        true => this.pr_1(),
-                        false => this.pr_3(),
-                    }),
-            )
-            .when(navigation || sidebar_right.is_some(), |this| {
+            .when(leading, |this| {
                 this.child(
                     div()
                         .flex()
                         .flex_none()
                         .items_center()
-                        .gap_1()
-                        .pr_3()
-                        .when(navigation, |this| this.child(self.account(cx)))
-                        .when_some(sidebar_right, |this, open| {
-                            this.child(self.lyrics_toggle(open, cx))
-                        }),
+                        .pl_2()
+                        .child(window_controls(true, traffic_light)),
                 )
             })
+            .child(row)
             .when(decorated && !leading, |this| {
                 this.child(
                     div()
@@ -508,6 +536,7 @@ impl Render for TitleBar {
                         .child(window_controls(false, traffic_light)),
                 )
             })
+            .children(menu)
     }
 }
 
@@ -551,6 +580,18 @@ fn traffic_lights_inset(settings: &AppSettings, height: Pixels) -> Option<Pixels
     None
 }
 
+/// Keeps a press on one of the bar's controls from moving the window.
+fn held(element: AnyElement) -> AnyElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .occlude()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(element)
+        .into_any_element()
+}
+
 /// The tag a debug build carries in its title bar, so it is never mistaken for a release.
 fn dev_badge() -> impl IntoElement {
     div()
@@ -558,7 +599,6 @@ fn dev_badge() -> impl IntoElement {
         .role(Role::Label)
         .aria_label(t!("app-dev-build"))
         .flex_none()
-        .ml_1()
         .child(Badge::text(t!("app-dev-badge")))
 }
 

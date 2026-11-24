@@ -13,60 +13,25 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
+use input::{ToggleLyrics, ToggleQueue};
 use music::Shape;
-use router::{
-    Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
-    open_settings,
+use router::{Destination, NavEntry, Navigation, NavigationEvent, navigate};
+use state::{
+    AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, SideTab, Sonora, Tool,
+    Zone,
 };
-use state::{AppSettings, Leaving, Library, Origin, PinSort, Pins, Playback, Shelf, Sonora};
 
+use crate::chrome::panels::{self, Customizing};
 use crate::shared::menus::{ItemMenu, item_menu};
-use crate::shared::nav::{entry_shown, nav_icon, nav_row};
+use crate::shared::nav::{nav_icon, nav_row};
 use crate::shared::pins::leaving;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
 /// The one drag list the pinned section keeps, so a pin dropped anywhere in it lands in order.
 const PINS: &str = "sidebar-pins";
 
-/// The sidebar's navigation rows in order: the entry that can hide each, its icon and where it goes.
-/// Recents and then Settings sit right under Search, and the four library rows after them each
-/// open one page of the merged streaming and local library. Settings lives in the account menu of
-/// the title bar and shows here only when added. It opens on the settings page last visited
-/// rather than on the one named here.
-pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
-    (NavEntry::Home, "icons/house.svg", Destination::Home),
-    (NavEntry::Search, "icons/search.svg", Destination::Search),
-    (
-        NavEntry::History,
-        "icons/rotate-ccw-clock.svg",
-        Destination::History,
-    ),
-    (
-        NavEntry::Settings,
-        "icons/settings.svg",
-        Destination::Settings(SettingsPage::Providers),
-    ),
-    (
-        NavEntry::Songs,
-        LibraryTab::Songs.icon(),
-        Destination::Library(LibraryTab::Songs),
-    ),
-    (
-        NavEntry::Albums,
-        LibraryTab::Albums.icon(),
-        Destination::Library(LibraryTab::Albums),
-    ),
-    (
-        NavEntry::Artists,
-        LibraryTab::Artists.icon(),
-        Destination::Library(LibraryTab::Artists),
-    ),
-    (
-        NavEntry::Playlists,
-        LibraryTab::Playlists.icon(),
-        Destination::Library(LibraryTab::Playlists),
-    ),
-];
+/// What pressing one of the sidebar's rows does.
+type Press = Box<dyn Fn(&mut Window, &mut App)>;
 
 const MIN_WIDTH: Pixels = px(160.);
 const MAX_WIDTH: Pixels = px(400.);
@@ -118,6 +83,8 @@ pub(crate) struct SidebarLeft {
     library: Entity<Library>,
     track_menu: ItemMenu,
     context_menu: Option<(Pin, Point<Pixels>)>,
+    /// Where a right click on the navigation rows opened the menu that arranges the bars.
+    panels_menu: Option<Point<Pixels>>,
     scrollbar: Entity<ui::Scrollbar>,
     popovers: ui::Popovers,
 }
@@ -133,6 +100,8 @@ impl SidebarLeft {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let chrome = super::Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
+        let customizing = Customizing::entity(cx);
+        cx.observe(&customizing, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
         let playlist_scrollbar = cx.new(|_| ui::Scrollbar::inset().watching(me));
         let scrollbar = cx.new(|_| {
@@ -178,6 +147,7 @@ impl SidebarLeft {
             library,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             context_menu: None,
+            panels_menu: None,
             scrollbar,
             popovers: ui::Popovers::default(),
         }
@@ -196,6 +166,18 @@ impl SidebarLeft {
         Some(
             Popup::new(position, menu)
                 .on_close(cx.listener(|this, _, _, cx| this.dismiss_menu(cx))),
+        )
+    }
+
+    /// The menu a right click on the navigation rows opens, with the way into arranging the
+    /// bars.
+    fn panels_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let at = self.panels_menu?;
+        Some(
+            Popup::new(at, panels::menu()).on_close(cx.listener(|this, _, _, cx| {
+                this.panels_menu = None;
+                cx.notify();
+            })),
         )
     }
 
@@ -345,42 +327,58 @@ impl SidebarLeft {
         cx.refresh_windows();
     }
 
-    /// The navigation entries the listener has not hidden, on the rail and in the full sidebar alike.
-    fn navigation(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let shown = |range: std::ops::Range<usize>, cx: &App| -> Vec<usize> {
-            range
-                .filter(|index| entry_shown(NAV[*index].0, self.settings.read(cx)))
-                .collect()
-        };
-        let top = shown(0..4, cx);
-        let library = shown(4..NAV.len(), cx);
+    /// The sidebar's tools in the order the listener arranged them, on the rail and in the full
+    /// sidebar alike, or their tiles while the bars are arranged.
+    fn navigation(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let column = div().id("sidebar-tools").flex().flex_col().gap_1().w_full();
+        if Customizing::editing(cx) {
+            // An empty sidebar still leaves room to drop a tool into.
+            return panels::zone(Zone::Sidebar, column, cx)
+                .min_h(cx.theme().metrics.control_small * 2.)
+                .py_1()
+                .children(panels::tiles(Zone::Sidebar, self.folded(), window, cx))
+                .into_any_element();
+        }
+
+        let tools: Vec<Tool> = self
+            .settings
+            .read(cx)
+            .panels()
+            .zone(Zone::Sidebar)
+            .iter()
+            .copied()
+            .filter(|tool| panels::shown(*tool, window, cx))
+            .collect();
+        let rule = |tool: &Tool| matches!(tool, Tool::Library | Tool::Separator);
         let mut rows = Vec::new();
-        if self.folded() {
-            for (group, indices) in [top, library]
-                .into_iter()
-                .filter(|indices| !indices.is_empty())
-                .enumerate()
-            {
-                if group > 0 {
-                    rows.push(self.divider(cx));
+        let mut headed = false;
+        for (index, tool) in tools.iter().enumerate() {
+            let before = tools[..index]
+                .iter()
+                .rev()
+                .take_while(|tool| !rule(tool))
+                .count()
+                > 0;
+            let after = tools[index + 1..]
+                .iter()
+                .take_while(|tool| !rule(tool))
+                .count()
+                > 0;
+            let row = match (tool, self.folded()) {
+                // A heading needs rows under it. On the rail it is a rule between two groups.
+                (Tool::Library, false) if after => {
+                    headed = true;
+                    Some(self.section("sidebar-library", cx))
                 }
-                for index in indices {
-                    rows.push(self.nav(index, cx));
-                }
-            }
-            return rows;
+                (Tool::Library | Tool::Separator, _) => (before && after).then(|| self.divider(cx)),
+                (tool, _) => self.row(*tool, cx),
+            };
+            rows.extend(row);
         }
-        for index in top {
-            rows.push(self.nav(index, cx));
-        }
-        if !library.is_empty() {
-            rows.push(self.section("sidebar-library", cx));
-            for index in library {
-                rows.push(self.nav(index, cx));
-            }
+        if headed {
             rows.push(self.gap(cx));
         }
-        rows
+        column.children(rows).into_any_element()
     }
 
     /// A heading over a group of entries, set like a settings group's heading. It starts where
@@ -730,30 +728,53 @@ impl SidebarLeft {
             .into_any_element()
     }
 
-    /// One navigation entry, which navigates and is lit while its page is current.
-    fn nav(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// One of the sidebar's rows, lit while its page is current or its panel shows. `None` for a
+    /// tool with no row of its own.
+    fn row(&self, tool: Tool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = *cx.theme();
         let accent = theme.sidebar_accent;
-        let (entry, icon, destination) = NAV[index].clone();
-        let key = entry.key();
-        let current = self.trail.read(cx).current();
-        let active = destination.same_section(&current);
+        let (active, press): (bool, Press) = match tool {
+            Tool::Lyrics | Tool::Queue => {
+                let settings = self.settings.read(cx);
+                let side = match tool {
+                    Tool::Lyrics => SideTab::Lyrics,
+                    _ => SideTab::Queue,
+                };
+                let showing = settings.sidebar_right_open() && settings.sidebar_right_tab() == side;
+                let press: Press = Box::new(move |window, cx| {
+                    let action: Box<dyn gpui::Action> = match side {
+                        SideTab::Lyrics => Box::new(ToggleLyrics),
+                        _ => Box::new(ToggleQueue),
+                    };
+                    window.dispatch_action(action, cx);
+                });
+                (showing, press)
+            }
+            tool => {
+                let destination = panels::route(tool)?;
+                let current = self.trail.read(cx).current();
+                let active = destination.same_section(&current);
+                let press: Press = Box::new(move |_, cx| panels::go(&destination, cx));
+                (active, press)
+            }
+        };
         let tint = match active {
             true => theme.foreground,
             false => theme.muted_foreground,
         };
+        let id = SharedString::from(format!("sidebar-{}", tool.id()));
+        let (key, icon) = (panels::label(tool), panels::icon(tool));
         let row = match self.folded() {
-            true => nav_icon(index, key, icon, tint, accent),
-            false => nav_row(index, key, tint, accent).icon(icon),
+            true => nav_icon(id, key, icon, tint, accent),
+            false => nav_row(id, key, tint, accent).icon(icon),
         };
 
-        row.lit(active, accent)
-            .when(active, |button| button.aria_selected(true))
-            .on_click(move |_, _, cx| match destination.in_settings() {
-                true => open_settings(cx),
-                false => navigate(destination.clone(), cx),
-            })
-            .into_any_element()
+        Some(
+            row.lit(active, accent)
+                .when(active, |button| button.aria_selected(true))
+                .on_click(move |_, window, cx| press(window, cx))
+                .into_any_element(),
+        )
     }
 
     /// Whether `target` takes the dragged `song`: a playlist the listener may edit, on the same
@@ -835,7 +856,10 @@ impl Render for SidebarLeft {
         }
         let closing = self.closing;
 
-        let mut rows = self.navigation(cx);
+        if Customizing::editing(cx) {
+            Customizing::animate(window, cx);
+        }
+        let mut rows = vec![self.navigation(window, cx)];
         rows.extend(self.pins(window, cx));
 
         let overlaid = self.overlays();
@@ -896,6 +920,18 @@ impl Render for SidebarLeft {
                     .flex_1()
                     .min_h_0()
                     .when(closing, |this| this.hidden())
+                    // A right click anywhere a pinned entry does not answer it opens the menu
+                    // that arranges the bars.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            if window.default_prevented() || Customizing::editing(cx) {
+                                return;
+                            }
+                            this.panels_menu = Some(event.position);
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         Scroller::new("sidebar-left-rows", &self.scrollbar)
                             .bottom_inset(super::Chrome::bottom(cx))
@@ -940,7 +976,8 @@ impl Render for SidebarLeft {
                             .map(|perch| super::Chrome::sidebar_perch(perch, cx)),
                     ),
             )
-            .children(self.menu(cx));
+            .children(self.menu(cx))
+            .children(self.panels_menu(cx));
 
         match overlaid {
             false => panel.into_any_element(),

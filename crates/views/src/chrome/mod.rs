@@ -4,6 +4,7 @@ pub(crate) mod jam;
 pub(crate) mod members;
 mod notice;
 mod output_picker;
+pub(crate) mod panels;
 mod player_bar;
 mod session;
 mod sessions_button;
@@ -23,6 +24,7 @@ pub(crate) use jam::{JamCode, JamInvite, JamJoin};
 pub(crate) use members::Members;
 pub(crate) use notice::AppNotice;
 pub(crate) use output_picker::OutputPicker;
+pub(crate) use panels::Customizing;
 pub(crate) use player_bar::{BarParts, COVER_GAP, PlayerBar, Volume};
 pub(crate) use session::{SessionCode, SessionJoin};
 pub(crate) use sessions_button::SessionsButton;
@@ -34,7 +36,7 @@ pub(crate) use theme_invite::ThemeInvite;
 pub(crate) use timeline::Timeline;
 #[cfg(target_os = "macos")]
 pub use title_bar::traffic_lights;
-pub(crate) use title_bar::{Busy, TitleBar, TitleBarEvent, TitleBarOptions};
+pub(crate) use title_bar::{Busy, TitleBar, TitleBarOptions};
 pub use toasts::ToastStack;
 pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
 

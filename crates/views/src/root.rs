@@ -2,9 +2,9 @@ use gpui::{AnyView, Context, Entity, MouseButton, NavigationDirection, Render, T
 use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelude::*};
 use gpui::{Pixels, Window, deferred, div};
 use input::{
-    CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePowerbar,
-    ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
+    CloseWindow, CustomizePanels, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter,
+    OpenSearch, OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePanel,
+    TogglePowerbar, ToggleQueue, ToggleSidebar, ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, back, forward, navigate};
 use state::{
@@ -20,8 +20,8 @@ use ui::{
 };
 
 use crate::chrome::{
-    Busy, JamCode, JamInvite, JamJoin, PlayerBar, SessionCode, SessionJoin, ThemeInvite, TitleBar,
-    TitleBarEvent, TitleBarOptions, ToastStack, Toolbar, Tooled,
+    Busy, Customizing, JamCode, JamInvite, JamJoin, PlayerBar, SessionCode, SessionJoin,
+    ThemeInvite, TitleBar, TitleBarOptions, ToastStack, Toolbar, Tooled,
 };
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
@@ -321,17 +321,6 @@ impl Root {
         let ambient = cx.new(Ambient::new);
 
         let title_bar = cx.new(TitleBar::new);
-        cx.subscribe(&title_bar, |this, _, event, cx| match event {
-            TitleBarEvent::ToggleSidebar => this
-                .shells
-                .workspace
-                .update(cx, |workspace, cx| workspace.toggle_sidebar(cx)),
-            TitleBarEvent::ToggleSidebarRight => this
-                .shells
-                .workspace
-                .update(cx, |workspace, cx| workspace.toggle_sidebar_right(cx)),
-        })
-        .detach();
 
         // Re-read the system preference when the window becomes active instead of keeping a
         // long-lived portal listener alive. This picks up changes after the user returns from
@@ -620,6 +609,7 @@ impl Root {
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
+        Customizing::stop(cx);
         match self.view {
             RootView::Workspace => navigate(Destination::Fullscreen, cx),
             RootView::Fullscreen => back(cx),
@@ -630,6 +620,10 @@ impl Root {
     /// on any screen. Otherwise it leaves fullscreen, and on a settings page it closes an open
     /// menu or dialog, then clears the search. It never leaves settings.
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if Customizing::editing(cx) {
+            Customizing::stop(cx);
+            return;
+        }
         let typing = window
             .context_stack()
             .iter()
@@ -1542,6 +1536,28 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
             )
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
+                this.shells
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.toggle_sidebar(cx))
+            }))
+            .on_action(cx.listener(|this, _: &TogglePanel, _, cx| {
+                this.shells
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.toggle_sidebar_right(cx))
+            }))
+            .on_action(cx.listener(|this, _: &CustomizePanels, window, cx| {
+                // Only the workspace shows the bars the editor arranges.
+                if matches!(this.view, RootView::Workspace) && !this.signing_in {
+                    Customizing::start(cx);
+                    // The menu that opened it leaves nothing focused, and a focused table or
+                    // result list binds Escape to deselect, so the workspace takes the focus
+                    // for Escape to reach `dismiss`.
+                    this.shells
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.focus(window, cx));
+                }
+            }))
             // The ambient background sits behind everything, title bar included.
             .when(ambient && !opening, |this| this.child(self.ambient.clone()))
             .children(leaving)
