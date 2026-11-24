@@ -6,8 +6,8 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollHandle, SharedString, Subscription, Task, Window, canvas,
-    div, point, px,
+    MouseDownEvent, Pixels, Render, ScrollHandle, SharedString, Stateful, Subscription, Task,
+    Window, canvas, div, point, px,
 };
 use i18n::{Language, t};
 use input::SEARCH_CONTEXT;
@@ -19,7 +19,7 @@ use state::{
 };
 use ui::{
     Activate, ActiveTheme as _, Card, Cascade, Deck, Dismiss, Dropdown, Input, Lazy, Popovers,
-    Scrollbar, ScrubberState, SelectNext, SelectPrevious, Spin, Submit, Unfold, Vacancy,
+    Room, Scrollbar, ScrubberState, SelectNext, SelectPrevious, Spin, Submit, Unfold, Vacancy,
     ease_out_quad, paced, snapped,
 };
 
@@ -50,11 +50,13 @@ mod themes;
 
 pub use header::SettingsHeader;
 use layout::section_title;
-pub(crate) use layout::{Layout, frame};
+pub(crate) use layout::{Heading, Layout, frame};
 pub(crate) use rows::Row;
 
 /// The space between two groups of a page.
 pub(super) const GROUPS: Pixels = px(40.);
+/// How wide the column of group names beside the groups stands, in list rows.
+const LABEL_COLUMN: f32 = 2.4;
 /// How much a query found in a setting's title counts over one found in its detail.
 const TITLE_WEIGHT: u32 = 2;
 /// How many settings the panel under the search field suggests.
@@ -86,14 +88,13 @@ enum Slot {
     CommunityThemes,
     Icons,
     Corners,
-    PageWidth,
-    Typeface,
+    /// The typeface and the text size, chosen in one row.
     Font,
     Opacity,
-    WindowBlur,
+    /// The blur of the window over the desktop and of the menus over the app, as chips.
     Blur,
+    /// The ambient background and its motion, as chips.
     Ambient,
-    AmbientMotion,
     Visualizer,
     VisualizerScreens,
     VisualizerAbsolute,
@@ -140,16 +141,12 @@ enum Slot {
     SessionsButton,
     SessionsOfficial,
     SessionsServer,
+    /// The Discord status drawn as Discord shows it, changed by clicking its parts.
     Discord,
-    DiscordName,
-    DiscordShowPaused,
-    DiscordBadge,
-    DiscordUploadCovers,
-    DiscordAnonymous,
-    DiscordHideOnConnect,
-    DiscordButtons,
-    ArtworkForLocal,
-    Scrobble(usize),
+    /// The status's choices the card cannot show, as chips under it.
+    DiscordOptions,
+    /// Every scrobbling service, as cards.
+    Scrobbles,
     ScrobbleProvider,
     /// The shortcut at this place in `input::shortcuts`.
     Keybind(usize),
@@ -199,31 +196,28 @@ enum Reveal {
     Section(SettingsPage),
 }
 
-/// One group of a page: an uppercase eyebrow with its icon, an optional block of option cards
-/// under it, and the rows below.
+/// One group of a page: its name in a column of its own beside it, an optional block of option
+/// cards, and the rows below them. A line sets it apart from the group above.
 struct Group {
     title: Option<&'static str>,
-    icon: Option<&'static str>,
     cards: Option<Slot>,
     rows: Vec<Slot>,
 }
 
 impl Group {
-    /// A group under the heading the Fluent key `title` names, with `icon` before it.
-    fn new(title: &'static str, icon: &'static str) -> Self {
+    /// A group named by the Fluent key `title`.
+    fn new(title: &'static str) -> Self {
         Self {
             title: Some(title),
-            icon: Some(icon),
             cards: None,
             rows: Vec::new(),
         }
     }
 
-    /// A group with no heading, for a page whose first rows need none.
+    /// A group with no name, for a page whose first rows need none.
     fn untitled() -> Self {
         Self {
             title: None,
-            icon: None,
             cards: None,
             rows: Vec::new(),
         }
@@ -821,7 +815,7 @@ impl SettingsView {
             SettingsPage::Storage => self.storage_groups(cx),
             SettingsPage::Discord => self.discord_groups(cx),
             SettingsPage::Scrobbling => self.scrobbling_groups(cx),
-            SettingsPage::General => self.general_groups(cx),
+            SettingsPage::General => self.general_groups(),
             SettingsPage::About => self.about_groups(),
             SettingsPage::Keybinds => self.keybinds_groups(),
             SettingsPage::LyricsSources => self.lyrics_sources_groups(),
@@ -873,20 +867,29 @@ impl SettingsView {
         }
     }
 
-    /// What a page shows under its groups.
-    fn footer(&self, page: SettingsPage, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The switch at the end of a page's title that turns the page's feature on, for a page
+    /// whose every other setting shapes that feature.
+    fn title_control(&self, page: SettingsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
+        match page {
+            SettingsPage::Discord => Some(self.discord_switch(cx)),
+            _ => None,
+        }
+    }
+
+    /// What a page shows under its groups, each part set apart by a line as a group is.
+    fn footer(
+        &self,
+        page: SettingsPage,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         match page {
             SettingsPage::About => vec![
-                self.lazy((page.id(), 2_usize), cx, |this, _, cx| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(GROUPS)
-                        .child(this.team(cx))
-                        .child(this.notice(cx))
-                        .into_any_element()
+                self.lazy((page.id(), 2_usize), cx, |this, window, cx| {
+                    this.team(window, cx).into_any_element()
                 })
                 .into_any_element(),
+                beside(None, true, false, self.notice(cx), window, cx),
             ],
             _ => Vec::new(),
         }
@@ -896,10 +899,7 @@ impl SettingsView {
     fn preview(&self, page: SettingsPage, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !matches!(
             page,
-            SettingsPage::NowPlaying
-                | SettingsPage::Lyrics
-                | SettingsPage::Sound
-                | SettingsPage::Discord
+            SettingsPage::NowPlaying | SettingsPage::Lyrics | SettingsPage::Sound
         ) {
             return None;
         }
@@ -916,9 +916,6 @@ impl SettingsView {
                     }
                     SettingsPage::Sound => {
                         preview::sound::preview(&previews.sound, this, window, cx)
-                    }
-                    SettingsPage::Discord => {
-                        preview::discord::preview(&previews.discord, this, window, cx)
                     }
                     _ => None,
                 }
@@ -1008,10 +1005,16 @@ impl SettingsView {
                 t!("settings-theme-explore"),
                 t!("settings-theme-explore-detail"),
             ),
-            Slot::Ambient => (t!("settings-ambient"), t!("settings-ambient-detail")),
-            Slot::AmbientMotion => (
-                t!("settings-ambient-motion"),
-                t!("settings-ambient-motion-detail"),
+            Slot::Ambient => (
+                t!("settings-group-background"),
+                format!(
+                    "{} {} {} {}",
+                    t!("settings-ambient"),
+                    t!("settings-ambient-detail"),
+                    t!("settings-ambient-motion"),
+                    t!("settings-ambient-motion-detail")
+                )
+                .into(),
             ),
             Slot::Visualizer => (t!("settings-visualizer"), t!("settings-visualizer-detail")),
             Slot::PlayerBarLayout => (
@@ -1036,16 +1039,21 @@ impl SettingsView {
             ),
             Slot::Icons => (t!("settings-icons"), t!("settings-icons-detail")),
             Slot::Opacity => (t!("settings-opacity"), t!("settings-opacity-detail")),
-            Slot::WindowBlur => (
-                t!("settings-blur-window"),
-                match ui::COMPOSITOR_OPACITY {
-                    true => t!("settings-blur-window-compositor-detail"),
-                    false => t!("settings-blur-window-detail"),
-                },
+            Slot::Blur => (
+                t!("settings-blur-title"),
+                format!(
+                    "{} {} {} {}",
+                    t!("settings-blur-window"),
+                    match ui::COMPOSITOR_OPACITY {
+                        true => t!("settings-blur-window-compositor-detail"),
+                        false => t!("settings-blur-window-detail"),
+                    },
+                    t!("settings-blur"),
+                    t!("settings-blur-detail")
+                )
+                .into(),
             ),
-            Slot::Blur => (t!("settings-blur"), t!("settings-blur-detail")),
             Slot::Corners => (t!("settings-corners"), t!("settings-corners-detail")),
-            Slot::PageWidth => (t!("settings-page-width"), t!("settings-page-width-detail")),
             Slot::FullscreenControlsAutohide => (
                 t!("settings-fullscreen-controls-autohide"),
                 t!("settings-fullscreen-controls-autohide-detail"),
@@ -1066,8 +1074,16 @@ impl SettingsView {
                 t!("settings-blur-lyrics"),
                 t!("settings-blur-lyrics-detail"),
             ),
-            Slot::Font => (t!("settings-font"), t!("settings-font-detail")),
-            Slot::Typeface => (t!("settings-typeface"), t!("settings-typeface-detail")),
+            Slot::Font => (
+                t!("settings-typeface"),
+                format!(
+                    "{} {} {}",
+                    t!("settings-typeface-detail"),
+                    t!("settings-font"),
+                    t!("settings-font-detail")
+                )
+                .into(),
+            ),
             Slot::Motion => (t!("settings-motion"), t!("settings-motion-detail")),
             Slot::Pace => (t!("settings-pace"), t!("settings-pace-detail")),
             Slot::Saver => (t!("settings-saver"), t!("settings-saver-detail")),
@@ -1214,40 +1230,40 @@ impl SettingsView {
             Slot::SessionsButton => (t!("settings-sessions-button"), SharedString::default()),
             Slot::SessionsOfficial => (t!("settings-sessions-official"), SharedString::default()),
             Slot::SessionsServer => (t!("common-server-address"), SharedString::default()),
-            Slot::Discord => (t!("settings-discord"), t!("settings-discord-detail")),
-            Slot::DiscordName => (
-                t!("settings-discord-name"),
-                t!("settings-discord-name-detail"),
+            Slot::Discord => (
+                t!("settings-discord"),
+                [
+                    "settings-discord-detail",
+                    "settings-discord-name",
+                    "settings-discord-name-detail",
+                    "settings-discord-badge",
+                    "settings-discord-badge-detail",
+                    "settings-discord-buttons",
+                    "settings-discord-buttons-detail",
+                ]
+                .map(|key| i18n::lookup(key, None).to_string())
+                .join(" ")
+                .into(),
             ),
-            Slot::DiscordShowPaused => (
-                t!("settings-discord-show-paused"),
-                t!("settings-discord-show-paused-detail"),
+            Slot::DiscordOptions => (
+                t!("settings-group-status"),
+                [
+                    "settings-discord-show-paused",
+                    "settings-discord-show-paused-detail",
+                    "settings-discord-anonymous",
+                    "settings-discord-anonymous-detail",
+                    "settings-discord-upload-covers",
+                    "settings-discord-upload-covers-detail",
+                    "settings-artwork-for-local-files",
+                    "settings-artwork-for-local-files-detail",
+                    "settings-discord-hide-on-connect",
+                    "settings-discord-hide-on-connect-detail",
+                ]
+                .map(|key| i18n::lookup(key, None).to_string())
+                .join(" ")
+                .into(),
             ),
-            Slot::DiscordBadge => (
-                t!("settings-discord-badge"),
-                t!("settings-discord-badge-detail"),
-            ),
-            Slot::DiscordUploadCovers => (
-                t!("settings-discord-upload-covers"),
-                t!("settings-discord-upload-covers-detail"),
-            ),
-            Slot::ArtworkForLocal => (
-                t!("settings-artwork-for-local-files"),
-                t!("settings-artwork-for-local-files-detail"),
-            ),
-            Slot::DiscordAnonymous => (
-                t!("settings-discord-anonymous"),
-                t!("settings-discord-anonymous-detail"),
-            ),
-            Slot::DiscordHideOnConnect => (
-                t!("settings-discord-hide-on-connect"),
-                t!("settings-discord-hide-on-connect-detail"),
-            ),
-            Slot::DiscordButtons => (
-                t!("settings-discord-buttons"),
-                t!("settings-discord-buttons-detail"),
-            ),
-            Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
+            Slot::Scrobbles => self.scrobbles_meta(cx),
             Slot::ScrobbleProvider => self.scrobble_provider_meta(cx)?,
             Slot::Keybind(index) => self.keybind_meta(index, cx)?,
             Slot::KeybindsReset => (t!("keybinds-reset-all"), SharedString::default()),
@@ -1287,19 +1303,17 @@ impl SettingsView {
             Slot::LocalFolder => self.local_folder_row(cx),
             Slot::SubsonicLibrary => self.subsonic_library_row(cx),
             Slot::Folders => self.folders(cx),
-            Slot::Theme | Slot::Icons | Slot::Corners | Slot::PageWidth => div().into_any_element(),
+            Slot::Theme | Slot::Icons | Slot::Corners => div().into_any_element(),
             Slot::Adaptive => self.adaptive_row(cx),
             Slot::CommunityThemes => self.community_themes_row(cx),
             Slot::Ambient => self.ambient_row(cx),
-            Slot::AmbientMotion => self.ambient_motion_row(cx),
-            Slot::Visualizer => div().into_any_element(),
+            Slot::Visualizer => self.visualizer_row(cx),
             Slot::PlayerBarLayout => div().into_any_element(),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
             Slot::PlayerBarTimeLeft => self.player_bar_time_left_row(cx),
             Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
             Slot::Opacity => self.opacity_row(cx),
-            Slot::WindowBlur => self.blur_window_row(cx),
             Slot::Blur => self.blur_row(cx),
             Slot::FullscreenControlsAutohide => self.fullscreen_controls_autohide_row(cx),
             Slot::OsFullscreen => self.os_fullscreen_row(cx),
@@ -1307,7 +1321,6 @@ impl SettingsView {
             Slot::FullscreenLyricsSize => self.fullscreen_lyrics_size_row(cx),
             Slot::BlurLyrics => self.blur_lyrics_row(cx),
             Slot::Font => self.font_row(cx),
-            Slot::Typeface => self.typeface_row(cx),
             Slot::Motion => self.motion_row(cx),
             Slot::Pace => self.pace_row(cx),
             Slot::Saver => self.saver_row(cx),
@@ -1316,9 +1329,9 @@ impl SettingsView {
             #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
             Slot::Decorations => self.decorations_row(cx),
             #[cfg(not(target_os = "macos"))]
-            Slot::Side => self.side_row(cx),
+            Slot::Side => self.side_row(window, cx),
             #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => self.traffic_light_controls_row(cx),
+            Slot::TrafficLights => self.traffic_light_controls_row(window, cx),
             #[cfg(any(
                 target_os = "windows",
                 target_os = "linux",
@@ -1362,19 +1375,9 @@ impl SettingsView {
             Slot::SessionsButton => self.sessions_button_row(cx),
             Slot::SessionsOfficial => self.sessions_official_row(cx),
             Slot::SessionsServer => self.sessions_server_row(cx),
-            Slot::Discord => self.discord_row(cx),
-            Slot::DiscordName => self.discord_name_row(cx),
-            Slot::DiscordShowPaused => self.discord_show_paused_row(cx),
-            Slot::DiscordBadge => self.discord_badge_row(cx),
-            Slot::DiscordUploadCovers => self.discord_upload_covers_row(cx),
-            Slot::ArtworkForLocal => self.artwork_for_local_files_row(cx),
-            Slot::DiscordAnonymous => self.discord_anonymous_row(cx),
-            Slot::DiscordHideOnConnect => self.discord_hide_on_connect_row(cx),
-            Slot::DiscordButtons => self.discord_buttons_row(cx),
-            Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
-                true => self.scrobble_row(index, cx),
-                false => div().into_any_element(),
-            },
+            Slot::Discord => self.discord_card(window, cx),
+            Slot::DiscordOptions => self.discord_options(cx),
+            Slot::Scrobbles => div().into_any_element(),
             Slot::ScrobbleProvider => self.scrobble_provider_row(cx),
             Slot::Keybind(index) => self.keybind_row(index, cx),
             Slot::KeybindsReset => self.keybinds_reset_row(cx),
@@ -1392,34 +1395,36 @@ impl SettingsView {
     /// draws its row instead.
     fn cards(&self, slot: Slot, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         match slot {
-            Slot::Accounts => self.accounts_rows(cx),
+            Slot::Accounts => self.accounts_cards(window, cx),
+            Slot::Scrobbles => self.scrobble_cards(window, cx),
             Slot::Theme => self.theme_cards(cx),
             Slot::Icons => self.icon_cards(window, cx),
             Slot::Corners => self.corner_cards(window, cx),
-            Slot::PageWidth => self.page_width_cards(window, cx),
-            Slot::Visualizer => self.visualizer_cards(window, cx),
             Slot::PlayerBarLayout => self.player_bar_cards(window, cx),
             Slot::StreamQuality => self.quality_cards(window, cx),
             slot => self.slot_element(slot, window, cx),
         }
     }
 
-    /// One group: the eyebrow with its icon, its option cards, then its rows, all on the page
-    /// itself with no surface around them and nothing between the rows.
-    fn group(&self, group: Group, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let Group {
-            title,
-            icon,
-            cards,
-            rows,
-        } = group;
+    /// One group: its name beside it, its option cards, then its rows, all on the page itself
+    /// with no surface around them and nothing between the rows. A group with no name leaves
+    /// the name's column empty while `indent`, so its rows line up with the named groups of
+    /// the page.
+    fn group(
+        &self,
+        group: Group,
+        indent: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Group { title, cards, rows } = group;
         let heading = title.map(|key| {
-            let label = i18n::lookup(key, None);
-            group_heading(label.clone(), icon, cx)
-                .id(SharedString::from(format!("settings-group-{key}")))
-                .role(Role::Heading)
-                .aria_level(2)
-                .aria_label(label)
+            group_label(
+                SharedString::from(format!("settings-group-{key}")),
+                i18n::lookup(key, None),
+                cx,
+            )
+            .into_any_element()
         });
         let carded = cards.is_some();
         let cards = cards.map(|slot| {
@@ -1443,13 +1448,8 @@ impl SettingsView {
                 .children(rows)
         });
 
-        div()
-            .flex()
-            .flex_col()
-            .children(heading)
-            .children(cards)
-            .children(rows)
-            .into_any_element()
+        let body = div().flex().flex_col().children(cards).children(rows);
+        beside(heading, indent, !carded, body, window, cx)
     }
 
     /// Lights `element` while it is the setting a search result just opened, in the fill the
@@ -1545,38 +1545,77 @@ impl SettingsView {
             Some(_) => vec![self.page],
             None => self.page.tab().sections().to_vec(),
         };
-        // a section's title stands as close over its groups as the page's own title does
-        let inset = cx.theme().metrics.inset;
+        // a section's title stands as close over its groups as the page's own title does, and
+        // only as far below the section above as the title's own size sets it apart
+        let theme = *cx.theme();
+        let inset = theme.metrics.inset;
         let pages = pages
             .into_iter()
             .enumerate()
             .map(|(index, page)| {
                 let title = (index > 0).then(|| {
-                    let title = section_title(page, cx).into_any_element();
-                    div().mt(GROUPS).mb(inset).child(self.revealing(
-                        Reveal::Section(page),
-                        title,
-                        cx,
-                    ))
+                    let control = self.title_control(page, cx);
+                    let title = section_title(page, control, cx).into_any_element();
+                    div()
+                        .mb(inset)
+                        .child(self.revealing(Reveal::Section(page), title, cx))
                 });
-                let groups = self
-                    .groups(page, cx)
+                let groups = self.groups(page, cx);
+                let indent = groups.iter().any(|group| group.title.is_some());
+                let mut parts = groups
                     .into_iter()
                     .enumerate()
                     .map(|(index, group)| {
                         // A search target must lay out even off screen so its reveal marker
                         // can position the scroll. The other groups keep their cached heights.
-                        if self.reveal.is_some_and(|reveal| {
+                        match self.reveal.is_some_and(|reveal| {
                             group.slots().any(|slot| reveal == Reveal::Slot(slot))
                         }) {
-                            return self.group(group, window, cx);
+                            true => self.group(group, indent, window, cx),
+                            false => self
+                                .lazy((page.id(), index + 3), cx, move |this, window, cx| {
+                                    this.group(group, indent, window, cx)
+                                })
+                                .into_any_element(),
                         }
-                        self.lazy((page.id(), index + 3), cx, move |this, window, cx| {
-                            this.group(group, window, cx)
-                        })
-                        .into_any_element()
                     })
                     .collect::<Vec<_>>();
+                parts.extend(self.footer(page, window, cx));
+                let groups = parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, shown)| {
+                        div()
+                            .when(index > 0, |this| {
+                                this.mt(theme.metrics.pad)
+                                    .pt(theme.metrics.pad)
+                                    .border_t_1()
+                                    .border_color(theme.border)
+                            })
+                            .child(shown)
+                    })
+                    .collect::<Vec<_>>();
+
+                // the Now playing preview stands beside its settings where the column has room,
+                // and every other preview over them
+                let groups = div().flex().flex_col().children(groups);
+                let preview = self.preview(page, cx);
+                let beside = (page == SettingsPage::NowPlaying)
+                    .then(|| preview::now_playing::beside(window, cx))
+                    .flatten();
+                let (above, body) = match (preview, beside) {
+                    (Some(preview), Some(width)) => (
+                        None,
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap(inset)
+                            .child(div().flex_none().w(width).child(preview))
+                            .child(groups.flex_1().min_w_0())
+                            .into_any_element(),
+                    ),
+                    (preview, _) => (preview, groups.into_any_element()),
+                };
 
                 div().flex().flex_col().children(title).child(
                     div()
@@ -1584,9 +1623,8 @@ impl SettingsView {
                         .flex_col()
                         .gap(GROUPS)
                         .children(self.header(page, cx))
-                        .children(self.preview(page, cx))
-                        .children(groups)
-                        .children(self.footer(page, cx)),
+                        .children(above)
+                        .child(body),
                 )
             })
             .collect::<Vec<_>>();
@@ -1851,11 +1889,23 @@ impl Render for SettingsView {
             false => self.tab(window, cx),
         };
         let destination = Destination::Settings(self.page);
-        let named = self.searching().then(|| t!("settings-search-results"));
+        let heading = match self.searching() {
+            true => Heading {
+                named: Some(t!("settings-search-results")),
+                trailing: None,
+            },
+            false => Heading {
+                named: None,
+                trailing: match self.page.parent() {
+                    Some(_) => None,
+                    None => self.title_control(self.page.tab().lead(), cx),
+                },
+            },
+        };
 
         layout::frame(
             &destination,
-            named,
+            heading,
             "settings",
             &self.scrollbar,
             body,
@@ -1912,4 +1962,60 @@ fn result_key(page: SettingsPage, slot: Slot) -> String {
 /// A group's heading: its icon, when it has one, before its name as an uppercase eyebrow.
 pub(super) fn group_heading(label: SharedString, icon: Option<&'static str>, cx: &App) -> Div {
     ui::eyebrow_with(icon, label, cx).mb(cx.theme().metrics.pad)
+}
+
+/// A group's name as it stands in the column beside the group, read as a level two heading.
+pub(super) fn group_label(id: SharedString, label: SharedString, cx: &App) -> Stateful<Div> {
+    ui::eyebrow_with(None, label.clone(), cx)
+        .flex_1()
+        .min_w_0()
+        .id(id)
+        .role(Role::Heading)
+        .aria_level(2)
+        .aria_label(label)
+}
+
+/// Lays `body` out beside its `label` where the column has the room, and under it where it does
+/// not. With `centred` the label stands level with the body's first row, otherwise at its top,
+/// for a body that opens with cards. With no label the body takes the whole width, or keeps the
+/// label's column empty while `indent`.
+pub(super) fn beside(
+    label: Option<AnyElement>,
+    indent: bool,
+    centred: bool,
+    body: impl IntoElement,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let side = Layout::of(window, cx).room().fits(Room::Roomy);
+    if !side {
+        return div()
+            .flex()
+            .flex_col()
+            .children(label.map(|label| div().mb(theme.metrics.pad).child(label)))
+            .child(body)
+            .into_any_element();
+    }
+    if label.is_none() && !indent {
+        return body.into_any_element();
+    }
+
+    div()
+        .flex()
+        .items_start()
+        .gap(theme.metrics.pad * 2.)
+        .child(
+            div()
+                .flex_none()
+                .w(theme.metrics.list_row * LABEL_COLUMN)
+                .flex()
+                .map(|column| match centred {
+                    true => column.min_h(theme.metrics.list_row).items_center(),
+                    false => column.pt(theme.metrics.pad),
+                })
+                .children(label),
+        )
+        .child(div().flex_1().min_w_0().child(body))
+        .into_any_element()
 }

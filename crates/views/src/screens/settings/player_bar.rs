@@ -10,16 +10,18 @@ use ui::{ActiveTheme as _, OptionCard, Switch};
 use super::rows::{Announced as _, grid};
 use super::{Group, Row, SettingsView, Slot};
 
+/// How much of the page a transparent bar's miniature lets through. The real bar is far more
+/// solid, but at a thumbnail's size only a thin fill shows that the page runs on under it.
+const SEE_THROUGH: f32 = 0.55;
+
 impl SettingsView {
-    /// The Player bar page: layout cards, the bar's material and its clock.
+    /// The Player bar page: the layout cards under the page's own title, then the bar's
+    /// material and its clock, all in one group.
     pub(super) fn player_bar_groups(&self) -> Vec<Group> {
         vec![
-            Group::new("settings-player-bar-layout", "icons/layout-grid.svg")
-                .cards(Slot::PlayerBarLayout),
-            Group::new("settings-player-bar-surface", "icons/blend.svg")
-                .rows([Slot::PlayerBarTransparent]),
-            Group::new("settings-player-bar-time", "icons/rotate-ccw-clock.svg")
-                .rows([Slot::PlayerBarTimeLeft]),
+            Group::untitled()
+                .cards(Slot::PlayerBarLayout)
+                .rows([Slot::PlayerBarTransparent, Slot::PlayerBarTimeLeft]),
         ]
     }
 
@@ -100,7 +102,9 @@ impl SettingsView {
 
 /// A still miniature of a page and its player bar, `height` tall. The page is placed in
 /// proportions of the thumbnail and the bar in flex rows sized from `height`, so the bar's
-/// pieces stay centred on one line whatever width the settings column gives the card.
+/// pieces stay centred on one line whatever width the settings column gives the card. The
+/// page runs on under the bar, which shows it through while `transparent` and stands on the
+/// chrome's colour, as the real bar does, while not.
 fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) -> Div {
     let theme = *cx.theme();
     let radius = theme.radius * 0.25;
@@ -179,9 +183,10 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
                 .border_1(),
             _ => panel.bottom_0().w_full().px(gap).border_t_1(),
         })
-        .map(|panel| match transparent {
-            true => ui::popover_surface(panel, cx),
-            false => panel.bg(theme.secondary),
+        .map(|panel| match (transparent, layout) {
+            (true, _) => panel.bg(theme.popover.opacity(SEE_THROUGH)),
+            (false, PlayerBarLayout::Island) => panel.bg(theme.popover),
+            (false, _) => panel.bg(theme.sidebar),
         });
     let panel = match layout {
         PlayerBarLayout::Classic => panel
@@ -285,7 +290,7 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
         .child(tile([0.05, 0.10, 0.35, 0.05], muted, radius))
         .children((0..4).map(|index| {
             tile(
-                [0.05 + index as f32 * 0.24, 0.28, 0.18, 0.46],
+                [0.05 + index as f32 * 0.24, 0.28, 0.18, 0.72],
                 theme.primary.opacity(0.15),
                 radius,
             )

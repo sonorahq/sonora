@@ -100,6 +100,9 @@ pub struct Button {
     /// A small element drawn after the icon and before the label, as a picker's curve sketch.
     leading: Option<AnyElement>,
     detail: Option<SharedString>,
+    /// A small element drawn where the muted detail goes, as the marks of the services a row
+    /// stands for.
+    aside: Option<AnyElement>,
     trailing: Option<SharedString>,
     variant: Variant,
     small: bool,
@@ -154,6 +157,7 @@ impl Button {
             icon: None,
             leading: None,
             detail: None,
+            aside: None,
             trailing: None,
             variant: Variant::Ghost,
             small: false,
@@ -238,6 +242,14 @@ impl Button {
     /// that opens a page of its own says what is chosen there.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// An element shown after the label and before the trailing icon, where `detail` would
+    /// stand. It is drawn only, so a caller whose element means something says so to screen
+    /// readers with `aria_description`.
+    pub fn aside(mut self, aside: impl IntoElement) -> Self {
+        self.aside = Some(aside.into_any_element());
         self
     }
 
@@ -487,6 +499,7 @@ impl RenderOnce for Button {
             icon,
             leading,
             detail,
+            aside,
             trailing,
             variant,
             small,
@@ -541,6 +554,7 @@ impl RenderOnce for Button {
             && reserve.is_empty()
             && leading.is_none()
             && detail.is_none()
+            && aside.is_none()
             && sized_by_content(base.style());
 
         let theme = cx.theme();
@@ -959,7 +973,10 @@ impl RenderOnce for Button {
                     div()
                         .min_w_0()
                         .truncate()
-                        .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
+                        .when(
+                            trailing.is_some() || detail.is_some() || aside.is_some(),
+                            |this| this.flex_1(),
+                        )
                         .when(resizing.is_some(), |this| this.flex_none())
                         .child(label),
                 ),
@@ -974,6 +991,9 @@ impl RenderOnce for Button {
                         .text_color(theme.muted_foreground)
                         .child(detail),
                 )
+            })
+            .when_some(aside, |this, aside| {
+                this.child(div().flex_none().flex().items_center().child(aside))
             })
             .when_some(trailing, |this, path| {
                 this.child(

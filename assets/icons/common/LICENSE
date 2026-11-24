@@ -3,9 +3,23 @@ Icons in this folder never follow the chosen pack.
 The window control glyphs (window-close, window-maximize, window-minimize,
 window-restore) are part of Sonora and carry the licence in COPYING.
 
-The brand marks (applemusic, deezer, firefoxbrowser, spotify, tidal, youtubemusic) come from Simple Icons
-(https://simpleicons.org), released under CC0 1.0. Each mark stays the
+The brand marks (applemusic, deezer, firefoxbrowser, lastfm, spotify, tidal, youtubemusic) come from
+Simple Icons (https://simpleicons.org), released under CC0 1.0. Each mark stays the
 trademark of its owner and is used only to point at that service.
+
+The scrobbling services' marks below are single-colour redrawings of each service's own logo,
+and each stays the trademark of its owner, used only to point at that service:
+
+- listenbrainz: the ListenBrainz monochrome icon by the MetaBrainz Foundation,
+  https://github.com/metabrainz/design-system (brand/logos/ListenBrainz), licensed under
+  CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). Rescaled to this folder's
+  24 px grid; the rescaled mark is shared under the same licence.
+- librefm: the Libre.fm arcs from the GNU FM source (clients/sailfish/qml/images/librefm.svg),
+  whose project is licensed under the AGPL 3.0. Merged into one colour.
+- maloja: traced from the Maloja icon (maloja/web/static/png/favicon_large.png) in
+  https://github.com/krateng/maloja, whose project is licensed under the GPL 3.0.
+- tealfm: traced from the teal.fm icon (apps/site/public/favicon.ico) in
+  https://github.com/teal-fm/teal, whose project is licensed under the MIT licence.
 
 The middle-scroll anchor (scroll) is part of Sonora and carries the licence in COPYING.
 

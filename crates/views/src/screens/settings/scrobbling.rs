@@ -1,10 +1,11 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, SharedString, div, px};
+use gpui::{AnyElement, App, Context, SharedString, Window, div, px};
 use i18n::t;
 use music::scrobble::{Link, Secret};
 use state::ScrobbleState;
-use ui::{ActiveTheme as _, Button, Form, Modal, Switch, Text};
+use ui::{ActiveTheme as _, Button, Form, Modal, Room, Switch};
 
+use super::accounts::{Offer, Press, ProviderCard};
 use super::{Group, SettingsView, Slot};
 
 /// One field of the scrobbling link dialog: which hint it carries, what it starts with, and
@@ -16,18 +17,26 @@ struct Field {
 }
 
 impl SettingsView {
-    /// One row per scrobbling service, in the order `music::scrobble` lists them, then the
+    /// One card per scrobbling service, in the order `music::scrobble` lists them, then the
     /// switch for the active provider's plays when a provider is signed in.
     pub(super) fn scrobbling_groups(&self, cx: &App) -> Vec<Group> {
-        let services = self.scrobbling.read(cx).rows().len();
         let provider = self.session.read(cx).provider_slug().is_some();
         vec![
-            Group::untitled().rows(
-                (0..services)
-                    .map(Slot::Scrobble)
-                    .chain(provider.then_some(Slot::ScrobbleProvider)),
-            ),
+            Group::untitled()
+                .cards(Slot::Scrobbles)
+                .rows(provider.then_some(Slot::ScrobbleProvider)),
         ]
+    }
+
+    /// What a search finds the cards by: the page's name over every service's name and where
+    /// its link stands.
+    pub(super) fn scrobbles_meta(&self, cx: &App) -> (SharedString, SharedString) {
+        let words = (0..self.scrobbling.read(cx).rows().len())
+            .filter_map(|index| self.scrobble_meta(index, cx))
+            .map(|(title, detail)| format!("{title} {detail}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (t!("settings-page-scrobbling"), words.into())
     }
 
     /// The switch's label and explanation, named after the active provider.
@@ -83,85 +92,119 @@ impl SettingsView {
         Some((i18n::lookup(&format!("settings-{service}"), None), detail))
     }
 
-    /// A service: its name, where its link stands unless the Connect button says so already,
-    /// and the controls for its state.
-    pub(super) fn scrobble_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let (title, detail) = self.scrobble_meta(index, cx).unwrap_or_default();
+    /// One card per service, two to a line, or one where the page is tight.
+    pub(super) fn scrobble_cards(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let count = self.scrobbling.read(cx).rows().len();
+        let cards = (0..count)
+            .map(|index| self.scrobble_card((index, count), cx))
+            .collect::<Vec<_>>();
+        let columns = match super::Layout::of(window, cx).room() {
+            Room::Tight => 1,
+            _ => 2,
+        };
 
-        let row = &self.scrobbling.read(cx).rows()[index];
+        div()
+            .grid()
+            .grid_cols(columns)
+            .gap_2()
+            .children(cards)
+            .into_any_element()
+    }
+
+    /// A service's card at `place`, its index and the length of the list, drawn as a streaming
+    /// provider's is. Not linked, the card is a dashed outline and its click starts the link.
+    /// Linking, it offers to stop. Linked, it carries the switch that turns scrobbling to it on
+    /// and the button that disconnects it, and it is edged in the accent while it scrobbles. A
+    /// link that failed or was turned down says so in red.
+    fn scrobble_card(&self, place: (usize, usize), cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let (title, detail) = self.scrobble_meta(place.0, cx).unwrap_or_default();
+        let row = &self.scrobbling.read(cx).rows()[place.0];
         let service = row.id();
         let link = row.link();
         let linked = row.linked();
         let linking = row.linking();
         let enabled = row.enabled();
-        let status = (!matches!(row.state(), ScrobbleState::Off)).then_some(detail);
+        let state = row.state();
+        let alert = matches!(state, ScrobbleState::Refused | ScrobbleState::Failed(_));
+        let status = (!matches!(state, ScrobbleState::Off)).then_some(detail);
 
-        let action = match linked {
-            true => div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Switch::new(
-                        SharedString::from(format!("scrobble-on-{service}")),
-                        enabled,
-                    )
-                    .name(title.clone())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.scrobbling.update(cx, |scrobbling, cx| {
-                            scrobbling.set_enabled(service, !enabled, cx)
-                        });
-                    })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("scrobble-unlink-{service}")))
-                        .label(t!("settings-scrobble-disconnect"))
+        let (offer, press): (Offer, Option<Press>) = match (linked, linking) {
+            (true, _) => (
+                Offer::Control(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new(SharedString::from(format!("scrobble-unlink-{service}")))
+                                .ghost()
+                                .icon("icons/log-out.svg")
+                                .tooltip("settings-scrobble-disconnect")
+                                .tint(theme.muted_foreground)
+                                .size(theme.metrics.control_small)
+                                .px_0()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.disconnect(service, cx)
+                                    });
+                                })),
+                        )
+                        .child(
+                            Switch::new(
+                                SharedString::from(format!("scrobble-on-{service}")),
+                                enabled,
+                            )
+                            .name(title.clone())
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.scrobbling.update(cx, |scrobbling, cx| {
+                                        scrobbling.set_enabled(service, !enabled, cx)
+                                    });
+                                },
+                            )),
+                        )
+                        .into_any_element(),
+                ),
+                None,
+            ),
+            (false, true) => (
+                Offer::Cancel(
+                    Button::new(SharedString::from(format!("scrobble-cancel-{service}")))
+                        .label(t!("common-cancel"))
                         .small()
                         .outline()
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, _, cx| {
                             this.scrobbling
-                                .update(cx, |scrobbling, cx| scrobbling.disconnect(service, cx));
-                        })),
-                )
-                .into_any_element(),
-            false => match linking {
-                true => Button::new(SharedString::from(format!("scrobble-cancel-{service}")))
-                    .label(t!("common-cancel"))
-                    .small()
-                    .outline()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.scrobbling
-                            .update(cx, |scrobbling, cx| scrobbling.cancel(cx));
-                    }))
-                    .into_any_element(),
-                false => Button::new(SharedString::from(format!("scrobble-link-{service}")))
-                    .label(t!("settings-scrobble-connect"))
-                    .small()
-                    .outline()
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_scrobble(service, link, cx)),
-                    )
-                    .into_any_element(),
-            },
+                                .update(cx, |scrobbling, cx| scrobbling.cancel(cx));
+                        }))
+                        .into_any_element(),
+                ),
+                None,
+            ),
+            (false, false) => (
+                Offer::SignIn(t!("settings-scrobble-connect")),
+                Some(Box::new(cx.listener(move |this, _, _, cx| {
+                    this.open_scrobble(service, link, cx)
+                }))),
+            ),
         };
 
-        let control = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .children(status.map(|status| {
-                ui::spoken(
-                    SharedString::from(format!("scrobble-status-{service}")),
-                    status,
-                )
-                .max_w(theme.metrics.cover * 1.5)
-                .truncate()
-                .text_size(theme.text(Text::Label))
-                .text_color(theme.muted_foreground)
-            }))
-            .child(action);
-        self.row(title, control.into_any_element())
+        ProviderCard {
+            id: SharedString::from(format!("scrobble-{service}")),
+            logo: Some(crate::shared::scrobbler_logo(service)),
+            brand: crate::shared::scrobbler_brand(service, cx),
+            active: linked && enabled,
+            stored: linked || linking,
+            name: title,
+            status,
+            alert,
+            offer,
+            press,
+            error: None,
+            place,
+        }
+        .into_any_element()
     }
 
     /// Starts a link. A service with nothing to type goes straight to the browser; the rest put
