@@ -36,6 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it.
+- The volume icon switches at once as you change the volume, instead of popping on every step.
 
 ### Fixed
 
