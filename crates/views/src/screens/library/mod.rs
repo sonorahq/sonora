@@ -978,13 +978,8 @@ impl LibraryView {
         let gap = deck_gap(window);
         let tile = Card::tile_height(card, window, cx);
         let heading = head_height(window, cx);
-        // A letter heading brings room of its own above its title, so a deck that opens on one
-        // starts that much higher and the title lines up with the cards' side inset.
-        let lead = match self.card_rows.first() {
-            Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
-            _ => inset,
-        };
-        let depth = (scrolled(&scroll) - lead).max(Pixels::ZERO);
+        let depth =
+            (scrolled(&scroll) - deck_lead(&self.card_rows, inset, window)).max(Pixels::ZERO);
 
         let repacked = self.card_columns != columns
             || (self.card_tile - tile).abs() >= px(0.5)
@@ -1019,6 +1014,7 @@ impl LibraryView {
         }
         self.card_tile = tile;
         self.card_heading = heading;
+        let lead = deck_lead(&self.card_rows, inset, window);
 
         let heights = deck_heights(&self.card_rows, tile, heading);
         if let Some((index, share)) =
@@ -1541,6 +1537,17 @@ fn head_height(window: &Window, cx: &App) -> Pixels {
 /// The room a letter heading keeps above its title, which `head` pads with `pt_2`.
 fn head_lead(window: &Window) -> Pixels {
     snapped(window.rem_size() * 0.5, window)
+}
+
+/// The room above the first row of a deck. A letter heading brings room of its own above its
+/// title, so a deck that opens on one starts that much higher and the title lines up with the
+/// cards' side inset. Pass the rows the deck draws this frame, or it stays shifted until the
+/// next redraw.
+fn deck_lead(rows: &[DeckRow], inset: Pixels, window: &Window) -> Pixels {
+    match rows.first() {
+        Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
+        _ => inset,
+    }
 }
 
 fn deck_gap(window: &Window) -> Pixels {
