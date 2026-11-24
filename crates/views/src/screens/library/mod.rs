@@ -944,7 +944,7 @@ impl LibraryView {
         let circle = self.section == Section::Artists;
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
             .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
@@ -1039,7 +1039,7 @@ impl LibraryView {
         let playback = self.playback.clone();
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
             .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .pt(lead)
@@ -1308,7 +1308,7 @@ impl Render for LibraryView {
                 .into_any_element(),
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                     .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
@@ -1319,7 +1319,7 @@ impl Render for LibraryView {
                     .into_any_element()
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                 .top_inset(page::below_head(window, cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
                 .when(framed, |this| this.pt(inset))
