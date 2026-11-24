@@ -24,7 +24,7 @@ commands it sends to other devices and reads the queue Spotify reports.
 
 | Area | Endpoint | Use |
 | --- | --- | --- |
-| Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext` | Reads occurrence IDs when publishing a Connect queue, resolves play commands whose track or queue cannot be reconstructed locally, and reads track radio stations. |
+| Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolveContext` | Reads occurrence IDs when publishing a Connect queue, resolves play commands whose track or queue cannot be reconstructed locally, and requests radio stations for tracks, albums, playlists, and artists. |
 | Playback contexts | `POST /sequence-proxy/spotify.sequenceproxy.v1.SequenceProxyService/ResolvePage` | Fetches entries for page IDs returned by ResolveContext. Batches known page IDs and follows continuation pages in order when Spotify returns a chain. |
 | Search | `GET /searchview/v3/search` · `entity_types=track` | Searches tracks. |
 | Search | `GET /searchview/v3/search` · `entity_types=album` | Searches albums. |

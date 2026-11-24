@@ -3,7 +3,7 @@
 //! Every provider stamps when something was added or changed, and each spells it a little
 //! differently, so one tolerant reader serves them all rather than one per provider.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// A release date with the precision supplied by the provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,31 +14,6 @@ pub enum ReleaseDate {
 }
 
 impl ReleaseDate {
-    /// Reads the typed date or the ISO string saved by earlier builds.
-    pub(crate) fn deserialize_optional<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Self>, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum SavedDate {
-            Typed(ReleaseDate),
-            Iso(String),
-        }
-        Ok(
-            Option::deserialize(deserializer)?.and_then(|date| match date {
-                SavedDate::Typed(date) => {
-                    let (year, month, day) = date.parts();
-                    Self::from_parts(
-                        year.try_into().ok()?,
-                        i32::from(month.unwrap_or_default()),
-                        i32::from(day.unwrap_or_default()),
-                    )
-                }
-                SavedDate::Iso(iso) => Self::parse(&iso),
-            }),
-        )
-    }
-
     /// Builds a date from the longest valid prefix of its components.
     pub fn from_parts(year: i32, month: i32, day: i32) -> Option<Self> {
         if !(1..=9999).contains(&year) {

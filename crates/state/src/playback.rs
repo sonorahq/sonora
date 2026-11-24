@@ -2591,7 +2591,8 @@ impl Playback {
         if self.track.is_some() || !self.queue.read(cx).is_empty() {
             return;
         }
-        let Some(slug) = self.session.read(cx).provider_slug() else {
+        let session = self.session.read(cx);
+        let Some(slug) = session.provider_slug() else {
             return;
         };
         let Some(resume) = self
@@ -2603,6 +2604,19 @@ impl Playback {
         else {
             return;
         };
+
+        // Soloist reports its queue through Connect. A saved streaming track would send a
+        // new paused Play to the daemon and replace that queue as soon as it registers.
+        if session
+            .soloist_account()
+            .is_some_and(music::soloist::ready_for)
+            && !resume
+                .current
+                .as_ref()
+                .is_some_and(|track| music::is_local_id(&track.id))
+        {
+            return;
+        }
 
         let at = Duration::from_secs_f32(resume.position.max(0.));
         let Some(track) = self.queue.update(cx, |queue, cx| queue.revive(resume, cx)) else {

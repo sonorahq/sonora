@@ -77,7 +77,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
 - Seek ahead in a Spotify track while it is still downloading with Soloist off.
 - Jump directly to songs in the history or upcoming queue on another Spotify device, including duplicate tracks.
-- Sonora follows Spotify Connect playback and queue changes through Soloist. Switching players keeps the current position, and shuffled albums and playlists retain their context.
+- Sonora picks up Spotify Connect playback and its queue on startup with Soloist and follows changes from there. Switching players keeps the current position, and shuffled albums and playlists retain their context.
 - Spotify Home shows the account name on Liked Songs and marks the playlist playing on the active device.
 - Spotify sidebar pins can include items outside the main library list, and removing a playlist no longer reports a false failure.
 - A Spotify Jam stays visible if ending or leaving it fails.
