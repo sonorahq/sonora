@@ -76,7 +76,7 @@ const VACANCY_HEIGHT: Pixels = px(88.);
 const PIN_MARK: f32 = 0.7;
 /// The space between two pinned entries, the same as the `gap_1` between the rows above them.
 const ROW_GAP: Pixels = px(4.);
-/// The rail's side padding in rem, matching its `px_2`.
+/// The rail's side padding in rem.
 const RAIL_INSET: f32 = 0.5;
 const BORDER: Pixels = px(1.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
@@ -100,6 +100,8 @@ pub(crate) struct SidebarLeft {
     grabbed: Option<(Pixels, bool)>,
     /// Whether an edge drag is held below half the rail, which closes the sidebar on release.
     closing: bool,
+    /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
+    lingering: bool,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -158,6 +160,7 @@ impl SidebarLeft {
             cramped: false,
             grabbed: None,
             closing: false,
+            lingering: false,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -207,7 +210,16 @@ impl SidebarLeft {
         self.rail || self.squeezed()
     }
 
-    fn breadth(&self) -> Pixels {
+    /// Keeps a closed sidebar drawn while it slides away beside the page.
+    pub fn linger(&mut self, lingering: bool, cx: &mut Context<Self>) {
+        if self.lingering != lingering {
+            self.lingering = lingering;
+            cx.notify();
+        }
+    }
+
+    /// How wide the sidebar is when it shows, whether or not it shows now.
+    pub fn breadth(&self) -> Pixels {
         match (self.closing, self.folded()) {
             (true, _) => Pixels::ZERO,
             (false, true) => self.rail_width,
@@ -425,7 +437,10 @@ impl SidebarLeft {
 
         let held = pinned.len();
         let count = held + rest.len();
-        let row = ui::snapped(cx.theme().metrics.list_row, window);
+        let row = match self.folded() {
+            true => ui::Card::glance_size(window, cx),
+            false => ui::snapped(cx.theme().metrics.list_row, window),
+        };
         Some(
             Deck::new("sidebar-pins-deck")
                 .rows((0..count).map(|_| row))
@@ -840,9 +855,14 @@ impl Render for SidebarLeft {
                 }
                 cx.notify();
             }))
-            .when(!self.is_open(), |this| this.hidden())
+            .when(!self.is_open() && !self.lingering, |this| this.hidden())
             .when(!theme.transparent, |this| this.bg(sidebar_bg))
-            .border_color(sidebar_border)
+            // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
+            // the page and keeps its own.
+            .border_color(match overlaid {
+                true => sidebar_border,
+                false => gpui::transparent_black(),
+            })
             // A sidebar dragged shut keeps only its edge until the drag lets go.
             .when(closing, |this| this.border_r_0())
             .when(overlaid, |this| {
@@ -857,6 +877,9 @@ impl Render for SidebarLeft {
                     .child(
                         Scroller::new("sidebar-left-rows", &self.scrollbar)
                             .bottom_inset(super::Chrome::bottom(cx))
+                            // The rows start right under the title bar, so they fade out there
+                            // as they scroll away instead of being cut off at its edge.
+                            .fade_scrolled(theme.metrics.inset)
                             .size_full()
                             .child(
                                 div()
@@ -866,9 +889,11 @@ impl Render for SidebarLeft {
                                     .flex_col()
                                     .gap_1()
                                     .w_full()
-                                    .py_3()
+                                    // The first row keeps a little clear of the title bar.
+                                    .pt(theme.metrics.pad)
+                                    .pb_3()
                                     .map(|column| match rail {
-                                        true => column.px_2(),
+                                        true => column.px(window.rem_size() * RAIL_INSET),
                                         false => column.px_3(),
                                     })
                                     // Leave the last row somewhere to go, clear of the
@@ -920,10 +945,13 @@ pub(crate) fn sidebar_width(settings: &AppSettings) -> Pixels {
     px(settings.sidebar_width()).clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
-/// One pinned row's width plus the rail's padding and border.
+/// One pinned cover's glance plus the rail's padding and border.
 fn rail_width(window: &Window, cx: &App) -> Pixels {
-    let row = cx.theme().metrics.list_row;
-    ui::snapped(row + window.rem_size() * (RAIL_INSET * 2.) + BORDER, window)
+    let glance = ui::Card::glance_size(window, cx);
+    ui::snapped(
+        glance + window.rem_size() * (RAIL_INSET * 2.) + BORDER,
+        window,
+    )
 }
 
 /// The kind of an entry, behind a dimmed pin when it is one of the pinned ones.

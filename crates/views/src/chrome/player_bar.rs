@@ -519,10 +519,13 @@ impl PlayerBar {
             .when_else(
                 transparent,
                 |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
-                |this| this.when(!theme.transparent, |this| this.bg(theme.secondary)),
+                |this| this.when(!theme.transparent, |this| this.bg(theme.sidebar)),
             )
-            .border_t_1()
-            .border_color(theme.border)
+            // Glass over the page needs an edge, while an opaque bar is chrome that the sheet's
+            // own edge already parts from the page.
+            .when(transparent, |this| {
+                this.border_t_1().border_color(theme.border)
+            })
     }
 
     /// How much room the cover takes beside the title right now, which [`CoverRoom`] sets.

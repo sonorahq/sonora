@@ -53,7 +53,6 @@ artist-monthly-listeners = { $count ->
    *[other] { $value } oyentes mensuales
 }
 artist-popular = Popular
-artist-popular-eyebrow = Descubre a este artista
 artist-popular-empty = Todavía no hay nada que reproducir de este artista
 artist-releases = Lanzamientos
 artist-filter-all = Todo

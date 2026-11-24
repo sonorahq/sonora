@@ -31,6 +31,8 @@ pub struct Scroller {
     fade_top: Pixels,
     /// How tall the bands are where content fades at whichever end still has more to scroll to.
     fade_ends: Pixels,
+    /// How tall the band along the top grows, as the content scrolls up, where it fades out.
+    fade_scrolled: Pixels,
     /// Whether the region holds what is at its top when it changes width, and whether that hold
     /// is active right now.
     hold: Option<bool>,
@@ -54,6 +56,7 @@ impl Scroller {
             top_inset: None,
             fade_top: Pixels::ZERO,
             fade_ends: Pixels::ZERO,
+            fade_scrolled: Pixels::ZERO,
             hold: None,
             reflowed: false,
             keep: None,
@@ -135,6 +138,14 @@ impl Scroller {
         self.fade_ends = height.max(Pixels::ZERO);
         self
     }
+
+    /// Fades content out along the top once it scrolls, across a band that grows with the
+    /// distance scrolled up to `height`. Unlike [`Self::fade_top`] it adds no room above the
+    /// content, so the first item still starts at the very top and nothing fades at rest.
+    pub fn fade_scrolled(mut self, height: Pixels) -> Self {
+        self.fade_scrolled = height.max(Pixels::ZERO);
+        self
+    }
 }
 
 impl Styled for Scroller {
@@ -168,6 +179,7 @@ impl RenderOnce for Scroller {
             top_inset,
             fade_top,
             fade_ends,
+            fade_scrolled,
             hold,
             reflowed,
             keep,
@@ -192,15 +204,16 @@ impl RenderOnce for Scroller {
         let scroll = bar.read(cx).scroll().clone();
         // The offset runs negative as the content moves up, so it sits between minus the furthest
         // it can go and zero. Half a pixel of slack keeps a rounded offset from fading an end.
-        let (above, below) = {
+        let (above, below, scrolled) = {
             let (at, end) = (-scroll.offset().y, scroll.max_offset().y);
-            (at > px(0.5), end - at > px(0.5))
+            (at > px(0.5), end - at > px(0.5), at.max(Pixels::ZERO))
         };
         let end = |more: bool| match more {
             true => fade_ends,
             false => Pixels::ZERO,
         };
-        let (fade_top_end, fade_bottom_end) = (end(above), end(below));
+        let (fade_top_end, fade_bottom_end) =
+            (end(above).max(scrolled.min(fade_scrolled)), end(below));
         let overrides = std::mem::take(base.style());
         bar.read(cx).sync();
         let presentation = bar.read(cx).presentation();

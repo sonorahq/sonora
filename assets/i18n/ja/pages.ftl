@@ -52,7 +52,6 @@ artist-monthly-listeners = { $count ->
    *[other] 月間リスナー { $value }人
 }
 artist-popular = 人気の曲
-artist-popular-eyebrow = このアーティストを知る
 artist-popular-empty = このアーティストにはまだ再生できる曲がありません
 artist-releases = リリース
 artist-filter-all = すべて

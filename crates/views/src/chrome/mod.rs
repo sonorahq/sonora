@@ -7,6 +7,7 @@ mod output_picker;
 mod player_bar;
 mod session;
 mod sessions_button;
+mod sheet;
 mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
@@ -25,6 +26,7 @@ pub(crate) use output_picker::OutputPicker;
 pub(crate) use player_bar::{BarParts, COVER_GAP, PlayerBar, Volume};
 pub(crate) use session::{SessionCode, SessionJoin};
 pub(crate) use sessions_button::SessionsButton;
+pub(crate) use sheet::{SHEET_EDGE, inner_corners, sheet_frame};
 pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
 pub(crate) use swipe_cue::SwipeCue;
@@ -38,7 +40,7 @@ pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div};
+use gpui::{App, Corners, Div, Edges, Entity, Global, Pixels, SharedString, Window, div};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use state::AppSettings;
 use state::{PageWidth, Sonora};
@@ -96,6 +98,10 @@ pub(crate) struct Chrome {
     reserved_right: Pixels,
     /// The part of a page covered by the translucent player bar.
     player_bottom: Pixels,
+    /// How round each corner of the page's sheet is.
+    sheet_corners: Corners<Pixels>,
+    /// How wide the sheet's edge is on each side, zero where the side lies against the window.
+    sheet_edges: Edges<Pixels>,
 }
 
 struct Installed(Entity<Chrome>);
@@ -116,7 +122,7 @@ impl Chrome {
             sidebar_left: left,
             sidebar_right: right,
             reserved_right,
-            player_bottom: Self::get(cx).player_bottom,
+            ..Self::get(cx)
         };
         let chrome = Self::entity(cx);
         chrome.update(cx, |chrome, cx| {
@@ -135,6 +141,53 @@ impl Chrome {
 
     pub fn reserved_right(cx: &App) -> Pixels {
         Self::get(cx).reserved_right
+    }
+
+    /// How round each corner of the sheet the page lies on is. A corner rounds where it meets
+    /// the chrome and stays square against the window's edge.
+    pub fn sheet_corners(cx: &App) -> Corners<Pixels> {
+        Self::get(cx).sheet_corners
+    }
+
+    /// How wide the sheet's edge is on each side, zero on a side against the window's edge.
+    pub fn sheet_edges(cx: &App) -> Edges<Pixels> {
+        Self::get(cx).sheet_edges
+    }
+
+    /// Publishes how much of a sidebar lies beside each side of the sheet, from 0 where the side
+    /// meets the window's edge to 1 where the sidebar has slid all the way out, and whether the
+    /// bottom runs to the window's foot. A corner rounds in step with its side and a side with
+    /// nothing beside it draws no edge.
+    pub(crate) fn set_sheet(left: f32, right: f32, bottom: bool, cx: &mut App) {
+        let radius = cx.theme().radius * 1.5;
+        let round = |beside: f32| radius * beside.clamp(0., 1.);
+        let edge = |beside: f32| match beside > 0. {
+            true => SHEET_EDGE,
+            false => Pixels::ZERO,
+        };
+        let below = match bottom {
+            true => 0.,
+            false => 1.,
+        };
+        let corners = Corners {
+            top_left: round(left),
+            top_right: round(right),
+            bottom_left: round(left.min(below)),
+            bottom_right: round(right.min(below)),
+        };
+        let edges = Edges {
+            top: SHEET_EDGE,
+            left: edge(left),
+            right: edge(right),
+            bottom: edge(below),
+        };
+        Self::entity(cx).update(cx, |chrome, cx| {
+            if chrome.sheet_corners != corners || chrome.sheet_edges != edges {
+                chrome.sheet_corners = corners;
+                chrome.sheet_edges = edges;
+                cx.notify();
+            }
+        });
     }
 
     /// The extra scroll space needed to bring a page's last item above the player bar.

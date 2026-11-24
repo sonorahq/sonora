@@ -143,9 +143,9 @@ impl Render for Members {
             .flex_none()
             .items_center()
             .h(snapped(theme.metrics.header, window))
-            .px_2()
-            .border_b_1()
-            .border_color(theme.border)
+            // The title starts where the queue's section labels do.
+            .pl_4()
+            .pr_2()
             .child(eyebrow(t!("members-title"), cx));
         let root = div()
             .id("members")

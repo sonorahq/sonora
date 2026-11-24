@@ -61,7 +61,6 @@ artist-followers = { $count ->
    *[other] { $value } người theo dõi
 }
 artist-popular = Phổ biến
-artist-popular-eyebrow = Khám phá nghệ sĩ này
 artist-popular-empty = Chưa có gì để phát từ nghệ sĩ này
 artist-favorite-songs = Bài hát yêu thích của bạn
 artist-favorite-songs-count = { $count ->

@@ -1492,6 +1492,7 @@ impl Shell for FullscreenView {
             sidebar_open: false,
             sidebar_right: None,
             border: false,
+            sheet: false,
             content: None,
             transparent: ambient::shown(cx),
         }
