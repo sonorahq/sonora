@@ -66,7 +66,7 @@ def needs_macos(base: str, head: str) -> bool:
 
 def gated_modules(rev: str) -> set[str]:
     """The modules a cfg naming macOS declares at `rev`, as a directory and as a `.rs` file."""
-    candidates = git("grep", "-lz", "-iE", "macos|apple", rev, "--", "*.rs").split("\0")
+    candidates = git("grep", "-lz", "-iE", r'macos|apple|"ios"|linux', rev, "--", "*.rs").split("\0")
     modules = set()
     for entry in filter(None, candidates):
         path = PurePosixPath(entry.removeprefix(f"{rev}:"))
