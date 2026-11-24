@@ -45,6 +45,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Streaming services are cards in two columns, and the row that opens them shows the logo of every service, the one in use in colour.
 - Now playing settings stand beside their live preview, with the visualizer style in a short menu instead of picture cards.
 - The Discord status is changed right on its preview: click the name, the badge or a button, and the other options are toggles under it.
+- A setting's description waits behind an info mark next to its name and shows the moment you point at it, and settings Soloist keeps to local files carry a red mark instead.
+- Scrobbling services are cards with each service's logo, like the streaming services.
+- Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
 
 ### Fixed
 
