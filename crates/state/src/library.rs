@@ -2864,6 +2864,11 @@ impl Library {
         self.arm_reorders(REORDER_PAUSE, cx);
     }
 
+    /// Whether a playlist change is running, so another one cannot start yet.
+    pub fn playlist_busy(&self) -> bool {
+        self.playlist_task.is_some()
+    }
+
     /// Whether the playlist has a new order that is not written yet, or is being written.
     pub fn reordering(&self, playlist_id: &str) -> bool {
         self.reorders.contains_key(playlist_id)

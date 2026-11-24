@@ -53,6 +53,17 @@ pub enum Value {
     Lyrics(LyricsSnapshot),
     /// Whether the current track is a favorite, as `sonora like` prints it.
     Liked(bool),
+    /// The listener's playlists, as `sonora playlist list` prints them.
+    Playlists(Vec<PlaylistSummary>),
+}
+
+/// One playlist in `sonora playlist list`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistSummary {
+    pub id: String,
+    pub name: String,
+    pub public: bool,
+    pub owned: bool,
 }
 
 /// At most this many lines of lyrics are reported, from the start, so a very long text never

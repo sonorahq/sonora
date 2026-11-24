@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::{
-    self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    SessionCommand, Switch, Time, Watch,
+    self, Item, Kind, Level, PlaybackCommand, PlaylistCommand, ProviderCommand, QueueCommand,
+    Request, SearchQuery, SessionCommand, Switch, Time, Watch,
 };
 use cli::wire::{
     self, Current, Failure, LyricsStatus, QueueEntry, QueueEntryKind, QueueSnapshot, Reply,
@@ -21,9 +21,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
-    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
-    noted,
+    Addition, Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState,
+    QueueKind, QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence,
+    join, noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -191,6 +191,7 @@ impl Control {
                 .playback
                 .update(cx, |playback, cx| play(playback, command, cx)),
             Request::Queue(command) => return self.queue(command, reply, cx),
+            Request::Playlists(command) => return self.playlists(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
@@ -321,6 +322,75 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Lists or changes the listener's playlists. A change answers once Sonora has accepted it;
+    /// the app posts its own result when the provider finishes, as it does for edits in the UI.
+    fn playlists(
+        &mut self,
+        command: PlaylistCommand,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = match command {
+            PlaylistCommand::List => {
+                let library = self.library.read(cx);
+                let items = [Shelf::Streaming, Shelf::Local]
+                    .into_iter()
+                    .flat_map(|shelf| library.state(shelf).playlists())
+                    .map(|playlist| wire::PlaylistSummary {
+                        id: playlist.id.clone(),
+                        name: playlist.name.clone(),
+                        public: playlist.public,
+                        owned: playlist.owned,
+                    })
+                    .collect();
+                Reply::Value(Value::Playlists(items))
+            }
+            change => {
+                if self.library.read(cx).playlist_busy() {
+                    Reply::Failed(Failure::Busy)
+                } else {
+                    let shelf = match &change {
+                        PlaylistCommand::Create { local, .. } => match local {
+                            true => Shelf::Local,
+                            false => Shelf::Streaming,
+                        },
+                        PlaylistCommand::Rename { id, .. }
+                        | PlaylistCommand::Visibility { id, .. }
+                        | PlaylistCommand::AddTracks { id, .. }
+                        | PlaylistCommand::RemoveTracks { id, .. }
+                        | PlaylistCommand::Delete { id } => Shelf::of(id),
+                        PlaylistCommand::List => unreachable!(),
+                    };
+                    if self.session.read(cx).client_of(shelf).is_none() {
+                        Reply::Failed(Failure::SignedOut)
+                    } else {
+                        self.library.update(cx, |library, cx| match change {
+                            PlaylistCommand::Create { name, tracks, .. } => {
+                                library.create_playlist(name, Addition::Tracks(tracks), shelf, cx)
+                            }
+                            PlaylistCommand::Rename { id, name } => {
+                                library.rename_playlist(id, name, cx)
+                            }
+                            PlaylistCommand::Visibility { id, public } => {
+                                library.set_playlist_public(id, public, cx)
+                            }
+                            PlaylistCommand::AddTracks { id, tracks } => {
+                                library.add_tracks_to_playlist(id, Addition::Tracks(tracks), cx)
+                            }
+                            PlaylistCommand::RemoveTracks { id, tracks } => {
+                                library.remove_tracks_from_playlist(id, tracks, cx)
+                            }
+                            PlaylistCommand::Delete { id } => library.delete_playlist(id, cx),
+                            PlaylistCommand::List => unreachable!(),
+                        });
+                        Reply::Done
+                    }
+                }
+            }
+        };
+        reply.send(answer).ok();
     }
 
     /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same

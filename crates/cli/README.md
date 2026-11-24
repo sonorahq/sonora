@@ -24,6 +24,13 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |
 | `sonora like [on\|off\|toggle]` | Print or change whether the current track is a favorite |
+| `sonora playlist list` | List your playlists |
+| `sonora playlist create <name> [--tracks ID...] [--local]` | Create a playlist, optionally with tracks |
+| `sonora playlist rename <id> <name>` | Rename a playlist |
+| `sonora playlist public <id> on\|off` | Change a playlist's visibility |
+| `sonora playlist add <id> <track>...` | Add tracks to a playlist |
+| `sonora playlist remove <id> <track>...` | Remove tracks from a playlist |
+| `sonora playlist delete <id>` | Delete a playlist |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
 | `sonora volume [N\|+N\|-N]` | Print the volume, set it from 0 to 100, or step it |
 | `sonora mute [on\|off\|toggle]` | Print or change whether playback is muted |
@@ -53,6 +60,13 @@ unmute, and a volume change while muted clears that remembered level.
 
 Playback commands go to the device that has playback, so while Sonora steers another device over
 Spotify Connect, that device is the one that pauses or skips.
+
+### Playlists
+
+`sonora playlist list --json` prints each playlist's `id`, which the other actions take. Track
+arguments are provider track ids, the `id` field of `sonora search --json`. An action answers once
+Sonora accepts the change; the app posts a toast when the provider finishes it, as it does for
+edits made in the UI. Use `--local` on `create` to make the playlist in the local library.
 
 ### Queueing
 
