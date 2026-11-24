@@ -228,13 +228,15 @@ pub(super) fn chip(
     cx: &App,
 ) -> Button {
     let theme = cx.theme();
+    // a chip whose label already says it all is named by its label alone, so it is read once
+    let named = name != label;
 
     Button::new(id)
         .outline()
         .small()
         .icon(icon)
         .label(label)
-        .name(name)
+        .when(named, |chip| chip.name(name))
         .toggled(on)
         .map(|chip| match on {
             true => chip

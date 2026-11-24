@@ -19,7 +19,7 @@ use i18n::t;
 use state::DiscordName;
 use ui::ActiveTheme as _;
 use ui::Glowing as _;
-use ui::{Artwork, MenuItem, Picker, SMALL_INSET, Text, tabular};
+use ui::{Artwork, Menu, MenuItem, Picker, Popover, Text, tabular};
 
 use super::Tick;
 use crate::screens::settings::SettingsView;
@@ -94,8 +94,11 @@ const GHOST_EDGE: u32 = 0xffffff4d;
 const GHOST_TEXT: u32 = 0xffffff8c;
 /// How large the plus on a badge or button that is off draws.
 const PLUS: Pixels = px(14.);
-/// The popover key of the status name's menu.
+/// The popover key of the status name's menu, how far the header's hover fill reaches past
+/// its text, and the fill itself, white at low strength over the card.
 const NAME_MENU: &str = "discord-name";
+const NAME_INSET: Pixels = px(4.);
+const NAME_HOVER: u32 = 0xffffff14;
 
 /// What a click on a part of the card does.
 type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -216,11 +219,12 @@ pub(in crate::screens::settings) fn preview(
             }))
         }),
     });
-    // the provider's button never goes out with hidden details or a local file, so it is not
-    // offered for them either
+    // the provider's button never goes out with hidden details or a local file, so the card
+    // leaves it out for them, except that a local track picked for the card still offers it
+    // while the card can be changed, as the card is the one place it is turned on and off
     let mut buttons = Vec::new();
     if !hidden
-        && !local
+        && (!local || on)
         && let Some((_, name, _)) = provider
     {
         buttons.push(Link {
@@ -251,30 +255,57 @@ pub(in crate::screens::settings) fn preview(
     // with the status off the card shows only what the status would
     buttons.retain(|link| link.on || link.press.is_some());
 
-    let header = t!("settings-discord-preview-listening", name = &listening);
+    // the header names the status the way Discord does, cut short within the card, and opens
+    // the menu of names while the card can be changed
+    let header = ui::spoken(
+        "discord-preview-header",
+        t!("settings-discord-preview-listening", name = &listening),
+    )
+    .min_w_0()
+    .text_size(HEADER_SIZE)
+    .text_color(rgb(HEADER))
+    .truncate();
     let header = match on {
-        true => Picker::new(NAME_MENU, &view.popovers, header)
+        true => Popover::new(NAME_MENU, view.popovers.clone())
             .name(t!("settings-discord-name"))
-            .ghost()
-            .left()
-            .tint(rgb(HEADER).into())
-            .width(Picker::NARROW)
-            .items(DiscordName::ALL.map(|choice| {
-                MenuItem::new(choice.id(), i18n::lookup(choice.key(), None))
-                    .selected(choice == name)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings
-                            .update(cx, |settings, cx| settings.set_discord_name(choice, cx));
-                        cx.notify();
-                    }))
-            }))
-            .ml(-SMALL_INSET)
+            .face(
+                div()
+                    .id("discord-preview-name")
+                    .flex()
+                    .items_center()
+                    .gap(NAME_INSET)
+                    .min_w_0()
+                    .mx(-NAME_INSET)
+                    .px(NAME_INSET)
+                    .rounded(BUTTON_RADIUS)
+                    .hover(|style| style.bg(rgba(NAME_HOVER)))
+                    .child(header)
+                    .child(
+                        svg()
+                            .path(icons::path("icons/chevron-down.svg"))
+                            .size(PLUS)
+                            .flex_none()
+                            .text_color(rgb(HEADER)),
+                    ),
+            )
+            .menu(
+                Menu::new("discord-name-menu")
+                    .w(Picker::NARROW)
+                    .left_0()
+                    .items(DiscordName::ALL.map(|choice| {
+                        MenuItem::new(choice.id(), i18n::lookup(choice.key(), None))
+                            .selected(choice == name)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_discord_name(choice, cx)
+                                });
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .commands()
             .into_any_element(),
-        false => ui::spoken("discord-preview-header", header)
-            .text_size(HEADER_SIZE)
-            .text_color(rgb(HEADER))
-            .truncate()
-            .into_any_element(),
+        false => header.into_any_element(),
     };
 
     let (title, artist, album) = match hidden {
@@ -297,7 +328,7 @@ pub(in crate::screens::settings) fn preview(
         .rounded(CARD_RADIUS)
         .bg(rgb(CARD))
         .font_family(FONT)
-        .child(div().flex().child(header))
+        .child(header)
         .child(
             div()
                 .flex()

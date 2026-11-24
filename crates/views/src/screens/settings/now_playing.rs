@@ -4,7 +4,7 @@ use i18n::t;
 use state::{FullscreenControlsAutohide, SideTab};
 use ui::{MenuItem, Picker, Switch, VisualizerStyle};
 
-use super::rows::{chip, chips, segmented};
+use super::rows::{chip, chips};
 use super::{Group, SettingsView, Slot};
 
 /// The views of the fullscreen player the visualizer can be drawn in, with the id each one's
@@ -23,6 +23,7 @@ const SCREENS: [(Option<SideTab>, &str, &str); 3] = [
     ),
 ];
 const AUTOHIDE: &str = "fullscreen-controls-autohide";
+const VISUALIZER: &str = "visualizer";
 
 impl SettingsView {
     /// The Now playing page, which stands beside its preview where the column has room: what
@@ -85,26 +86,28 @@ impl SettingsView {
         )
     }
 
-    /// How the spectrum is drawn behind the fullscreen artwork, off included, as one segmented
-    /// control.
+    /// How the spectrum is drawn behind the fullscreen artwork, off included, as a picker,
+    /// which keeps the row narrow enough to stand beside the preview in every language. The
+    /// preview beside it shows the style chosen.
     pub(super) fn visualizer_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.settings.read(cx).visualizer_style();
 
-        let styles = segmented(
-            "visualizer",
-            VisualizerStyle::ALL.map(|style| (style, style.label())),
-            chosen,
-            cx.listener(|this, style: &VisualizerStyle, _, cx| {
-                let style = *style;
-                this.settings
-                    .update(cx, |settings, cx| settings.set_visualizer_style(style, cx));
-                cx.notify();
-            }),
-        );
+        let picker = Picker::new(VISUALIZER, &self.popovers, chosen.label())
+            .width(Picker::NARROW)
+            .items(VisualizerStyle::ALL.map(|style| {
+                MenuItem::new(style.id(), style.label())
+                    .selected(style == chosen)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings
+                            .update(cx, |settings, cx| settings.set_visualizer_style(style, cx));
+                        this.popovers.close();
+                        cx.notify();
+                    }))
+            }));
 
         self.row(
             t!("settings-visualizer"),
-            styles.name(t!("settings-visualizer")).into_any_element(),
+            picker.name(t!("settings-visualizer")).into_any_element(),
         )
     }
 

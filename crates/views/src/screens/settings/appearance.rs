@@ -753,7 +753,7 @@ pub(super) fn usable_fonts(text_system: std::sync::Arc<gpui::TextSystem>) -> Vec
 
 /// The top left corner of a surface drawn at `rounding`'s radius, the rest of it cut off by
 /// the thumbnail.
-pub(super) fn corner(rounding: Rounding, cx: &App) -> Div {
+fn corner(rounding: Rounding, cx: &App) -> Div {
     let theme = cx.theme();
 
     div().size_full().relative().child(
