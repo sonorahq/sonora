@@ -54,7 +54,6 @@ artist-monthly-listeners = { $count ->
    *[other] { $value } měsíčních posluchačů
 }
 artist-popular = Populární
-artist-popular-eyebrow = Prozkoumej tohoto interpreta
 artist-popular-empty = Zatím tu není co přehrát
 artist-releases = Vydání
 artist-filter-all = Vše

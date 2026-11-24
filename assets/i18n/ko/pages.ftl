@@ -74,7 +74,6 @@ artist-followers = { $count ->
    *[other] 팔로워 { $value }명
 }
 artist-popular = 인기 곡
-artist-popular-eyebrow = 이 아티스트 둘러보기
 artist-popular-empty = 이 아티스트의 재생 가능한 곡이 아직 없습니다.
 artist-favorite-songs = 즐겨찾기한 곡
 artist-favorite-songs-count = { $count ->

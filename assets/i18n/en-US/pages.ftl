@@ -74,7 +74,6 @@ artist-followers = { $count ->
    *[other] { $value } followers
 }
 artist-popular = Popular
-artist-popular-eyebrow = Explore this artist
 artist-popular-empty = Nothing to play from this artist yet
 artist-favorite-songs = Your favorite songs
 artist-favorite-songs-count = { $count ->

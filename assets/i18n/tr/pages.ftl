@@ -53,7 +53,6 @@ artist-monthly-listeners =
        *[other] { $value } aylık dinleyici
     }
 artist-popular = Popüler
-artist-popular-eyebrow = Bu sanatçıyı keşfet
 artist-popular-empty = Bu sanatçıdan çalınacak bir şey henüz yok
 artist-releases = Yayınlar
 artist-filter-all = Tümü

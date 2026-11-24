@@ -53,7 +53,6 @@ artist-monthly-listeners = { $count ->
    *[other] { $value } dëgjues mujorë
 }
 artist-popular = Popullore
-artist-popular-eyebrow = Eksploro këtë artist
 artist-popular-empty = Ende asgjë për të luajtur nga ky artist
 artist-releases = Publikime
 artist-filter-all = Të gjitha

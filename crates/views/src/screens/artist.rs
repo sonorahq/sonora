@@ -1044,7 +1044,6 @@ impl ArtistView {
             self.popular_page,
         )
         .title("artist-popular")
-        .eyebrow(i18n::lookup("artist-popular-eyebrow", None))
         .vacancy("artist-popular-empty")
         .detailed()
         .loading(self.detail.read(cx).is_loading())
