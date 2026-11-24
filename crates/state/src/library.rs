@@ -2787,6 +2787,7 @@ impl Library {
             |playlist| playlist.track_count += added_count,
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             ids.extend(track_ids);
         } else {
@@ -2810,10 +2811,13 @@ impl Library {
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             for track in &track_ids {
                 ids.remove(track);
             }
+        } else {
+            self.read_playlists(Shelf::of(playlist_id), cx);
         }
         for track in track_ids {
             cx.emit(LibraryEvent::TrackDropped {
