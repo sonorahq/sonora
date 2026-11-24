@@ -44,7 +44,7 @@ use gpui::{App, Corners, Div, Edges, Entity, Global, Pixels, SharedString, Windo
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use state::AppSettings;
 use state::{PageWidth, Sonora};
-use ui::{ActiveTheme as _, MIN_CONTENT, Room, eyebrow};
+use ui::{ActiveTheme as _, MIN_CONTENT, Room, Rounding, eyebrow};
 
 /// The radius every element touching a corner of the window rounds that corner with, or `None`
 /// under server-side decorations or `Rounding::Square`. It never exceeds half the title bar's
@@ -162,14 +162,15 @@ impl Chrome {
     /// The corners and edges of a sheet with `left` and `right` of a sidebar beside it, from 0
     /// where the side meets the window's edge to 1 where the sidebar has slid all the way out,
     /// and whose bottom runs to the window's foot when `bottom` holds. A corner rounds in step
-    /// with its side and a side with nothing beside it draws no edge.
+    /// with its side and a side with nothing beside it draws no edge. The corners stop growing at
+    /// the `Rounded` setting, since rounder ones cut into what the page lays along its top.
     pub(crate) fn sheet_shape(
         left: f32,
         right: f32,
         bottom: bool,
         cx: &App,
     ) -> (Corners<Pixels>, Edges<Pixels>) {
-        let radius = cx.theme().radius * 1.5;
+        let radius = cx.theme().radius.min(Rounding::Rounded.radius()) * 1.5;
         let round = |beside: f32| radius * beside.clamp(0., 1.);
         let edge = |beside: f32| match beside > 0. {
             true => SHEET_EDGE,
@@ -197,6 +198,13 @@ impl Chrome {
     /// The extra scroll space needed to bring a page's last item above the player bar.
     pub fn bottom(cx: &App) -> Pixels {
         Self::get(cx).player_bottom
+    }
+
+    /// How far above a page's foot its scrollbar ends: clear of a translucent player bar, or of
+    /// the sheet's rounded bottom corner where the page stops above an opaque one.
+    pub fn track_bottom(cx: &App) -> Pixels {
+        let chrome = Self::get(cx);
+        chrome.player_bottom.max(chrome.sheet_corners.bottom_right)
     }
 
     /// Publishes the player bar's overlap after its responsive height has been resolved.

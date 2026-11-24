@@ -206,8 +206,6 @@ impl Render for SidebarRight {
             // them.
             .when(!theme.transparent, |this| this.bg(theme.sidebar))
             .border_color(gpui::transparent_black())
-            // Its title keeps a little clear of the title bar, as the left sidebar's rows do.
-            .pt(theme.metrics.pad)
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),
                 _ => self
