@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use reqwest::Method;
-use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 
 use crate::engine::Loudness;
 use crate::plex::auth::{self, Credentials};
@@ -27,6 +27,10 @@ const ALBUMS: &str = "9";
 const TRACKS: &str = "10";
 /// A rating of five stars, which is what a favorite is.
 const FAVORITE: &str = "10";
+const JSON: &str = "application/json";
+/// What a request for a file or a lyrics sidecar accepts. Plex turns a lyrics stream into JSON
+/// when asked for JSON.
+const ANY: &str = "*/*";
 const LIBRARY_PAGE: usize = 500;
 const PORTRAIT_LIMIT: usize = 24;
 const RADIO_COUNT: &str = "25";
@@ -60,6 +64,8 @@ pub struct PlexClient {
 
 struct Inner {
     http: reqwest::Client,
+    /// Talks to plex.tv, which can take longer to connect to than a server on the same network.
+    tv: reqwest::Client,
     client_id: String,
     stored: Credentials,
     /// The address of the server that last answered. It moves when the server does.
@@ -78,9 +84,14 @@ impl PlexClient {
             .https_only(true)
             .build()
             .context("cannot build the plex http client")?;
+        let tv = reqwest::Client::builder()
+            .https_only(true)
+            .build()
+            .context("cannot build the plex.tv http client")?;
         Ok(Self {
             inner: Arc::new(Inner {
                 http,
+                tv,
                 client_id,
                 uri: RwLock::new(stored.server.uri.clone()),
                 stored,
@@ -119,7 +130,7 @@ impl PlexClient {
     /// answering: the server moved, or the listener left the network it was on.
     async fn reroute(&self) -> Result<()> {
         let stored = &self.inner.stored;
-        let servers = tv::servers(&self.inner.http, &self.inner.client_id, &stored.token).await?;
+        let servers = tv::servers(&self.inner.tv, &self.inner.client_id, &stored.token).await?;
         let server = servers
             .into_iter()
             .find(|server| server.client_identifier == stored.server.id)
@@ -149,22 +160,25 @@ impl PlexClient {
         Ok(())
     }
 
-    /// Sends one request to the server. A server that does not answer is looked for again once,
-    /// and a refused token marks the session revoked.
+    /// Sends one request to the server, asking for `accept`. A server that does not answer is looked
+    /// for again once, and a refused token marks the session revoked.
     async fn send(
         &self,
         method: Method,
         path: &str,
         query: &[(&str, &str)],
         timeout: Option<Duration>,
+        accept: &'static str,
     ) -> Result<reqwest::Response> {
         let mut rerouted = false;
+        let mut headers = self.headers();
+        headers.insert(ACCEPT, HeaderValue::from_static(accept));
         loop {
             let mut request = self
                 .inner
                 .http
                 .request(method.clone(), format!("{}{path}", self.base()))
-                .headers(self.headers())
+                .headers(headers.clone())
                 .query(query);
             if let Some(timeout) = timeout {
                 request = request.timeout(timeout);
@@ -201,7 +215,7 @@ impl PlexClient {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<reqwest::Response> {
-        self.send(method, path, query, Some(TIMEOUT)).await
+        self.send(method, path, query, Some(TIMEOUT), JSON).await
     }
 
     async fn container(&self, path: &str, query: &[(&str, &str)]) -> Result<Container> {
@@ -474,7 +488,7 @@ impl PlexClient {
 
     /// The query that lists what the listener has given five stars, of one kind of item.
     fn rated(kind: &'static str) -> [(&'static str, &'static str); 2] {
-        [("type", kind), ("userRating>>", FAVORITE)]
+        [("type", kind), ("userRating", FAVORITE)]
     }
 
     /// The tracks of an album, in the order the album is heard.
@@ -599,7 +613,7 @@ impl PlexClient {
     /// Opens the file of a track and answers once the response headers are in. The body is
     /// still on its way, and the server sends the file as it is, with no conversion.
     pub async fn open_stream(&self, part: &str) -> Result<reqwest::Response> {
-        self.send(Method::GET, part, &[], None).await
+        self.send(Method::GET, part, &[], None, ANY).await
     }
 
     /// The lyrics the server holds for a track, as the text of the first lyrics stream, and
@@ -616,7 +630,13 @@ impl PlexClient {
             return Ok(None);
         };
         let text = self
-            .request(Method::GET, &format!("/library/streams/{id}"), &[])
+            .send(
+                Method::GET,
+                &format!("/library/streams/{id}"),
+                &[],
+                Some(TIMEOUT),
+                ANY,
+            )
             .await?
             .text()
             .await
@@ -1154,6 +1174,24 @@ impl MusicApi for PlexClient {
             .context("cannot search")?
             .into_iter()
             .map(|item| self.track(item))
+            .collect())
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        Ok(self
+            .items(
+                &self.section("/search"),
+                &[
+                    ("type", ARTISTS),
+                    ("query", query),
+                    ("X-Plex-Container-Start", "0"),
+                    ("X-Plex-Container-Size", "30"),
+                ],
+            )
+            .await
+            .context("cannot search artists")?
+            .into_iter()
+            .map(|item| self.artist_card(item))
             .collect())
     }
 
