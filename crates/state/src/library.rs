@@ -2870,6 +2870,11 @@ impl Library {
         self.playlist_task.is_some()
     }
 
+    /// The account generation of `shelf`, so a delayed edit can refuse to run after a switch.
+    pub fn shelf_epoch(&self, shelf: Shelf) -> u64 {
+        self.epochs[shelf.slot()]
+    }
+
     /// Whether the playlist has a new order that is not written yet, or is being written.
     pub fn reordering(&self, playlist_id: &str) -> bool {
         self.reorders.contains_key(playlist_id)

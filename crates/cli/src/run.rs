@@ -345,6 +345,7 @@ fn describe(failure: &Failure) -> String {
         Failure::SteeredReadOnly => {
             "another device has playback; its queue cannot be placed at a position".to_owned()
         }
+        Failure::AccountChanged => "the account changed while the command was waiting".to_owned(),
     }
 }
 

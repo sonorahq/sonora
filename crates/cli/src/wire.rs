@@ -375,6 +375,8 @@ pub enum Failure {
     NothingFound(String),
     /// Another device has playback, and its queue cannot be edited at a position.
     SteeredReadOnly,
+    /// The account changed while the command was waiting, so it was not applied.
+    AccountChanged,
 }
 
 /// Why a line could not be read off the socket.

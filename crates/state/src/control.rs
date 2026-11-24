@@ -392,6 +392,7 @@ impl Control {
                     let Some(client) = self.session.read(cx).client_of(shelf) else {
                         unreachable!()
                     };
+                    let epoch = self.library.read(cx).shelf_epoch(shelf);
                     let fetch_id = id.clone();
                     let fetch =
                         Io::global(cx).spawn(async move { client.playlist(&fetch_id).await });
@@ -418,19 +419,28 @@ impl Control {
                                     None
                                 }
                             };
+                            // The provider that answered the fetch may not be the one on duty
+                            // now, and the library writes with the account active at write time.
+                            let changed_account =
+                                this.library.read(cx).shelf_epoch(shelf) != epoch;
                             // Without the exact rows the library would miscount repeated tracks
                             // and undo only one copy, so refuse the edit instead.
-                            let answer = match rows {
-                                Some(rows) => {
-                                    let started = this.library.update(cx, |library, cx| {
-                                        library.remove_tracks_from_playlist(id.clone(), rows, cx)
-                                    });
-                                    match started {
-                                        true => Reply::Done,
-                                        false => Reply::Failed(Failure::Busy),
+                            let answer = if changed_account {
+                                Reply::Failed(Failure::AccountChanged)
+                            } else {
+                                match rows {
+                                    Some(rows) => {
+                                        let started = this.library.update(cx, |library, cx| {
+                                            library
+                                                .remove_tracks_from_playlist(id.clone(), rows, cx)
+                                        });
+                                        match started {
+                                            true => Reply::Done,
+                                            false => Reply::Failed(Failure::Busy),
+                                        }
                                     }
+                                    None => Reply::Failed(Failure::Unfetched(id)),
                                 }
-                                None => Reply::Failed(Failure::Unfetched(id)),
                             };
                             reply.send(answer).ok();
                             this.pending.remove(&key);
