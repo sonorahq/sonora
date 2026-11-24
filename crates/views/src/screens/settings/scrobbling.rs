@@ -77,6 +77,7 @@ impl SettingsView {
                 true => t!("settings-scrobble-on"),
                 false => t!("settings-scrobble-as", name = name.as_ref()),
             },
+            ScrobbleState::Refused => t!("settings-scrobble-key-refused"),
             ScrobbleState::Failed(key) => i18n::lookup(key, None),
         };
         Some((i18n::lookup(&format!("settings-{service}"), None), detail))

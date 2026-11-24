@@ -93,7 +93,7 @@ jobs:
 
       # nextest runs the tests of every binary in parallel instead of one binary after another,
       # and skips the rustdoc pass for doctests the workspace does not have.
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         if: matrix.task == 'test'
         with:
           tool: cargo-nextest

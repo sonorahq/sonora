@@ -136,6 +136,7 @@ pub(crate) fn volume_slider<V: VolumeHost>(
                     .name(t!("equalizer-status-volume"))
                     .value(percent(level))
                     .colors(theme.progress_bar, empty, theme.foreground)
+                    .lift(VOLUME_BUBBLE_LIFT)
                     .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                     .on_move(cx.listener(|this: &mut V, fraction: &f32, _, cx| {
                         let level = *fraction;
