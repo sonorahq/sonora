@@ -98,10 +98,8 @@ pub(crate) struct Chrome {
     reserved_right: Pixels,
     /// The part of a page covered by the translucent player bar.
     player_bottom: Pixels,
-    /// How round each corner of the page's sheet is.
+    /// How round each corner of the page's sheet is once every sidebar has landed.
     sheet_corners: Corners<Pixels>,
-    /// How wide the sheet's edge is on each side, zero where the side lies against the window.
-    sheet_edges: Edges<Pixels>,
 }
 
 struct Installed(Entity<Chrome>);
@@ -149,16 +147,28 @@ impl Chrome {
         Self::get(cx).sheet_corners
     }
 
-    /// How wide the sheet's edge is on each side, zero on a side against the window's edge.
-    pub fn sheet_edges(cx: &App) -> Edges<Pixels> {
-        Self::get(cx).sheet_edges
+    /// Publishes the corners of the sheet the page lies on once every sidebar has landed, which
+    /// pages pad against. The arguments are those of `sheet_shape`.
+    pub(crate) fn set_sheet(left: f32, right: f32, bottom: bool, cx: &mut App) {
+        let (corners, _) = Self::sheet_shape(left, right, bottom, cx);
+        Self::entity(cx).update(cx, |chrome, cx| {
+            if chrome.sheet_corners != corners {
+                chrome.sheet_corners = corners;
+                cx.notify();
+            }
+        });
     }
 
-    /// Publishes how much of a sidebar lies beside each side of the sheet, from 0 where the side
-    /// meets the window's edge to 1 where the sidebar has slid all the way out, and whether the
-    /// bottom runs to the window's foot. A corner rounds in step with its side and a side with
-    /// nothing beside it draws no edge.
-    pub(crate) fn set_sheet(left: f32, right: f32, bottom: bool, cx: &mut App) {
+    /// The corners and edges of a sheet with `left` and `right` of a sidebar beside it, from 0
+    /// where the side meets the window's edge to 1 where the sidebar has slid all the way out,
+    /// and whose bottom runs to the window's foot when `bottom` holds. A corner rounds in step
+    /// with its side and a side with nothing beside it draws no edge.
+    pub(crate) fn sheet_shape(
+        left: f32,
+        right: f32,
+        bottom: bool,
+        cx: &App,
+    ) -> (Corners<Pixels>, Edges<Pixels>) {
         let radius = cx.theme().radius * 1.5;
         let round = |beside: f32| radius * beside.clamp(0., 1.);
         let edge = |beside: f32| match beside > 0. {
@@ -181,13 +191,7 @@ impl Chrome {
             right: edge(right),
             bottom: edge(below),
         };
-        Self::entity(cx).update(cx, |chrome, cx| {
-            if chrome.sheet_corners != corners || chrome.sheet_edges != edges {
-                chrome.sheet_corners = corners;
-                chrome.sheet_edges = edges;
-                cx.notify();
-            }
-        });
+        (corners, edges)
     }
 
     /// The extra scroll space needed to bring a page's last item above the player bar.
