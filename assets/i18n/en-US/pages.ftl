@@ -7,6 +7,7 @@ login-restoring = Checking your saved session…
 login-authorizing = Waiting for authorization in your browser…
 login-signed-in = Signed in as { $name }
 login-failed-title = Sign-in failed
+login-window-title = Sign in to { $provider }
 login-problem-region = Spotify will not open a session from the country you are in. Sign in from your home country, or change the country on your Spotify account.
 login-problem-credentials = Your saved session for this service is no longer valid. Sign in again to continue.
 login-problem-password = The server did not accept that username and password. Check them and try again.
