@@ -115,7 +115,8 @@ song    One More Time  Daft Punk  5:20    https://open.spotify.com/track/…
 album   Discovery      Daft Punk          https://open.spotify.com/album/…
 ```
 
-Hits without a link to act on, such as an artist no provider id names, are left out.
+Hits without a link to act on, such as an artist no provider id names, are left out. With
+`--json`, every hit also carries its provider `id`, which the `playlist` commands take.
 
 ### Output
 

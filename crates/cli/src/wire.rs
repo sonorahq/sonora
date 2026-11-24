@@ -238,6 +238,9 @@ pub struct SessionInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hit {
     pub kind: Kind,
+    /// The provider id, for commands that take an id such as `playlist add`.
+    #[serde(default)]
+    pub id: String,
     pub title: String,
     /// The artists, or a playlist's owner. Empty for an artist.
     pub by: String,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -332,61 +332,121 @@ impl Control {
         reply: oneshot::Sender<Reply>,
         cx: &mut Context<Self>,
     ) {
-        let answer = match command {
-            PlaylistCommand::List => {
-                let library = self.library.read(cx);
-                let items = [Shelf::Streaming, Shelf::Local]
-                    .into_iter()
-                    .flat_map(|shelf| library.state(shelf).playlists())
-                    .map(|playlist| wire::PlaylistSummary {
-                        id: playlist.id.clone(),
-                        name: playlist.name.clone(),
-                        public: playlist.public,
-                        owned: playlist.owned,
-                    })
-                    .collect();
-                Reply::Value(Value::Playlists(items))
+        if let PlaylistCommand::List = command {
+            let library = self.library.read(cx);
+            let items = [Shelf::Streaming, Shelf::Local]
+                .into_iter()
+                .flat_map(|shelf| library.state(shelf).playlists())
+                .map(|playlist| wire::PlaylistSummary {
+                    id: playlist.id.clone(),
+                    name: playlist.name.clone(),
+                    public: playlist.public,
+                    owned: playlist.owned,
+                })
+                .collect();
+            reply.send(Reply::Value(Value::Playlists(items))).ok();
+            return;
+        }
+
+        let (shelf, id) = match &command {
+            PlaylistCommand::Create { local, .. } => (
+                match local {
+                    true => Shelf::Local,
+                    false => Shelf::Streaming,
+                },
+                None,
+            ),
+            PlaylistCommand::Rename { id, .. }
+            | PlaylistCommand::Visibility { id, .. }
+            | PlaylistCommand::Delete { id } => (Shelf::of(id), Some(id.clone())),
+            PlaylistCommand::AddTracks { id, tracks }
+            | PlaylistCommand::RemoveTracks { id, tracks } => {
+                if tracks.is_empty() {
+                    reply.send(Reply::Failed(Failure::Malformed)).ok();
+                    return;
+                }
+                (Shelf::of(id), Some(id.clone()))
             }
-            change => {
-                if self.library.read(cx).playlist_busy() {
-                    Reply::Failed(Failure::Busy)
-                } else {
-                    let shelf = match &change {
-                        PlaylistCommand::Create { local, .. } => match local {
-                            true => Shelf::Local,
-                            false => Shelf::Streaming,
-                        },
-                        PlaylistCommand::Rename { id, .. }
-                        | PlaylistCommand::Visibility { id, .. }
-                        | PlaylistCommand::AddTracks { id, .. }
-                        | PlaylistCommand::RemoveTracks { id, .. }
-                        | PlaylistCommand::Delete { id } => Shelf::of(id),
-                        PlaylistCommand::List => unreachable!(),
+            PlaylistCommand::List => unreachable!(),
+        };
+
+        // These are the same conditions the library refuses a change under, so the reply says
+        // busy rather than claiming an edit that never started.
+        let blocked = {
+            let library = self.library.read(cx);
+            library.playlist_busy()
+                || id.as_deref().is_some_and(|id| library.reordering(id))
+                || id
+                    .as_deref()
+                    .is_some_and(|id| library.playlist(id).is_some_and(|item| item.read_only))
+        };
+        let answer = if blocked {
+            Reply::Failed(Failure::Busy)
+        } else if self.session.read(cx).client_of(shelf).is_none() {
+            Reply::Failed(Failure::SignedOut)
+        } else {
+            match command {
+                // The library counts one row per copy of a track, so read the playlist to keep
+                // the count and Undo right when the same id appears more than once.
+                PlaylistCommand::RemoveTracks { id, tracks } => {
+                    let Some(client) = self.session.read(cx).client_of(shelf) else {
+                        unreachable!()
                     };
-                    if self.session.read(cx).client_of(shelf).is_none() {
-                        Reply::Failed(Failure::SignedOut)
-                    } else {
-                        self.library.update(cx, |library, cx| match change {
-                            PlaylistCommand::Create { name, tracks, .. } => {
-                                library.create_playlist(name, Addition::Tracks(tracks), shelf, cx)
-                            }
-                            PlaylistCommand::Rename { id, name } => {
-                                library.rename_playlist(id, name, cx)
-                            }
-                            PlaylistCommand::Visibility { id, public } => {
-                                library.set_playlist_public(id, public, cx)
-                            }
-                            PlaylistCommand::AddTracks { id, tracks } => {
-                                library.add_tracks_to_playlist(id, Addition::Tracks(tracks), cx)
-                            }
-                            PlaylistCommand::RemoveTracks { id, tracks } => {
-                                library.remove_tracks_from_playlist(id, tracks, cx)
-                            }
-                            PlaylistCommand::Delete { id } => library.delete_playlist(id, cx),
-                            PlaylistCommand::List => unreachable!(),
-                        });
-                        Reply::Done
-                    }
+                    let fetch_id = id.clone();
+                    let fetch =
+                        Io::global(cx).spawn(async move { client.playlist(&fetch_id).await });
+                    let key = self.issued;
+                    self.issued += 1;
+                    let task = cx.spawn(async move |this, cx| {
+                        let fetched = join(fetch).await;
+                        this.update(cx, |this, cx| {
+                            let wanted: HashSet<&str> =
+                                tracks.iter().map(String::as_str).collect();
+                            let rows = match fetched {
+                                Ok(detail) => detail
+                                    .tracks
+                                    .into_iter()
+                                    .filter_map(|track| track.id)
+                                    .filter(|track_id| wanted.contains(track_id.as_str()))
+                                    .collect(),
+                                Err(error) => {
+                                    log::warn!(
+                                        "control: cannot read a playlist before removing tracks: {error:#}"
+                                    );
+                                    tracks
+                                }
+                            };
+                            this.library.update(cx, |library, cx| {
+                                library.remove_tracks_from_playlist(id, rows, cx)
+                            });
+                            reply.send(Reply::Done).ok();
+                            this.pending.remove(&key);
+                        })
+                        .ok();
+                    });
+                    self.pending.insert(key, task);
+                    return;
+                }
+                change => {
+                    self.library.update(cx, |library, cx| match change {
+                        PlaylistCommand::Create { name, tracks, .. } => {
+                            library.create_playlist(name, Addition::Tracks(tracks), shelf, cx)
+                        }
+                        PlaylistCommand::Rename { id, name } => {
+                            library.rename_playlist(id, name, cx)
+                        }
+                        PlaylistCommand::Visibility { id, public } => {
+                            library.set_playlist_public(id, public, cx)
+                        }
+                        PlaylistCommand::AddTracks { id, tracks } => {
+                            library.add_tracks_to_playlist(id, Addition::Tracks(tracks), cx)
+                        }
+                        PlaylistCommand::Delete { id } => library.delete_playlist(id, cx),
+                        PlaylistCommand::RemoveTracks { .. } | PlaylistCommand::List => {
+                            unreachable!()
+                        }
+                    });
+                    Reply::Done
                 }
             }
         };
@@ -875,6 +935,7 @@ fn wire_hit(hit: Hit, client: &dyn MusicApi) -> Option<wire::Hit> {
     let link = client.share_url(media, &id)?;
     Some(wire::Hit {
         kind,
+        id,
         title,
         by,
         duration,

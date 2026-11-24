@@ -179,7 +179,7 @@ enum PlaylistArg {
     Create {
         name: String,
         /// Track ids to put in the new playlist.
-        #[arg(long)]
+        #[arg(long, num_args = 1..)]
         tracks: Vec<String>,
         /// Create in the local library instead of on the current provider.
         #[arg(long)]
@@ -698,7 +698,7 @@ mod tests {
             ),
             (
                 &[
-                    "playlist", "create", "Local", "--local", "--tracks", "a", "--tracks", "b",
+                    "playlist", "create", "Local", "--local", "--tracks", "a", "b",
                 ][..],
                 PlaylistCommand::Create {
                     name: "Local".to_owned(),
