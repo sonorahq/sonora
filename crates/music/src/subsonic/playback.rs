@@ -132,7 +132,7 @@ fn encoding_from_params(params: &symphonia::core::codecs::CodecParameters) -> Op
 }
 
 /// Observes a bounded prefix so a short download's encoding is known before its cache facts
-/// are finalized. Larger streams are probed from the prepared spool in `load`.
+/// are finalized. An incomplete prefix leaves the response metadata fallback intact.
 struct ServedResponse {
     response: reqwest::Response,
     facts: Arc<Mutex<Facts>>,
@@ -252,6 +252,13 @@ impl Fetch for Subsonic {
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|content_type| content_type.to_str().ok())
                     .map(str::to_owned);
+                let fallback_encoding = served_encoding(self.transcode, content_type.as_deref());
+                match facts.lock() {
+                    Ok(mut facts) => facts.encoding = fallback_encoding,
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
+                    }
+                }
                 let total = response.content_length();
                 let remote = Remote::new(&response);
                 let seekable = original && ranged::ranges(&response);
@@ -292,14 +299,13 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
-                let encoding = probe_encoding(prepared.reader(&stream))
-                    .or_else(|| served_encoding(self.transcode, content_type.as_deref()));
-                match facts.lock() {
-                    Ok(mut facts) => facts.encoding = encoding,
+                let encoding = match facts.lock() {
+                    Ok(facts) => facts.encoding,
                     Err(error) => {
-                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
+                        log::warn!("playback: cannot read the served encoding for {id}: {error}");
+                        fallback_encoding
                     }
-                }
+                };
                 let file = remote
                     .filter(|_| seekable)
                     .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
