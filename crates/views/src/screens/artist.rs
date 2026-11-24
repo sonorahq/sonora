@@ -1325,7 +1325,7 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let viewport = page::past_border(page::viewport(&scroll, inset, window, cx));
+            let viewport = page::past_border(page::viewport(&self.scrollbar, inset, window, cx));
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }
