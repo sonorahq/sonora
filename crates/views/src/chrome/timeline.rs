@@ -105,7 +105,8 @@ impl Timeline {
     }
 
     /// Forgets where the pointer rested over the seek bar once it has left the player bar, so the
-    /// bubble does not outlive it. A drag keeps its own place in `pending`.
+    /// bubble does not outlive it, even when the island slides out from under a still pointer and
+    /// hands on no last move. A drag keeps its own place in `pending`.
     pub fn leave(&mut self, cx: &mut Context<Self>) {
         if self.over.take().is_some() {
             cx.notify();
@@ -136,14 +137,6 @@ impl Timeline {
         let over = self.seek.hovered(position, cx.theme().metrics.pad);
         if moved(self.over, over) {
             self.over = over;
-            cx.notify();
-        }
-    }
-
-    /// Hides the bubble once the pointer is off the island, which can move out from under a
-    /// still pointer as the sheet slides and so hands on no last move to hide it by.
-    pub fn leave(&mut self, cx: &mut Context<Self>) {
-        if self.over.take().is_some() {
             cx.notify();
         }
     }

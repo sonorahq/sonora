@@ -937,7 +937,6 @@ impl Render for PlayerBar {
                     .child(
                         base.on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                             if !*hovered {
-                                this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
                                 this.aim_seek(false, cx);
                                 this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
                             }

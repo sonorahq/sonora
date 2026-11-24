@@ -1048,15 +1048,11 @@ impl Aside {
             .collect()
     }
 
-    /// Keeps floating controls above the workspace player bar and the strip over it, or above
-    /// the fullscreen transport. An island standing clear of the sidebar leaves them at its foot.
+    /// Places floating controls the way every sidebar does in the workspace, or above the
+    /// fullscreen transport.
     fn raised(&self, perch: Div, cx: &App) -> Div {
-        let bottom = Chrome::sidebar_bottom(cx);
         match self.titled {
-            true => match bottom > Pixels::ZERO {
-                true => perch.bottom(bottom + cx.theme().metrics.pad * 1.5),
-                false => perch,
-            },
+            true => Chrome::sidebar_perch(perch, cx),
             false => perch.bottom_16(),
         }
     }

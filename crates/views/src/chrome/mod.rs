@@ -201,13 +201,16 @@ impl Chrome {
         Self::get(cx).player_bottom
     }
 
-    /// The room a sidebar's floating buttons keep at its foot: the player bar's while the bar
-    /// runs under the sidebar, and none while an island stands clear of it on the sheet.
-    pub fn sidebar_bottom(cx: &App) -> Pixels {
+    /// Places a button perched over a sidebar's rows. Beside an island standing clear of the
+    /// sidebar it lines up with the island's middle. Over a bar that runs under the sidebar it
+    /// stands above that bar, and with no bar there it keeps its own place at the foot.
+    pub fn sidebar_perch(perch: Div, cx: &App) -> Div {
         let chrome = Self::get(cx);
-        match chrome.island_clear {
-            true => Pixels::ZERO,
-            false => chrome.player_bottom,
+        let metrics = cx.theme().metrics;
+        match (chrome.island_clear, chrome.player_bottom > Pixels::ZERO) {
+            (true, _) => perch.bottom((chrome.player_bottom - metrics.control_small) / 2.),
+            (false, true) => perch.bottom(chrome.player_bottom + metrics.pad * 1.5),
+            (false, false) => perch,
         }
     }
 

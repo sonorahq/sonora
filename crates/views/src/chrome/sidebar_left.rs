@@ -921,13 +921,8 @@ impl Render for SidebarLeft {
                             ),
                     )
                     .children(
-                        ui::return_top("sidebar-return-top", &self.scrollbar, cx).map(|perch| {
-                            let bottom = super::Chrome::sidebar_bottom(cx);
-                            match bottom > Pixels::ZERO {
-                                true => perch.bottom(bottom + theme.metrics.pad * 1.5),
-                                false => perch,
-                            }
-                        }),
+                        ui::return_top("sidebar-return-top", &self.scrollbar, cx)
+                            .map(|perch| super::Chrome::sidebar_perch(perch, cx)),
                     ),
             )
             .children(self.menu(cx));
