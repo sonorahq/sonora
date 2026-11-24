@@ -4,9 +4,9 @@
 The Linux and Windows lints compile everything but the code only macOS builds, so only a change to
 that code needs a Mac. A change needs one when it touches a manifest, the lockfile, the toolchain,
 a build script, C or Objective-C sources or this lint's own setup, when a Rust file it touches
-names macOS before or after, or when it touches a module only macOS compiles. A change to shared
-code that breaks a macOS caller in a file it leaves alone gets past this, and the lint of the push
-to main catches it there.
+names macOS before or after, or when it touches a module declared behind a cfg that names macOS.
+A change to shared code that breaks a macOS caller in a file it leaves alone gets past this, and
+the lint of the push to main catches it there.
 
 Usage: touches-macos.py BASE HEAD
 """
@@ -57,7 +57,7 @@ def needs_macos(base: str, head: str) -> bool:
         if not path.endswith(".rs"):
             continue
         if any(path == module or path.startswith(module + "/") for module in gated):
-            return found(f"{path} is a module only macOS compiles")
+            return found(f"{path} is a module behind a macOS cfg")
         if any(MACOS.search(show(rev, path)) for rev in (base, head)):
             return found(f"{path} names macOS")
     print("macos lint: nothing in this change compiles for macOS alone", file=sys.stderr)
@@ -65,25 +65,16 @@ def needs_macos(base: str, head: str) -> bool:
 
 
 def gated_modules(rev: str) -> set[str]:
-    """The modules a macOS cfg declares at `rev`, as a directory and as a `.rs` file."""
-    candidates = git("grep", "-lz", "-iE", r"cfg\(.*macos", rev, "--", "*.rs").split("\0")
+    """The modules a cfg naming macOS declares at `rev`, as a directory and as a `.rs` file."""
+    candidates = git("grep", "-lz", "-iE", "macos|apple", rev, "--", "*.rs").split("\0")
     modules = set()
     for entry in filter(None, candidates):
         path = PurePosixPath(entry.removeprefix(f"{rev}:"))
         parent = path.parent if path.name in ("lib.rs", "main.rs", "mod.rs") else path.with_suffix("")
         for condition, name in GATED_MOD.findall(show(rev, str(path))):
-            if macos_only(condition):
+            if MACOS.search(condition):
                 modules.add(str(parent / name))
     return modules | {f"{module}.rs" for module in modules}
-
-
-def macos_only(condition: str) -> bool:
-    """Whether a cfg reads as macOS without Linux. A cfg Linux also meets is linted there."""
-    return (
-        MACOS.search(condition) is not None
-        and not condition.startswith("not(")
-        and re.search(r"linux|unix", condition) is None
-    )
 
 
 def found(why: str) -> bool:

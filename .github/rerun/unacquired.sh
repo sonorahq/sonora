@@ -10,22 +10,14 @@ set -euo pipefail
 # A run is tried three times in all, so a pool that stays empty does not keep it going all day.
 max_attempts=3
 
+# One field per line, so a missing branch stays an empty line instead of shifting the others.
 run=$(
   gh api "repos/$GH_REPO/actions/runs/$RUN_ID" \
-    -q '[.workflow_id, .head_branch, .event, .head_sha, .run_attempt] | @tsv'
+    -q '.workflow_id, .head_branch, .event, .head_sha, .run_attempt'
 )
-IFS=$'\t' read -r workflow branch event sha attempt <<<"$run"
+{ read -r workflow; read -r branch; read -r event; read -r sha; read -r attempt; } <<<"$run"
 if (( attempt >= max_attempts )); then
   echo "rerun: run $RUN_ID is on attempt $attempt already, leaving it"
-  exit 0
-fi
-
-newest=$(
-  gh api -X GET "repos/$GH_REPO/actions/workflows/$workflow/runs" \
-    -f branch="$branch" -f event="$event" -F per_page=1 -q '.workflow_runs[0].id'
-)
-if [[ $newest != "$RUN_ID" ]]; then
-  echo "rerun: run $newest on $branch superseded run $RUN_ID, leaving it"
   exit 0
 fi
 
@@ -53,6 +45,16 @@ for job in $jobs; do
     exit 0
   fi
 done
+
+# Checked last, so a push that lands while the rest is looked up is still seen.
+newest=$(
+  gh api -X GET "repos/$GH_REPO/actions/workflows/$workflow/runs" \
+    -f branch="$branch" -f event="$event" -F per_page=1 -q '.workflow_runs[0].id'
+)
+if [[ $newest != "$RUN_ID" ]]; then
+  echo "rerun: run $newest on $branch superseded run $RUN_ID, leaving it"
+  exit 0
+fi
 
 echo "rerun: no runner took the failed jobs of run $RUN_ID ($(wc -w <<<"$jobs")), rerunning them"
 if [[ -z ${DRY_RUN:-} ]]; then
