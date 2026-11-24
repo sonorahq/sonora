@@ -653,8 +653,8 @@ impl PlayerBar {
     /// Gives `base` the bar's ground: the frosted surface or the secondary colour the settings
     /// pick, the border along its top and the window's bottom corners. The narrow fullscreen
     /// player stands its own bar on the same ground, so the two draw alike to the pixel. A
-    /// floating island is a raised pill instead: edged all round, shadowed, and clear of the
-    /// window's corners.
+    /// floating island is a raised pill instead, edged all round, shadowed and clear of the
+    /// window's corners. Under square corners it keeps square corners too.
     pub(crate) fn surface(base: Stateful<Div>, window: &Window, cx: &App) -> Stateful<Div> {
         let theme = *cx.theme();
         let transparent = Sonora::global(cx)
@@ -686,10 +686,14 @@ impl PlayerBar {
             this.border_t_1().border_color(theme.border)
         })
         .when(island, |this| {
-            this.rounded_full()
-                .border_1()
-                .border_color(theme.border)
-                .shadow_md()
+            this.when_else(
+                theme.radius == px(0.),
+                |this| this.rounded_none(),
+                |this| this.rounded_full(),
+            )
+            .border_1()
+            .border_color(theme.border)
+            .shadow_md()
         })
     }
 
