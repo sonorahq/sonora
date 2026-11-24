@@ -394,8 +394,10 @@ impl Control {
                     };
                     let epoch = self.library.read(cx).shelf_epoch(shelf);
                     let fetch_id = id.clone();
-                    let fetch =
-                        Io::global(cx).spawn(async move { client.playlist(&fetch_id).await });
+                    // `playlist_tracks` walks every page; `playlist` only returns the first one
+                    // on providers that paginate, which would leave later copies behind.
+                    let fetch = Io::global(cx)
+                        .spawn(async move { client.playlist_tracks(&fetch_id).await });
                     let key = self.issued;
                     self.issued += 1;
                     let task = cx.spawn(async move |this, cx| {
@@ -404,9 +406,8 @@ impl Control {
                             let wanted: HashSet<&str> =
                                 tracks.iter().map(String::as_str).collect();
                             let rows = match fetched {
-                                Ok(detail) => Some(
-                                    detail
-                                        .tracks
+                                Ok(tracks) => Some(
+                                    tracks
                                         .into_iter()
                                         .filter_map(|track| track.id)
                                         .filter(|track_id| wanted.contains(track_id.as_str()))
