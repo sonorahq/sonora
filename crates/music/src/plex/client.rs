@@ -11,7 +11,7 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use crate::engine::Loudness;
 use crate::plex::auth::{self, Credentials};
 use crate::plex::tv;
-use crate::plex::wire::{Container, Envelope, Item, Stream};
+use crate::plex::wire::{Container, Envelope, Item, Stream, Tag};
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, Playlist,
@@ -33,6 +33,8 @@ const JSON: &str = "application/json";
 const ANY: &str = "*/*";
 const LIBRARY_PAGE: usize = 500;
 const PORTRAIT_LIMIT: usize = 24;
+/// How many tracks a station holds, and the same number as the server reads it.
+const RADIO_SIZE: usize = 25;
 const RADIO_COUNT: &str = "25";
 const HOME_SONGS: &str = "25";
 const HOME_ALBUMS: &str = "12";
@@ -603,6 +605,83 @@ impl PlexClient {
         .await
     }
 
+    /// Up to a station's worth of the library's tracks that match `filter`, in random order. A
+    /// filter the server refuses gives none.
+    async fn shuffled(&self, filter: &[(&str, &str)]) -> Vec<Item> {
+        let mut query = vec![
+            ("type", TRACKS),
+            ("sort", "random"),
+            ("X-Plex-Container-Start", "0"),
+            ("X-Plex-Container-Size", RADIO_COUNT),
+        ];
+        query.extend_from_slice(filter);
+        self.items(&self.section("/all"), &query)
+            .await
+            .unwrap_or_else(|error| {
+                log::info!("plex: cannot pick station tracks: {error:#}");
+                Vec::new()
+            })
+    }
+
+    /// A station seeded by `track_id` that needs no Plex Pass. It plays one track of the seed's
+    /// artist after every two of related artists: those Plex calls similar or that share a style
+    /// with the seed's, or failing both, those that share a genre.
+    async fn kin_tracks(&self, track_id: &str) -> Result<Vec<Item>> {
+        let seed = self.metadata(track_id).await?;
+        let artist_id = seed
+            .grandparent_rating_key
+            .filter(|id| !id.is_empty())
+            .context("the track has no artist")?;
+        let similar_path = format!(
+            "/library/metadata/{}/similar",
+            escape::component(&artist_id)
+        );
+        let (artist, similar) = tokio::join!(
+            self.metadata(&artist_id),
+            self.items(&similar_path, &[("count", SIMILAR_ARTISTS)]),
+        );
+        let artist = artist?;
+        let similar = similar
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| item.rating_key)
+            .filter(|id| !id.is_empty() && *id != artist_id)
+            .collect::<Vec<_>>()
+            .join(",");
+        let styles = tag_ids(&artist.style);
+        let genres = tag_ids(&artist.genre);
+        let alike = async {
+            match similar.is_empty() {
+                true => Vec::new(),
+                false => self.shuffled(&[("artist.id", similar.as_str())]).await,
+            }
+        };
+        let styled = async {
+            match styles.is_empty() {
+                true => Vec::new(),
+                false => {
+                    self.shuffled(&[
+                        ("artist.style", styles.as_str()),
+                        ("artist.id!", &artist_id),
+                    ])
+                    .await
+                }
+            }
+        };
+        let own_filter = [("artist.id", artist_id.as_str())];
+        let (own, alike, styled) = tokio::join!(self.shuffled(&own_filter), alike, styled,);
+        let mut related: Vec<Item> = alike.into_iter().chain(styled).collect();
+        if related.is_empty() && !genres.is_empty() {
+            related = self
+                .shuffled(&[
+                    ("artist.genre", genres.as_str()),
+                    ("artist.id!", &artist_id),
+                ])
+                .await;
+        }
+        Ok(interleave(own, related))
+    }
+
     /// What the server records about a track: its length, its loudness where the server has
     /// measured it, and where its file is served from.
     pub async fn details(&self, track_id: &str) -> Result<Details> {
@@ -1127,34 +1206,48 @@ impl MusicApi for PlexClient {
         Ok(distinct_covers(&tracks, wanted))
     }
 
-    /// The tracks that sound like `track_id` when the server has analysed the library, and a
-    /// handful of random ones when it has not.
+    /// The tracks that sound like `track_id`. A server with Plex Pass that has analysed the
+    /// library answers that itself. Without it the station mixes the track's artist with related
+    /// artists from the library, and random tracks fill what is still missing.
     async fn track_radio(
         &self,
         track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        let similar = self
+        let nearest = self
             .items(
                 &format!("/library/metadata/{}/nearest", escape::component(track_id)),
                 &[("limit", RADIO_COUNT)],
             )
             .await;
-        if let Ok(items) = similar {
-            let tracks: Vec<Track> = items.into_iter().map(|item| self.track(item)).collect();
-            if !tracks.is_empty() {
-                return Ok((tracks, None));
-            }
+        if let Ok(items) = nearest
+            && !items.is_empty()
+        {
+            return Ok((
+                items.into_iter().map(|item| self.track(item)).collect(),
+                None,
+            ));
         }
-        let random = self
-            .random_tracks(RADIO_COUNT)
-            .await
-            .context("cannot load a radio fallback")?;
+        let mut picked = self.kin_tracks(track_id).await.unwrap_or_else(|error| {
+            log::info!("plex: cannot mix a station for {track_id}: {error:#}");
+            Vec::new()
+        });
+        let mut seen = HashSet::from([track_id.to_owned()]);
+        picked.retain(|item| seen.insert(item.rating_key.clone()));
+        if picked.len() < RADIO_SIZE {
+            let random = self
+                .ordered(TRACKS, "random", RADIO_COUNT)
+                .await
+                .context("cannot load a radio fallback")?;
+            picked.extend(
+                random
+                    .into_iter()
+                    .filter(|item| seen.insert(item.rating_key.clone())),
+            );
+        }
+        picked.truncate(RADIO_SIZE);
         Ok((
-            random
-                .into_iter()
-                .filter(|track| track.id.as_deref() != Some(track_id))
-                .collect(),
+            picked.into_iter().map(|item| self.track(item)).collect(),
             None,
         ))
     }
@@ -1353,4 +1446,32 @@ fn loudness_of(stream: &Stream) -> Option<Loudness> {
         None => (stream.album_gain?, stream.album_peak),
     };
     Some(Loudness::replay_gain(gain, peak))
+}
+
+/// The ids of `tags` joined by commas, which a filter reads as any one of them.
+fn tag_ids(tags: &[Tag]) -> String {
+    tags.iter()
+        .filter_map(|tag| tag.id)
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Puts one of `own` after every two of `related`, then whatever is left of either.
+fn interleave(own: Vec<Item>, related: Vec<Item>) -> Vec<Item> {
+    let mut own = own.into_iter();
+    let mut related = related.into_iter();
+    let mut mixed = Vec::new();
+    loop {
+        let round: Vec<Item> = related
+            .next()
+            .into_iter()
+            .chain(related.next())
+            .chain(own.next())
+            .collect();
+        if round.is_empty() {
+            return mixed;
+        }
+        mixed.extend(round);
+    }
 }

@@ -77,12 +77,20 @@ pub struct Item {
     pub media: Vec<Media>,
     #[serde(rename = "Format")]
     pub format: Vec<Tag>,
+    /// The broad genres of an artist or an album.
+    #[serde(rename = "Genre")]
+    pub genre: Vec<Tag>,
+    /// The narrower styles of an artist, such as metalcore, which say more about how it sounds.
+    #[serde(rename = "Style")]
+    pub style: Vec<Tag>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Tag {
     pub tag: String,
+    /// What a filter on this tag names it by. A format has none.
+    pub id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
