@@ -12,6 +12,7 @@ settings-player-bar-layout-detail = Arrange the track information, playback cont
 settings-player-bar-classic = Classic
 settings-player-bar-compact = Compact
 settings-player-bar-centered = Centered
+settings-player-bar-island = Island
 settings-player-bar-surface = Surface
 settings-player-bar-transparent = Transparent player bar
 settings-player-bar-transparent-detail = Let pages and sidebars scroll underneath a frosted player bar

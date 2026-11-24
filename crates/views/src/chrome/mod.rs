@@ -98,6 +98,8 @@ pub(crate) struct Chrome {
     reserved_right: Pixels,
     /// The part of a page covered by the translucent player bar.
     player_bottom: Pixels,
+    /// Whether the bar is an island standing on the sheet clear of both sidebars.
+    island_clear: bool,
     /// How round each corner of the page's sheet is once every sidebar has landed.
     sheet_corners: Corners<Pixels>,
 }
@@ -205,6 +207,29 @@ impl Chrome {
     pub fn track_bottom(cx: &App) -> Pixels {
         let chrome = Self::get(cx);
         chrome.player_bottom.max(chrome.sheet_corners.bottom_right)
+    }
+
+    /// Places a button perched over a sidebar's rows. Beside an island standing clear of the
+    /// sidebar it lines up with the island's middle. Over a bar that runs under the sidebar it
+    /// stands above that bar, and with no bar there it keeps its own place at the foot.
+    pub fn sidebar_perch(perch: Div, cx: &App) -> Div {
+        let chrome = Self::get(cx);
+        let metrics = cx.theme().metrics;
+        match (chrome.island_clear, chrome.player_bottom > Pixels::ZERO) {
+            (true, _) => perch.bottom((chrome.player_bottom - metrics.control_small) / 2.),
+            (false, true) => perch.bottom(chrome.player_bottom + metrics.pad * 1.5),
+            (false, false) => perch,
+        }
+    }
+
+    /// Publishes whether the island stands on the sheet clear of both sidebars.
+    pub(crate) fn set_island_clear(clear: bool, cx: &mut App) {
+        Self::entity(cx).update(cx, |chrome, cx| {
+            if chrome.island_clear != clear {
+                chrome.island_clear = clear;
+                cx.notify();
+            }
+        });
     }
 
     /// Publishes the player bar's overlap after its responsive height has been resolved.

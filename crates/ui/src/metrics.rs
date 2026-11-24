@@ -138,6 +138,7 @@ pub fn snapped(value: Pixels, window: &Window) -> Pixels {
     px((value / px(1.) * scale).round() / scale)
 }
 
+/// How wide `text` sets in the window's current text style, on one line.
 pub fn text_width(text: impl Into<SharedString>, window: &Window) -> Pixels {
     let text = text.into();
     if text.is_empty() {

@@ -35,6 +35,8 @@ pub struct Scroller {
     fade_scrolled: Pixels,
     /// How tall the band along the bottom is, while more lies below, where content fades out.
     fade_remaining: Pixels,
+    /// How tall the band along the bottom is where content always fades out.
+    fade_bottom: Pixels,
     /// Whether the region holds what is at its top when it changes width, and whether that hold
     /// is active right now.
     hold: Option<bool>,
@@ -60,6 +62,7 @@ impl Scroller {
             fade_ends: Pixels::ZERO,
             fade_scrolled: Pixels::ZERO,
             fade_remaining: Pixels::ZERO,
+            fade_bottom: Pixels::ZERO,
             hold: None,
             reflowed: false,
             keep: None,
@@ -157,6 +160,13 @@ impl Scroller {
         self.fade_remaining = height.max(Pixels::ZERO);
         self
     }
+
+    /// Fades content out across a band of `height` along the bottom whether or not there is more
+    /// to scroll to, for a region whose foot lies under chrome floating over the window's edge.
+    pub fn fade_bottom(mut self, height: Pixels) -> Self {
+        self.fade_bottom = height.max(Pixels::ZERO);
+        self
+    }
 }
 
 impl Styled for Scroller {
@@ -192,6 +202,7 @@ impl RenderOnce for Scroller {
             fade_ends,
             fade_scrolled,
             fade_remaining,
+            fade_bottom,
             hold,
             reflowed,
             keep,
@@ -231,7 +242,9 @@ impl RenderOnce for Scroller {
         };
         let (fade_top_end, fade_bottom_end) = (
             end(above).max(scrolled.min(fade_scrolled)),
-            end(below).max(remaining.min(fade_remaining)),
+            end(below)
+                .max(remaining.min(fade_remaining))
+                .max(fade_bottom),
         );
         let overrides = std::mem::take(base.style());
         bar.read(cx).sync();

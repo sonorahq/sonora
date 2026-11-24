@@ -908,6 +908,11 @@ impl Render for SidebarLeft {
                                 true => Pixels::ZERO,
                                 false => theme.metrics.inset,
                             })
+                            // Under a floating island the page fades out at its foot, and the
+                            // rows beside it fade there the way they do at the top.
+                            .when(super::PlayerBar::floating(window, cx), |this| {
+                                this.fade_bottom(theme.metrics.inset)
+                            })
                             .size_full()
                             .child(
                                 div()
@@ -931,13 +936,8 @@ impl Render for SidebarLeft {
                             ),
                     )
                     .children(
-                        ui::return_top("sidebar-return-top", &self.scrollbar, cx).map(|perch| {
-                            match super::Chrome::bottom(cx) > Pixels::ZERO {
-                                true => perch
-                                    .bottom(super::Chrome::bottom(cx) + theme.metrics.pad * 1.5),
-                                false => perch,
-                            }
-                        }),
+                        ui::return_top("sidebar-return-top", &self.scrollbar, cx)
+                            .map(|perch| super::Chrome::sidebar_perch(perch, cx)),
                     ),
             )
             .children(self.menu(cx));

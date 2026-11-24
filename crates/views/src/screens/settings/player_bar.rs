@@ -1,5 +1,8 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Div, Hsla, Pixels, Window, div, relative};
+use gpui::{
+    AnyElement, App, Context, Div, Hsla, Pixels, Window, div, linear_color_stop, linear_gradient,
+    relative,
+};
 use i18n::t;
 use state::PlayerBarLayout;
 use ui::{ActiveTheme as _, OptionCard, Switch};
@@ -106,15 +109,23 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
     let bar = height
         * match layout {
             PlayerBarLayout::Compact => 0.26,
-            PlayerBarLayout::Classic | PlayerBarLayout::Centered => 0.44,
+            PlayerBarLayout::Island => 0.3,
+            PlayerBarLayout::Classic | PlayerBarLayout::Centered => 0.34,
         };
     let gap = height * 0.06;
     let title = height * 0.035;
     let line = height * 0.025;
 
+    // A full-height bar keeps its cover well inside its height, as the real bar does around a
+    // row-sized cover. The compact bar is about as tall as its cover.
+    let cover_side = bar
+        * match layout {
+            PlayerBarLayout::Classic | PlayerBarLayout::Centered => 0.6,
+            PlayerBarLayout::Compact | PlayerBarLayout::Island => 0.7,
+        };
     let cover = div()
         .flex_none()
-        .size(bar * 0.7)
+        .size(cover_side)
         .rounded(radius)
         .bg(theme.primary.opacity(0.6));
     let details = |centered: bool| {
@@ -149,17 +160,25 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
             .child(stroke(width, line, muted, radius))
     };
 
+    // The island floats clear of the thumbnail's edges as a pill, its end marks set in from its
+    // round ends. Every other bar spans the thumbnail.
     let panel = div()
         .absolute()
-        .bottom_0()
-        .w_full()
         .h(bar)
         .flex()
         .items_center()
         .gap(gap)
-        .px(gap)
-        .border_t_1()
         .border_color(theme.border)
+        .map(|panel| match layout {
+            PlayerBarLayout::Island => panel
+                .bottom(gap)
+                .left(gap * 2.)
+                .right(gap * 2.)
+                .px(bar * 0.3)
+                .rounded(bar / 2.)
+                .border_1(),
+            _ => panel.bottom_0().w_full().px(gap).border_t_1(),
+        })
         .map(|panel| match transparent {
             true => ui::popover_surface(panel, cx),
             false => panel.bg(theme.secondary),
@@ -215,7 +234,49 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
             .child(transport(height, cx))
             .child(div().flex_1().child(seek))
             .child(sound(1.).w(relative(0.12))),
+        // The cover and title sit over the seek line, all three small enough to share the pill's
+        // height, with the tools after them as marks like the transport's.
+        PlayerBarLayout::Island => panel
+            .child(transport(height, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(title)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(gap * 0.6)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size(bar * 0.4)
+                                    .rounded(radius)
+                                    .bg(theme.primary.opacity(0.6)),
+                            )
+                            .child(details(false).flex_1().min_w_0()),
+                    )
+                    .child(seek),
+            )
+            .child(transport(height, cx)),
     };
+    // Under the island the page fades into its own colour, the way it does in the window.
+    let fade = (layout == PlayerBarLayout::Island).then(|| {
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(bar + gap * 2.)
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(theme.background.opacity(0.), 0.),
+                linear_color_stop(theme.background, 0.7),
+            ))
+    });
 
     div()
         .relative()
@@ -229,6 +290,7 @@ fn sketch(layout: PlayerBarLayout, transparent: bool, height: Pixels, cx: &App) 
                 radius,
             )
         }))
+        .children(fade)
         .child(panel)
 }
 

@@ -28,7 +28,7 @@ use ui::{
 };
 use unicode_bidi::{BidiClass, Direction};
 
-use crate::chrome::{Chrome, section_label};
+use crate::chrome::{Chrome, PlayerBar, section_label};
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::{effects, quiet};
@@ -1048,14 +1048,11 @@ impl Aside {
             .collect()
     }
 
-    /// Keeps floating controls above the workspace player bar and the strip over it, or above
-    /// the fullscreen transport.
+    /// Places floating controls the way every sidebar does in the workspace, or above the
+    /// fullscreen transport.
     fn raised(&self, perch: Div, cx: &App) -> Div {
         match self.titled {
-            true => match self.bottom(cx) > Pixels::ZERO {
-                true => perch.bottom(self.bottom(cx) + cx.theme().metrics.pad * 1.5),
-                false => perch,
-            },
+            true => Chrome::sidebar_perch(perch, cx),
             false => perch.bottom_16(),
         }
     }
@@ -2243,6 +2240,13 @@ impl Render for Aside {
                                         let under = match self.titled {
                                             true => Pixels::ZERO,
                                             false => px(FADE * 0.5),
+                                        };
+                                        // Beside a floating island the rows fade out at the foot
+                                        // as the page does. The fullscreen queue keeps its own.
+                                        let island = self.titled && PlayerBar::floating(window, cx);
+                                        let under = match island {
+                                            true => under.max(cx.theme().metrics.inset),
+                                            false => under,
                                         };
                                         let scrolled =
                                             -self.scroll.0.borrow().base_handle.offset().y
