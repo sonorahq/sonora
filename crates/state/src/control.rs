@@ -276,6 +276,20 @@ impl Control {
             }
             QueueCommand::Add(items) => (items, Place::Queue(QueuePlacement::End)),
             QueueCommand::PlayNext(items) => (items, Place::Queue(QueuePlacement::Next)),
+            QueueCommand::At { items, position } => {
+                let Some(placement) = Self::placement_for(position) else {
+                    reply.send(Reply::Failed(Failure::Malformed)).ok();
+                    return;
+                };
+                // A steered device only accepts an append. Refuse before fetching anything so
+                // no track lands at the end of a queue the listener never asked us to change.
+                let steered = self.playback.read(cx).steered(cx).is_some();
+                if steered {
+                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
+                    return;
+                }
+                (items, Place::Queue(placement))
+            }
             QueueCommand::Play(items) => (items, Place::Now),
         };
         if let [Item::Local { text, kind }] = items.as_slice() {
@@ -305,6 +319,16 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same
+    /// as `play-next`, and a later one is a gap the queue caps ahead of the suggested tracks.
+    fn placement_for(position: usize) -> Option<QueuePlacement> {
+        match position.checked_sub(1) {
+            None => None,
+            Some(0) => Some(QueuePlacement::Next),
+            Some(gap) => Some(QueuePlacement::Gap(gap)),
+        }
     }
 
     /// Plays or queues the best match of `text` and `kind` in the local library, ranked as the
@@ -1135,6 +1159,13 @@ mod tests {
     use music::{LyricsLine, RomanizedText};
 
     use super::*;
+
+    #[test]
+    fn queue_position_one_uses_the_next_placement() {
+        assert_eq!(Control::placement_for(1), Some(QueuePlacement::Next));
+        assert_eq!(Control::placement_for(2), Some(QueuePlacement::Gap(1)));
+        assert_eq!(Control::placement_for(0), None);
+    }
 
     fn hit(lyrics: Sheet) -> LyricsHit {
         LyricsHit {
