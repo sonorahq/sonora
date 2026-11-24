@@ -218,8 +218,8 @@ impl Render for Timeline {
             true => end_clock(elapsed, total, time_left).text,
             false => clock(total),
         };
-        let (start_clear, end_clear) = match &bubble {
-            Some((at, text)) => {
+        let (start_clear, end_clear) = match (&bubble, self.spread) {
+            (Some((at, text)), Some(_)) => {
                 let chip = set_width(text, theme.text(ui::Text::Tiny), window)
                     + window.rem_size() * BUBBLE_PAD * 2.;
                 let reach = chip / 2. + pad * BUBBLE_AIR;
@@ -228,7 +228,7 @@ impl Render for Timeline {
                 let end = set_width(&closing_text, clock_text, window);
                 (x - reach >= start, x + reach <= row - end)
             }
-            None => (true, true),
+            _ => (true, true),
         };
         let gives_way = |clear: bool| match clear {
             true => 1.,

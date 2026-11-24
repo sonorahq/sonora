@@ -2241,9 +2241,10 @@ impl Render for Aside {
                                             true => Pixels::ZERO,
                                             false => px(FADE * 0.5),
                                         };
-                                        // Under a floating island the rows fade out at the foot
-                                        // as the page beside them does.
-                                        let under = match PlayerBar::floating(window, cx) {
+                                        // Beside a floating island the rows fade out at the foot
+                                        // as the page does. The fullscreen queue keeps its own.
+                                        let island = self.titled && PlayerBar::floating(window, cx);
+                                        let under = match island {
                                             true => under.max(cx.theme().metrics.inset),
                                             false => under,
                                         };
