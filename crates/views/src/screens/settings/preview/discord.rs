@@ -169,6 +169,12 @@ pub(in crate::screens::settings) fn preview(
             Some((slug, name, name))
         });
     let local = sample.id.as_deref().is_some_and(music::is_local_id);
+    // a local track belongs to the local files, so the button it would have stood for is the
+    // one of the service in use, and there is none to offer while no service is
+    let listen_on = match local {
+        true => session.provider_name(),
+        false => provider.map(|(_, name, _)| name),
+    };
 
     let listening: SharedString = match name {
         DiscordName::Sonora => SONORA.into(),
@@ -225,7 +231,7 @@ pub(in crate::screens::settings) fn preview(
     let mut buttons = Vec::new();
     if !hidden
         && (!local || on)
-        && let Some((_, name, _)) = provider
+        && let Some(name) = listen_on
     {
         buttons.push(Link {
             id: "discord-preview-provider-button",
@@ -290,6 +296,7 @@ pub(in crate::screens::settings) fn preview(
             )
             .menu(
                 Menu::new("discord-name-menu")
+                    .name(t!("settings-discord-name"))
                     .w(Picker::NARROW)
                     .left_0()
                     .items(DiscordName::ALL.map(|choice| {
