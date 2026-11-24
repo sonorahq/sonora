@@ -192,6 +192,26 @@ impl Tracks for ShelfTracks {
             .capabilities_of(Shelf::Streaming)
             .song_arrival
     }
+
+    /// A streaming song shows no date when its provider dates none of its songs, even once a
+    /// like made here stamped it with today's. Only the local files beside it then show one.
+    fn added_at(&self, track: &Track, cx: &App) -> Option<i64> {
+        let streaming = track
+            .id
+            .as_deref()
+            .is_some_and(|id| Shelf::of(id) == Shelf::Streaming);
+        let undated = streaming
+            && Sonora::global(cx)
+                .session
+                .read(cx)
+                .capabilities_of(Shelf::Streaming)
+                .song_arrival
+                .is_some();
+        match undated {
+            true => None,
+            false => track.added_at,
+        }
+    }
 }
 
 /// Whether a section is still waiting for rows from either shelf.
