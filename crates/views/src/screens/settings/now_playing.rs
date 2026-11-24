@@ -1,8 +1,9 @@
+use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context};
+use gpui::{AnyElement, App, Context, div, svg};
 use i18n::t;
 use state::{FullscreenControlsAutohide, SideTab};
-use ui::{MenuItem, Picker, Switch, VisualizerStyle};
+use ui::{ActiveTheme as _, MenuItem, Perch, Picker, Switch, Text, Tipped as _, VisualizerStyle};
 
 use super::rows::{chip, chips};
 use super::{Group, SettingsView, Slot};
@@ -88,9 +89,28 @@ impl SettingsView {
 
     /// How the spectrum is drawn behind the fullscreen artwork, off included, as a picker,
     /// which keeps the row narrow enough to stand beside the preview in every language. The
-    /// preview beside it shows the style chosen.
+    /// preview beside it shows the style chosen. While Soloist plays Spotify a red warning
+    /// stands before the picker, saying on hover that the visualizer follows local files only,
+    /// since Soloist's sound never passes through Sonora.
     pub(super) fn visualizer_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
         let chosen = self.settings.read(cx).visualizer_style();
+        let warning = self.local_only(cx).map(|note| {
+            div()
+                .id("settings-visualizer-soloist")
+                .role(Role::Image)
+                .aria_label(note.clone())
+                .flex_none()
+                .flex()
+                .items_center()
+                .child(
+                    svg()
+                        .path(icons::path("icons/triangle-alert.svg"))
+                        .size(theme.text(Text::Body))
+                        .text_color(theme.status_error),
+                )
+                .tip_label(note, Perch::Below)
+        });
 
         let picker = Picker::new(VISUALIZER, &self.popovers, chosen.label())
             .width(Picker::NARROW)
@@ -107,7 +127,13 @@ impl SettingsView {
 
         self.row(
             t!("settings-visualizer"),
-            picker.name(t!("settings-visualizer")).into_any_element(),
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .children(warning)
+                .child(picker.name(t!("settings-visualizer")))
+                .into_any_element(),
         )
     }
 
