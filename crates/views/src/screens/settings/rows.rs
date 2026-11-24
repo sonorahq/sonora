@@ -358,10 +358,13 @@ pub(super) fn dashed(color: Hsla, radius: Pixels) -> impl IntoElement {
             let half = DASH_WIDTH / 2.;
             let (left, top) = (bounds.left() + half, bounds.top() + half);
             let (right, bottom) = (bounds.right() - half, bounds.bottom() - half);
+            if right <= left || bottom <= top {
+                return;
+            }
             let round = (radius - half)
-                .max(Pixels::ZERO)
                 .min((right - left) / 2.)
-                .min((bottom - top) / 2.);
+                .min((bottom - top) / 2.)
+                .max(Pixels::ZERO);
             let corner = point(round, round);
             let mut path = PathBuilder::stroke(DASH_WIDTH).dash_array(&[DASH, DASH_GAP]);
             path.move_to(point(left + round, top));
@@ -390,8 +393,13 @@ pub(super) fn dashed(color: Hsla, radius: Pixels) -> impl IntoElement {
             }
         },
     )
+    // a positioned child stands inside its parent's border, so the outline reaches back over
+    // the border's width to trace the edge a border would
     .absolute()
-    .inset_0()
+    .top(-DASH_WIDTH)
+    .right(-DASH_WIDTH)
+    .bottom(-DASH_WIDTH)
+    .left(-DASH_WIDTH)
 }
 
 /// A row that opens a page of its own: the label, the value chosen there in muted text, and a
