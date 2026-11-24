@@ -23,6 +23,9 @@ pub(crate) struct SidebarRight {
     tab: SideTab,
     /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
     lingering: bool,
+    /// How many times the listener has opened or closed the sidebar. The page springs aside only
+    /// when this moves, so an edge drag or a window resize never sets the sidebar sliding.
+    slides: usize,
 }
 
 impl SidebarRight {
@@ -64,11 +67,16 @@ impl SidebarRight {
             open,
             tab,
             lingering: false,
+            slides: 0,
         }
     }
 
     pub(crate) fn is_open(&self) -> bool {
         self.open
+    }
+
+    pub(crate) fn slides(&self) -> usize {
+        self.slides
     }
 
     /// How wide the sidebar is when it shows, whether or not it shows now.
@@ -111,6 +119,7 @@ impl SidebarRight {
 
     pub(crate) fn toggle(&mut self, cx: &mut Context<Self>) {
         self.open = !self.open;
+        self.slides += 1;
         if self.open && self.tab != SideTab::Members {
             let tab = self.tab;
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
@@ -135,6 +144,9 @@ impl SidebarRight {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
         self.tab = tab;
+        if !self.open {
+            self.slides += 1;
+        }
         self.open = true;
         self.remember(cx);
         cx.notify();
@@ -151,6 +163,9 @@ impl SidebarRight {
 
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.aside.update(cx, |aside, cx| aside.dismiss(cx));
+        if self.open {
+            self.slides += 1;
+        }
         self.open = false;
         self.remember(cx);
         cx.notify();

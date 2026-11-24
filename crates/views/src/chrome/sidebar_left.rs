@@ -102,6 +102,9 @@ pub(crate) struct SidebarLeft {
     closing: bool,
     /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
     lingering: bool,
+    /// How many times the listener has opened or closed the sidebar. The page springs aside only
+    /// when this moves, so an edge drag or a window resize never sets the sidebar sliding.
+    slides: usize,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -161,6 +164,7 @@ impl SidebarLeft {
             grabbed: None,
             closing: false,
             lingering: false,
+            slides: 0,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -218,6 +222,10 @@ impl SidebarLeft {
         }
     }
 
+    pub fn slides(&self) -> usize {
+        self.slides
+    }
+
     /// How wide the sidebar is when it shows, whether or not it shows now.
     pub fn breadth(&self) -> Pixels {
         match (self.closing, self.folded()) {
@@ -250,6 +258,7 @@ impl SidebarLeft {
     }
 
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
+        self.slides += 1;
         match self.cramped {
             true => self.forced = Some(!self.is_open()),
             false => {
@@ -494,7 +503,11 @@ impl SidebarLeft {
             .flex()
             .flex_none()
             .items_center()
-            .justify_between()
+            // On the rail the toggle stands alone, centred like the icons above it.
+            .map(|header| match folded {
+                true => header.justify_center(),
+                false => header.justify_between(),
+            })
             .w_full()
             .min_w_0()
             .when(!folded, |header| {

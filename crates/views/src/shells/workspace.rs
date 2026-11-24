@@ -47,25 +47,27 @@ pub(crate) struct Workspace {
     right_slide: Slide,
 }
 
-/// How far a sidebar beside the page has slid out. It springs when the sidebar opens or closes
-/// and follows at once when an open sidebar only changes width, so an edge drag never lags.
+/// How far a sidebar beside the page has slid out. It springs only when the listener opens or
+/// closes the sidebar and follows any other change of width at once, so an edge drag or a window
+/// resize never sets it sliding.
 #[derive(Default)]
 struct Slide {
     spring: Option<Sprung>,
-    open: bool,
+    /// The sidebar's count of opens and closes as last seen.
+    slides: usize,
 }
 
 impl Slide {
-    /// Steps towards `width` and answers how wide the sidebar shows this frame. The first call
-    /// lands at once, so the window opens with its sidebars already out.
-    fn follow(&mut self, width: Pixels, window: &Window, cx: &App) -> Pixels {
+    /// Steps towards `width` and answers how wide the sidebar shows this frame. `slides` is the
+    /// sidebar's count of opens and closes, and a new one starts a slide. The first call lands at
+    /// once, so the window opens with its sidebars already out.
+    fn follow(&mut self, width: Pixels, slides: usize, window: &Window, cx: &App) -> Pixels {
         let target = width / px(1.);
-        let open = target > 0.;
         let spring = self.spring.get_or_insert_with(|| Sprung::at(target));
-        if open == self.open && spring.resting() {
+        if slides == self.slides && spring.resting() {
             spring.jump(target);
         }
-        self.open = open;
+        self.slides = slides;
         px(spring.follow(target, SLIDE, SLIDE_REST, window, cx).max(0.))
     }
 }
@@ -196,26 +198,23 @@ impl Render for Workspace {
         // Each sidebar beside the page slides out and back, and the page gives way as it goes.
         let left_target = self.sidebar.read(cx).occupied_width();
         let right_target = self.sidebar_right.read(cx).occupied_width(window);
-        let left = self.left_slide.follow(left_target, window, cx);
-        let right = self.right_slide.follow(right_target, window, cx);
-        // While a sidebar slides the page is laid out once at the width it lands at and rides
-        // along with the sheet's moving edge, so it is pushed aside rather than covered and never
-        // reflows on the frames in between.
-        let sliding = left != left_target || right != right_target;
-        let landed = (window.viewport_size().width - left_target - right_target).max(Pixels::ZERO);
-        let from_left = left != left_target;
-        let place = move |this: Div| match (sliding, from_left) {
-            (false, _) => this.left(-overlay_width).right_0(),
-            (true, true) => this.left(-overlay_width).w(landed + overlay_width),
-            (true, false) => this.right_0().w(landed),
-        };
+        let left_slides = self.sidebar.read(cx).slides();
+        let right_slides = self.sidebar_right.read(cx).slides();
+        let left = self.left_slide.follow(left_target, left_slides, window, cx);
+        let right = self
+            .right_slide
+            .follow(right_target, right_slides, window, cx);
         let left_breadth = self.sidebar.read(cx).breadth();
         let right_breadth = self.sidebar_right.read(cx).breadth();
+        // While a sidebar slides the page fills the sheet on every frame and is laid out again
+        // at its width, as it is while the window is resized, so it never jumps or runs under a
+        // sidebar.
+        let place = move |this: Div| this.left(-overlay_width).right_0();
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.linger(left > Pixels::ZERO, cx));
         self.sidebar_right
             .update(cx, |sidebar, cx| sidebar.linger(right > Pixels::ZERO, cx));
-        Chrome::publish(left_target, right_target, reserved, cx);
+        Chrome::publish(left, right, reserved, cx);
         let covered = self.sidebar_right.read(cx).covers_content(window);
         let overlay = self.sidebar.read(cx).overlays();
         let bar_height = PlayerBar::height(window, cx);
@@ -227,22 +226,35 @@ impl Render for Workspace {
         Chrome::set_bottom(bottom, cx);
         // The sheet meets the window's edge wherever no chrome lies beside it, rounding into a
         // sidebar as it slides out, and its bottom runs under a translucent player bar to the
-        // window's foot.
+        // window's foot. Pages pad against the corners the sheet lands with, and only the frame
+        // drawn here rounds along with a slide.
         let beside = |shown: Pixels, breadth: Pixels| match breadth > Pixels::ZERO {
             true => shown / breadth,
             false => 0.,
         };
-        let left_beside = match overlay_width > Pixels::ZERO {
+        let left_beside = |shown: Pixels| match overlay_width > Pixels::ZERO {
             true => 1.,
-            false => beside(left, left_breadth),
+            false => beside(shown, left_breadth),
         };
-        Chrome::set_sheet(left_beside, beside(right, right_breadth), underlap, cx);
+        Chrome::set_sheet(
+            left_beside(left_target),
+            beside(right_target, right_breadth),
+            underlap,
+            cx,
+        );
+        let (corners, edges) = Chrome::sheet_shape(
+            left_beside(left),
+            beside(right, right_breadth),
+            underlap,
+            cx,
+        );
         // A cached view is laid out from the style given here and its own root
         // style is never consulted, so it can only be cached while it is in the
         // flow at a width this knows: an overlaid sidebar places itself, and a
         // closed one hides itself and takes no space at all. A sliding one keeps its
-        // full width and shows only the part that has slid out.
-        let sidebar = match overlay || left == Pixels::ZERO {
+        // full width and shows only the part that has slid out, nothing on the frame a slide
+        // starts from, and is cached on either side so a slide never rebuilds what it moves.
+        let sidebar = match overlay || (left == Pixels::ZERO && left_target == Pixels::ZERO) {
             true => self.sidebar.clone().into_any_element(),
             false => slid(
                 self.sidebar
@@ -254,10 +266,17 @@ impl Render for Workspace {
                 true,
             ),
         };
-        let sidebar_right = match right == Pixels::ZERO {
+        let sidebar_right = match right == Pixels::ZERO && right_target == Pixels::ZERO {
             true => self.sidebar_right.clone().into_any_element(),
             false => slid(
-                self.sidebar_right.clone().into_any_element(),
+                match right < right_breadth {
+                    true => self
+                        .sidebar_right
+                        .clone()
+                        .cached(StyleRefinement::default().w(right_breadth).h_full())
+                        .into_any_element(),
+                    false => self.sidebar_right.clone().into_any_element(),
+                },
                 right,
                 right_breadth,
                 false,
@@ -296,7 +315,11 @@ impl Render for Workspace {
         // rendered uncached. Every screen sizes its root `size_full`, so the layout
         // is the one the cache would have used, and only the frames of the
         // transition pay for the render.
-        let content = match (dissolving && hidden > 0.) || !self.cached {
+        // A sliding sidebar renders the page uncached too. A cached page would only learn of
+        // the width published above after this frame, and would be laid out again at the new
+        // size with the widths it worked out for an earlier one.
+        let sliding = left != left_target || right != right_target;
+        let content = match (dissolving && hidden > 0.) || !self.cached || sliding {
             true => self.content.clone().into_any_element(),
             false => self
                 .content
@@ -382,7 +405,7 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .min_h_0()
-                                    .when(hidden > 0. || sliding, |this| this.overflow_hidden())
+                                    .when(hidden > 0., |this| this.overflow_hidden())
                                     .child(
                                         div()
                                             .absolute()
@@ -419,7 +442,7 @@ impl Render for Workspace {
                                     }),
                             )
                             .child(self.swipe_cue.clone())
-                            .child(sheet_frame(cx)),
+                            .child(sheet_frame(corners, edges, cx)),
                     )
                     .child(sidebar_right)
                     .when(overlay, |this| this.child(self.sidebar.clone())),

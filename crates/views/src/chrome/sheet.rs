@@ -15,11 +15,14 @@ const SEGMENTS: usize = 16;
 /// Draws the page's frame as a sheet lying on the chrome: an edge with rounded corners wherever
 /// it meets the chrome and, on an opaque window, the chrome's colour outside each rounded corner
 /// so whatever the page paints there is cut along the curve. Lay it over the page as its last
-/// child, filling it.
-pub(crate) fn sheet_frame(cx: &App) -> impl IntoElement {
+/// child, filling it. It takes its shape from `Chrome::sheet_shape` rather than the published
+/// sheet, so it can follow a sliding sidebar frame by frame.
+pub(crate) fn sheet_frame(
+    corners: Corners<Pixels>,
+    edges: Edges<Pixels>,
+    cx: &App,
+) -> impl IntoElement {
     let theme = cx.theme();
-    let corners = Chrome::sheet_corners(cx);
-    let edges = Chrome::sheet_edges(cx);
     let edge = theme.sidebar_border;
     let backing = (!theme.transparent).then_some(theme.sidebar);
     canvas(
