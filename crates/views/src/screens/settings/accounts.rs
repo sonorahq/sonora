@@ -16,7 +16,7 @@ use ui::{
     Text, Theme, mix,
 };
 
-use super::rows::drill;
+use super::rows::{dashed, drill};
 use super::{Group, SettingsView, Slot};
 use crate::shared::device_code::device_code;
 use crate::shared::local;
@@ -45,7 +45,7 @@ const CHOICES: f32 = 3.;
 const GUEST: &str = "guest";
 
 /// What a row does when it is clicked.
-type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+pub(super) type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 pub(super) struct Account {
     slug: &'static str,
@@ -776,7 +776,7 @@ impl SettingsView {
             (false, true) => Offer::Choice {
                 leave: Some(self.sign_out_button(slug, slug, pending, cx)),
             },
-            (false, false) => Offer::SignIn,
+            (false, false) => Offer::SignIn(t!("settings-provider-sign-in")),
         };
         let press: Option<Press> = match (cancel, stored, active) {
             (true, ..) | (false, true, true) => None,
@@ -793,12 +793,13 @@ impl SettingsView {
 
         ProviderCard {
             id: SharedString::from(format!("account-{slug}")),
-            logo: crate::shared::provider_logo(slug),
+            logo: Some(crate::shared::provider_logo(slug)),
             brand: crate::shared::provider_brand(slug, cx),
             active,
             stored,
             name: name.into(),
             status,
+            alert: false,
             offer,
             press: press.filter(|_| !pending),
             error,
@@ -840,12 +841,13 @@ impl SettingsView {
 
         ProviderCard {
             id: SharedString::from("account-guest"),
-            logo: "icons/hat-glasses.svg",
+            logo: Some("icons/hat-glasses.svg"),
             brand: cx.theme().foreground,
             active,
             stored: true,
             name: t!("login-guest-title"),
             status,
+            alert: false,
             offer: Offer::Choice { leave },
             press: press.filter(|_| !pending),
             error: None,
@@ -1276,40 +1278,46 @@ fn line(theme: &Theme, step: Text) -> Pixels {
     px((theme.text(step) / px(1.) * LEADING).round())
 }
 
-/// What a provider card ends with.
+/// What a service card ends with.
 pub(super) enum Offer {
     /// The card is a choice between accounts, with the sign out button at its end when there
     /// is an account to leave.
     Choice { leave: Option<AnyElement> },
-    /// A quiet "Sign in" for a provider with no account yet. The card's own click answers it.
-    SignIn,
+    /// A quiet word, as "Sign in", for a service with no account yet. The card's own click
+    /// answers it.
+    SignIn(SharedString),
     /// The button that stops a sign-in in flight.
     Cancel(AnyElement),
+    /// Controls of the caller's own, as a linked scrobbler's switch and disconnect button.
+    Control(AnyElement),
 }
 
-/// One provider as a card: its mark, the name over a muted status, and the `offer` at the end.
-/// The provider in use (`active`) has its mark and status in its `brand` colour and a border of
-/// it. One with an account (`stored`) shares its secondary fill with a muted mark, and one
-/// without has only a dashed outline and a faint mark. Under the pointer the mark warms to its colour
-/// and the fill lightens. The sign out button keeps a slot of its own, shown on hover and always
-/// on the active card, so nothing moves as it comes and goes. A sign-in error wraps under the
-/// name on a line of its own. Screen readers hear the card as one node named after the
-/// provider, a radio button for an account to switch to and a button for one to sign in to,
-/// with the status, hint and error as its description.
+/// One service as a card: its mark when it has one, the name over a muted status, and the
+/// `offer` at the end. A streaming provider and a scrobbler both draw as one. The service in use
+/// (`active`) has its mark and status in its `brand` colour and a border of it. One with an
+/// account (`stored`) shares its secondary fill with a muted mark, and one without has only a
+/// dashed outline and a faint mark. Under the pointer the mark warms to its colour and the fill
+/// lightens. The sign out button keeps a slot of its own, shown on hover and always on the
+/// active card, so nothing moves as it comes and goes. A sign-in error wraps under the name on a
+/// line of its own, and a status that reports trouble (`alert`) is red. Screen readers hear the
+/// card as one node named after the service, a radio button for an account to switch to, a
+/// button for one to sign in to and a group around controls of its own, with the status, hint
+/// and error as its description.
 #[derive(IntoElement)]
 pub(super) struct ProviderCard {
-    id: SharedString,
-    logo: &'static str,
-    brand: Hsla,
-    active: bool,
-    stored: bool,
-    name: SharedString,
-    status: Option<SharedString>,
-    offer: Offer,
-    press: Option<Press>,
-    error: Option<Failure>,
+    pub(super) id: SharedString,
+    pub(super) logo: Option<&'static str>,
+    pub(super) brand: Hsla,
+    pub(super) active: bool,
+    pub(super) stored: bool,
+    pub(super) name: SharedString,
+    pub(super) status: Option<SharedString>,
+    pub(super) alert: bool,
+    pub(super) offer: Offer,
+    pub(super) press: Option<Press>,
+    pub(super) error: Option<Failure>,
     /// The card's index in the list and the list's length.
-    place: (usize, usize),
+    pub(super) place: (usize, usize),
 }
 
 impl RenderOnce for ProviderCard {
@@ -1322,6 +1330,7 @@ impl RenderOnce for ProviderCard {
             stored,
             name,
             status,
+            alert,
             offer,
             press,
             error,
@@ -1330,10 +1339,13 @@ impl RenderOnce for ProviderCard {
         let theme = *cx.theme();
         let role = match offer {
             Offer::Choice { .. } => Role::RadioButton,
-            Offer::SignIn => Role::Button,
-            Offer::Cancel(_) => Role::Group,
+            Offer::SignIn(_) => Role::Button,
+            Offer::Cancel(_) | Offer::Control(_) => Role::Group,
         };
-        let hint = matches!(offer, Offer::SignIn).then(|| t!("settings-provider-sign-in"));
+        let hint = match &offer {
+            Offer::SignIn(hint) => Some(hint.clone()),
+            _ => None,
+        };
         let description = status
             .iter()
             .chain(hint.iter())
@@ -1374,12 +1386,12 @@ impl RenderOnce for ProviderCard {
                 })
                 .children(leave.filter(|_| active || hover > 0.))
                 .into_any_element(),
-            Offer::SignIn => div()
+            Offer::SignIn(hint) => div()
                 .text_size(theme.text(Text::Label))
                 .text_color(mix(theme.muted_foreground, theme.foreground, hover))
-                .children(hint)
+                .child(hint)
                 .into_any_element(),
-            Offer::Cancel(cancel) => cancel,
+            Offer::Cancel(control) | Offer::Control(control) => control,
         };
 
         div()
@@ -1399,10 +1411,16 @@ impl RenderOnce for ProviderCard {
             .justify_center()
             .min_h(theme.metrics.list_row * CARD_HEIGHT)
             .px_5()
+            .relative()
             .rounded(theme.radius)
+            // a card with no account keeps its border's room, drawn as an outline of long
+            // dashes instead
             .border_1()
-            .border_color(edge)
-            .when(!stored, |this| this.border_dashed())
+            .border_color(match stored {
+                true => edge,
+                false => edge.opacity(0.),
+            })
+            .when(!stored, |this| this.child(dashed(edge, theme.radius)))
             .bg(fill)
             .on_hover(move |hovered, window, cx| {
                 fade.update(cx, |fade, _| fade.set(*hovered));
@@ -1417,13 +1435,13 @@ impl RenderOnce for ProviderCard {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(
+                    .children(logo.map(|logo| {
                         svg()
                             .path(icons::path(logo))
                             .flex_none()
                             .size(MARK)
-                            .text_color(mark),
-                    )
+                            .text_color(mark)
+                    }))
                     .child(
                         div()
                             .flex()
@@ -1450,9 +1468,10 @@ impl RenderOnce for ProviderCard {
                                     .truncate()
                                     .line_height(relative(LEADING))
                                     .text_size(theme.text(Text::Small))
-                                    .text_color(match active {
-                                        true => brand,
-                                        false => theme.muted_foreground,
+                                    .text_color(match (alert, active) {
+                                        (true, _) => theme.status_error,
+                                        (false, true) => brand,
+                                        (false, false) => theme.muted_foreground,
                                     })
                                     .child(status)
                             })),

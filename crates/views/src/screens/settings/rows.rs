@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Div, ElementId, Hsla, SharedString, Stateful, Window, div, svg};
+use gpui::{
+    AnyElement, App, Div, ElementId, Hsla, PathBuilder, Pixels, SharedString, Stateful, Window,
+    canvas, div, point, px, svg,
+};
 use i18n::t;
 use ui::{ActiveTheme as _, Button, OptionCard, Perch, Room, TabBar, Tipped as _};
 
@@ -11,6 +14,12 @@ use super::SettingsView;
 
 /// What a segmented control does with the option picked in it.
 type Pick<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
+
+/// How long the dashes of a dashed outline run, how far apart they stand, and how thick its
+/// line is.
+const DASH: Pixels = px(6.);
+const DASH_GAP: Pixels = px(4.);
+const DASH_WIDTH: Pixels = px(1.);
 
 /// How strongly a chip that is on fills with the accent, under the pointer and at rest, and
 /// how strongly its border takes it.
@@ -335,6 +344,54 @@ pub(super) fn chip(
 /// Chips set side by side at the end of a row.
 pub(super) fn chips(chips: impl IntoIterator<Item = Button>) -> Div {
     div().flex().items_center().gap_2().children(chips)
+}
+
+/// A dashed outline over its parent's edge, rounded by `radius`, for a card standing for
+/// something not set up yet. GPUI's dashed border sizes its dashes by its width, which leaves a
+/// hairline dotted, so the outline is stroked here with longer dashes. The parent is
+/// positioned and keeps a transparent border of the line's width, so nothing moves when the
+/// outline gives way to a border.
+pub(super) fn dashed(color: Hsla, radius: Pixels) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let half = DASH_WIDTH / 2.;
+            let (left, top) = (bounds.left() + half, bounds.top() + half);
+            let (right, bottom) = (bounds.right() - half, bounds.bottom() - half);
+            let round = (radius - half)
+                .max(Pixels::ZERO)
+                .min((right - left) / 2.)
+                .min((bottom - top) / 2.);
+            let corner = point(round, round);
+            let mut path = PathBuilder::stroke(DASH_WIDTH).dash_array(&[DASH, DASH_GAP]);
+            path.move_to(point(left + round, top));
+            path.line_to(point(right - round, top));
+            path.arc_to(corner, Pixels::ZERO, false, true, point(right, top + round));
+            path.line_to(point(right, bottom - round));
+            path.arc_to(
+                corner,
+                Pixels::ZERO,
+                false,
+                true,
+                point(right - round, bottom),
+            );
+            path.line_to(point(left + round, bottom));
+            path.arc_to(
+                corner,
+                Pixels::ZERO,
+                false,
+                true,
+                point(left, bottom - round),
+            );
+            path.line_to(point(left, top + round));
+            path.arc_to(corner, Pixels::ZERO, false, true, point(left + round, top));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// A row that opens a page of its own: the label, the value chosen there in muted text, and a

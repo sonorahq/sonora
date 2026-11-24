@@ -145,7 +145,8 @@ enum Slot {
     Discord,
     /// The status's choices the card cannot show, as chips under it.
     DiscordOptions,
-    Scrobble(usize),
+    /// Every scrobbling service, as cards.
+    Scrobbles,
     ScrobbleProvider,
     /// The shortcut at this place in `input::shortcuts`.
     Keybind(usize),
@@ -1262,7 +1263,7 @@ impl SettingsView {
                 .join(" ")
                 .into(),
             ),
-            Slot::Scrobble(index) => self.scrobble_meta(index, cx)?,
+            Slot::Scrobbles => self.scrobbles_meta(cx),
             Slot::ScrobbleProvider => self.scrobble_provider_meta(cx)?,
             Slot::Keybind(index) => self.keybind_meta(index, cx)?,
             Slot::KeybindsReset => (t!("keybinds-reset-all"), SharedString::default()),
@@ -1376,10 +1377,7 @@ impl SettingsView {
             Slot::SessionsServer => self.sessions_server_row(cx),
             Slot::Discord => self.discord_card(window, cx),
             Slot::DiscordOptions => self.discord_options(cx),
-            Slot::Scrobble(index) => match index < self.scrobbling.read(cx).rows().len() {
-                true => self.scrobble_row(index, cx),
-                false => div().into_any_element(),
-            },
+            Slot::Scrobbles => div().into_any_element(),
             Slot::ScrobbleProvider => self.scrobble_provider_row(cx),
             Slot::Keybind(index) => self.keybind_row(index, cx),
             Slot::KeybindsReset => self.keybinds_reset_row(cx),
@@ -1398,6 +1396,7 @@ impl SettingsView {
     fn cards(&self, slot: Slot, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         match slot {
             Slot::Accounts => self.accounts_cards(window, cx),
+            Slot::Scrobbles => self.scrobble_cards(window, cx),
             Slot::Theme => self.theme_cards(cx),
             Slot::Icons => self.icon_cards(window, cx),
             Slot::Corners => self.corner_cards(window, cx),
