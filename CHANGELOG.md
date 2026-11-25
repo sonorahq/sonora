@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
+- The streaming service and scrobbler in use are outlined in your theme's colour in Settings, with only their logo in the service's own colour.
 - Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
 - Switching to another service from the account menu opens your startup page instead of leaving you on a page of the previous service.
 - The account menu lists Guest mode next to your services so you can switch to it from there, and Manage accounts opens a page of its own for signing in and out, which Settings now links to instead of listing every service.
@@ -57,6 +58,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening a menu no longer thickens the haze under the Settings header, so the page scrolling beneath it looks the same with the menu open as without.
 - A dropdown in Settings resizes to a newly picked option without shaking: its arrow and edge stay in place, and its text no longer jumps up and down.
 - The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
 - Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
