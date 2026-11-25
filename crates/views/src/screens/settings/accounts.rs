@@ -31,8 +31,8 @@ const MARK: Pixels = px(24.);
 const MARK_FADE: Duration = Duration::from_millis(160);
 /// How many list rows tall a provider's card stands, before an error adds to it.
 const CARD_HEIGHT: f32 = 1.25;
-/// How strongly the brand colour takes the border of the provider in use.
-const BRAND_EDGE: f32 = 0.55;
+/// How strongly the theme's primary colour takes the border of the provider in use.
+const ACTIVE_EDGE: f32 = 0.55;
 /// How faint the mark of a provider with no account stands on its card.
 const FAINT_MARK: f32 = 0.45;
 /// How large a service's mark draws in the row that opens the streaming services page, and
@@ -1294,9 +1294,9 @@ pub(super) enum Offer {
 
 /// One service as a card: its mark when it has one, the name over a muted status, and the
 /// `offer` at the end. A streaming provider and a scrobbler both draw as one. The service in use
-/// (`active`) has its mark and status in its `brand` colour and a border of it. One with an
-/// account (`stored`) shares its secondary fill with a muted mark, and one without has only a
-/// dashed outline and a faint mark. Under the pointer the mark warms to its colour and the fill
+/// (`active`) has its mark in its `brand` colour, and its status and border in the theme's
+/// primary colour. One with an account (`stored`) shares its secondary fill with a muted mark,
+/// and one without has only a dashed outline and a faint mark. Under the pointer the mark warms to its colour and the fill
 /// lightens. The sign out button keeps a slot of its own, shown on hover and always on the
 /// active card, so nothing moves as it comes and goes. A sign-in error wraps under the name on a
 /// line of its own, and a status that reports trouble (`alert`) is red. Screen readers hear the
@@ -1371,7 +1371,7 @@ impl RenderOnce for ProviderCard {
             false => mix(rest, brand, hover),
         };
         let (fill, edge) = match (active, stored) {
-            (true, _) => (theme.secondary, brand.opacity(BRAND_EDGE)),
+            (true, _) => (theme.secondary, theme.primary.opacity(ACTIVE_EDGE)),
             (false, true) => (mix(theme.secondary, theme.muted, hover), theme.border),
             (false, false) => (theme.secondary.opacity(hover), theme.border),
         };
@@ -1470,7 +1470,7 @@ impl RenderOnce for ProviderCard {
                                     .text_size(theme.text(Text::Small))
                                     .text_color(match (alert, active) {
                                         (true, _) => theme.status_error,
-                                        (false, true) => brand,
+                                        (false, true) => theme.primary,
                                         (false, false) => theme.muted_foreground,
                                     })
                                     .child(status)
