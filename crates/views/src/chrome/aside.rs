@@ -198,6 +198,8 @@ struct Sung {
     lane: Pixels,
     scripts: Option<RomanizationScripts>,
     theme: ui::Theme,
+    /// The colour of the sung letters, which are drawn over the line's own letters. It fades
+    /// out rather than towards the line's colour, so a finished line looks like every other.
     karaoke_tint: gpui::Hsla,
     lift: f32,
     from: gpui::Point<f32>,
@@ -1565,11 +1567,7 @@ impl Aside {
                         _ => tint,
                     };
                     let sung = Sung {
-                        karaoke_tint: mix(
-                            theme.foreground,
-                            tint,
-                            primary_karaoke_fade(line, active, position),
-                        ),
+                        karaoke_tint: karaoke_tint(line, active, position, &theme),
                         lift,
                         from: match hugs_end(line.voice, sung.mirrored) {
                             true => gpui::point(1., 0.5),
@@ -2525,11 +2523,7 @@ pub(crate) fn verse(
         lane: look.lane,
         scripts: look.scripts,
         theme: *theme,
-        karaoke_tint: mix(
-            theme.foreground,
-            tint,
-            primary_karaoke_fade(line, look.active, position),
-        ),
+        karaoke_tint: karaoke_tint(line, look.active, position, theme),
         lift: 1.,
         from: match hugs_end(line.voice, mirrored) {
             true => gpui::point(1., 0.5),
@@ -4162,6 +4156,19 @@ fn primary_karaoke_fade(
     own_sung_end(line).map_or(0., |end| {
         progress_between(end, end + Motion::Control.span(), position)
     })
+}
+
+/// The colour of a line's sung letters at `position`. They lie over the line's own letters, so
+/// a lit layer in the line's translucent colour would double it, and it fades out instead.
+fn karaoke_tint(
+    line: &music::LyricsLine,
+    line_active: bool,
+    position: std::time::Duration,
+    theme: &ui::Theme,
+) -> gpui::Hsla {
+    theme
+        .foreground
+        .opacity(1. - primary_karaoke_fade(line, line_active, position))
 }
 
 fn background_line_singing(
