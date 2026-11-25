@@ -311,7 +311,7 @@ impl MenuSearch {
         }
         match restore {
             Some(focus) => window.focus(&focus, cx),
-            None => window.blur(cx),
+            None => crate::release_focus(window, cx),
         }
     }
 
