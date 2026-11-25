@@ -1182,11 +1182,11 @@ fn update_focus_for_wake(window: &Window, cx: &mut App) {
 }
 
 /// How much of the see-through shell underneath has to show while the one over it shows `over`
-/// of itself, so the two let the desktop through exactly as much as one shell alone on a window
-/// keeping `opacity` of itself, and their colours blend in step with `over`. Fading both linearly
-/// would leave the window clearer than either halfway through.
-fn stacked(over: f32, opacity: f32) -> f32 {
-    ((1. - over) / (1. - opacity * over).max(f32::EPSILON)).clamp(0., 1.)
+/// of itself, so the two let the desktop through exactly as much as one shell alone whose ground
+/// keeps `ground` of the desktop out, and their colours blend in step with `over`. Fading both
+/// linearly would leave the window clearer than either halfway through.
+fn stacked(over: f32, ground: f32) -> f32 {
+    ((1. - over) / (1. - ground * over).max(f32::EPSILON)).clamp(0., 1.)
 }
 
 /// The shell on its way out, in the `theme` it wore and on its `ground` when it had one, since
@@ -1454,7 +1454,7 @@ impl Render for Root {
                 .absolute()
                 .inset_0()
                 .when(dissolving, |this| {
-                    this.opacity(stacked(1. - zooming, theme.opacity))
+                    this.opacity(stacked(1. - zooming, theme.background.a))
                 })
                 .child(parting(
                     &parted,
@@ -1492,7 +1492,7 @@ impl Render for Root {
                     .flex_1()
                     .min_h_0()
                     .when(hidden > 0. && dissolving, |this| {
-                        this.opacity(stacked(hidden, theme.opacity))
+                        this.opacity(stacked(hidden, parted.background.a))
                     })
                     .when(zooming > 0., |this| this.opacity(1. - zooming).occlude())
                     .when_some(zoom, |this, zoom| this.layer_scale(zoom))
@@ -1650,7 +1650,7 @@ impl Render for Root {
                     // the rest of the workspace rather than standing whole under the player
                     // leaving.
                     .when(hidden > 0. && grounded, |this| {
-                        this.opacity(stacked(hidden, theme.opacity))
+                        this.opacity(stacked(hidden, parted.background.a))
                     })
                     .child(
                         self.title_bar.clone().cached(
