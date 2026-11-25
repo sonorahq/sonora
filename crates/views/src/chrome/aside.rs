@@ -198,6 +198,8 @@ struct Sung {
     lane: Pixels,
     scripts: Option<RomanizationScripts>,
     theme: ui::Theme,
+    /// The colour of the sung letters, which are drawn over the line's own letters. It fades
+    /// out rather than towards the line's colour, so a finished line looks like every other.
     karaoke_tint: gpui::Hsla,
     lift: f32,
     from: gpui::Point<f32>,
@@ -259,7 +261,16 @@ struct Credit {
     source: &'static str,
     writers: Vec<String>,
     language: i18n::Language,
-    lines: (SharedString, Option<SharedString>),
+    lines: CreditLines,
+}
+
+/// The lines of a sheet's credit: its source, its writers when named, and the service it came
+/// through with the address that line opens.
+#[derive(Clone)]
+struct CreditLines {
+    from: SharedString,
+    by: Option<SharedString>,
+    via: Option<(SharedString, &'static str)>,
 }
 
 /// What the height of a settled lyrics row depends on besides its own words. A row off screen is
@@ -1565,11 +1576,7 @@ impl Aside {
                         _ => tint,
                     };
                     let sung = Sung {
-                        karaoke_tint: mix(
-                            theme.foreground,
-                            tint,
-                            primary_karaoke_fade(line, active, position),
-                        ),
+                        karaoke_tint: karaoke_tint(line, active, position, &theme),
                         lift,
                         from: match hugs_end(line.voice, sung.mirrored) {
                             true => gpui::point(1., 0.5),
@@ -1874,7 +1881,8 @@ impl Aside {
 
         if state == LyricsState::Ready
             && shown
-            && let Some((from, by)) = self.credit.as_ref().map(|credit| credit.lines.clone())
+            && let Some(CreditLines { from, by, via }) =
+                self.credit.as_ref().map(|credit| credit.lines.clone())
         {
             let credit = body.len();
             let along = viewport_along(&scroll, credit, scroll.bounds(), drag.downward);
@@ -1893,7 +1901,18 @@ impl Aside {
                 .text_size(theme.text(Text::Small))
                 .text_color(quiet(&theme))
                 .child(ui::spoken("lyrics-credit-source", from))
-                .children(by.map(|by| ui::spoken("lyrics-credit-writers", by)));
+                .children(by.map(|by| ui::spoken("lyrics-credit-writers", by)))
+                .children(via.map(|(via, url)| {
+                    div()
+                        .id("lyrics-credit-link")
+                        .role(Role::Link)
+                        .aria_label(via.clone())
+                        .self_start()
+                        .cursor_pointer()
+                        .hover(|style| style.underline())
+                        .on_click(move |_, _, cx| cx.open_url(url))
+                        .child(via)
+                }));
             body.push(adrift(note, translation, false, window));
         }
         if drifting {
@@ -2525,11 +2544,7 @@ pub(crate) fn verse(
         lane: look.lane,
         scripts: look.scripts,
         theme: *theme,
-        karaoke_tint: mix(
-            theme.foreground,
-            tint,
-            primary_karaoke_fade(line, look.active, position),
-        ),
+        karaoke_tint: karaoke_tint(line, look.active, position, theme),
         lift: 1.,
         from: match hugs_end(line.voice, mirrored) {
             true => gpui::point(1., 0.5),
@@ -3404,8 +3419,9 @@ fn selected_romanization(
         .then(|| romanized.text.clone())
 }
 
-/// Which source a sheet came from and, when it names them, who wrote the song.
-fn credit_lines(source: &str, writers: &[String]) -> (SharedString, Option<SharedString>) {
+/// Which source a sheet came from, who wrote the song when it names them, and the service it came
+/// through when that service asks to be credited.
+fn credit_lines(source: &str, writers: &[String]) -> CreditLines {
     let from = match source == music::lyrics::LOCAL {
         true => t!("lyrics-source-local"),
         false => t!("lyrics-source", source = source),
@@ -3414,7 +3430,9 @@ fn credit_lines(source: &str, writers: &[String]) -> (SharedString, Option<Share
         let writers = writers.join(", ");
         t!("lyrics-writers", writers = writers.as_str())
     });
-    (from, by)
+    let via = music::lyrics::credit(source)
+        .map(|credit| (t!("lyrics-via", service = credit.name), credit.url));
+    CreditLines { from, by, via }
 }
 
 /// A fingerprint of a font name, so the sheet notices a change of font without keeping a copy.
@@ -4162,6 +4180,19 @@ fn primary_karaoke_fade(
     own_sung_end(line).map_or(0., |end| {
         progress_between(end, end + Motion::Control.span(), position)
     })
+}
+
+/// The colour of a line's sung letters at `position`. They lie over the line's own letters, so
+/// a lit layer in the line's translucent colour would double it, and it fades out instead.
+fn karaoke_tint(
+    line: &music::LyricsLine,
+    line_active: bool,
+    position: std::time::Duration,
+    theme: &ui::Theme,
+) -> gpui::Hsla {
+    theme
+        .foreground
+        .opacity(1. - primary_karaoke_fade(line, line_active, position))
 }
 
 fn background_line_singing(

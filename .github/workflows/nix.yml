@@ -78,8 +78,10 @@ jobs:
           name: sonora
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
+      # `--fallback` builds a path from source when its download from a cache breaks off, so a
+      # connection to cachix dropping halfway slows the build down instead of failing it.
       - name: build
-        run: nix build --print-build-logs --no-link --print-out-paths .#packages.${{ matrix.system }}.default
+        run: nix build --print-build-logs --fallback --no-link --print-out-paths .#packages.${{ matrix.system }}.default
 
   # A plain push, so a branch that would not fast-forward fails here instead of being rewound.
   promote:

@@ -1,6 +1,5 @@
 pub mod apple;
 pub mod artwork;
-pub mod binimum;
 pub mod calendar;
 pub mod connect;
 pub mod cover;
@@ -13,6 +12,7 @@ pub mod kugou;
 pub mod link;
 pub mod local;
 pub mod lrclib;
+pub mod lrcred;
 pub mod lyrics;
 mod models;
 pub mod musixmatch;
