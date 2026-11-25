@@ -18,10 +18,7 @@ impl SettingsView {
             return Vec::new();
         }
         if jellyfin(cx) {
-            return vec![
-                Group::new("settings-group-jellyfin-remote", "icons/speaker.svg")
-                    .rows([Slot::SpotifyConnect]),
-            ];
+            return vec![Group::new("settings-group-jellyfin-remote").rows([Slot::SpotifyConnect])];
         }
         if youtube(cx) {
             return vec![
@@ -38,7 +35,7 @@ impl SettingsView {
                 slots.push(Slot::SpotifyConnectCustom);
             }
         }
-        vec![Group::new("settings-group-spotify-connect", "icons/speaker.svg").rows(slots)]
+        vec![Group::new("settings-group-spotify-connect").rows(slots)]
     }
 
     /// The switch that lists this app on the account's devices. Soloist is the account's

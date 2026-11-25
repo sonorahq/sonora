@@ -45,6 +45,11 @@ impl SessionsButton {
         }
     }
 
+    /// Whether the button's menu is open.
+    pub fn open(&self) -> bool {
+        self.popovers.shows(KEY)
+    }
+
     /// The account's other devices, with the one that plays marked.
     fn connect_items(&self, elsewhere: Option<&Elsewhere>, cx: &App) -> Vec<MenuItem> {
         let state = self.devices.read(cx);

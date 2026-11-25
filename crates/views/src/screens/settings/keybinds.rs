@@ -22,7 +22,7 @@ impl SettingsView {
                     .filter(|(_, shortcut)| shortcut.section == section)
                     .map(|(index, _)| Slot::Keybind(index))
                     .collect();
-                (!slots.is_empty()).then(|| Group::new(section.key(), section.icon()).rows(slots))
+                (!slots.is_empty()).then(|| Group::new(section.key()).rows(slots))
             })
             .chain(std::iter::once(
                 Group::untitled().rows([Slot::KeybindsReset]),

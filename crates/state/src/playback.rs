@@ -10,8 +10,9 @@ use logic::station::{self, unheard};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
-    Analyzer, Contributor, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent,
-    PlaybackEvents, PlaybackFactory, Player, Quality, Spectrum, Track, TrackSignal, Transcode,
+    Analyzer, Capabilities, Contributor, Meter, MusicApi, PlaybackConfig,
+    PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory, Player, Quality, RadioSeed,
+    Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -387,7 +388,11 @@ pub enum Whence {
     Album,
     Playlist,
     Artist,
+    /// The radio of a track, whose id the origin carries.
     Radio,
+    /// The radio of a whole album, playlist or artist, whose id the origin carries.
+    #[serde(rename = "collection-radio")]
+    CollectionRadio(RadioSeed),
     Saved,
     Local,
 }
@@ -428,6 +433,10 @@ impl Origin {
         Self::of(Whence::Radio, id)
     }
 
+    pub fn collection_radio(seed: RadioSeed, id: impl Into<String>) -> Self {
+        Self::of(Whence::CollectionRadio(seed), id)
+    }
+
     pub fn saved() -> Self {
         Self::of(Whence::Saved, String::new())
     }
@@ -448,29 +457,50 @@ impl Origin {
     }
 
     /// Loads the collection once for playback or queue placement, retaining radio continuation.
-    /// When `stations` is false the provider cannot seed a radio, so a song collection is just
-    /// the track itself.
+    /// `capabilities` are those of the provider holding it. Without `radio` a song collection is
+    /// just the track itself, and a collection's radio cannot be had at all.
     pub(crate) async fn load(
         &self,
         client: &dyn MusicApi,
-        stations: bool,
+        capabilities: Capabilities,
     ) -> Result<(Vec<Track>, Option<String>)> {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
             Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
-            Whence::Radio => {
-                if !stations {
-                    return Ok((vec![client.track(&self.id).await?], None));
-                }
-                let (mut tracks, next) = client.track_radio(&self.id, None).await?;
+            Whence::Radio if !capabilities.radio => {
+                return Ok((vec![client.track(&self.id).await?], None));
+            }
+            Whence::CollectionRadio(_) if !capabilities.radio => {
+                anyhow::bail!("the provider seeds no radio")
+            }
+            Whence::Radio | Whence::CollectionRadio(_) => {
+                let (mut tracks, next) = self.station(client, capabilities, None).await?;
                 tracks.retain(|track| track.playable);
                 return Ok((tracks, next));
             }
             Whence::Local => anyhow::bail!("local collections are supplied by the library"),
         };
         Ok((tracks, None))
+    }
+
+    /// The stretch of the station this origin names, from its start or from the continuation
+    /// `from`. Only a radio is a station. `capabilities` decide whether a collection's radio comes
+    /// from the provider or is blended from track radios.
+    async fn station(
+        &self,
+        client: &dyn MusicApi,
+        capabilities: Capabilities,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        match self.whence {
+            Whence::CollectionRadio(seed) => {
+                let native = capabilities.collection_radio.contains(&seed);
+                station::collection_radio(client, seed, &self.id, native, from).await
+            }
+            _ => client.track_radio(&self.id, from).await,
+        }
     }
 
     fn of(whence: Whence, id: impl Into<String>) -> Self {
@@ -710,7 +740,7 @@ impl Playback {
         cx.on_app_quit(|this, _| {
             this.task = None;
             this.engine = None;
-            music::soloist::stopped()
+            soloist::stopped()
         })
         .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
@@ -1012,6 +1042,9 @@ impl Playback {
                     state: Arc::new(connect::Snapshot {
                         context: origin.and_then(|origin| match origin.whence {
                             Whence::Radio => Some(connect::Collection::Radio(origin.id.clone())),
+                            Whence::CollectionRadio(seed) => Some(
+                                connect::Collection::CollectionRadio(seed, origin.id.clone()),
+                            ),
                             _ => collection_of(origin),
                         }),
                         track: Some(connect::QueuedTrack::new(id, false)),
@@ -1611,10 +1644,12 @@ impl Playback {
     /// keep a queue going, so the radio paths leave it alone rather than asking and getting
     /// nothing back.
     fn stations(&self, id: &str, cx: &Context<Self>) -> bool {
-        self.session
-            .read(cx)
-            .capabilities_of(crate::Shelf::of(id))
-            .radio
+        self.capabilities(id, cx).radio
+    }
+
+    /// What the provider that owns `id` can do.
+    fn capabilities(&self, id: &str, cx: &Context<Self>) -> Capabilities {
+        self.session.read(cx).capabilities_of(crate::Shelf::of(id))
     }
 
     /// Fetches tracks for the queue on the tokio runtime and places them on arrival, with a
@@ -1642,12 +1677,12 @@ impl Playback {
         };
         let id = id.to_owned();
         let from = origin.clone();
-        let stations = self.stations(&id, cx);
+        let capabilities = self.capabilities(&id, cx);
         self.enqueue = Some(Io::global(cx).load(
             async move {
                 match from {
                     Some(origin) => origin
-                        .load(&*client, stations)
+                        .load(&*client, capabilities)
                         .await
                         .map(|(tracks, _)| tracks),
                     None => client.track(&id).await.map(|track| vec![track]),
@@ -1734,14 +1769,14 @@ impl Playback {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let io = Io::global(cx);
-        let stations = self.stations(&origin.id, cx);
+        let capabilities = self.capabilities(&origin.id, cx);
         cx.spawn(async move |this, cx| {
             if !dwell.is_zero() {
                 cx.background_executor().timer(dwell).await;
             }
             let from = origin.clone();
             let loaded =
-                crate::join(io.spawn(async move { from.load(&*client, stations).await })).await;
+                crate::join(io.spawn(async move { from.load(&*client, capabilities).await })).await;
             this.update(cx, |this, cx| this.collected(origin, loaded, cx))
                 .ok();
         })
@@ -2028,11 +2063,12 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
-        let seed = station.rest.seed().to_owned();
+        let capabilities = self.capabilities(&station.origin.id, cx);
+        let seed = station.origin.clone();
         let token = station.rest.next().to_owned();
         self.topping = Some(Io::global(cx).load(
             async move {
-                let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
+                let (mut tracks, next) = seed.station(&*client, capabilities, Some(&token)).await?;
                 unheard(&mut tracks, &heard);
                 anyhow::Ok((tracks, next))
             },
@@ -3760,12 +3796,12 @@ impl Playback {
                  this session"
             );
         }
-        let note = match music::soloist::ready() {
+        let note = match soloist::ready() {
             true => "toast-soloist-refused",
             false => "toast-keys-refused",
         };
         let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
-        let toast = match music::soloist::supported() {
+        let toast = match soloist::supported() {
             true => toast.lead("soloist-setup-title", Target::PlaybackSettings, |cx| {
                 let soloist = Sonora::global(cx).soloist.clone();
                 soloist.update(cx, |soloist, cx| soloist.begin(cx));

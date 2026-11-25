@@ -1,0 +1,224 @@
+//! Apple Music: a proof of concept that a subscription track can reach Sonora's own output.
+//!
+//! The account arrives as one cookie, `media-user-token`, from the app's own sign-in window, or
+//! from `SONORA_APPLE_MEDIA_USER_TOKEN` for a headless run. Playback resolves the track through
+//! the web player's own endpoints, asks the Widevine CDM the machine has for a license, and
+//! decrypts each CENC sample as the decoder reaches it. What comes out
+//! is an ordinary clear fMP4, so from `rodio` onwards this is the same path as every other
+//! provider: the equalizer, the volume ramp, the spectrum tap, cpal.
+//!
+//! The library, search, albums, artists, playlists, stations and what Apple recommends all come
+//! from the same endpoints the web player calls, described in [`client`]. One thing is missing
+//! rather than unfinished: lyrics, which the token read off the page has no permission for.
+
+mod auth;
+mod client;
+mod links;
+mod playback;
+mod progressive;
+mod recommend;
+mod stream;
+mod wire;
+
+use std::sync::Arc;
+
+use anyhow::{Context as _, Result};
+use async_trait::async_trait;
+use music::{
+    Arrival, Capabilities, Catalog, InputSource, MusicApi as _, MusicProvider, PromptSink,
+    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, WebSignIn,
+};
+
+use crate::playback::Factory;
+pub use client::AppleClient;
+pub use progressive::Media;
+
+/// The account token a run without a window uses: whatever `SONORA_APPLE_MEDIA_USER_TOKEN`
+/// names, or the one the sign-in window stored.
+pub fn account() -> Option<String> {
+    auth::load()
+}
+
+/// The page the sign-in window opens. Apple finishes on music.apple.com with the account
+/// cookie set, which is the one thing this needs.
+const SIGN_IN_URL: &str = "https://music.apple.com/login";
+/// Where the window ends up, and what cookie reads are scoped to.
+const LANDING: &str = "music.apple.com";
+/// The cookie filter runs on bare domains, so no leading dot. The account cookie is set on
+/// `music.apple.com`, which this covers.
+const COOKIE_DOMAIN: &str = "apple.com";
+
+pub struct AppleProvider;
+
+impl AppleProvider {
+    pub fn new() -> Self {
+        Self
+    }
+
+    async fn connect(secret: &str) -> Result<ProviderSession> {
+        let token = auth::user_token(secret)?;
+        let client = AppleClient::connect(&token)
+            .await
+            .context("cannot reach apple music with that account")?;
+        entitled(&client).await?;
+        let profile = client.profile().await?;
+        auth::store(&token)?;
+        Ok(session(client, profile))
+    }
+
+    async fn restore_stored() -> Result<Option<ProviderSession>> {
+        let Some(token) = auth::load() else {
+            return Ok(None);
+        };
+        match AppleClient::connect(&token).await {
+            Ok(client) => {
+                entitled(&client).await?;
+                let profile = client.profile().await?;
+                Ok(Some(session(client, profile)))
+            }
+            Err(error) if music::trouble::offline(&format!("{error:#}")) => Err(error),
+            Err(error) => {
+                log::warn!("apple: the stored account is no longer usable: {error:#}");
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Refuses an account Apple says has no active subscription, since every library read and
+/// every play would fail for it. A check that cannot be made lets the account through.
+async fn entitled(client: &AppleClient) -> Result<()> {
+    match client.subscribed().await {
+        Ok(Some(false)) => {
+            log::warn!(
+                "apple: the account has no active subscription in storefront {}",
+                client.storefront()
+            );
+            Err(anyhow::Error::new(SignInFailure(
+                SignInProblem::Subscription,
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if music::trouble::offline(&format!("{error:#}")) => Err(error),
+        Err(error) => {
+            log::debug!("apple: cannot read the subscription status: {error:#}");
+            Ok(())
+        }
+    }
+}
+
+fn session(client: AppleClient, profile: music::UserProfile) -> ProviderSession {
+    if !widevine::available() {
+        // Metadata still works, so the account is worth keeping; only playback will refuse.
+        log::warn!("apple: no widevine module is here yet, so tracks cannot be decrypted");
+    }
+    ProviderSession {
+        profile,
+        api: Arc::new(client.clone()),
+        playback: Arc::new(Factory::new(client)),
+        // The library is what the listener added, and favorites are a separate set on top of
+        // it. Songs and albums go into it apart from the star, and a favorited song still
+        // lands in it through the account's Add Favorite Songs to Library setting, which is on
+        // by default.
+        shape: Shape::Catalog(Catalog::Editable),
+        authenticated: true,
+        // Apple keeps no play counts. Stations it does have, through the same endpoint the web
+        // player's autoplay uses. An artist can be favorited like anything else, and pins live
+        // behind `me/library/pins`. A download only saves the fetch, since every play still
+        // needs a license. A library song or one in your own playlist carries no date, but both
+        // are listed in the order they were added. The library comes newest first because its
+        // listing asks Apple to sort that way, and your own playlists come oldest first.
+        capabilities: Capabilities {
+            radio: true,
+            follow_artists: true,
+            pins: true,
+            keeps: true,
+            downloads: true,
+            qualities: stream::QUALITIES,
+            song_arrival: Some(Arrival::NewestFirst),
+            playlist_arrival: Some(Arrival::OldestFirst),
+            ..Capabilities::NONE
+        },
+    }
+}
+
+impl Default for AppleProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl MusicProvider for AppleProvider {
+    fn name(&self) -> &'static str {
+        "Apple Music"
+    }
+
+    fn slug(&self) -> &'static str {
+        "apple"
+    }
+
+    fn link(&self, link: &str) -> Option<music::link::Linked> {
+        links::read(link)
+    }
+
+    fn reach(&self) -> Option<String> {
+        Some("music.apple.com".to_owned())
+    }
+
+    fn sign_in_options(&self) -> Vec<SignIn> {
+        vec![SignIn::Secret]
+    }
+
+    fn stored(&self) -> bool {
+        auth::stored()
+    }
+
+    fn public_art(&self) -> bool {
+        // artwork lives on mzstatic, open to anyone with the url
+        true
+    }
+
+    fn protected(&self) -> bool {
+        true
+    }
+
+    async fn restore(&self) -> Result<Option<ProviderSession>> {
+        Self::restore_stored().await
+    }
+
+    async fn sign_in(
+        &self,
+        method: SignIn,
+        prompt: PromptSink,
+        mut input: InputSource,
+    ) -> Result<ProviderSession> {
+        match method {
+            SignIn::Secret | SignIn::Default => {
+                prompt(SignInPrompt::Secret);
+                let cookies = input.recv().await.context("sign-in was cancelled")?;
+                Self::connect(&cookies).await
+            }
+            SignIn::Anonymous => anyhow::bail!("apple music has no anonymous sign-in"),
+            SignIn::Path(_) => anyhow::bail!("apple music does not sign in with a folder path"),
+            SignIn::Credentials { .. } => {
+                anyhow::bail!("apple music does not sign in with a server address")
+            }
+        }
+    }
+
+    fn sign_out(&self) {
+        auth::forget();
+    }
+
+    fn web_sign_in(&self) -> Option<WebSignIn> {
+        Some(WebSignIn {
+            url: SIGN_IN_URL,
+            landing: LANDING,
+            domain: COOKIE_DOMAIN,
+            proof: auth::PROOF,
+            // Apple's sign-in page is happy with whatever the backend's own engine says.
+            agent: None,
+        })
+    }
+}

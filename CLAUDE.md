@@ -13,7 +13,20 @@ crates/
   views/      screens, shells (Workspace, FullscreenView) and app chrome
   state/      GPUI entities holding app state, and all async orchestration
   logic/      what the app decides about listening: play order, station rules, lyrics lookup (no GPUI)
-  music/      provider traits and models in the root, one submodule per provider (no GPUI)
+  music/      provider traits and models, kept tracks and the helpers every provider shares
+              (no GPUI)
+  sound/      the real-time sound path: decoders, progressive download, equalizer, analysers,
+              paced output queue, output devices (no models, no GPUI)
+  engine/     the one playback engine every provider but Spotify plays through
+  spotify/ youtube/ apple/ tidal/ deezer/ subsonic/ jellyfin/ plex/ local/
+              one crate per provider
+  soloist/    Spotify's headless player: its download, pairing and the engine that drives it
+  scrobble/   scrobbling to Last.fm, Libre.fm, ListenBrainz, Maloja and teal.fm
+  lyrics/     LRC and TTML parsing, romanisation and the ranking of what every source found
+  lyric-sources/
+              the standalone lyrics sources: LRCLIB, Musixmatch, NetEase, Kugou and lrc.red
+  artwork/    public cover lookup and upload for a track whose own art cannot be shared
+  probe/      ignored live tests against real accounts, and the lyrics probing examples
   storage/    the state.sqlite and cache.sqlite paths, schema and connection setup
   ui/         design system: theme, metrics, layout ladder and reusable elements
   router/     Destination enum, navigation history, Link trait
@@ -28,26 +41,40 @@ crates/
 Dependency direction is strict. Do not create a back edge:
 
 ```
-sonora → views → state → logic → music
-         state, music → storage
+sonora → views → state → logic → lyrics → music → sound
+         sonora → providers → engine → music, sound
+         sonora → lyric-sources → lyrics
+         providers, state, views → lyrics
+         state → artwork → music
+         spotify → soloist → music
+         state, views → soloist, scrobble → music
+         state, local → storage
          state → webview
          music → widevine
          all ui-side crates → ui, router, input → ui → gpui
          every ui-side crate → i18n, icons → gpui
 ```
 
-- `state` and `views` see only the traits and models in the root of `music`, never a provider
-  module. Only `sonora/src/main.rs` names a concrete provider.
+- `state` and `views` see only the traits and models of `music`, never a provider crate, so a
+  change to a provider rebuilds that provider and `sonora` alone. Only `sonora/src/main.rs` names
+  a concrete provider. Soloist, scrobbling, lyrics and cover lookup are not providers, so `state`
+  and `views` reach them as the `soloist`, `scrobble`, `lyrics` and `artwork` crates.
+- A provider never depends on another provider. What two of them share goes into `music`, into
+  `lyrics` when it reads or ranks lyrics, or into `sound` when it touches the sound path.
 - `music` never depends on `gpui`. `ui` never knows about `music`, `state` or playback. Widgets
   that need app state live in `views/src/chrome/`.
 - `logic` never depends on `gpui` or a UI crate either. The Android app
   links it next to `music`, so a rule both apps follow goes there and `state` wraps it in an
   entity that redraws, saves and posts toasts.
-- `music::engine` is the one playback engine and `music::stream` the one progressive download. A
+- `engine` is the one playback engine and `sound::stream` the one progressive download. A
   provider implements `engine::Fetch` and `stream::Body` rather than writing its own. The engine
   applies loudness normalisation, so a provider only reports a track's level through
   `Fetch::loudness`. Spotify is the one exception, because librespot decodes and normalises
   inside its own player.
+- `sound` and `engine` are built at `opt-level = 3` in debug builds, every other crate at the
+  default. Generic code compiles in the crate that names its types, so a provider hands the
+  engine a `sound::decode::Decoded` over a `decode::Media`, never a decoder type of its own, and
+  anything that touches every sample lives in `sound` behind a non-generic function.
 - `music::drm` is the only way `state` and `views` reach protected playback. The CDM is never
   shipped in any artefact or package.
 

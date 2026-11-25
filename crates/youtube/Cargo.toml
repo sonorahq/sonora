@@ -1,0 +1,30 @@
+[package]
+name = "youtube"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+engine.workspace = true
+fastrand.workspace = true
+futures.workspace = true
+log.workspace = true
+lyrics.workspace = true
+mdns-sd.workspace = true
+music.workspace = true
+reqwest.workspace = true
+rustls = { workspace = true, features = ["tls12"] }
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sound.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+ytmusic.workspace = true
+
+[lints]
+workspace = true

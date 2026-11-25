@@ -794,6 +794,17 @@ impl Sprung {
         self.state.position
     }
 
+    /// How fast the spring moves now, in units a second.
+    pub fn velocity(&self) -> f32 {
+        self.state.velocity
+    }
+
+    /// Sets how fast the spring moves, in units a second, keeping where it stands and its clock,
+    /// so a motion turned mid-flight carries on without a stalled frame.
+    pub fn set_velocity(&mut self, velocity: f32) {
+        self.state.velocity = velocity;
+    }
+
     /// Whether the spring has come to rest where it was last sent, rather than moving.
     pub fn resting(&self) -> bool {
         self.beat.is_none()

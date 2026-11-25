@@ -9,7 +9,7 @@ use music::connect::{
     Collection, Command, Connect, Device, Elsewhere, Event, Invite, Jam, Naming, QueuedTrack,
     Request, Roster, Snapshot, Start,
 };
-use music::{Contributor, MusicApi, Track};
+use music::{Capabilities, Contributor, MusicApi, Track};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::queue::Reach;
@@ -707,7 +707,7 @@ impl Devices {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect() && !music::soloist::ready();
+        let wanted = settings.spotify_connect() && !soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -927,6 +927,7 @@ impl Devices {
             ),
             Collection::Saved => (Origin::saved(), None),
             Collection::Radio(id) => (Origin::radio(id), None),
+            Collection::CollectionRadio(seed, id) => (Origin::collection_radio(*seed, id), None),
         };
         Some(match name {
             Some(name) => origin.named(name),
@@ -1177,6 +1178,7 @@ impl Devices {
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
+        let capabilities = self.session.read(cx).capabilities();
         let state = start.state.clone();
         let restart = start.restart;
         let reach = match restart {
@@ -1196,7 +1198,7 @@ impl Devices {
                 .filter_map(|track| Some((track.id.clone()?, track.clone()))),
         );
         self.changing = Some(self.io.load(
-            load(client, start, known),
+            load(client, capabilities, start, known),
             move |this, loaded, cx| {
                 this.changing = None;
                 let moved = match restart {
@@ -1396,9 +1398,11 @@ async fn person(client: &dyn MusicApi, id: String) -> Option<(String, Arc<Contri
 }
 
 /// Reads in what a start names: the collection if it has one the track is in, otherwise the
-/// track and the tracks that follow it.
+/// track and the tracks that follow it. `capabilities` are the provider's, which pick where a
+/// collection's radio comes from.
 async fn load(
     client: Arc<dyn MusicApi>,
+    capabilities: Capabilities,
     start: Start,
     mut known: HashMap<String, Track>,
 ) -> Result<(Vec<Track>, usize, Option<Origin>, Option<RemoteWindow>)> {
@@ -1427,6 +1431,11 @@ async fn load(
                 tracks.retain(|track| track.playable && track.id.as_deref() != Some(id));
                 tracks.insert(0, client.track(id).await?);
                 (tracks, Some(Origin::radio(id)))
+            }
+            Some(Collection::CollectionRadio(seed, id)) => {
+                let origin = Origin::collection_radio(*seed, id);
+                let (tracks, _) = origin.load(&*client, capabilities).await?;
+                (tracks, Some(origin))
             }
             None => (Vec::new(), None),
         }

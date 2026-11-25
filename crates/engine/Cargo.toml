@@ -1,0 +1,17 @@
+[package]
+name = "engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+log.workspace = true
+music.workspace = true
+sound.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

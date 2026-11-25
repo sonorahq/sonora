@@ -7,7 +7,9 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 fastrand.workspace = true
+futures.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 serde.workspace = true
 tokio.workspace = true

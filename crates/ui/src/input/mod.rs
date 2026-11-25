@@ -67,6 +67,13 @@ struct Kept(bool);
 
 impl Global for Kept {}
 
+/// Where the keyboard goes when a field or menu lets go of it with nothing earlier to hand it
+/// back to. A window without focus sends shortcuts and the actions buttons dispatch only to its
+/// root element, so an app points this at the view that handles them.
+struct FocusFallback(Option<FocusHandle>);
+
+impl Global for FocusFallback {}
+
 /// Re-reads GNOME's middle-click paste switch through the settings portal and repaints every
 /// window when it changed. A desktop that does not expose the switch keeps middle-click paste on.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -103,6 +110,29 @@ pub(crate) fn keep_focus(window: &mut Window, cx: &mut App) {
     window.defer(cx, |window, cx| {
         window.defer(cx, |_, cx| cx.set_global(Kept(false)))
     });
+}
+
+/// Makes `fallback` the place `release_focus` hands the keyboard to. `None` leaves the window
+/// without focus instead.
+pub fn set_focus_fallback(fallback: Option<FocusHandle>, cx: &mut App) {
+    if cx.try_global::<FocusFallback>().map(|kept| &kept.0) == Some(&fallback) {
+        return;
+    }
+    cx.set_global(FocusFallback(fallback));
+}
+
+pub fn focus_fallback(cx: &App) -> Option<FocusHandle> {
+    cx.try_global::<FocusFallback>()
+        .and_then(|fallback| fallback.0.clone())
+}
+
+/// Takes the keyboard from whatever holds it and gives it to the focus fallback at once, so an
+/// action dispatched before the next frame still finds its handler.
+pub fn release_focus(window: &mut Window, cx: &mut App) {
+    match focus_fallback(cx) {
+        Some(fallback) => window.focus(&fallback, cx),
+        None => window.blur(cx),
+    }
 }
 
 /// Whether a middle click in a field pastes the primary selection right now.
@@ -804,7 +834,7 @@ impl Input {
             if kept || !focus.is_focused(window) {
                 return;
             }
-            window.blur(cx);
+            release_focus(window, cx);
             field
                 .update(cx, |this, cx| {
                     this.selecting = false;
@@ -822,7 +852,7 @@ impl Input {
         let pressed_out = std::mem::take(&mut self.pressed_out);
         if dismissed && pressed_out && self.focus_handle.is_focused(window) {
             self.selecting = false;
-            window.blur(cx);
+            release_focus(window, cx);
         }
         cx.notify();
     }

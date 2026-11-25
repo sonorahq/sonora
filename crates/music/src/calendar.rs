@@ -7,7 +7,7 @@
 /// time joined by `T` or a space, fractional seconds, and a `Z`, `+02:00` or `+0000` offset,
 /// which covers what Apple Music, Deezer and Tidal write. A missing month or day reads as the
 /// first. `None` when not even the year is a number.
-pub(crate) fn seconds(stamp: &str) -> Option<i64> {
+pub fn seconds(stamp: &str) -> Option<i64> {
     let stamp = stamp.trim();
     let (date, time) = stamp.split_once(['T', ' ']).unwrap_or((stamp, ""));
     let mut parts = date.split('-');

@@ -24,6 +24,16 @@ gpui_platform.workspace = true
 i18n.workspace = true
 icons.workspace = true
 music = { workspace = true, features = ["widevine"] }
+apple.workspace = true
+deezer.workspace = true
+jellyfin.workspace = true
+local.workspace = true
+lyric-sources.workspace = true
+plex.workspace = true
+spotify.workspace = true
+subsonic.workspace = true
+tidal.workspace = true
+youtube.workspace = true
 state.workspace = true
 storage.workspace = true
 input.workspace = true

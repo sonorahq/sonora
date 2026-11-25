@@ -120,6 +120,7 @@ pub(crate) fn volume_slider<V: VolumeHost>(
                 .ghost()
                 .small()
                 .icon(volume_icon(level))
+                .snapping()
                 .tooltip_above(match muted {
                     true => "player-unmute",
                     false => "player-mute",
@@ -195,6 +196,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                         .when(frosted, Button::frosted)
                         .small()
                         .icon(volume_icon(level))
+                        .snapping()
                         // No tooltip: it would sit over the slider rising from the same spot,
                         // so the button carries its name for screen readers alone.
                         .name(match muted {

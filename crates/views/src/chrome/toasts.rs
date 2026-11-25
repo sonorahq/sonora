@@ -6,12 +6,12 @@ use std::time::{Duration, Instant};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    Context, DispatchPhase, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, Window, canvas, div, point, px, relative,
+    App, Context, DispatchPhase, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Render, SpringConfig, Window, canvas, div, point, px, relative,
 };
 use router::{Destination, SettingsPage, navigate};
 use state::{Outcome, Target, Toasts};
-use ui::{ActiveTheme as _, Toast, css_ease, css_ease_out, paced};
+use ui::{ActiveTheme as _, Springs, Sprung, Toast};
 
 /// The toast width in multiples of the font size.
 const WIDTH: f32 = 26.;
@@ -22,23 +22,28 @@ const GAP: Pixels = px(14.);
 const SHRINK: f32 = 0.1;
 /// How many toasts the pile shows. The rest wait out of sight behind the last one.
 const VISIBLE: usize = 3;
-/// How long a toast takes to move into a new place in the stack, entering, leaving and springing
-/// back from a short swipe included. These timings are Sonner's.
-const SETTLE: Duration = Duration::from_millis(400);
-/// How long a dismissed toast stays on screen. It is cut off partway through its slide, which is
-/// what makes the exit quick.
-const UNMOUNT: Duration = Duration::from_millis(200);
-/// How long a dismissed toast that was piled behind the front one takes to sink.
-const SINK: Duration = Duration::from_millis(500);
-/// How long a swiped toast takes to fade out. It is short so the toast is gone after a nudge
-/// rather than seen crossing the window.
-const THROW: Duration = Duration::from_millis(120);
+/// How far back from the release a swipe's speed is read, so the toast leaves the hand at the
+/// speed it was going at the end rather than on average.
+const TRAIL: Duration = Duration::from_millis(80);
+/// The shortest stretch of a swipe that tells its speed. Two moves closer together than this
+/// came in one burst and say nothing about how fast the hand went.
+const TRAIL_SHORTEST: Duration = Duration::from_millis(8);
+/// How close a value in pixels has to come to its target to count as landed.
+const PIXEL_REST: f32 = 0.1;
+/// How close a scale or an opacity has to come to its target to count as landed.
+const LEVEL_REST: f32 = 0.002;
+/// How faint a dismissed toast has to fade before it is dropped.
+const GONE: f32 = 0.01;
 /// How far past the release point a swiped toast drifts while it fades, as a share of its width.
 const DRIFT: f32 = 0.15;
 /// How far a toast has to be dragged right to dismiss it.
 const FLING: Pixels = px(45.);
 /// How fast, in pixels per millisecond, a shorter drag right has to be to dismiss the toast.
 const FLICK: f32 = 0.11;
+/// How much of an exponential ease-out's opening speed a toast sets off with when it is sent
+/// somewhere. At 0 it gathers speed like a spring let go from rest, at 1 it starts at full speed,
+/// which looks abrupt.
+const ONSET: f32 = 0.5;
 
 /// The toasts above the player bar, piled with the newest in front. Pointing at the pile
 /// spreads it out and stops every toast's clock, and a toast dragged right far or fast enough
@@ -51,7 +56,7 @@ pub struct ToastStack {
     swipe: Option<Swipe>,
 }
 
-/// One toast on screen, kept after the toast is dismissed for as long as it takes to leave.
+/// One toast on screen, kept after the toast is dismissed for as long as it takes to fade out.
 struct Slot {
     toast: state::Toast,
     height: Option<Pixels>,
@@ -60,15 +65,15 @@ struct Slot {
     /// or waiting out of sight does not.
     active: bool,
     entered: bool,
-    leaving: Option<Instant>,
+    leaving: bool,
     flung: bool,
-    rise: Tween,
-    scale: Tween,
-    opacity: Tween,
-    shown: Tween,
-    clip: Tween,
-    drop: Tween,
-    sway: Tween,
+    rise: Spring,
+    scale: Spring,
+    opacity: Spring,
+    shown: Spring,
+    clip: Spring,
+    drop: Spring,
+    sway: Spring,
 }
 
 /// A drag on a toast, measured from where the button went down.
@@ -78,16 +83,20 @@ struct Swipe {
     began: Instant,
     vertical: Option<bool>,
     offset: Point<Pixels>,
+    /// Where the toast was over the last moments of the drag, which tells how fast it was going
+    /// when it was let go.
+    trail: Vec<(Instant, Point<Pixels>)>,
 }
 
-/// A value easing from one number to another, which can be sent somewhere new halfway.
+/// One value of a toast on a spring: where it stands, where it heads and on which spring. Sent
+/// somewhere new halfway, it turns with the speed it had rather than starting over.
 #[derive(Clone, Copy)]
-struct Tween {
-    from: f32,
-    to: f32,
-    start: Instant,
-    span: Duration,
-    ease: fn(f32) -> f32,
+struct Spring {
+    sprung: Sprung,
+    target: f32,
+    config: SpringConfig,
+    /// How close to the target the value has to come to count as landed.
+    rest: f32,
 }
 
 impl ToastStack {
@@ -124,12 +133,14 @@ impl ToastStack {
     }
 
     fn grab(&mut self, id: usize, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let now = Instant::now();
         self.swipe = Some(Swipe {
             id,
             origin: event.position,
-            began: Instant::now(),
+            began: now,
             vertical: None,
             offset: Point::default(),
+            trail: vec![(now, Point::default())],
         });
         self.hold(cx);
     }
@@ -150,29 +161,47 @@ impl ToastStack {
             Some(false) => point(damped(moved.x), Pixels::ZERO),
             Some(true) => point(Pixels::ZERO, damped(moved.y)),
         };
+        let now = Instant::now();
+        swipe
+            .trail
+            .retain(|(at, _)| now.duration_since(*at) <= TRAIL);
+        swipe.trail.push((now, swipe.offset));
         cx.notify();
     }
 
     /// Ends a drag: far or fast enough right dismisses the toast, anything else springs it back.
+    /// Either way the toast leaves the hand at the speed it was going, so a flung one carries on
+    /// and one let go on its way back keeps its pace into the return.
     fn release(&mut self, cx: &mut Context<Self>) {
         let Some(swipe) = self.swipe.take() else {
             return;
         };
-        let now = Instant::now();
         let travel = swipe.offset.x / px(1.);
         let millis = swipe.began.elapsed().as_secs_f32() * 1000.;
         let speed = travel / millis.max(1.);
         let flung = swipe.offset.x >= FLING || (travel > 0. && speed > FLICK);
-        let snap = span(SETTLE, cx);
+        let thrown = thrown(&swipe.trail, Instant::now());
+        let snap = Springs::RESPONSIVE;
+        let drift = Springs::FLIGHT;
+        let width = cx.theme().font_size * WIDTH / px(1.);
 
         if let Some(slot) = self.slots.iter_mut().find(|slot| slot.toast.id == swipe.id) {
-            slot.drop = Tween::still(swipe.offset.y / px(1.), now);
-            slot.sway = Tween::still(travel, now);
+            slot.drop.launch(swipe.offset.y / px(1.), thrown.y);
+            slot.drop.aim(0., snap);
             match flung {
-                true => slot.flung = true,
+                true => {
+                    // a run sets off faster the further it has to go, so the toast heads on far
+                    // enough to leave the hand at least as fast as it was thrown, and a nudge on
+                    // at the least
+                    let rate = ONSET * drift.canonical().0;
+                    let reach = (thrown.x.max(0.) / rate).max(width * DRIFT);
+                    slot.flung = true;
+                    slot.sway.jump(travel);
+                    slot.sway.aim(travel + reach, drift);
+                }
                 false => {
-                    slot.drop.aim(0., snap, now);
-                    slot.sway.aim(0., snap, now);
+                    slot.sway.launch(travel, thrown.x);
+                    slot.sway.aim(0., snap);
                 }
             }
         }
@@ -183,48 +212,40 @@ impl ToastStack {
     }
 
     /// Brings the slots in line with the toasts that are up: new ones get a slot, and the
-    /// dismissed ones start leaving and are dropped once they are gone.
-    fn sync(&mut self, now: Instant, cx: &mut Context<Self>) {
+    /// dismissed ones start leaving and are dropped once they have faded out.
+    fn sync(&mut self, cx: &mut Context<Self>) {
         let shown = self.toasts.read(cx).shown().to_vec();
         let expanded = self.expanded();
-        let settle = span(SETTLE, cx);
-        let unmount = span(UNMOUNT, cx);
-        let sink = span(SINK, cx);
-        let throw = span(THROW, cx);
+        // a leaving toast fades quicker than it slides, so it is gone partway through the slide
+        let slide = Springs::FLIGHT;
+        let fade = Springs::SWAP_OUT;
         let below = clearance(cx) / px(1.);
-        let width = cx.theme().font_size * WIDTH / px(1.);
 
         for slot in &mut self.slots {
-            if slot.leaving.is_some() || shown.iter().any(|toast| toast.id == slot.toast.id) {
+            if slot.leaving || shown.iter().any(|toast| toast.id == slot.toast.id) {
                 continue;
             }
-            slot.leaving = Some(now);
+            slot.leaving = true;
             let height = slot.height.map_or(0., |height| height / px(1.));
             match (slot.flung, expanded || slot.index == 0) {
-                (true, _) => {
-                    let away = slot.sway.now(now) + width * DRIFT;
-                    slot.sway.aim_eased(away, throw, css_ease_out, now);
-                    slot.opacity.aim_eased(0., throw, css_ease_out, now);
-                }
+                // the swipe already sent it on its way
+                (true, _) => slot.opacity.aim(0., fade),
                 (false, true) => {
-                    slot.drop.aim(height + below, settle, now);
-                    slot.opacity.aim(0., settle, now);
+                    slot.drop.aim(height + below, slide);
+                    slot.opacity.aim(0., fade);
                 }
                 (false, false) => {
-                    slot.drop.aim(height * 0.4, sink, now);
-                    slot.opacity.aim(0., unmount, now);
+                    slot.drop.aim(height * 0.4, slide);
+                    slot.opacity.aim(0., fade);
                 }
             }
         }
-        self.slots.retain(|slot| {
-            slot.leaving
-                .is_none_or(|left| now.duration_since(left) < unmount)
-        });
+        self.slots.retain(|slot| !slot.gone());
 
         for toast in shown {
             match self.slots.iter_mut().find(|slot| slot.toast.id == toast.id) {
                 Some(slot) => slot.toast = toast,
-                None => self.slots.push(Slot::new(toast, now)),
+                None => self.slots.push(Slot::new(toast)),
             }
         }
         self.slots.sort_by_key(|slot| slot.toast.id);
@@ -238,14 +259,15 @@ impl ToastStack {
 
     /// Sends every measured toast toward its place: spread out one above another when the stack
     /// is expanded, or piled behind the front one, smaller and with its contents hidden.
-    fn arrange(&mut self, now: Instant, cx: &mut Context<Self>) -> Pixels {
+    fn arrange(&mut self, cx: &mut Context<Self>) -> Pixels {
         let expanded = self.expanded();
-        let settle = span(SETTLE, cx);
+        // no spring here overshoots: a toast covers most of the way at once and slows into place
+        let settle = Springs::RESPONSIVE;
         let below = clearance(cx) / px(1.);
         let mut order: Vec<usize> = (0..self.slots.len())
             .filter(|at| {
                 let slot = &self.slots[*at];
-                slot.leaving.is_none() && slot.height.is_some()
+                !slot.leaving && slot.height.is_some()
             })
             .collect();
         order.reverse();
@@ -300,19 +322,19 @@ impl ToastStack {
 
             if !slot.entered {
                 slot.entered = true;
-                slot.rise = Tween::still(rise - height - below, now);
-                slot.rise.aim(rise, settle, now);
-                slot.opacity.aim(opacity, settle, now);
-                slot.scale = Tween::still(scale, now);
-                slot.shown = Tween::still(shown, now);
-                slot.clip = Tween::still(clip, now);
+                slot.rise.jump(rise - height - below);
+                slot.rise.aim(rise, settle);
+                slot.opacity.aim(opacity, settle);
+                slot.scale.jump(scale);
+                slot.shown.jump(shown);
+                slot.clip.jump(clip);
                 continue;
             }
-            slot.rise.aim(rise, settle, now);
-            slot.scale.aim(scale, settle, now);
-            slot.clip.aim(clip, settle, now);
-            slot.shown.aim(shown, settle, now);
-            slot.opacity.aim(opacity, settle, now);
+            slot.rise.aim(rise, settle);
+            slot.scale.aim(scale, settle);
+            slot.clip.aim(clip, settle);
+            slot.shown.aim(shown, settle);
+            slot.opacity.aim(opacity, settle);
         }
 
         let piled = order.len().clamp(1, VISIBLE) as f32 - 1.;
@@ -322,7 +344,7 @@ impl ToastStack {
         })
     }
 
-    fn card(&self, slot: &Slot, now: Instant, cx: &mut Context<Self>) -> Toast {
+    fn card(&self, slot: &Slot, cx: &mut Context<Self>) -> Toast {
         let toast = &slot.toast;
         let id = toast.id;
         let mut args = i18n::FluentArgs::new();
@@ -336,19 +358,19 @@ impl ToastStack {
         let swiped = self.swipe.as_ref().filter(|swipe| swipe.id == id);
         let (sway, drop) = match swiped {
             Some(swipe) => (swipe.offset.x / px(1.), swipe.offset.y / px(1.)),
-            None => (slot.sway.now(now), slot.drop.now(now)),
+            None => (slot.sway.now(), slot.drop.now()),
         };
-        let scale = slot.scale.now(now).max(0.01);
+        let scale = slot.scale.now().max(0.01);
         let theme = *cx.theme();
 
         let card = Toast::new(("toast", id), message)
             .absolute()
             .left_0()
             .right_0()
-            .bottom(px(slot.rise.now(now)))
-            .opacity(slot.opacity.now(now))
-            .contents(slot.shown.now(now))
-            .when(slot.entered, |card| card.h(px(slot.clip.now(now))))
+            .bottom(px(slot.rise.now()))
+            .opacity(slot.opacity.now().clamp(0., 1.))
+            .contents(slot.shown.now().clamp(0., 1.))
+            .when(slot.entered, |card| card.h(px(slot.clip.now().max(0.))))
             .when(!slot.entered, |card| card.opacity(0.))
             .when(scale != 1., |card| {
                 card.layer_scale(scale).layer_scale_origin(point(0.5, 0.))
@@ -403,7 +425,7 @@ impl ToastStack {
 
         // A leaving or covered toast keeps every button so its text does not reflow, but lets
         // every press through to the toast in front.
-        if slot.leaving.is_some() || !slot.active {
+        if slot.leaving || !slot.active {
             return card
                 .inert()
                 .on_dismiss(|_, _, _| {})
@@ -483,8 +505,7 @@ impl ToastStack {
 impl Render for ToastStack {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
-        let now = Instant::now();
-        self.sync(now, cx);
+        self.sync(cx);
         if self.slots.is_empty() {
             if self.hovered || self.swipe.is_some() {
                 self.hovered = false;
@@ -493,33 +514,17 @@ impl Render for ToastStack {
             }
             return div();
         }
-        let height = self.arrange(now, cx);
-
-        let moving = self.swipe.is_some()
-            || self.slots.iter().any(|slot| {
-                !slot.entered
-                    || slot.leaving.is_some()
-                    || [
-                        slot.rise,
-                        slot.scale,
-                        slot.opacity,
-                        slot.shown,
-                        slot.clip,
-                        slot.drop,
-                        slot.sway,
-                    ]
-                    .iter()
-                    .any(|tween| tween.moving(now))
-            });
-        if moving {
+        let height = self.arrange(cx);
+        // every spring asks for the next frame while it moves; a toast waiting to be measured or
+        // to be dropped once it has faded asks here, since under reduced motion nothing moves
+        for slot in &mut self.slots {
+            slot.step(window, cx);
+        }
+        if self.swipe.is_some() || self.slots.iter().any(|slot| !slot.entered || slot.leaving) {
             window.request_animation_frame();
         }
 
-        let cards: Vec<Toast> = self
-            .slots
-            .iter()
-            .map(|slot| self.card(slot, now, cx))
-            .collect();
+        let cards: Vec<Toast> = self.slots.iter().map(|slot| self.card(slot, cx)).collect();
 
         // The stack hangs from the top of the player bar and clips there, so a toast entering or
         // leaving slides out from under it rather than across.
@@ -542,6 +547,9 @@ impl Render for ToastStack {
                     .role(Role::Log)
                     .relative()
                     .occlude()
+                    // off the pixel grid, so a toast's place, height and text glide instead of
+                    // stepping a pixel at a time as they slow down
+                    .pixel_snap(false)
                     .w(theme.font_size * WIDTH)
                     .max_w_full()
                     .h(height)
@@ -553,79 +561,131 @@ impl Render for ToastStack {
 }
 
 impl Slot {
-    fn new(toast: state::Toast, now: Instant) -> Self {
+    fn new(toast: state::Toast) -> Self {
         Self {
             toast,
             height: None,
             index: 0,
             active: false,
             entered: false,
-            leaving: None,
+            leaving: false,
             flung: false,
-            rise: Tween::still(0., now),
-            scale: Tween::still(1., now),
-            opacity: Tween::still(0., now),
-            shown: Tween::still(1., now),
-            clip: Tween::still(0., now),
-            drop: Tween::still(0., now),
-            sway: Tween::still(0., now),
+            rise: Spring::at(0., PIXEL_REST),
+            scale: Spring::at(1., LEVEL_REST),
+            opacity: Spring::at(0., LEVEL_REST),
+            shown: Spring::at(1., LEVEL_REST),
+            clip: Spring::at(0., PIXEL_REST),
+            drop: Spring::at(0., PIXEL_REST),
+            sway: Spring::at(0., PIXEL_REST),
         }
+    }
+
+    /// Moves every value of the toast one frame on.
+    fn step(&mut self, window: &Window, cx: &App) {
+        for spring in [
+            &mut self.rise,
+            &mut self.scale,
+            &mut self.opacity,
+            &mut self.shown,
+            &mut self.clip,
+            &mut self.drop,
+            &mut self.sway,
+        ] {
+            spring.step(window, cx);
+        }
+    }
+
+    /// Whether a dismissed toast has faded out far enough to drop.
+    fn gone(&self) -> bool {
+        self.leaving && self.opacity.now() <= GONE
     }
 }
 
-impl Tween {
-    fn still(at: f32, now: Instant) -> Self {
+impl Spring {
+    /// A value resting at `at`. Until it is aimed somewhere the spring it moves on does not
+    /// matter.
+    fn at(at: f32, rest: f32) -> Self {
         Self {
-            from: at,
-            to: at,
-            start: now,
-            span: Duration::ZERO,
-            ease: css_ease,
+            sprung: Sprung::at(at),
+            target: at,
+            config: Springs::RESPONSIVE,
+            rest,
         }
     }
 
-    fn now(&self, now: Instant) -> f32 {
-        let elapsed = now.saturating_duration_since(self.start);
-        if elapsed >= self.span {
-            return self.to;
-        }
-        let progress = elapsed.as_secs_f32() / self.span.as_secs_f32();
-        self.from + (self.to - self.from) * (self.ease)(progress)
+    fn now(&self) -> f32 {
+        self.sprung.position()
     }
 
-    /// Heads for `to` from wherever the value is right now. Aiming where it already heads
-    /// changes nothing, so calling this every frame keeps one smooth run.
-    fn aim(&mut self, to: f32, span: Duration, now: Instant) {
-        self.aim_eased(to, span, css_ease, now);
-    }
-
-    fn aim_eased(&mut self, to: f32, span: Duration, ease: fn(f32) -> f32, now: Instant) {
-        if (to - self.to).abs() < 0.01 {
+    /// Heads for `to` on `config` from wherever the value stands. It sets off already moving and
+    /// slows into place, the way an ease-out curve does, rather than gathering speed first the
+    /// way a spring let go from rest would, and keeps whatever speed a throw gave it on top.
+    /// Aiming where it already heads changes nothing, so calling this every frame keeps one
+    /// smooth run.
+    fn aim(&mut self, to: f32, config: SpringConfig) {
+        if to == self.target && config == self.config {
             return;
         }
-        self.from = self.now(now);
-        self.to = to;
-        self.start = now;
-        self.span = span;
-        self.ease = ease;
+        let carry = self.sprung.velocity() - self.ease();
+        self.target = to;
+        self.config = config;
+        self.sprung.set_velocity(carry + self.ease());
     }
 
-    fn moving(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.start) < self.span
+    /// Puts the value at `at` at once, resting there.
+    fn jump(&mut self, at: f32) {
+        self.sprung.jump(at);
+        self.target = at;
     }
-}
 
-/// A motion's length at the chosen pace, or nothing when motion is reduced.
-fn span(base: Duration, cx: &Context<ToastStack>) -> Duration {
-    match ui::motion::animates(cx) {
-        true => paced(base),
-        false => Duration::ZERO,
+    /// Puts the value at `at` easing back to where it was aimed, moving `speed` units a second
+    /// faster than that, as a toast let go of after a swipe. A hand that stopped before letting go
+    /// leaves it easing straight back, and one thrown back towards the target carries at most as
+    /// much speed as still lands there without passing it.
+    fn launch(&mut self, at: f32, speed: f32) {
+        self.sprung.jump(at);
+        let gap = self.target - at;
+        let most = (1. - ONSET) * self.config.canonical().0 * gap.abs();
+        let speed = match speed * gap > 0. {
+            true => speed.clamp(-most, most),
+            false => speed,
+        };
+        self.sprung.set_velocity(speed + self.ease());
+    }
+
+    /// How fast the value sets off on a run from where it stands to its target: [`ONSET`] of the
+    /// speed at which a critically damped spring closes the gap at an exponential rate.
+    fn ease(&self) -> f32 {
+        ONSET * self.config.canonical().0 * (self.target - self.now())
+    }
+
+    /// Moves the value one frame towards its target, asking for the next frame while it moves.
+    /// It lands at once under reduced motion.
+    fn step(&mut self, window: &Window, cx: &App) {
+        self.sprung
+            .follow(self.target, self.config, self.rest, window, cx);
     }
 }
 
 /// The space between the front toast and the top of the player bar.
 fn clearance(cx: &Context<ToastStack>) -> Pixels {
     cx.theme().metrics.pad * 2
+}
+
+/// How fast a swiped toast was moving as it was let go at `now`, in pixels a second, read from
+/// the last stretch of the drag up to the release. A hand that slowed before letting go throws
+/// less, and one that stopped throws nothing.
+fn thrown(trail: &[(Instant, Point<Pixels>)], now: Instant) -> Point<f32> {
+    let start = trail.partition_point(|(at, _)| now.duration_since(*at) > TRAIL);
+    let (Some((first, from)), Some((last, to))) = (trail[start..].first(), trail.last()) else {
+        return Point::default();
+    };
+    if last.duration_since(*first) < TRAIL_SHORTEST {
+        return Point::default();
+    }
+    let moved = *to - *from;
+    let seconds = now.duration_since(*first).as_secs_f32();
+    point(moved.x / px(1.) / seconds, moved.y / px(1.) / seconds)
 }
 
 /// Shrinks a drag the wrong way so the toast gives a little and then stiffens.

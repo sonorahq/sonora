@@ -98,4 +98,5 @@ lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
+lyrics-via = Via { $service }
 lyrics-instrumental-break = Instrumental break

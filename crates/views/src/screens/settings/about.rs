@@ -9,13 +9,15 @@ use state::{Channel, UpdateState};
 use ui::{ActiveTheme as _, Avatar, Button, Glowing as _, Switch, Text};
 
 use super::rows::{Row, outward, segmented};
-use super::{Group, SettingsView, Slot, group_heading};
+use super::{Group, SettingsView, Slot, beside, group_label};
 use crate::shared::cells::relative_stamp;
 
 /// How large the app icon stands, in covers.
 const MARK_TILE: f32 = 0.5;
 /// The app icon as this platform shows it, registered by the binary's asset source.
 const APP_ICON: &str = "brand/sonora.svg";
+/// How large a team member's avatar draws, as a share of a list thumbnail.
+const AVATAR: f32 = 1.2;
 const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
 const SOURCE_URL: &str = "https://github.com/sonorahq/sonora";
 
@@ -70,13 +72,9 @@ impl SettingsView {
             .into_iter()
             .flatten();
         vec![
-            Group::new("settings-group-updates", "icons/refresh-cw.svg")
+            Group::new("settings-group-updates")
                 .rows([Slot::Version, Slot::Updates].into_iter().chain(itself)),
-            Group::new("settings-group-project", "icons/info.svg").rows([
-                Slot::Log,
-                Slot::License,
-                Slot::Source,
-            ]),
+            Group::new("settings-group-project").rows([Slot::Log, Slot::License, Slot::Source]),
         ]
     }
 
@@ -154,7 +152,7 @@ impl SettingsView {
             t!("settings-version-title", version = version.as_ref()),
             check.into_any_element(),
         )
-        .detail(status)
+        .status(status)
         .into_any_element()
     }
 
@@ -281,20 +279,17 @@ impl SettingsView {
             .child(t!("settings-notice"))
     }
 
-    /// The people behind Sonora, each opening their GitHub profile.
-    pub(super) fn team(&self, cx: &Context<Self>) -> impl IntoElement {
+    /// The people behind Sonora in one row beside the name of the list, each an avatar over
+    /// their login that opens their GitHub profile. Their roles are left to screen readers, which
+    /// hear them as each link's description.
+    pub(super) fn team(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
+        let heading = group_label("settings-team".into(), t!("settings-team"), cx);
 
-        div()
-            .flex()
-            .flex_col()
-            .child(
-                group_heading(t!("settings-team"), Some("icons/user-round.svg"), cx)
-                    .id("settings-team")
-                    .role(gpui::accesskit::Role::Heading)
-                    .aria_level(2)
-                    .aria_label(t!("settings-team")),
-            )
+        let members = div()
+            .grid()
+            .grid_cols(MEMBERS.len() as u16)
+            .gap_1()
             .children(MEMBERS.into_iter().enumerate().map(|(index, member)| {
                 div()
                     .id(("team-member", index))
@@ -303,33 +298,35 @@ impl SettingsView {
                     .aria_description(member.role.label())
                     .aria_position_in_set(index + 1)
                     .aria_size_of_set(MEMBERS.len())
+                    .min_w_0()
                     .flex()
+                    .flex_col()
                     .items_center()
-                    .gap_3()
-                    .h(theme.metrics.list_row)
-                    .mx_neg_3()
-                    .px_3()
+                    .gap_2()
+                    .py_2()
+                    .px_1()
                     .rounded(theme.radius)
                     .cursor_pointer()
                     .on_click(move |_, _, cx| cx.open_url(member.profile))
-                    .child(Avatar::new(Some(member.avatar)).size(theme.metrics.thumb))
+                    .child(Avatar::new(Some(member.avatar)).size(theme.metrics.thumb * AVATAR))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
+                            .max_w_full()
                             .truncate()
+                            .text_size(theme.text(Text::Small))
                             .font_weight(FontWeight::MEDIUM)
                             .child(member.login),
                     )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(theme.text(Text::Label))
-                            .text_color(theme.muted_foreground)
-                            .child(member.role.label()),
-                    )
                     .glowed(theme.secondary_hover)
-            }))
+            }));
+        beside(
+            Some(heading.into_any_element()),
+            true,
+            false,
+            members,
+            window,
+            cx,
+        )
     }
 }
 

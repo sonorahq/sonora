@@ -17,7 +17,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = Baixar
 menu-remove-download = Remover download
 menu-downloading = Baixando. Clique para parar
-menu-song-radio = Ir para a rádio da música
 menu-go-to-album = Ir para o álbum
 menu-go-to-artist = Ir para o artista
 menu-go-to-playlist = Ir para a playlist

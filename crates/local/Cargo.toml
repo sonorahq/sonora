@@ -1,0 +1,31 @@
+[package]
+name = "local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+engine.workspace = true
+fastrand.workspace = true
+lofty.workspace = true
+log.workspace = true
+lyrics.workspace = true
+music.workspace = true
+percent-encoding.workspace = true
+rodio.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sound.workspace = true
+storage.workspace = true
+symphonia.workspace = true
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[lints]
+workspace = true
