@@ -16,7 +16,7 @@
 use std::time::Instant;
 
 use gpui::prelude::*;
-use gpui::{App, Context, Hsla, Pixels, Render, Rgba, Task, Window, div, px};
+use gpui::{App, Context, EventEmitter, Hsla, Pixels, Render, Rgba, Task, Window, div, px};
 use state::Sonora;
 use ui::{ActiveTheme as _, CoverPalette, Theme};
 
@@ -61,6 +61,10 @@ pub(crate) struct Ambient {
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
 }
+
+/// Emitted by a framed field once the colours sampled off the cover it follows land, for whatever
+/// draws over it in those colours.
+pub(crate) struct Landed;
 
 /// The palette of the cover a framed field follows, sampled by the field itself.
 #[derive(Default)]
@@ -120,6 +124,7 @@ impl Ambient {
             this.update(cx, |this, cx| {
                 if let Some(sampled) = this.framed.as_mut() {
                     sampled.palette = palette;
+                    cx.emit(Landed);
                     cx.notify();
                 }
             })
@@ -250,6 +255,8 @@ impl Ambient {
         ]
     }
 }
+
+impl EventEmitter<Landed> for Ambient {}
 
 impl Render for Ambient {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
