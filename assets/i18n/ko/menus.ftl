@@ -17,6 +17,7 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = 다운로드
 menu-remove-download = 다운로드 항목 제거
 menu-downloading = 다운로드 중입니다. 중지하려면 클릭
+menu-start-radio = 라디오 시작
 menu-go-to-album = 앨범으로 이동
 menu-go-to-artist = 아티스트로 이동
 menu-go-to-playlist = 플레이리스트로 이동
