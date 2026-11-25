@@ -203,6 +203,9 @@ struct Sung {
     rise: Pixels,
     /// How many `RISE_STEP` steps `rise` spans, which rising letters are rounded to.
     rise_steps: f32,
+    /// Whether long held syllables swell. It holds for a worded line with animations on, also
+    /// while the line settles after it is left, so a swollen letter shrinks back on its own time.
+    swell: bool,
     /// Whether long held syllables glow, which only reads on light text with effects on.
     glow: bool,
     /// The most letters a second the karaoke fill may run through, worked out from the whole song.
@@ -1239,6 +1242,7 @@ impl Aside {
             from: gpui::point(0., 0.5),
             rise: px(0.),
             rise_steps: 1.,
+            swell: false,
             glow: effects() && theme.foreground.l > 0.5,
             pace,
             fit: 1.,
@@ -1569,6 +1573,7 @@ impl Aside {
                             false => gpui::point(0., 0.5),
                         },
                         rise,
+                        swell: animations && worded,
                         fit: match active {
                             true => 1.,
                             false => small,
@@ -2528,6 +2533,7 @@ pub(crate) fn verse(
             false => gpui::point(0., 0.5),
         },
         rise: px(0.),
+        swell: false,
         fit: 1.,
         size: look.size,
         rise_steps: 1.,
@@ -2668,9 +2674,7 @@ fn karaoke_lane(
             .is_some_and(|&(start, end)| end.saturating_sub(start).as_secs_f32() > SWELL_SHORT)
     };
     let swell_of = |unit: usize, letter: usize, letters: usize| match moments.get(unit) {
-        Some(&(start, end)) if sung.rise > px(0.) => {
-            swelling(start, end, position, letter, letters)
-        }
+        Some(&(start, end)) if sung.swell => swelling(start, end, position, letter, letters),
         _ => 0.,
     };
     // a right-to-left line is read from its right edge, so its fill grows from there, and the
@@ -2891,7 +2895,7 @@ fn risen_row(
             }
             false => 0.,
         };
-        let big = moving && group.iter().any(|&(word, _, _)| (letters.swells)(word));
+        let big = sung.swell && group.iter().any(|&(word, _, _)| (letters.swells)(word));
         for &(word, syllable_cell, syllable_count) in group {
             let glow = (letters.glow)(word);
             for cell in syllable_cell..syllable_cell + syllable_count {
@@ -2944,8 +2948,10 @@ fn risen_row(
         match pieces.last_mut() {
             Some((last, joined)) if rtl && last.word == mark.word => {
                 last.end = mark.end;
-                last.glow = last.glow.max(mark.glow);
-                last.grown = last.grown.max(mark.grown);
+                // a joined word glows and swells only as far as all of it does, so a syllable
+                // not yet sung never lights up early
+                last.glow = last.glow.min(mark.glow);
+                last.grown = last.grown.min(mark.grown);
                 *joined = SharedString::from(format!("{joined}{text}"));
             }
             _ => pieces.push((*mark, text.clone())),
@@ -3327,6 +3333,7 @@ fn secondary_lyrics_lane(
         fit: 1.,
         size,
         rise: px(0.),
+        swell: false,
         ..*sung
     };
     let lyrics =
@@ -4115,11 +4122,10 @@ fn own_sung_end(line: &music::LyricsLine) -> Option<std::time::Duration> {
         .or(line.end)
 }
 
-/// How long a line keeps its karaoke after its own words end, so a swollen letter settles and a
-/// paced fill catches up before the line is drawn plain.
+/// How long a line keeps its karaoke after its own words end: a paced fill may finish up to
+/// `PACE_LAG` late, and a swollen letter settles after that, before the line is drawn plain.
 fn karaoke_tail() -> std::time::Duration {
-    std::time::Duration::from_secs_f32(SWELL_SETTLE + SWELL_WAVE)
-        .max(PACE_LAG)
+    (PACE_LAG + std::time::Duration::from_secs_f32(SWELL_SETTLE + SWELL_WAVE))
         .max(Motion::Control.span())
 }
 
