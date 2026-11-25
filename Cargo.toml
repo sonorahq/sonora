@@ -10,24 +10,34 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
-embed = { path = "crates/embed" }
+apple = { path = "crates/apple" }
 cli = { path = "crates/cli" }
 deezer = { path = "crates/deezer" }
+embed = { path = "crates/embed" }
+engine = { path = "crates/engine" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
-music = { path = "crates/music" }
-state = { path = "crates/state" }
-storage = { path = "crates/storage" }
 input = { path = "crates/input" }
+jellyfin = { path = "crates/jellyfin" }
+local = { path = "crates/local" }
 logic = { path = "crates/logic" }
+lyrics = { path = "crates/lyrics" }
+music = { path = "crates/music" }
+plex = { path = "crates/plex" }
 router = { path = "crates/router" }
+scrobble = { path = "crates/scrobble" }
 soloist = { path = "crates/soloist" }
 sound = { path = "crates/sound" }
 spotify = { path = "crates/spotify" }
+state = { path = "crates/state" }
+storage = { path = "crates/storage" }
+subsonic = { path = "crates/subsonic" }
+tidal = { path = "crates/tidal" }
 ui = { path = "crates/ui" }
 views = { path = "crates/views" }
 webview = { path = "crates/webview" }
 widevine = { path = "crates/widevine" }
+youtube = { path = "crates/youtube" }
 
 alsa = "0.11"
 anyhow = "1.0"
@@ -288,7 +298,7 @@ opt-level = 2
 [profile.dev.package.sound]
 opt-level = 3
 
-[profile.dev.package.music]
+[profile.dev.package.engine]
 opt-level = 3
 
 [profile.dev.package.rodio]

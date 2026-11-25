@@ -9,7 +9,7 @@
 //! file readable by the owner alone in the data folder the downloads share. There, copying the
 //! whole data folder carries the key along with the downloads.
 //!
-//! What goes in is what the provider sent, before its [`Body`](crate::stream::Body) touched it.
+//! What goes in is what the provider sent, before its [`Body`](sound::stream::Body) touched it.
 //! A Deezer track stays striped with Blowfish inside the vault, so its decrypted audio still
 //! never reaches the disk. An Apple Music track stays under Widevine and is licensed again on
 //! every play, so peeling off the vault's layer leaves nothing easier to play than the stream
@@ -49,9 +49,8 @@ use bytes::Bytes;
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hkdf, hmac};
+use sound::stream::Source;
 use tokio::sync::watch;
-
-use crate::stream::Source;
 
 /// How much of a track one sealed chunk holds. Big enough that the tags cost nothing, small
 /// enough that a damaged chunk is found long before the decoder needs it.

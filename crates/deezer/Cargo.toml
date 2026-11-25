@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 blowfish.workspace = true
 cbc.workspace = true
+engine.workspace = true
 fastrand.workspace = true
 futures.workspace = true
 log.workspace = true

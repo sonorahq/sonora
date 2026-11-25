@@ -254,6 +254,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "apple"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "engine",
+ "fastrand",
+ "futures",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "widevine",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1741,6 +1763,7 @@ dependencies = [
  "async-trait",
  "blowfish",
  "cbc 0.2.1",
+ "engine",
  "fastrand",
  "futures",
  "log",
@@ -2094,6 +2117,19 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "engine"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "log",
+ "music",
+ "sound",
+ "tokio",
+]
 
 [[package]]
 name = "enum-primitive-derive"
@@ -3777,6 +3813,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jellyfin"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "engine",
+ "fastrand",
+ "futures",
+ "gethostname",
+ "log",
+ "music",
+ "open",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
 name = "jiff"
 version = "0.2.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4269,6 +4330,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
+name = "local"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 7.0.0",
+ "engine",
+ "fastrand",
+ "lofty",
+ "log",
+ "music",
+ "percent-encoding",
+ "rodio",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sound",
+ "storage",
+ "symphonia",
+ "tokio",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4397,6 +4482,25 @@ dependencies = [
  "float_next_after",
  "lyon_path",
  "num-traits",
+]
+
+[[package]]
+name = "lyrics"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "dirs 7.0.0",
+ "flate2",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4642,42 +4746,24 @@ version = "0.50.3"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.23.1",
  "bytes",
  "deunicode",
  "dirs 7.0.0",
- "env_logger",
  "fastrand",
- "flate2",
  "futures",
- "gethostname",
  "image",
  "jiff",
  "kakasi",
- "lofty",
  "log",
- "md-5 0.11.0",
- "open",
- "opensubsonic",
  "percent-encoding",
  "reqwest 0.13.5",
  "ring",
- "rodio",
  "roxmltree 0.21.2",
- "rusqlite",
- "rustls",
  "serde",
- "serde-saphyr",
  "serde_json",
  "sound",
- "storage",
- "symphonia",
- "tempfile",
  "tokio",
- "tokio-tungstenite 0.30.0",
  "widevine",
- "windows 0.62.2",
- "ytmusic",
 ]
 
 [[package]]
@@ -5761,6 +5847,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "plex"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "engine",
+ "fastrand",
+ "gethostname",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5906,16 +6011,22 @@ name = "probe"
 version = "0.50.3"
 dependencies = [
  "anyhow",
+ "apple",
  "deezer",
  "image",
+ "local",
+ "lyrics",
  "music",
  "reqwest 0.13.5",
  "rustls",
  "serde_json",
  "spotify",
  "storage",
+ "subsonic",
  "tempfile",
+ "tidal",
  "tokio",
+ "youtube",
  "ytmusic",
 ]
 
@@ -7156,6 +7267,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrobble"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "jiff",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "open",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7572,6 +7701,7 @@ name = "sonora"
 version = "0.50.3"
 dependencies = [
  "anyhow",
+ "apple",
  "block2 0.6.2",
  "cli",
  "deezer",
@@ -7586,13 +7716,17 @@ dependencies = [
  "image",
  "input",
  "interprocess",
+ "jellyfin",
  "ksni",
  "libc",
+ "local",
  "log",
+ "lyrics",
  "music",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "plex",
  "raw-window-handle",
  "reqwest 0.13.5",
  "resvg 0.49.0",
@@ -7602,6 +7736,8 @@ dependencies = [
  "spotify",
  "state",
  "storage",
+ "subsonic",
+ "tidal",
  "tokio",
  "tray-icon",
  "ui",
@@ -7612,6 +7748,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "x11rb 0.14.0",
+ "youtube",
  "zbus 6.2.1",
 ]
 
@@ -7784,6 +7921,7 @@ dependencies = [
  "objc2-io-kit",
  "reqwest 0.13.5",
  "rusqlite",
+ "scrobble",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -7882,6 +8020,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcf32d66269b5fbb8558334e8d22b657b2f7af0dd2ef56c231541099a862e464"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "subsonic"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "engine",
+ "fastrand",
+ "futures",
+ "jiff",
+ "log",
+ "music",
+ "opensubsonic",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
 ]
 
 [[package]]
@@ -8321,6 +8481,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "tidal"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "engine",
+ "futures",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "open",
+ "reqwest 0.13.5",
+ "rodio",
+ "roxmltree 0.21.2",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
 ]
 
 [[package]]
@@ -9168,6 +9351,7 @@ dependencies = [
  "music",
  "open",
  "router",
+ "scrobble",
  "soloist",
  "state",
  "ui",
@@ -10388,6 +10572,25 @@ dependencies = [
  "quote",
  "syn 3.0.9",
  "synstructure",
+]
+
+[[package]]
+name = "youtube"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "engine",
+ "futures",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "ytmusic",
 ]
 
 [[package]]

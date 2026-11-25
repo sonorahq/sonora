@@ -1,10 +1,10 @@
 use anyhow::{Context as _, Result, bail};
+use apple::AppleProvider;
 use deezer::DeezerProvider;
-use music::apple::AppleProvider;
-use music::subsonic::{SubsonicClient, auth};
-use music::youtube::YouTubeProvider;
 use music::{MusicApi, MusicProvider, ReleaseType};
 use spotify::SpotifyProvider;
+use subsonic::{SubsonicClient, auth};
+use youtube::YouTubeProvider;
 
 /// A release every catalogue files as an EP, and the query that finds it.
 const ARTIST: &str = "Sylosis";

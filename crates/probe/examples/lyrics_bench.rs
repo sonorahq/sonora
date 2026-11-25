@@ -2,10 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use music::{
-    Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, binimum, kugou,
-    lrclib, musixmatch, netease,
-};
+use lyrics::{binimum, kugou, lrclib, musixmatch, netease};
+use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey};
 use spotify::{AuthConfig, LibrespotClient, auth};
 
 const SOURCES: [&str; 7] = [
@@ -41,7 +39,7 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     let http = reqwest::Client::new();
     vec![
         Arc::new(spotify::SpotifyLyrics::from_env()),
-        Arc::new(music::youtube::YouTubeLyrics::new()),
+        Arc::new(youtube::YouTubeLyrics::new()),
         Arc::new(binimum::Binimum::new(http.clone())),
         Arc::new(musixmatch::Musixmatch::new(http.clone())),
         Arc::new(lrclib::LrcLib::new(http.clone())),

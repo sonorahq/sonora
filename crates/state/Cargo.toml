@@ -24,6 +24,7 @@ music.workspace = true
 notify.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
+scrobble.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 soloist.workspace = true

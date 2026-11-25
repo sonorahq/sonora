@@ -12,6 +12,7 @@ jiff.workspace = true
 music.workspace = true
 input.workspace = true
 router.workspace = true
+scrobble.workspace = true
 soloist.workspace = true
 ui.workspace = true
 state.workspace = true

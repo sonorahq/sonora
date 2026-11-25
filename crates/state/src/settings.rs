@@ -27,10 +27,10 @@ use gpui::{
     WindowBounds, point, px, size,
 };
 use music::lyrics::LOCAL;
-use music::scrobble::Account;
 use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
+use scrobble::Account;
 use serde::{Deserialize, Serialize};
 use storage::Database;
 use ui::{

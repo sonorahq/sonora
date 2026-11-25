@@ -1,35 +1,26 @@
-pub mod apple;
+//! What every provider implements and the app reads: the `MusicApi`, `MusicProvider` and
+//! `Player` contracts, the models they hand over, and what more than one provider needs, such
+//! as lyrics ranking, kept tracks and links. Each provider is a crate of its own on top of this
+//! one, so `state` and `views` depend on the contract and never on a provider.
+
 pub mod artwork;
-pub mod binimum;
 pub mod calendar;
 pub mod connect;
 pub mod cover;
 pub mod credentials;
 pub mod drm;
-pub mod engine;
 pub mod escape;
-pub mod jellyfin;
-pub mod kugou;
 pub mod link;
-pub mod local;
-pub mod lrclib;
 pub mod lyrics;
 mod models;
-pub mod musixmatch;
-pub mod netease;
 pub mod order;
-pub mod plex;
 pub mod potoken;
 pub mod progress;
 mod redact;
-pub mod scrobble;
 pub mod smart;
 mod sponsorblock;
-pub mod subsonic;
-pub mod tidal;
 pub mod trouble;
 pub mod vault;
-pub mod youtube;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -39,12 +30,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
-use sound::{aac, audio, decode, mp4, sink, spectrum, stream, trim};
 
-pub use sound::{equalizer, output, ranged};
-
-pub use audio::Meter;
-pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
@@ -52,13 +38,15 @@ pub use models::{
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
-pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use smart::{
     Condition, FieldKind, Operand, OperandShape, Operator, Problem, Rule, RuleGroup, RuleProblem,
     SmartPlaylist, SmartPlaylistUpdate, SmartRules, field_kind, parse_number,
 };
-pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
+pub use sound::audio::Meter;
+pub use sound::equalizer::{self, Equalizer};
+pub use sound::output::{self, Server as SoundServer, missing_bridge};
+pub use sound::spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 pub use sponsorblock::{SkipSegment, SponsorBlock};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
