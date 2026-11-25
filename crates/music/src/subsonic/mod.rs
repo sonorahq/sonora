@@ -1,4 +1,4 @@
-pub(crate) mod auth;
+pub mod auth;
 mod client;
 mod lyrics;
 mod playback;

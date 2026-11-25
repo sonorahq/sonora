@@ -19,11 +19,10 @@ use rodio::Source as _;
 
 use crate::aac::Aac;
 use crate::apple::client::AppleClient;
-use crate::apple::progressive::{Cenc, Media};
+use crate::apple::progressive::Media;
 use crate::apple::stream;
-use crate::audio::Trimmed;
+use crate::decode::{self, Decoded};
 use crate::engine::{self, Fetch, Loudness};
-use crate::stream::Reader;
 use crate::trim;
 use crate::vault::Shelf;
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
@@ -85,7 +84,6 @@ struct Apple {
 #[async_trait]
 impl Fetch for Apple {
     type Loaded = Loaded;
-    type Source = Trimmed<rodio::Decoder<Reader<Cenc>>>;
 
     fn name(&self) -> &'static str {
         "apple"
@@ -175,11 +173,11 @@ impl Fetch for Apple {
     /// reader hands it the init segment followed by the fragment that covers the position, and
     /// the remainder inside that fragment is trimmed off the front. Nothing before the target
     /// is read at all.
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let media = &loaded.media;
         if media.is_plain() {
             let mut builder = rodio::Decoder::builder()
-                .with_data(media.reader())
+                .with_data(decode::Media::new(media.reader()))
                 .with_seekable(true);
             if let Some(total) = media.total() {
                 builder = builder.with_byte_len(total);
@@ -199,7 +197,7 @@ impl Fetch for Apple {
                     at.as_secs()
                 );
             }
-            return Some(Trimmed::new(decoder, Duration::ZERO, None));
+            return Some(Decoded::trimmed(decoder, Duration::ZERO, None));
         }
         let opening = Instant::now();
         let entry = (!at.is_zero()).then(|| media.entry(at)).flatten();
@@ -209,7 +207,7 @@ impl Fetch for Apple {
         };
         let decoder = match rodio::Decoder::builder()
             .with_symphonia_decoder::<Aac>()
-            .with_data(reader)
+            .with_data(decode::Media::new(reader))
             .with_seekable(false)
             .build()
         {
@@ -248,6 +246,6 @@ impl Fetch for Apple {
             media.samples(),
             decrypting.as_secs_f32()
         );
-        Some(Trimmed::new(decoder, skip, take))
+        Some(Decoded::trimmed(decoder, skip, take))
     }
 }

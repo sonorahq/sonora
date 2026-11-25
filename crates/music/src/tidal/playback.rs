@@ -21,7 +21,7 @@ use rodio::Source as _;
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
-use crate::audio::Trimmed;
+use crate::decode::{Decoded, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::ranged::{self, Address, Backoff, Failure, Resuming, Span};
 use crate::stream::{self, Reader, Stream};
@@ -45,9 +45,6 @@ const SEGMENT_CEILING: usize = 64 * 1024 * 1024;
 /// this holds more than an hour and a half of it. On a 32-bit target it is as much as a size
 /// can count.
 const SPOOL_CEILING: u64 = 4 * 1024 * 1024 * 1024;
-
-/// A decoder over a Tidal track, with what comes before the asked-for position trimmed off.
-type Opened = Trimmed<rodio::Decoder<Reader<Long>>>;
 
 /// Where the segments of a segmented track start, in the music and in the stream.
 struct Timeline {
@@ -491,10 +488,13 @@ impl Tidal {
         loaded: &Loaded,
         timeline: &Mutex<Timeline>,
         at: Duration,
-    ) -> Option<(Opened, Duration)> {
+    ) -> Option<(Decoded, Duration)> {
         if at.is_zero() {
             let decoder = ranged::forward("tidal", id, loaded.stream.reader())?;
-            return Some((Trimmed::new(decoder, Duration::ZERO, None), Duration::ZERO));
+            return Some((
+                Decoded::trimmed(decoder, Duration::ZERO, None),
+                Duration::ZERO,
+            ));
         }
         let (reader, into, started) = match landing(&loaded.stream, timeline, at) {
             Some(entry) => (
@@ -508,7 +508,7 @@ impl Tidal {
         if let (Some(reach), Some(ahead)) = (&loaded.reach, started) {
             *lock(&reach.ahead) = Some(ahead);
         }
-        Some((Trimmed::new(decoder, into, None), at))
+        Some((Decoded::trimmed(decoder, into, None), at))
     }
 
     /// A reader on the segment covering `at` out of a download started for a seek: the last
@@ -581,7 +581,7 @@ impl Tidal {
     /// Opens a track that is one file at `at`. A FLAC file still arriving is entered part way,
     /// since moving a seekable decoder searches the whole file and would wait for most of it.
     /// Any other file is opened seekable and moved, which waits for the bytes at `at`.
-    fn open_file(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Opened, Duration)> {
+    fn open_file(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Decoded, Duration)> {
         let stream = &loaded.stream;
         if ranged::ahead(stream, at)
             && let Some(reach) = &loaded.file
@@ -590,11 +590,14 @@ impl Tidal {
         {
             let decoder =
                 reach.enter(stream, span, at, |data| ranged::forward("tidal", id, data))?;
-            return Some((Trimmed::new(decoder, Duration::ZERO, None), at));
+            return Some((Decoded::trimmed(decoder, Duration::ZERO, None), at));
         }
         let mut decoder = file_decoder(id, stream)?;
         if at.is_zero() {
-            return Some((Trimmed::new(decoder, Duration::ZERO, None), Duration::ZERO));
+            return Some((
+                Decoded::trimmed(decoder, Duration::ZERO, None),
+                Duration::ZERO,
+            ));
         }
         if let Err(error) = decoder.try_seek(at) {
             log::warn!(
@@ -603,14 +606,13 @@ impl Tidal {
             );
             return None;
         }
-        Some((Trimmed::new(decoder, Duration::ZERO, None), at))
+        Some((Decoded::trimmed(decoder, Duration::ZERO, None), at))
     }
 }
 
 #[async_trait]
 impl Fetch for Tidal {
     type Loaded = Loaded;
-    type Source = Opened;
 
     fn name(&self) -> &'static str {
         "tidal"
@@ -696,7 +698,7 @@ impl Fetch for Tidal {
         true
     }
 
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         self.open_near(id, loaded, at).map(|(source, _)| source)
     }
 
@@ -708,7 +710,7 @@ impl Fetch for Tidal {
     /// segment that covers it, trimming what comes before the position off the front. A file
     /// that has all arrived is opened seekable and moved. `None` when the position cannot be
     /// reached, which leaves a seek where it was rather than starting the track again.
-    fn open_near(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Opened, Duration)> {
+    fn open_near(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Decoded, Duration)> {
         let (source, start) = match &loaded.timeline {
             Some(timeline) => self.open_segments(id, loaded, timeline, at),
             None => self.open_file(id, loaded, at),
@@ -739,10 +741,10 @@ fn landing(stream: &Stream<Long>, timeline: &Mutex<Timeline>, at: Duration) -> O
 }
 
 /// A seekable decoder over the whole of a track that is one file.
-fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<Reader<Long>>> {
+fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<Media>> {
     let builder = rodio::Decoder::builder()
         .with_symphonia_decoder::<Aac>()
-        .with_data(stream.reader())
+        .with_data(Media::new(stream.reader()))
         .with_seekable(true);
     let builder = match stream.total() {
         Some(total) => builder.with_byte_len(total),

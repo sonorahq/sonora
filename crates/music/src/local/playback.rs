@@ -14,6 +14,7 @@ use rodio::Source as _;
 
 use super::{tags, wire};
 use crate::aac::Aac;
+use crate::decode::{Decoded, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
 
@@ -40,7 +41,6 @@ struct Local;
 #[async_trait]
 impl Fetch for Local {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<BufReader<Audio>>;
 
     fn name(&self) -> &'static str {
         "local"
@@ -75,7 +75,7 @@ impl Fetch for Local {
         loaded.encoding
     }
 
-    fn open(&self, id: &str, _loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, _loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let mut decoder = match decode(id) {
             Ok(decoder) => decoder,
             Err(error) => {
@@ -88,7 +88,7 @@ impl Fetch for Local {
         {
             log::warn!("playback: cannot start {id} at {}s: {error}", at.as_secs());
         }
-        Some(decoder)
+        Some(Decoded::new(decoder))
     }
 }
 
@@ -117,7 +117,7 @@ impl Seek for Audio {
 }
 
 /// Opens a local file and builds its decoder.
-fn decode(id: &str) -> Result<rodio::Decoder<BufReader<Audio>>> {
+fn decode(id: &str) -> Result<rodio::Decoder<Media>> {
     let path =
         wire::path_from_track_id(id).ok_or_else(|| anyhow!("{id} is not a local track id"))?;
     let mut file =
@@ -133,7 +133,7 @@ fn decode(id: &str) -> Result<rodio::Decoder<BufReader<Audio>>> {
 
     let mut builder = rodio::Decoder::builder()
         .with_symphonia_decoder::<Aac>()
-        .with_data(reader)
+        .with_data(Media::new(reader))
         .with_seekable(true)
         .with_gapless(gapless);
 

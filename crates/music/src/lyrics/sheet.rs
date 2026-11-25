@@ -99,7 +99,7 @@ const RIGHTS: &[&str] = &[
 const HEADERS: usize = 16;
 const LABEL_REACH: usize = 48;
 
-pub(crate) fn instrumental(lines: &[LyricsLine]) -> bool {
+pub fn instrumental(lines: &[LyricsLine]) -> bool {
     !lines.is_empty()
         && lines.iter().all(|line| {
             let text = line.text.trim().to_lowercase();
@@ -107,7 +107,7 @@ pub(crate) fn instrumental(lines: &[LyricsLine]) -> bool {
         })
 }
 
-pub(crate) fn headed(lines: &mut Vec<LyricsLine>, title: &str, artists: &[String]) -> bool {
+pub fn headed(lines: &mut Vec<LyricsLine>, title: &str, artists: &[String]) -> bool {
     for _ in 0..HEADERS {
         let Some(first) = lines.first().map(|line| line.text.clone()) else {
             return true;

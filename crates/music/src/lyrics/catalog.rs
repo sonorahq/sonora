@@ -3,7 +3,7 @@ use crate::{Lyrics, LyricsHit, LyricsQuery, Track};
 const TRUST: u32 = 25;
 const CANDIDATES: usize = 3;
 
-pub(crate) fn hit(source: &'static str, query: &LyricsQuery, lyrics: Lyrics) -> LyricsHit {
+pub fn hit(source: &'static str, query: &LyricsQuery, lyrics: Lyrics) -> LyricsHit {
     LyricsHit {
         source,
         trust: TRUST,
@@ -19,7 +19,7 @@ pub(crate) fn hit(source: &'static str, query: &LyricsQuery, lyrics: Lyrics) -> 
 
 /// Match the recording before requesting its sheet, retaining the catalogue's metadata so
 /// the final lyrics ranking can still reject a different artist, version or duration.
-pub(crate) fn candidates(
+pub fn candidates(
     source: &'static str,
     query: &LyricsQuery,
     tracks: Vec<Track>,

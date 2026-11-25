@@ -24,11 +24,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, anyhow, ensure};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use rodio::Source as _;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 
 use crate::audio::{Chain, Volume};
+use crate::decode::Decoded;
 use crate::sink::{Cue, Paced, packet, watch_for_output};
 use crate::spectrum::Spectrum;
 use crate::vault::Shelf;
@@ -82,9 +82,6 @@ pub trait Fetch: Send + Sync + 'static {
     /// it for the load that follows, so it should be a handle to a download rather than the
     /// bytes themselves.
     type Loaded: Clone + Send + 'static;
-
-    /// What a decoder over one of those yields.
-    type Source: rodio::Source + Send + 'static;
 
     /// What to call this engine's threads.
     fn name(&self) -> &'static str;
@@ -153,7 +150,7 @@ pub trait Fetch: Send + Sync + 'static {
 
     /// Opens a decoder placed at `at`. `None` means the track cannot be played, which the
     /// engine reports as unavailable.
-    fn open(&self, id: &str, loaded: &Self::Loaded, at: Duration) -> Option<Self::Source>;
+    fn open(&self, id: &str, loaded: &Self::Loaded, at: Duration) -> Option<Decoded>;
 
     /// Opens a decoder as near `at` as the download allows and says where it really starts,
     /// which is where the engine reports the position from. The default is [`open`](Self::open)
@@ -163,7 +160,7 @@ pub trait Fetch: Send + Sync + 'static {
         id: &str,
         loaded: &Self::Loaded,
         at: Duration,
-    ) -> Option<(Self::Source, Duration)> {
+    ) -> Option<(Decoded, Duration)> {
         self.open(id, loaded, at).map(|source| (source, at))
     }
 
@@ -952,7 +949,7 @@ struct Playing<F: Fetch> {
     loaded: F::Loaded,
 
     /// The decoder. `Paced` resamples what it decodes to the device's rate.
-    source: F::Source,
+    source: Decoded,
 
     /// The number of channels the source has.
     channels: u16,
@@ -987,7 +984,7 @@ impl<F: Fetch> Playing<F> {
     ) -> Option<Self> {
         let (source, base) = fetch.open_near(id, &loaded, at)?;
         let gain = normalisation(normalise, fetch.loudness(&loaded));
-        let (channels, rate) = (source.channels().get(), source.sample_rate().get());
+        let (channels, rate) = (source.channels(), source.sample_rate());
         let track = TrackSignal {
             encoding: fetch.encoding(&loaded),
             rate,
@@ -1035,11 +1032,9 @@ impl<F: Fetch> Playing<F> {
 
     /// Pulls up to `frames` frames out of the decoder into `samples`, which starts empty.
     /// `None` means the track ended.
-    fn take(&mut self, frames: usize, mut samples: Vec<f32>) -> Option<Vec<f32>> {
+    fn take(&mut self, frames: usize, samples: Vec<f32>) -> Option<Vec<f32>> {
         let wanted = self.samples(frames);
-        for sample in self.source.by_ref().take(wanted) {
-            samples.push(sample * self.gain);
-        }
+        let samples = self.source.take(wanted, self.gain, samples);
         (!samples.is_empty()).then_some(samples)
     }
 }

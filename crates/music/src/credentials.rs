@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result};
 
 /// The file every provider keeps its sign-in under, inside its own accounts folder.
-pub(crate) const FILE: &str = "credentials.json";
+pub const FILE: &str = "credentials.json";
 
 /// What each provider used to keep beside its sign-in in the cache folder, by slug. These files
 /// move into the accounts folder on the first launch that finds them there.
@@ -27,7 +27,7 @@ static MIGRATION: Once = Once::new();
 
 /// Sonora's cache root, `$XDG_CACHE_HOME/sonora`, falling back to the temp dir. It holds only
 /// what Sonora can fetch again, since cleaners and the system are free to empty it.
-pub(crate) fn root() -> PathBuf {
+pub fn root() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("sonora")
@@ -35,7 +35,7 @@ pub(crate) fn root() -> PathBuf {
 
 /// A provider's own accounts folder, named by its slug, under `$XDG_DATA_HOME/sonora/accounts`.
 /// The first call in a process moves the sign-ins an older Sonora left in the cache folder.
-pub(crate) fn dir(slug: &str) -> PathBuf {
+pub fn dir(slug: &str) -> PathBuf {
     MIGRATION.call_once(migrate);
     accounts().join(slug)
 }
@@ -44,7 +44,7 @@ pub(crate) fn dir(slug: &str) -> PathBuf {
 /// go to a temporary file beside it that is synced and then renamed over the old one, so a
 /// crash leaves either the old sign-in or the new one and never half of either. It fails when
 /// the system names no data folder, rather than leaving credentials in the shared temp dir.
-pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
     let private = dirs::data_local_dir().context("cannot find a private folder for credentials")?;
     if !path.starts_with(&private) {
         anyhow::bail!(
@@ -79,7 +79,7 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
 }
 
 /// Restricts an existing credential file to its owner. A missing file is left alone.
-pub(crate) fn secure(path: &Path) {
+pub fn secure(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -94,7 +94,7 @@ pub(crate) fn secure(path: &Path) {
 }
 
 /// Deletes a credential file, treating one that is already gone as success.
-pub(crate) fn remove(path: &Path) {
+pub fn remove(path: &Path) {
     if let Err(error) = std::fs::remove_file(path)
         && error.kind() != std::io::ErrorKind::NotFound
     {

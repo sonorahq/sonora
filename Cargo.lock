@@ -1734,6 +1734,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "deezer"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blowfish",
+ "cbc 0.2.1",
+ "fastrand",
+ "futures",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4618,15 +4640,10 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 name = "music"
 version = "0.50.3"
 dependencies = [
- "alsa",
  "anyhow",
- "ardftsrc",
  "async-trait",
  "base64 0.23.1",
- "blowfish",
  "bytes",
- "cbc 0.2.1",
- "cpal",
  "deunicode",
  "dirs 7.0.0",
  "env_logger",
@@ -4634,38 +4651,25 @@ dependencies = [
  "flate2",
  "futures",
  "gethostname",
- "http",
  "image",
  "jiff",
  "kakasi",
- "libc",
- "librespot-core",
- "librespot-playback",
- "librespot-protocol",
  "lofty",
  "log",
  "md-5 0.11.0",
- "oauth2",
- "objc2-core-audio",
- "objc2-core-foundation",
  "open",
  "opensubsonic",
  "percent-encoding",
- "protobuf",
- "pulseaudio",
  "reqwest 0.13.5",
  "ring",
  "rodio",
  "roxmltree 0.21.2",
- "rtrb",
  "rusqlite",
- "rustfft",
  "rustls",
- "rusty_aac",
  "serde",
  "serde-saphyr",
  "serde_json",
- "sha1 0.11.0",
+ "sound",
  "storage",
  "symphonia",
  "tempfile",
@@ -5895,6 +5899,24 @@ dependencies = [
  "equivalent",
  "indexmap",
  "serde",
+]
+
+[[package]]
+name = "probe"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "deezer",
+ "image",
+ "music",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde_json",
+ "spotify",
+ "storage",
+ "tempfile",
+ "tokio",
+ "ytmusic",
 ]
 
 [[package]]
@@ -7526,12 +7548,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "soloist"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 7.0.0",
+ "flate2",
+ "futures",
+ "libc",
+ "log",
+ "music",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
 name = "sonora"
 version = "0.50.3"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
  "cli",
+ "deezer",
  "dirs 7.0.0",
  "embed",
  "env_logger",
@@ -7556,6 +7599,7 @@ dependencies = [
  "router",
  "rustls",
  "sha2 0.11.1",
+ "spotify",
  "state",
  "storage",
  "tokio",
@@ -7569,6 +7613,35 @@ dependencies = [
  "winresource",
  "x11rb 0.14.0",
  "zbus 6.2.1",
+]
+
+[[package]]
+name = "sound"
+version = "0.50.3"
+dependencies = [
+ "alsa",
+ "anyhow",
+ "ardftsrc",
+ "async-trait",
+ "bytes",
+ "cpal",
+ "dirs 7.0.0",
+ "futures",
+ "jiff",
+ "log",
+ "objc2-core-audio",
+ "objc2-core-foundation",
+ "pulseaudio",
+ "reqwest 0.13.5",
+ "rodio",
+ "rtrb",
+ "rustfft",
+ "rusty_aac",
+ "serde",
+ "symphonia",
+ "tempfile",
+ "tokio",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -7635,6 +7708,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "spotify"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "fastrand",
+ "flate2",
+ "futures",
+ "gethostname",
+ "http",
+ "jiff",
+ "librespot-core",
+ "librespot-playback",
+ "librespot-protocol",
+ "log",
+ "music",
+ "oauth2",
+ "open",
+ "protobuf",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "soloist",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "sqlite-wasm-rs"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7682,6 +7787,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "soloist",
  "souvlaki",
  "storage",
  "tempfile",
@@ -9062,6 +9168,7 @@ dependencies = [
  "music",
  "open",
  "router",
+ "soloist",
  "state",
  "ui",
  "unicode-bidi",

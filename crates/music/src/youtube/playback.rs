@@ -17,10 +17,10 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use ytmusic::{AudioStream, Locator, YtMusic};
 
-use crate::audio::Trimmed;
+use crate::decode::Decoded;
 use crate::engine::{self, Fetch, Loudness};
 use crate::ranged::{self, Address, Reach};
-use crate::stream::{PREROLL, Plain, Reader, Source, Stream};
+use crate::stream::{PREROLL, Plain, Source, Stream};
 use crate::trim::{self, Trim};
 use crate::vault::{Recording, Shelf};
 use crate::youtube::segments::Segments;
@@ -122,26 +122,31 @@ struct Facts {
     kbps: u32,
 }
 
-impl Source for AudioStream {
+/// YouTube's response for a track, read as the stream's source.
+struct Download(AudioStream);
+
+impl Source for Download {
     async fn chunk(&mut self) -> Result<Option<Bytes>> {
-        AudioStream::chunk(self).await
+        self.0.chunk().await
     }
 }
 
+/// What a seek's download asks for a fresh url when the one it has expires.
+struct Renewal(Locator);
+
 #[async_trait]
-impl ranged::Renew for Locator {
+impl ranged::Renew for Renewal {
     /// A fresh url, which reaches the main download too since both share the locator, and the
     /// user agent of the client it came from.
     async fn url(&self) -> Result<(String, HeaderMap)> {
-        self.renew().await?;
-        Ok(request(self))
+        self.0.renew().await?;
+        Ok(request(&self.0))
     }
 }
 
 #[async_trait]
 impl Fetch for YouTube {
     type Loaded = Loaded;
-    type Source = Trimmed<rodio::Decoder<Reader>>;
 
     fn name(&self) -> &'static str {
         "yt"
@@ -224,7 +229,7 @@ impl Fetch for YouTube {
     /// covers the position, and the part of that segment before it is trimmed off the front. A
     /// segment well past the download is read from a download of its own started at its first
     /// byte.
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let priming = loaded.edit.map(|edit| edit.skip).unwrap_or_default();
         let entry = match at.is_zero() {
             true => None,
@@ -247,7 +252,7 @@ impl Fetch for YouTube {
             Some(entry) => (entry.into, None),
             None => (priming + at, take.map(|take| take.saturating_sub(at))),
         };
-        Some(Trimmed::new(decoder, skip, take))
+        Some(Decoded::trimmed(decoder, skip, take))
     }
 }
 
@@ -299,7 +304,8 @@ async fn attempt_open(
         .await
         .context("stream metadata timed out")??;
     let total = audio.total();
-    let locator = Arc::new(audio.locator());
+    let locator = Arc::new(Renewal(audio.locator()));
+    let audio = Download(audio);
     let audio = match shelf {
         Some(shelf) => {
             let facts = Facts {
@@ -341,7 +347,7 @@ async fn attempt_open(
     let reach = segments.is_some().then(|| {
         let media = media.clone();
         let reach = Reach::new("youtube", id, move |_| {
-            let (url, headers) = request(&locator);
+            let (url, headers) = request(&locator.0);
             let address = Address::new("youtube", media.clone(), url)
                 .capped(ytmusic::stream::CHUNK)
                 .renewed(locator.clone());
