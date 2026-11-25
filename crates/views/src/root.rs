@@ -363,6 +363,15 @@ impl Root {
             .detach();
         update_focus_for_wake(window, cx);
 
+        // A focused element that leaves the page takes the focus with it, and the shell takes it
+        // up again.
+        cx.on_focus_lost(window, |_, window, cx| {
+            if let Some(fallback) = ui::focus_fallback(cx) {
+                window.focus(&fallback, cx);
+            }
+        })
+        .detach();
+
         ui::WindowBlur::update(window, cx);
         window
             .observe_window_appearance(|window, cx| {
@@ -619,6 +628,18 @@ impl Root {
                 }
             }
         }
+    }
+
+    /// Points the keyboard's fallback at the shell on show, or at nothing under the sign-in
+    /// screen. Without focus, every shortcut and every action a button dispatches stops at the
+    /// window's root and never reaches the handlers on this view.
+    fn follow_focus_fallback(&self, cx: &mut App) {
+        let fallback = match (self.signing_in, &self.view) {
+            (true, _) => None,
+            (false, RootView::Workspace) => Some(self.shells.workspace.read(cx).focus_handle()),
+            (false, RootView::Fullscreen) => Some(self.shells.fullscreen.read(cx).focus_handle()),
+        };
+        ui::set_focus_fallback(fallback, cx);
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
@@ -1197,6 +1218,7 @@ impl Render for Root {
             SessionState::Authorizing(_) => self.signing_in,
         };
         self.signing_in = show_sign_in;
+        self.follow_focus_fallback(cx);
 
         match self.pending.take() {
             Some(Focus::Search) => self

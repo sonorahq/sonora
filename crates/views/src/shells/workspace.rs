@@ -118,6 +118,10 @@ impl Workspace {
         window.focus(&self.focus, cx);
     }
 
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     pub fn toggle_sidebar(&self, cx: &mut Context<Self>) {
         self.sidebar.update(cx, |sidebar, cx| sidebar.toggle(cx));
     }

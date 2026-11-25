@@ -288,6 +288,10 @@ impl FullscreenView {
         window.focus(&self.focus, cx);
     }
 
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     /// Starts the idle clock as the view opens and stops it as the view closes, so it never
     /// hides the cursor over the workspace. Either way the view next shows with its controls up.
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
