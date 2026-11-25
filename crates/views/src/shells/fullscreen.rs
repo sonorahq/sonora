@@ -410,9 +410,9 @@ impl FullscreenView {
 
     /// Whether anything under the pointer should hold the chrome awake. A hover flag only counts
     /// while the pointer is over the window: one set when it left stays set, and a stale flag
-    /// would keep the controls up for good. A Jam invite or a panel's track menu drawn over the
-    /// view holds it too, since the pointer over either never reaches the view and the cursor
-    /// would hide under it.
+    /// would keep the controls up for good. A Jam invite, a panel's track menu or the Sessions
+    /// menu drawn over the view holds it too, since the pointer over any of them never reaches
+    /// the view and the cursor would hide under it.
     fn busy(&self, cx: &App) -> bool {
         let parked = self.volume.parked()
             || self.over_pill
@@ -426,6 +426,7 @@ impl FullscreenView {
             || self.volume.held
             || self.pending.is_some()
             || self.context_menu.is_some()
+            || self.sessions.read(cx).open()
             || (self.panel.is_some() && self.aside.read(cx).menu_open())
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
@@ -1109,9 +1110,10 @@ impl FullscreenView {
             )
     }
 
-    /// The seek bar over the transport, with the volume at the transport row's right end. They
-    /// stand centred under the cover from `Room::Wide` up, at most `deck` wide, so they keep one
-    /// width whether they sit in the column or at the bottom.
+    /// The seek bar over the transport, with the Sessions button at the transport row's left end
+    /// and the volume at its right end. They stand centred under the cover from `Room::Wide` up,
+    /// at most `deck` wide, so they keep one width whether they sit in the column or at the
+    /// bottom.
     fn controls(&self, deck: Pixels, hide: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let stack = div()
             .flex()
@@ -1125,6 +1127,16 @@ impl FullscreenView {
                     .relative()
                     .w_full()
                     .justify_center()
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .flex()
+                            .items_center()
+                            .child(PlayerBar::tools_like(self.sessions.clone(), cx)),
+                    )
                     .child(
                         div()
                             .absolute()
