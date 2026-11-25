@@ -96,9 +96,9 @@ fn main() -> ExitCode {
     if state::start_staged(!args.is_empty()) {
         return ExitCode::SUCCESS;
     }
-    // reqwest is built without a crypto provider, and opensubsonic still compiles aws-lc-rs in
-    // beside ring, so rustls cannot pick one by itself. Every client uses ring from here on. A
-    // second install only means another crate got there first.
+    // reqwest is built without a crypto provider, so a client built before this line panics.
+    // Every client uses ring from here on. A second install only means another crate got there
+    // first.
     rustls::crypto::ring::default_provider()
         .install_default()
         .ok();

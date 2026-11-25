@@ -5,6 +5,10 @@ use music::{Lyrics, LyricsProvider, LyricsQuery, Voice, binimum, musixmatch};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+
     let wanted = [
         (
             "Shallow",

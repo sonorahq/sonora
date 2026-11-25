@@ -202,6 +202,9 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      # librespot-core's build script stamps a random build id and the date into the crate unless
+      # this is set, so sccache missed it and every crate above it, music to views, on every run.
+      SOURCE_DATE_EPOCH: "315532800"
     strategy:
       fail-fast: false
       matrix:

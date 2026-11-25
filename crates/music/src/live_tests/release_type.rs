@@ -44,6 +44,9 @@ async fn subsonic_labels_an_ep_as_one() -> Result<()> {
     let username = variable("SONORA_SUBSONIC_USERNAME")?;
     let password = variable("SONORA_SUBSONIC_PASSWORD")?;
     let signature = auth::sign(&username, &password);
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
     let client = SubsonicClient::new(
         variable("SONORA_SUBSONIC_SERVER")?,
         username,
