@@ -204,7 +204,7 @@ impl Render for SidebarRight {
             }))
             // It lies on the chrome beside the page's sheet, which draws the only edge between
             // them.
-            .when(!theme.transparent, |this| this.bg(theme.sidebar))
+            .bg(theme.sidebar)
             .border_color(gpui::transparent_black())
             .child(match self.tab {
                 SideTab::Members => self.members.clone().into_any_element(),

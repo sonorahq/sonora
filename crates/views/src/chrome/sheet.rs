@@ -13,10 +13,10 @@ pub(crate) const SHEET_EDGE: Pixels = gpui::px(1.);
 const SEGMENTS: usize = 16;
 
 /// Draws the page's frame as a sheet lying on the chrome: an edge with rounded corners wherever
-/// it meets the chrome and, on an opaque window, the chrome's colour outside each rounded corner
-/// so whatever the page paints there is cut along the curve. Lay it over the page as its last
-/// child, filling it. It takes its shape from `Chrome::sheet_shape` rather than the published
-/// sheet, so it can follow a sliding sidebar frame by frame.
+/// it meets the chrome and the chrome's colour outside each rounded corner, so whatever the page
+/// paints there is cut along the curve. Lay it over the page as its last child, filling it. It
+/// takes its shape from `Chrome::sheet_shape` rather than the published sheet, so it can follow a
+/// sliding sidebar frame by frame.
 pub(crate) fn sheet_frame(
     corners: Corners<Pixels>,
     edges: Edges<Pixels>,
@@ -24,7 +24,7 @@ pub(crate) fn sheet_frame(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let edge = theme.sidebar_border;
-    let backing = (!theme.transparent).then_some(theme.sidebar);
+    let backing = theme.sidebar;
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| paint(bounds, corners, edges, edge, backing, window),
@@ -47,25 +47,23 @@ pub(crate) fn inner_corners(cx: &App) -> Corners<Pixels> {
     }
 }
 
-/// Cuts each rounded corner with `backing` when there is one, then draws the edge.
+/// Cuts each rounded corner with `backing`, then draws the edge.
 fn paint(
     bounds: Bounds<Pixels>,
     corners: Corners<Pixels>,
     edges: Edges<Pixels>,
     edge: Hsla,
-    backing: Option<Hsla>,
+    backing: Hsla,
     window: &mut Window,
 ) {
-    if let Some(backing) = backing {
-        for (corner, toward, radius) in [
-            (bounds.origin, point(1f32, 1.), corners.top_left),
-            (bounds.top_right(), point(-1., 1.), corners.top_right),
-            (bounds.bottom_left(), point(1., -1.), corners.bottom_left),
-            (bounds.bottom_right(), point(-1., -1.), corners.bottom_right),
-        ] {
-            if radius > Pixels::ZERO {
-                cut(corner, toward, radius, backing, window);
-            }
+    for (corner, toward, radius) in [
+        (bounds.origin, point(1f32, 1.), corners.top_left),
+        (bounds.top_right(), point(-1., 1.), corners.top_right),
+        (bounds.bottom_left(), point(1., -1.), corners.bottom_left),
+        (bounds.bottom_right(), point(-1., -1.), corners.bottom_right),
+    ] {
+        if radius > Pixels::ZERO {
+            cut(corner, toward, radius, backing, window);
         }
     }
     window.paint_quad(quad(

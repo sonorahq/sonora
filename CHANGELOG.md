@@ -83,6 +83,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 - Highlighted menu entries round their corners in step with the menu's own, instead of half a pixel sharper.
 - Holding down the heart or another button on a song no longer tints the frosted column headers above it with the row's color.
+- A see-through window keeps its theme: the sidebars and bars stay their own colour beside the page, and buttons and the player bar no longer change shade the moment opacity drops below 100%.
+- The bottom edge of the fullscreen player no longer lets the desktop show through on a see-through window with the ambient background.
+- Opening and closing the fullscreen player on a see-through window no longer turns the window clearer halfway through, and the blur under its controls fades in instead of snapping on.
 
 ### Fixed
 
