@@ -44,6 +44,9 @@ const HOLD_REACH: f64 = 8.;
 const SAFE_X: Pixels = px(6.);
 const SAFE_Y: Pixels = px(12.);
 const NEAR: usize = Near::InnerBar as usize + 1;
+/// Paints a menu over a `Dropdown` panel, so a context menu opened from a field or from a row in
+/// the panel is never drawn under it.
+const PRIORITY: usize = 2;
 
 type Close = Rc<dyn Fn(&(), &mut Window, &mut App) + 'static>;
 type Action = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -607,7 +610,7 @@ impl Menu {
             name: None,
             dismiss: None,
             action: None,
-            priority: 1,
+            priority: PRIORITY,
             deferred: true,
             scrollbar: None,
             header: None,
@@ -1286,6 +1289,9 @@ impl RenderOnce for Menu {
                 })
             })
             .occlude()
+            // A press on the panel leaves the keyboard in the field it was in, so a context menu
+            // opened from a row in a field's dropdown does not put the dropdown away.
+            .capture_any_mouse_down(|_, window, cx| crate::input::keep_focus(window, cx))
             .child(body);
         if let Some(dismiss) = dismiss.clone().filter(|_| shielded) {
             arm(dismiss, cx);
