@@ -18,10 +18,13 @@ use crate::motion::mix;
 use crate::popup::Popup;
 use crate::theme::ActiveTheme as _;
 
-/// How much of the foreground a field takes as its fill and as its edge, and how much of the
-/// muted foreground and of the danger colour the ring a focused or turned down field wears.
+/// How much of the foreground a field takes as its fill. At rest it is edged in the theme's
+/// border, as every other control is, so the adaptive theme tints it with them. Focused, its
+/// edge takes this much of the accent and its ring this much, and a turned down field's ring
+/// this much of the danger colour.
 const FILL: f32 = 0.045;
-const EDGE: f32 = 0.15;
+const FOCUS_EDGE: f32 = 0.6;
+const FOCUS_RING: f32 = 0.25;
 const RING: f32 = 0.4;
 /// How far that ring reaches past the field.
 const RING_WIDTH: Pixels = px(2.);
@@ -304,16 +307,12 @@ impl Render for Input {
         };
         let edge = match self.invalid {
             true => theme.danger,
-            false => mix(
-                theme.foreground.opacity(EDGE),
-                theme.muted_foreground,
-                shown,
-            ),
+            false => mix(theme.border, theme.primary.opacity(FOCUS_EDGE), shown),
         };
         let ring = (shown > 0.).then(|| BoxShadow {
             color: match self.invalid {
                 true => theme.danger.opacity(RING),
-                false => theme.muted_foreground.opacity(RING * shown),
+                false => theme.primary.opacity(FOCUS_RING * shown),
             },
             offset: point(Pixels::ZERO, Pixels::ZERO),
             blur_radius: Pixels::ZERO,

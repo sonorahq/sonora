@@ -142,7 +142,7 @@ impl Toolbar {
         if self.input.read(cx).focus_handle(cx).is_focused(window) {
             match restore {
                 Some(focus) => window.focus(&focus, cx),
-                None => window.blur(cx),
+                None => ui::release_focus(window, cx),
             }
         }
         cx.notify();

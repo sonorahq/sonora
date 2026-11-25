@@ -31,7 +31,7 @@ pub enum Target {
     Playlist(SharedString),
     /// The Playback tab of settings, where the Widevine module and Soloist are managed.
     PlaybackSettings,
-    /// The Providers tab of settings, where a provider is signed in again.
+    /// The streaming services page of settings, where a provider is signed in again.
     ProviderSettings,
 }
 

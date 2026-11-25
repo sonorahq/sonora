@@ -1,5 +1,5 @@
-# Arch packages of the buildbox image (Dockerfile on the buildbox), minus what only the server needs.
-# The cache only matches buildbox builds while both have the same toolchain and libraries.
+# Arch packages the snapshot builds against. A machine reuses the snapshot only while it has the
+# same toolchain and libraries.
 base-devel git rsync util-linux which
 rustup clang lld mold cmake ninja meson pkgconf sccache
 python python-pip nodejs npm go zig

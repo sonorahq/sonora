@@ -43,9 +43,11 @@ When the track's provider has no public cover, or the track is a local file, Son
 
 ## Scrobbling
 
-Scrobbling is off until an account is linked in the settings. Sonora can scrobble to Last.fm, Libre.fm, ListenBrainz and a self-hosted Maloja server. A linked service receives the artist, title, album and length of each track played long enough to count, and when it was played. Last.fm, Libre.fm and ListenBrainz are also told which track is playing right now.
+Scrobbling is off until an account is linked in the settings. Sonora can scrobble to Last.fm, Libre.fm, ListenBrainz, a self-hosted Maloja server and teal.fm. A linked service receives the artist, title, album and length of each track played long enough to count, and when it was played. Last.fm, Libre.fm, ListenBrainz and teal.fm are also told which track is playing right now.
 
-The keys and session tokens that link these accounts are stored in Sonora's `settings.json`, which on Linux and macOS only the user can read.
+teal.fm has no server of its own to send listens to. Sonora signs in to the user's ATProto account, usually on Bluesky, with an app password and writes each listen and the current track as records in that account's repository. Those records are public, like posts, and teal.fm and any other ATProto app can read them. To find the account's server, Sonora looks the handle up on the handle's own domain, then on Bluesky's public API, and reads the account's identity document from the PLC directory or the domain of a `did:web` identity.
+
+The keys, tokens and app passwords that link these accounts are stored in Sonora's accounts folder next to the streaming sign-ins, in files on Linux and macOS only the user can read.
 
 ## Authentication credentials
 

@@ -11,12 +11,18 @@ use crate::snapped;
 
 /// A scroll position that can be animated by the shared glide controller.
 pub trait ScrollPosition: Clone + 'static {
+    /// Whether `offset` reads back exactly what `set_offset` wrote, so that any other change
+    /// was made by someone else, such as a `Hold` keeping content in place as it reflows.
+    const EXACT: bool = false;
+
     fn offset(&self) -> Point<Pixels>;
     fn set_offset(&self, offset: Point<Pixels>);
     fn max_offset(&self) -> Point<Pixels>;
 }
 
 impl ScrollPosition for ScrollHandle {
+    const EXACT: bool = true;
+
     fn offset(&self) -> Point<Pixels> {
         ScrollHandle::offset(self)
     }
@@ -56,6 +62,10 @@ struct Drift {
     armed: bool,
     eased: Option<f32>,
     beat: Option<Instant>,
+    /// The offset the glide last wrote or started from. A step or aim that finds the scroll
+    /// somewhere else carries the glide along by as much, so a hold that kept content in place
+    /// mid-glide is not undone.
+    placed: Option<Point<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -117,16 +127,21 @@ impl Glide {
             drift.springing = false;
             drift.velocity = Point::default();
             drift.eased = None;
+            drift.placed = Some(drift.shown);
             scroll.set_offset(drift.shown);
         }
         self.schedule_frame(scroll, window);
     }
 
-    pub fn aim(&self, scroll: &impl ScrollPosition, to: Point<Pixels>, window: &mut Window) {
+    pub fn aim<S: ScrollPosition>(&self, scroll: &S, to: Point<Pixels>, window: &mut Window) {
         {
             let mut drift = self.drift.borrow_mut();
-            if !drift.gliding {
-                drift.shown = scroll.offset();
+            match drift.gliding {
+                true => drift.carry(scroll),
+                false => {
+                    drift.shown = scroll.offset();
+                    drift.placed = Some(drift.shown);
+                }
             }
             drift.target = held(to, scroll);
             drift.gliding = true;
@@ -208,13 +223,14 @@ impl Glide {
         window.on_next_frame(move |window, cx| glide.step(&scroll, window, cx));
     }
 
-    fn step(&self, scroll: &impl ScrollPosition, window: &mut Window, cx: &mut App) {
+    fn step<S: ScrollPosition>(&self, scroll: &S, window: &mut Window, cx: &mut App) {
         let landed = {
             let mut drift = self.drift.borrow_mut();
             drift.armed = false;
             if !drift.gliding {
                 return;
             }
+            drift.carry(scroll);
 
             let now = Instant::now();
             let elapsed = drift
@@ -272,11 +288,30 @@ impl Glide {
         };
 
         scroll.set_offset(landed);
+        self.drift.borrow_mut().placed = Some(landed);
         match self.watched {
             Some(view) => cx.notify(view),
             None => window.refresh(),
         }
         self.schedule_frame(scroll, window);
+    }
+}
+
+impl Drift {
+    /// Carries the glide along by as far as something else moved the scroll since the glide last
+    /// wrote it, and takes the scroll where it is now as the glide's own.
+    fn carry<S: ScrollPosition>(&mut self, scroll: &S) {
+        if !S::EXACT {
+            return;
+        }
+        let Some(placed) = self.placed else {
+            return;
+        };
+        let now = scroll.offset();
+        let moved = now - placed;
+        self.shown += moved;
+        self.target += moved;
+        self.placed = Some(now);
     }
 }
 

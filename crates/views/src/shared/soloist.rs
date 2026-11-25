@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
 use i18n::t;
-use music::soloist::{DASHBOARD, DEVICE, TERMS};
+use soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
@@ -188,7 +188,7 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                // said only once pairing has waited a while, when a firewall is the likely cause
+                // said only once pairing has waited a while
                 if let Some(port) = self.soloist.read(cx).blocked_port() {
                     // as text, so no locale groups the digits of a port number
                     let port = port.to_string();

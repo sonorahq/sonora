@@ -1,11 +1,13 @@
 members-title = 멤버
 members-empty = 함께 듣는 사람을 보려면 세션을 시작하거나 참여하세요.
+members-picked = 현재 재생 중인 곡을 대기열에 추가함
 
 # login
 login-restoring = 저장된 세션 확인 중…
 login-authorizing = 브라우저에서 인증을 기다리는 중…
 login-signed-in = { $name }(으)로 로그인됨
 login-failed-title = 로그인 실패
+login-window-title = { $provider }에 로그인
 login-problem-region = 현재 계신 국가에서는 Spotify 세션을 열 수 없습니다. 거주 국가에서 로그인하거나 Spotify 계정의 국가 설정을 변경하세요.
 login-problem-credentials = 이 서비스에 저장된 세션이 더 이상 유효하지 않습니다. 계속하려면 다시 로그인하세요.
 login-problem-password = 서버에서 해당 사용자 이름과 비밀번호를 허용하지 않았습니다. 확인 후 다시 시도하세요.
@@ -53,6 +55,10 @@ login-account-title = 계정 선택
 login-account-detail = 이 세션에 두 개 이상의 Google 계정이 로그인되어 있습니다. Sonora에서 사용할 계정을 선택하세요.
 login-profile-title = 프로필 선택
 login-profile-detail = 이 계정에 두 개 이상의 프로필이 있습니다. Sonora에서 사용할 프로필을 선택하세요.
+login-server-pick-title = 서버 선택
+login-server-pick-detail = 이 Plex 계정은 두 개 이상의 서버를 사용할 수 있습니다. Sonora에서 재생할 서버를 선택하세요.
+login-library-title = 음악 라이브러리 선택
+login-library-detail = 이 서버에 두 개 이상의 음악 라이브러리가 있습니다. Sonora에 표시할 라이브러리를 선택하세요.
 login-choose-title = { $provider }에 로그인
 login-choose-detail = { $provider }에 로그인할 방법을 선택하세요.
 login-providers = 음악 서비스
@@ -73,7 +79,6 @@ artist-followers = { $count ->
    *[other] 팔로워 { $value }명
 }
 artist-popular = 인기 곡
-artist-popular-eyebrow = 이 아티스트 둘러보기
 artist-popular-empty = 이 아티스트의 재생 가능한 곡이 아직 없습니다.
 artist-favorite-songs = 즐겨찾기한 곡
 artist-favorite-songs-count = { $count ->
@@ -105,6 +110,7 @@ user-playlists-empty = 공개 플레이리스트가 아직 없습니다.
 home-quick-picks = 빠른 선곡
 home-quick-picks-empty = 몇 곡에 좋아요를 누르면 여기에 표시됩니다.
 home-recently-added = 최근 추가됨
+home-newest-releases = 최신 발매작
 home-recently-played = 최근 재생한 항목
 home-most-played = 가장 많이 재생한 항목
 home-favorite-albums = 즐겨찾기한 앨범

@@ -37,7 +37,8 @@ pub(crate) fn nav_icon(
         .icon(icon)
         .tooltip_trailing(key)
         .tint(tint)
-        .w_full()
+        // Its fill hugs the icon rather than spanning the rail.
+        .self_center()
         .lit(false, accent)
         .active(move |style| style.bg(accent))
 }

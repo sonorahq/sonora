@@ -13,6 +13,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
+use input::OpenSearch;
 use music::Shape;
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
@@ -76,9 +77,12 @@ const VACANCY_HEIGHT: Pixels = px(88.);
 const PIN_MARK: f32 = 0.7;
 /// The space between two pinned entries, the same as the `gap_1` between the rows above them.
 const ROW_GAP: Pixels = px(4.);
-/// The rail's side padding in rem, matching its `px_2`.
+/// The rail's side padding in rem.
 const RAIL_INSET: f32 = 0.5;
 const BORDER: Pixels = px(1.);
+/// How far the scrollbar's thumb stands in from the sidebar's edge, which sets it about midway
+/// between the rows and the sheet's edge.
+const BAR_INSET: Pixels = px(2.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
 /// the regular `ui::Button`.
 const ROW_INSET: Pixels = px(12.);
@@ -100,6 +104,11 @@ pub(crate) struct SidebarLeft {
     grabbed: Option<(Pixels, bool)>,
     /// Whether an edge drag is held below half the rail, which closes the sidebar on release.
     closing: bool,
+    /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
+    lingering: bool,
+    /// How many times the listener has opened or closed the sidebar. The page springs aside only
+    /// when this moves, so an edge drag or a window resize never sets the sidebar sliding.
+    slides: usize,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -130,6 +139,7 @@ impl SidebarLeft {
         let scrollbar = cx.new(|_| {
             ui::Scrollbar::new(ScrollHandle::new())
                 .passive()
+                .edge_inset(BAR_INSET)
                 .watching(me)
         });
         let width = sidebar_width(settings.read(cx));
@@ -158,6 +168,8 @@ impl SidebarLeft {
             cramped: false,
             grabbed: None,
             closing: false,
+            lingering: false,
+            slides: 0,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -207,7 +219,20 @@ impl SidebarLeft {
         self.rail || self.squeezed()
     }
 
-    fn breadth(&self) -> Pixels {
+    /// Keeps a closed sidebar drawn while it slides away beside the page.
+    pub fn linger(&mut self, lingering: bool, cx: &mut Context<Self>) {
+        if self.lingering != lingering {
+            self.lingering = lingering;
+            cx.notify();
+        }
+    }
+
+    pub fn slides(&self) -> usize {
+        self.slides
+    }
+
+    /// How wide the sidebar is when it shows, whether or not it shows now.
+    pub fn breadth(&self) -> Pixels {
         match (self.closing, self.folded()) {
             (true, _) => Pixels::ZERO,
             (false, true) => self.rail_width,
@@ -238,6 +263,7 @@ impl SidebarLeft {
     }
 
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
+        self.slides += 1;
         match self.cramped {
             true => self.forced = Some(!self.is_open()),
             false => {
@@ -425,7 +451,10 @@ impl SidebarLeft {
 
         let held = pinned.len();
         let count = held + rest.len();
-        let row = ui::snapped(cx.theme().metrics.list_row, window);
+        let row = match self.folded() {
+            true => ui::Card::glance_size(window, cx),
+            false => ui::snapped(cx.theme().metrics.list_row, window),
+        };
         Some(
             Deck::new("sidebar-pins-deck")
                 .rows((0..count).map(|_| row))
@@ -479,7 +508,11 @@ impl SidebarLeft {
             .flex()
             .flex_none()
             .items_center()
-            .justify_between()
+            // On the rail the toggle stands alone, centred like the icons above it.
+            .map(|header| match folded {
+                true => header.justify_center(),
+                false => header.justify_between(),
+            })
             .w_full()
             .min_w_0()
             .when(!folded, |header| {
@@ -717,10 +750,13 @@ impl SidebarLeft {
 
         row.lit(active, accent)
             .when(active, |button| button.aria_selected(true))
-            .on_click(move |_, _, cx| match destination.in_settings() {
-                true => open_settings(cx),
-                false => navigate(destination.clone(), cx),
-            })
+            .on_click(
+                move |_, window, cx| match (entry, destination.in_settings()) {
+                    (NavEntry::Search, _) => window.dispatch_action(Box::new(OpenSearch), cx),
+                    (_, true) => open_settings(cx),
+                    (_, false) => navigate(destination.clone(), cx),
+                },
+            )
             .into_any_element()
     }
 
@@ -808,11 +844,16 @@ impl Render for SidebarLeft {
 
         let overlaid = self.overlays();
         let rail = self.folded();
+        // The rail is too narrow to give the bar a strip of its own, so there it only marks
+        // where the rows are while they scroll.
+        self.scrollbar
+            .update(cx, |scrollbar, cx| scrollbar.set_passive(rail, cx));
         // The edge drags past the rail to zero, so a drag can close the sidebar.
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
             .reach(self.ceiling(window, cx))
             .grip_above(super::Chrome::bottom(cx))
+            .clears_scrollbar(!rail)
             .on_resize(cx.listener(|this, width: &Pixels, _, cx| this.resize(*width, cx)))
             .on_drag_move(cx.listener(|this, _: &DragMoveEvent<DraggedPin>, _, cx| {
                 if this.dropping {
@@ -840,9 +881,14 @@ impl Render for SidebarLeft {
                 }
                 cx.notify();
             }))
-            .when(!self.is_open(), |this| this.hidden())
-            .when(!theme.transparent, |this| this.bg(sidebar_bg))
-            .border_color(sidebar_border)
+            .when(!self.is_open() && !self.lingering, |this| this.hidden())
+            .bg(sidebar_bg)
+            // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
+            // the page and keeps its own.
+            .border_color(match overlaid {
+                true => sidebar_border,
+                false => gpui::transparent_black(),
+            })
             // A sidebar dragged shut keeps only its edge until the drag lets go.
             .when(closing, |this| this.border_r_0())
             .when(overlaid, |this| {
@@ -857,6 +903,20 @@ impl Render for SidebarLeft {
                     .child(
                         Scroller::new("sidebar-left-rows", &self.scrollbar)
                             .bottom_inset(super::Chrome::bottom(cx))
+                            // The rows start right under the title bar, so they fade out there
+                            // as they scroll away instead of being cut off at its edge.
+                            .fade_scrolled(theme.metrics.inset)
+                            // Above an opaque player bar they end at its edge, so they fade out
+                            // there too. A translucent one lets them pass under it instead.
+                            .fade_remaining(match super::Chrome::bottom(cx) > Pixels::ZERO {
+                                true => Pixels::ZERO,
+                                false => theme.metrics.inset,
+                            })
+                            // Under a floating island the page fades out at its foot, and the
+                            // rows beside it fade there the way they do at the top.
+                            .when(super::PlayerBar::floating(window, cx), |this| {
+                                this.fade_bottom(theme.metrics.inset)
+                            })
                             .size_full()
                             .child(
                                 div()
@@ -866,9 +926,11 @@ impl Render for SidebarLeft {
                                     .flex_col()
                                     .gap_1()
                                     .w_full()
-                                    .py_3()
+                                    // The first row keeps a little clear of the title bar.
+                                    .pt(theme.metrics.pad)
+                                    .pb_3()
                                     .map(|column| match rail {
-                                        true => column.px_2(),
+                                        true => column.px(window.rem_size() * RAIL_INSET),
                                         false => column.px_3(),
                                     })
                                     // Leave the last row somewhere to go, clear of the
@@ -878,13 +940,8 @@ impl Render for SidebarLeft {
                             ),
                     )
                     .children(
-                        ui::return_top("sidebar-return-top", &self.scrollbar, cx).map(|perch| {
-                            match super::Chrome::bottom(cx) > Pixels::ZERO {
-                                true => perch
-                                    .bottom(super::Chrome::bottom(cx) + theme.metrics.pad * 1.5),
-                                false => perch,
-                            }
-                        }),
+                        ui::return_top("sidebar-return-top", &self.scrollbar, cx)
+                            .map(|perch| super::Chrome::sidebar_perch(perch, cx)),
                     ),
             )
             .children(self.menu(cx));
@@ -920,10 +977,13 @@ pub(crate) fn sidebar_width(settings: &AppSettings) -> Pixels {
     px(settings.sidebar_width()).clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
-/// One pinned row's width plus the rail's padding and border.
+/// One pinned cover's glance plus the rail's padding and border.
 fn rail_width(window: &Window, cx: &App) -> Pixels {
-    let row = cx.theme().metrics.list_row;
-    ui::snapped(row + window.rem_size() * (RAIL_INSET * 2.) + BORDER, window)
+    let glance = ui::Card::glance_size(window, cx);
+    ui::snapped(
+        glance + window.rem_size() * (RAIL_INSET * 2.) + BORDER,
+        window,
+    )
 }
 
 /// The kind of an entry, behind a dimmed pin when it is one of the pinned ones.

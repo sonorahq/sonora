@@ -100,6 +100,9 @@ pub struct Button {
     /// A small element drawn after the icon and before the label, as a picker's curve sketch.
     leading: Option<AnyElement>,
     detail: Option<SharedString>,
+    /// A small element drawn where the muted detail goes, as the marks of the services a row
+    /// stands for.
+    aside: Option<AnyElement>,
     trailing: Option<SharedString>,
     variant: Variant,
     small: bool,
@@ -125,6 +128,8 @@ pub struct Button {
     turn: f32,
     /// Whether a swapped icon fades into the one it replaces in place, with no pop.
     blend: bool,
+    /// Whether a new icon takes the old one's place at once, with no swap at all.
+    snap: bool,
     /// The side the icon leaves towards on a click, for a button whose icon rides a belt.
     belt: Option<Side>,
     hovered: Option<StyleRefinement>,
@@ -152,6 +157,7 @@ impl Button {
             icon: None,
             leading: None,
             detail: None,
+            aside: None,
             trailing: None,
             variant: Variant::Ghost,
             small: false,
@@ -169,6 +175,7 @@ impl Button {
             steady: false,
             turn: 0.,
             blend: false,
+            snap: false,
             belt: None,
             hovered: None,
             fill: None,
@@ -186,9 +193,10 @@ impl Button {
         self
     }
 
-    /// Keeps room for the widest of `labels` and centres the shown label in it. A new label
-    /// starts where the last one started and glides to the middle. Pass every label the button
-    /// can show, the current one included.
+    /// Keeps room for the widest of `labels` and centres the icon and the shown label together
+    /// in it, so the space before the icon matches the space after the label. A new label starts
+    /// where the last one started and glides to the middle. Pass every label the button can
+    /// show, the current one included.
     pub fn reserve(mut self, labels: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.reserve = labels.into_iter().map(Into::into).collect();
         self
@@ -234,6 +242,14 @@ impl Button {
     /// that opens a page of its own says what is chosen there.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// An element shown after the label and before the trailing icon, where `detail` would
+    /// stand. It is drawn only, so a caller whose element means something says so to screen
+    /// readers with `aria_description`.
+    pub fn aside(mut self, aside: impl IntoElement) -> Self {
+        self.aside = Some(aside.into_any_element());
         self
     }
 
@@ -391,6 +407,13 @@ impl Button {
         self
     }
 
+    /// Swaps icons at once, for an icon that follows a value as it slides, where a swap on
+    /// every step would keep the icon pulsing.
+    pub fn snapping(mut self) -> Self {
+        self.snap = true;
+        self
+    }
+
     /// Puts the icon on a belt. Each click slides it out towards `side`, shrinking and fading,
     /// while a copy comes in from the other side, and clicks in a row keep the belt running.
     pub fn belt(mut self, side: Side) -> Self {
@@ -476,6 +499,7 @@ impl RenderOnce for Button {
             icon,
             leading,
             detail,
+            aside,
             trailing,
             variant,
             small,
@@ -493,6 +517,7 @@ impl RenderOnce for Button {
             steady,
             turn,
             blend,
+            snap,
             belt,
             hovered,
             fill,
@@ -529,6 +554,7 @@ impl RenderOnce for Button {
             && reserve.is_empty()
             && leading.is_none()
             && detail.is_none()
+            && aside.is_none()
             && sized_by_content(base.style());
 
         let theme = cx.theme();
@@ -710,9 +736,10 @@ impl RenderOnce for Button {
                 let at = width.follow(target, Springs::RESIZE, RESIZE_REST, window, cx);
                 ((at - target).abs() > RESIZE_REST).then(|| px(at))
             });
-            // A new icon grows in from small while the one it replaces shrinks away over it.
+            // A new icon grows in from small while the one it replaces shrinks away over it,
+            // unless the button snaps to it.
             if shape.icon != icon {
-                if let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
+                if !snap && let (Some(old), Some(_)) = (shape.icon.clone(), icon.as_ref()) {
                     shape.pop.jump(0.);
                     shape.leaving = Some((old, Sprung::at(1.)));
                 }
@@ -733,7 +760,8 @@ impl RenderOnce for Button {
                 shape.leaving = None;
             }
             // A changed label in a reserved slot starts where the last one started and glides to
-            // its own place in the middle.
+            // its own place in the middle. Half the room the label leaves goes before the icon,
+            // so the icon and the label move as one.
             let inset = reserved.map(|(slot, shown)| {
                 let target = (f32::from(slot - shown) / 2.).max(0.);
                 let inset = shape.inset.get_or_insert_with(|| Sprung::at(target));
@@ -776,6 +804,7 @@ impl RenderOnce for Button {
             ),
         };
 
+        let has_icon = icon.is_some();
         let button = base
             .role(match tab {
                 true => gpui::accesskit::Role::Tab,
@@ -797,11 +826,17 @@ impl RenderOnce for Button {
             .gap(gap)
             .h(height)
             .px(padding)
+            // With an icon, half the room a reserved slot leaves goes before the icon, so the
+            // space before the icon matches the space after the label.
+            .when_some(inset.filter(|_| has_icon), |this, inset| {
+                this.pl(padding + inset)
+            })
             .rounded(radius)
             // Mid-resize the box is narrower or wider than what it holds, so the content keeps
-            // its own width from the leading edge and the box clips it as it grows. It leaves the
-            // pixel grid while it springs, so its edge glides instead of stepping a pixel at a
-            // time, and only its width keeps a fraction.
+            // its own width from the leading edge and the box clips it as it grows, all but a
+            // trailing icon, which rides the trailing edge so it stays put beside a button
+            // pinned there. It leaves the pixel grid while it springs, so its edge glides instead
+            // of stepping a pixel at a time, and only its width keeps a fraction.
             .when_some(resizing, |this, width| {
                 this.w(width)
                     .h(window.pixel_snap(height))
@@ -918,21 +953,48 @@ impl RenderOnce for Button {
                 // pixel grid so it moves by fractions rather than whole pixels. A label wider
                 // than what is left of the slot runs on into the padding for the moment it
                 // starts there.
-                Some(((slot, _), inset)) => this.child(
-                    div().flex_none().w(slot).pixel_snap(false).child(
-                        div()
-                            .pixel_snap(false)
-                            .ml(inset)
-                            .whitespace_nowrap()
-                            .child(label),
-                    ),
-                ),
+                Some(((slot, _), inset)) => {
+                    // With an icon the inset sits in the padding before it, so the slot gives that
+                    // room back and the label follows the icon directly.
+                    let (width, lead) = match has_icon {
+                        true => (slot - inset, Pixels::ZERO),
+                        false => (slot, inset),
+                    };
+                    this.child(
+                        div().flex_none().w(width).pixel_snap(false).child(
+                            div()
+                                .pixel_snap(false)
+                                .ml(lead)
+                                .whitespace_nowrap()
+                                .child(label),
+                        ),
+                    )
+                }
+                // Mid-resize a trailing icon holds to the trailing edge, so the label takes what
+                // room is left before it and is cut there without an ellipsis, which would flicker
+                // as the room grows. The label leaves the pixel grid the box leaves only across:
+                // text off it both ways is drawn unhinted on a fractional baseline and would drop
+                // as the box starts to move and jump back as it lands.
                 None => this.child(
                     div()
                         .min_w_0()
-                        .truncate()
-                        .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
-                        .when(resizing.is_some(), |this| this.flex_none())
+                        .when_else(
+                            resizing.is_some(),
+                            |this| {
+                                this.overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .pixel_snap(true)
+                                    .pixel_snap_x(false)
+                            },
+                            |this| this.truncate(),
+                        )
+                        .when(
+                            trailing.is_some() || detail.is_some() || aside.is_some(),
+                            |this| this.flex_1(),
+                        )
+                        .when(resizing.is_some() && trailing.is_none(), |this| {
+                            this.flex_none()
+                        })
                         .child(label),
                 ),
             })
@@ -946,6 +1008,9 @@ impl RenderOnce for Button {
                         .text_color(theme.muted_foreground)
                         .child(detail),
                 )
+            })
+            .when_some(aside, |this, aside| {
+                this.child(div().flex_none().flex().items_center().child(aside))
             })
             .when_some(trailing, |this, path| {
                 this.child(

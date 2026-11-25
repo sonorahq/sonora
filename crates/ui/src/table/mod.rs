@@ -60,6 +60,8 @@ const SKELETON_BAR: f32 = 0.3;
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
 
 pub const ROW_GROUP: &str = "table-row";
+/// The rule under a row, which its own height includes.
+const ROW_RULE: Pixels = px(1.);
 /// The list a row dragged within its own table names, so a drop on another row can tell it
 /// from a pin dragged in from elsewhere.
 const ROWS: &str = "table-rows";
@@ -80,6 +82,7 @@ pub enum RowMoves {
 pub struct Cell<F> {
     pub field: F,
     pub width: Pixels,
+    /// The height a drawn row's cells fill, without the rule under the row.
     pub height: Pixels,
     pub align: TextAlign,
     pub display: usize,
@@ -768,6 +771,8 @@ pub struct TableState<S: TableSource> {
     delegate: TableDelegate<S>,
     viewport: Viewport,
     corners: Corners<Pixels>,
+    /// The corners the head rounds while it sits against the top of the viewport.
+    stuck: Corners<Pixels>,
     focus: FocusHandle,
     scroll: Option<ScrollHandle>,
     context_menu: Option<OpenMenu>,
@@ -792,6 +797,7 @@ impl<S: TableSource> TableState<S> {
             delegate,
             viewport: Viewport::default(),
             corners: Corners::default(),
+            stuck: Corners::default(),
             focus: cx.focus_handle(),
             scroll: None,
             context_menu: None,
@@ -1441,6 +1447,13 @@ impl<S: TableSource> TableState<S> {
             .map(|display| {
                 let row = self.delegate.row(display);
                 let tail = display + 1 == count;
+                let ruled = !tail || bottom == Pixels::ZERO;
+                // A ruled row keeps its last pixel for the rule, so its cells centre their text
+                // on what is left above it.
+                let inner = match ruled {
+                    true => row_height - ROW_RULE,
+                    false => row_height,
+                };
                 let selected = marked.contains(&row);
                 let playing = self.delegate.source.playing(row, cx);
                 let cells: Vec<AnyElement> = (0..self.delegate.columns.len())
@@ -1449,7 +1462,7 @@ impl<S: TableSource> TableState<S> {
                         let cell = Cell {
                             field: column.spec.field,
                             width: self.delegate.inner_width(ix),
-                            height: row_height,
+                            height: inner,
                             align: column.spec.align,
                             display,
                             row,
@@ -1481,7 +1494,7 @@ impl<S: TableSource> TableState<S> {
                         this.rounded_bl(self.corners.bottom_left)
                             .rounded_br(self.corners.bottom_right)
                     })
-                    .when(!tail || bottom == Pixels::ZERO, |this| {
+                    .when(ruled, |this| {
                         this.border_b_1().border_color(theme.table_row_border)
                     })
                     .when(playing, |this| this.bg(theme.muted))
@@ -1642,6 +1655,15 @@ fn unpinned(corners: Corners<Pixels>, pinned: Pixels) -> Corners<Pixels> {
     }
 }
 
+/// Takes the rounder of each top corner of `a` and `b`.
+fn rounder(a: Corners<Pixels>, b: Corners<Pixels>) -> Corners<Pixels> {
+    Corners {
+        top_left: a.top_left.max(b.top_left),
+        top_right: a.top_right.max(b.top_right),
+        ..Corners::default()
+    }
+}
+
 fn radii(style: &StyleRefinement, rem: Pixels) -> Corners<Pixels> {
     let resolve = |length: Option<AbsoluteLength>| {
         length
@@ -1676,7 +1698,12 @@ impl<S: TableSource> Render for TableState<S> {
         let placeholders = self.placeholders(row, cx);
         let height = self.height(head, row, self.delegate.row_count().max(placeholders));
         let pinned = snapped(self.viewport.top.clamp(Pixels::ZERO, height - head), window);
-        let top = unpinned(self.corners, pinned);
+        // The head takes the page's corners only once it sticks to the top of the viewport,
+        // since anywhere lower it sits square in the middle of the page.
+        let top = match self.viewport.top > Pixels::ZERO {
+            true => rounder(unpinned(self.corners, pinned), self.stuck),
+            false => unpinned(self.corners, pinned),
+        };
         // With Blur UI on the rows pass behind the head and it frosts them, in the material of a
         // context menu on an opaque window and the player bar's thin glass on a see-through one.
         // Without it nothing passes behind the head, so it needs nothing behind it
@@ -1685,8 +1712,10 @@ impl<S: TableSource> Render for TableState<S> {
         // head's own alpha has always been mixed against.
         let frosted = blurring(cx);
         let backdrop = (!frosted && !cx.theme().transparent).then(|| cx.theme().background);
+        // A content mask is a plain rectangle, so rows frosted behind a rounded head would show
+        // past its curve. They pass behind it only below the band its corners round across.
         let masked = match frosted {
-            true => pinned,
+            true => pinned + top.top_left.max(top.top_right).min(head),
             false => pinned + head,
         };
         let column_menu = self.column_menu.map(|at| self.column_menu(at, cx));
@@ -1789,6 +1818,16 @@ impl<S: TableSource> Render for TableState<S> {
 pub struct Table<S: TableSource> {
     base: Div,
     state: Entity<TableState<S>>,
+    stuck: Corners<Pixels>,
+}
+
+impl<S: TableSource> Table<S> {
+    /// Rounds the head's top corners while it is stuck to the top of the viewport, for a
+    /// table that fills a page whose own top corners are rounded.
+    pub fn stuck_corners(mut self, corners: Corners<Pixels>) -> Self {
+        self.stuck = corners;
+        self
+    }
 }
 
 impl<S: TableSource> Styled for Table<S> {
@@ -1806,7 +1845,11 @@ impl<S: TableSource> InteractiveElement for Table<S> {
 impl<S: TableSource> RenderOnce for Table<S> {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let corners = radii(self.base.style(), window.rem_size());
-        self.state.update(cx, |state, _| state.corners = corners);
+        let stuck = self.stuck;
+        self.state.update(cx, |state, _| {
+            state.corners = corners;
+            state.stuck = stuck;
+        });
 
         self.base.child(self.state)
     }
@@ -1816,6 +1859,7 @@ pub fn table<S: TableSource>(state: &Entity<TableState<S>>) -> Table<S> {
     Table {
         base: div(),
         state: state.clone(),
+        stuck: Corners::default(),
     }
 }
 

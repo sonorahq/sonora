@@ -31,18 +31,15 @@ impl SettingsView {
         if !self.settings.read(cx).lyrics_enabled() {
             return groups;
         }
+        groups.push(Group::new("settings-group-display").rows([
+            Slot::Karaoke,
+            Slot::BlurLyrics,
+            Slot::Romanized,
+            Slot::PanelLyricsSize,
+            Slot::FullscreenLyricsSize,
+        ]));
         groups.push(
-            Group::new("settings-group-display", "icons/mic-vocal.svg").rows([
-                Slot::Karaoke,
-                Slot::BlurLyrics,
-                Slot::Romanized,
-                Slot::PanelLyricsSize,
-                Slot::FullscreenLyricsSize,
-            ]),
-        );
-        groups.push(
-            Group::new("settings-group-sources", "icons/list-music.svg")
-                .rows([Slot::LyricsSources, Slot::LyricsForLocal]),
+            Group::new("settings-group-sources").rows([Slot::LyricsSources, Slot::LyricsForLocal]),
         );
         groups
     }
@@ -65,8 +62,7 @@ impl SettingsView {
     pub(super) fn lyrics_sources_groups(&self) -> Vec<Group> {
         vec![
             Group::untitled().rows([Slot::WordSyncedFirst]),
-            Group::new("settings-group-lyrics-order", "icons/arrow-up-down.svg")
-                .rows([Slot::LyricsPriority]),
+            Group::new("settings-group-lyrics-order").rows([Slot::LyricsPriority]),
         ]
     }
 
@@ -463,9 +459,10 @@ impl Render for DraggedSource {
 /// The name a lyrics source goes by in the settings, falling back to the provider's own name.
 pub(super) fn source_name(provider: &str) -> SharedString {
     let key = match provider {
-        music::lyrics::LOCAL => "common-local-files",
+        lyrics::LOCAL => "common-local-files",
         "Subsonic" => "settings-lyrics-provider-subsonic",
         "Jellyfin" => "settings-lyrics-provider-jellyfin",
+        "Plex" => "settings-lyrics-provider-plex",
         "Spotify" => "settings-lyrics-provider-spotify",
         "YouTube Music" => "settings-lyrics-provider-youtube",
         "Apple Music" => "settings-lyrics-provider-apple-music",

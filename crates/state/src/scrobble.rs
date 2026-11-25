@@ -8,20 +8,29 @@
 use std::time::{Duration, SystemTime};
 
 use gpui::{App, Context, Entity, SharedString, Task};
-use music::scrobble::{self, Account, Link, Play, Secret, Service};
 use music::{MusicApi, Report, Track};
+use scrobble::{self, Account, KeyRefused, Link, Play, Secret, Service};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 use crate::playback::PlaybackEvent;
-use crate::{AppSettings, Io, Playback, PlaybackState, Session, join};
+use crate::{AppSettings, Io, Outcome, Playback, PlaybackState, Session, Toast, Toasts, join};
 
 /// What the settings row says when a link did not go through. The failure itself is in the log.
 const FAILED: &str = "settings-scrobble-failed";
+/// What the settings row says when the service refused the API key while linking.
+const KEY_REFUSED: &str = "settings-scrobble-key-refused";
 
 /// One state report on its way to the provider that served the track.
 type Reported = (Arc<dyn MusicApi>, String, Report, Duration);
+/// Whether one answer from a service refused the API key. It carries the session it was sent
+/// with, so an answer that arrives after the account was replaced is dropped.
+struct Verdict {
+    service: &'static str,
+    session: String,
+    refused: bool,
+}
 
 /// One service's link as the settings screen sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +38,9 @@ pub enum ScrobbleState {
     Off,
     Linking,
     On(SharedString),
+    /// Linked, but the service refuses the stored API key, so no listen gets through until the
+    /// key's owner fixes it upstream. Last.fm does this to keys whose owner has no Pro.
+    Refused,
     Failed(&'static str),
 }
 
@@ -43,6 +55,9 @@ pub struct ScrobbleRow {
     /// Whether the current play has already gone to this service. Per row, so one service being
     /// down never costs another its listen.
     sent: bool,
+    /// Whether the service refused the stored key on its last answer. Submissions go on, so the
+    /// row recovers by itself once the key is accepted again.
+    refused: bool,
 }
 
 impl ScrobbleRow {
@@ -63,7 +78,7 @@ impl ScrobbleRow {
     }
 
     pub fn linked(&self) -> bool {
-        matches!(self.state, ScrobbleState::On(_))
+        matches!(self.state, ScrobbleState::On(_) | ScrobbleState::Refused)
     }
 
     pub fn linking(&self) -> bool {
@@ -95,6 +110,8 @@ pub struct Scrobbling {
     play: Option<Play>,
     current: Option<String>,
     started: SystemTime,
+    /// How many plays have begun since launch, which numbers each one as its [`Play::order`].
+    plays: u64,
     /// Whether the current play has already gone to the provider it came from.
     reported: bool,
     /// Where the current track was last heard, for the report that says it stopped.
@@ -102,6 +119,9 @@ pub struct Scrobbling {
     /// The queue that sends state reports one at a time. A segue puts a stop and the next start
     /// back to back, and the start has to land last or the server forgets the new track.
     reports: mpsc::UnboundedSender<Reported>,
+    /// Where submissions say whether the service took the key, which `_hearing` applies.
+    verdicts: mpsc::UnboundedSender<Verdict>,
+    _hearing: Task<()>,
     link: Option<Task<()>>,
     waiting: Option<AbortHandle>,
 }
@@ -133,8 +153,19 @@ impl Scrobbling {
                 enabled: true,
                 state: ScrobbleState::Off,
                 sent: false,
+                refused: false,
             })
             .collect();
+
+        let (verdicts, mut heard) = mpsc::unbounded_channel::<Verdict>();
+        let hearing = cx.spawn(async move |this, cx| {
+            while let Some(verdict) = heard.recv().await {
+                let applied = this.update(cx, |this, cx| this.judged(verdict, cx));
+                if applied.is_err() {
+                    break;
+                }
+            }
+        });
 
         let mut scrobbling = Self {
             playback,
@@ -145,9 +176,12 @@ impl Scrobbling {
             play: None,
             current: None,
             started: SystemTime::now(),
+            plays: 0,
             reported: false,
             position: Duration::ZERO,
             reports: send_reports(&io),
+            verdicts,
+            _hearing: hearing,
             link: None,
             waiting: None,
         };
@@ -207,13 +241,18 @@ impl Scrobbling {
                         let id = this.rows[index].id();
                         this.rows[index].account = account;
                         this.rows[index].state = ScrobbleState::Off;
+                        this.rows[index].refused = false;
                         this.settings
                             .update(cx, |settings, cx| settings.set_scrobbling(id, true, cx));
                         this.rebuild(cx);
                     }
                     Err(error) => {
                         log::warn!("scrobble: cannot link {}: {error:#}", this.rows[index].id());
-                        this.rows[index].state = ScrobbleState::Failed(FAILED);
+                        this.rows[index].state =
+                            ScrobbleState::Failed(match KeyRefused::in_error(&error) {
+                                true => KEY_REFUSED,
+                                false => FAILED,
+                            });
                     }
                 }
                 cx.notify();
@@ -228,6 +267,7 @@ impl Scrobbling {
         scrobble::forget(service);
         if let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
             row.account = Account::default();
+            row.refused = false;
         }
         self.settings.update(cx, |settings, cx| {
             settings.set_scrobbling(service, true, cx)
@@ -294,12 +334,41 @@ impl Scrobbling {
             if row.linking() {
                 continue;
             }
-            row.state = match row.account.linked() {
-                true => ScrobbleState::On(SharedString::from(row.account.name.clone())),
-                false => ScrobbleState::Off,
+            row.state = match (row.account.linked(), row.refused) {
+                (true, true) => ScrobbleState::Refused,
+                (true, false) => ScrobbleState::On(SharedString::from(row.account.name.clone())),
+                (false, _) => ScrobbleState::Off,
             };
         }
         cx.notify();
+    }
+
+    /// Applies what a service said about the stored key. The first refusal in a run of them
+    /// posts a toast, since a listener rarely looks at the settings row while music plays.
+    fn judged(&mut self, verdict: Verdict, cx: &mut Context<Self>) {
+        let Verdict {
+            service,
+            session,
+            refused,
+        } = verdict;
+        let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) else {
+            return;
+        };
+        if row.refused == refused || !row.account.linked() || row.account.session != session {
+            return;
+        }
+        row.refused = refused;
+        if refused {
+            log::warn!("scrobble: {service} refuses the stored api key");
+            let name = i18n::lookup(&format!("settings-{service}"), None);
+            Toasts::post(
+                Toast::new(Outcome::Warning, "toast-scrobble-key-refused")
+                    .name(name)
+                    .note("toast-scrobble-key-refused-note"),
+                cx,
+            );
+        }
+        self.rebuild(cx);
     }
 
     /// Starts a play and reports it to every live service. A pause and resume of the same track
@@ -313,12 +382,13 @@ impl Scrobbling {
         if !resumed {
             self.current = track.id.clone();
             self.started = SystemTime::now();
+            self.plays += 1;
             self.reported = false;
             for row in &mut self.rows {
                 row.sent = false;
             }
         }
-        self.play = played(track, self.started);
+        self.play = played(track, self.started, self.plays);
         self.position = playback.position();
         self.report(Report::Playing, cx);
         let Some(play) = self.play.clone() else {
@@ -331,13 +401,16 @@ impl Scrobbling {
                 continue;
             }
             let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
+            let verdicts = self.verdicts.clone();
             self.io.spawn(async move {
-                if let Err(error) = service.now_playing(&account, &play).await {
+                let answer = service.now_playing(&account, &play).await;
+                if let Err(error) = &answer {
                     log::warn!(
                         "scrobble: cannot report the current track to {}: {error:#}",
                         service.id()
                     );
                 }
+                judge(&verdicts, service.id(), &account, &answer);
             });
         }
     }
@@ -379,7 +452,8 @@ impl Scrobbling {
         if playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref() {
             self.position = playback.position();
         }
-        if *playback.state() != PlaybackState::Playing || !play.earned(playback.position()) {
+        let played = playback.position();
+        if *playback.state() != PlaybackState::Playing || !play.earned(played) {
             return;
         }
 
@@ -397,22 +471,24 @@ impl Scrobbling {
 
         let muted = self.muted(cx);
         for row in &mut self.rows {
-            if muted || row.sent || !row.live() {
+            if muted || row.sent || !row.live() || !row.service.earned(play, played) {
                 continue;
             }
             row.sent = true;
 
             let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
+            let verdicts = self.verdicts.clone();
             self.io.spawn(async move {
-                if let Err(error) = service
+                let answer = service
                     .scrobble(&account, std::slice::from_ref(&play))
-                    .await
-                {
+                    .await;
+                if let Err(error) = &answer {
                     log::warn!(
                         "scrobble: cannot submit the track to {}: {error:#}",
                         service.id()
                     );
                 }
+                judge(&verdicts, service.id(), &account, &answer);
             });
         }
     }
@@ -451,8 +527,31 @@ impl Scrobbling {
     }
 }
 
+/// Tells the entity whether a service took the key, from the answer to one submission. Any other
+/// failure says nothing about the key, so it sends nothing.
+fn judge(
+    verdicts: &mpsc::UnboundedSender<Verdict>,
+    service: &'static str,
+    account: &Account,
+    answer: &anyhow::Result<()>,
+) {
+    let refused = match answer {
+        Ok(()) => false,
+        Err(error) if KeyRefused::in_error(error) => true,
+        Err(_) => return,
+    };
+    let session = account.session.clone();
+    verdicts
+        .send(Verdict {
+            service,
+            session,
+            refused,
+        })
+        .ok();
+}
+
 /// Turns a track into a listen. A track with no artist or no title is not submittable anywhere.
-fn played(track: &Track, at: SystemTime) -> Option<Play> {
+fn played(track: &Track, at: SystemTime, order: u64) -> Option<Play> {
     let artist = track
         .artist_refs
         .first()
@@ -468,6 +567,7 @@ fn played(track: &Track, at: SystemTime) -> Option<Play> {
         album: Some(track.album.clone()).filter(|album| !album.is_empty()),
         duration: track.duration,
         at,
+        order,
     })
 }
 

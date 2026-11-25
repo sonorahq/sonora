@@ -13,7 +13,6 @@ use music::GenreItem;
 use state::{Home, Network, Playback, Sonora};
 use ui::{ActiveTheme as _, Lazy, Mode, Popup, Scrollbar, Scroller};
 
-use crate::shared::cells;
 use crate::shared::picks::{Picks, Shape};
 use crate::shared::shelves::Shelves;
 use crate::shared::tracks::{PlaybackStatus, playback_status};
@@ -186,7 +185,10 @@ impl Render for HomeView {
         }
 
         let theme = *cx.theme();
-        let available = cells::content_width(window, theme.metrics.inset * 2., cx);
+        // The side padding sits on whole pixels, so Quick picks and the shelves under it are
+        // laid out from one width and end on the same pixel at either side.
+        let pad = window.pixel_snap(theme.metrics.inset + Chrome::margin(window, cx));
+        let available = (Chrome::content(window, cx) - pad * 2.).max(ui::MIN_CONTENT);
         if (available - self.width).abs() >= STEADY {
             self.width = available;
         }
@@ -214,9 +216,10 @@ impl Render for HomeView {
 
         Scroller::new("home-page", &self.scrollbar)
             .hold()
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .py(theme.metrics.inset)
-            .px(theme.metrics.inset + crate::chrome::Chrome::margin(window, cx))
+            .px(pad)
             .child(
                 div()
                     .flex()

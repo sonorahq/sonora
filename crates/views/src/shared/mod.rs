@@ -15,12 +15,14 @@ pub(crate) mod hero;
 pub(crate) mod local;
 pub(crate) mod menus;
 pub(crate) mod nav;
+pub(crate) mod now_playing;
 pub(crate) mod page;
 pub(crate) mod picks;
 pub(crate) mod pins;
 pub(crate) mod playlist_editor;
 pub(crate) mod popups;
 pub(crate) mod powerbar;
+pub(crate) mod rooted;
 pub(crate) mod shelves;
 pub(crate) mod smart_playlist;
 pub(crate) mod soloist;
@@ -45,6 +47,14 @@ const DEEZER: u32 = 0xa238ff;
 const APPLE: u32 = 0xfa2d48;
 const SUBSONIC: u32 = 0xffa31a;
 const JELLYFIN: u32 = 0x00a4dc;
+const PLEX: u32 = 0xe5a00d;
+/// The brand colours of the scrobbling services' marks. ListenBrainz's mark is navy and orange
+/// and Libre.fm's orange with a red dot, so each takes the colour that holds on a dark page.
+const LASTFM: u32 = 0xd51007;
+const LIBREFM: u32 = 0xf57900;
+const LISTENBRAINZ: u32 = 0xeb743b;
+const MALOJA: u32 = 0xdec329;
+const TEALFM: u32 = 0x14b8a6;
 /// How much of the foreground text keeps where the theme would grey it over the ambient field.
 /// The theme's grey is about that share of white over the page colour.
 const QUIET: f32 = 0.56;
@@ -54,11 +64,37 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
         "spotify" => "icons/spotify.svg",
         "youtube" => "icons/youtubemusic.svg",
         "subsonic" => "icons/subsonic.svg",
+        "plex" => "icons/plex.svg",
         "deezer" => "icons/deezer.svg",
         "apple" => "icons/applemusic.svg",
         "tidal" => "icons/tidal.svg",
         "jellyfin" => "icons/jellyfin.svg",
         _ => "icons/music.svg",
+    }
+}
+
+/// The mark of the scrobbling service `id`, as `assets/icons/common/LICENSE` credits them.
+pub(crate) fn scrobbler_logo(id: &str) -> &'static str {
+    match id {
+        "lastfm" => "icons/lastfm.svg",
+        "librefm" => "icons/librefm.svg",
+        "listenbrainz" => "icons/listenbrainz.svg",
+        "maloja" => "icons/maloja.svg",
+        "tealfm" => "icons/tealfm.svg",
+        _ => "icons/music.svg",
+    }
+}
+
+/// The brand colour of the scrobbling service `id`'s mark, or the accent for a service
+/// without one.
+pub(crate) fn scrobbler_brand(id: &str, cx: &gpui::App) -> gpui::Hsla {
+    match id {
+        "lastfm" => gpui::rgb(LASTFM).into(),
+        "librefm" => gpui::rgb(LIBREFM).into(),
+        "listenbrainz" => gpui::rgb(LISTENBRAINZ).into(),
+        "maloja" => gpui::rgb(MALOJA).into(),
+        "tealfm" => gpui::rgb(TEALFM).into(),
+        _ => ui::ActiveTheme::theme(cx).primary,
     }
 }
 
@@ -72,6 +108,7 @@ pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {
         "apple" => gpui::rgb(APPLE).into(),
         "subsonic" => gpui::rgb(SUBSONIC).into(),
         "jellyfin" => gpui::rgb(JELLYFIN).into(),
+        "plex" => gpui::rgb(PLEX).into(),
         _ => ui::ActiveTheme::theme(cx).foreground,
     }
 }

@@ -917,10 +917,9 @@ impl Render for DetailView {
             self.table.set_width(width, cx);
         }
 
-        let scroll = self.scrollbar.read(cx).scroll().clone();
         let viewport = match framed {
-            true => page::past_border(page::viewport(&scroll, inset, window, cx)),
-            false => page::viewport(&scroll, inset, window, cx),
+            true => page::past_border(page::viewport(&self.scrollbar, inset, window, cx)),
+            false => page::viewport(&self.scrollbar, inset, window, cx),
         };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));
@@ -953,7 +952,8 @@ impl Render for DetailView {
             .child(
                 Scroller::new("detail-page", &self.scrollbar)
                     .hold()
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                    .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)

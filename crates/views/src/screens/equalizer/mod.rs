@@ -852,7 +852,7 @@ impl Render for EqualizerView {
 
         settings::frame(
             &Destination::Equalizer,
-            None,
+            settings::Heading::default(),
             "equalizer-page",
             &self.scrollbar,
             body,

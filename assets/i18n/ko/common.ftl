@@ -94,6 +94,8 @@ library-local-unconfigured = 로컬 라이브러리 구성
 
 # app menu
 app-refresh = 새로고침
+app-dev-badge = 개발
+app-dev-build = 개발 빌드
 downloads-active = 다운로드 중
 downloads-left = { $count ->
     [one] { $count }곡 남음
@@ -152,6 +154,7 @@ filter-album = 앨범 트랙 필터링
 filter-reset = 필터 초기화
 filter-duration = 재생 시간
 filter-year = 연도
+filter-tracks = 트랙 수
 filter-hide-explicit = 성인용 콘텐츠 숨기기
 filter-favorites = 즐겨찾기만
 filter-downloaded = 다운로드됨
@@ -161,7 +164,7 @@ filter-streaming-only = 스트리밍만
 
 # view
 view-list = 목록
-view-cards = 그리드
+view-cards = 바둑판식
 
 # toolbar
 tool-sort = 정렬

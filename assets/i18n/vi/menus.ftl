@@ -15,7 +15,6 @@ menu-remove-tracks-from-history = { $count ->
 menu-download = Tải xuống
 menu-remove-download = Xóa bản tải xuống
 menu-downloading = Đang tải xuống. Nhấp để dừng
-menu-song-radio = Chuyển đến radio theo bài hát
 menu-go-to-album = Chuyển đến album
 menu-go-to-artist = Chuyển đến nghệ sĩ
 menu-go-to-playlist = Chuyển đến danh sách phát

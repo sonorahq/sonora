@@ -1,0 +1,27 @@
+[package]
+name = "tidal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+engine.workspace = true
+futures.workspace = true
+log.workspace = true
+md-5.workspace = true
+music.workspace = true
+open.workspace = true
+reqwest.workspace = true
+rodio.workspace = true
+roxmltree.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sound.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

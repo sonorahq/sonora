@@ -38,34 +38,24 @@ impl SettingsView {
             playing.push(Slot::SponsorBlock);
         }
         playing.extend([Slot::Sleep, Slot::StayAwake]);
-        let mut groups = vec![Group::new("settings-group-playing", "icons/play.svg").rows(playing)];
+        let mut groups = vec![Group::new("settings-group-playing").rows(playing)];
         // one level is nothing to choose between, so it is stated in a row rather than offered
         match capabilities.qualities.len() {
             0 => {}
-            1 => groups.push(
-                Group::new("settings-stream-quality", "icons/disc-3.svg")
-                    .rows([Slot::StreamQuality]),
-            ),
-            _ => groups.push(
-                Group::new("settings-stream-quality", "icons/disc-3.svg")
-                    .cards(Slot::StreamQuality),
-            ),
+            1 => groups.push(Group::new("settings-stream-quality").rows([Slot::StreamQuality])),
+            _ => groups.push(Group::new("settings-stream-quality").cards(Slot::StreamQuality)),
         }
         if capabilities.transcode {
             groups.push(
-                Group::new("settings-group-streaming", "icons/refresh-cw.svg")
+                Group::new("settings-group-streaming")
                     .rows([Slot::StreamFormat, Slot::StreamBitrate]),
             );
         }
         if self.drm.read(cx).shown(cx) {
-            groups.push(
-                Group::new("settings-group-protected", "icons/lock.svg").rows([Slot::Widevine]),
-            );
+            groups.push(Group::new("settings-group-protected").rows([Slot::Widevine]));
         }
         if self.soloist.read(cx).shown(cx) {
-            groups.push(
-                Group::new("settings-group-soloist", "icons/headphones.svg").rows([Slot::Soloist]),
-            );
+            groups.push(Group::new("settings-group-soloist").rows([Slot::Soloist]));
         }
         groups.extend(self.sessions_groups(cx));
         groups.extend(self.connect_groups(cx));
@@ -452,23 +442,12 @@ impl SettingsView {
                 )
             });
 
-        div()
-            .flex()
-            .flex_col()
-            .child(self.row(t!("settings-widevine"), action.into_any_element()))
-            .when(offerable, |row| {
-                row.child(
-                    div()
-                        .id("settings-widevine-detail")
-                        .role(Role::Paragraph)
-                        .aria_label(detail.clone())
-                        .pb_5()
-                        .text_color(theme.muted_foreground)
-                        .text_size(theme.text(Text::Label))
-                        .child(detail),
-                )
-            })
-            .into_any_element()
+        let row = super::Row::new(t!("settings-widevine"), action.into_any_element());
+        match offerable {
+            true => row.detail(detail),
+            false => row,
+        }
+        .into_any_element()
     }
 }
 
@@ -477,8 +456,8 @@ impl SettingsView {
     /// Soloist on this computer. Not set up, it offers the setup. Set up, it names the build and
     /// carries the switch that turns Soloist on and off without undoing the setup. Remove is
     /// offered whenever the program is on disk, a setup left halfway included. The explanation
-    /// wraps below the row either way, since it is where the listener learns what Soloist
-    /// changes before they turn it on and after.
+    /// waits behind the row's info mark either way, since it is where the listener learns what
+    /// Soloist changes before they turn it on and after.
     pub(super) fn soloist_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let state = self.soloist.read(cx).state().clone();
@@ -544,20 +523,8 @@ impl SettingsView {
                 )
             });
 
-        div()
-            .flex()
-            .flex_col()
-            .child(self.row(t!("settings-soloist"), action.into_any_element()))
-            .child(
-                div()
-                    .id("settings-soloist-detail")
-                    .role(Role::Paragraph)
-                    .aria_label(detail.clone())
-                    .pb_5()
-                    .text_color(theme.muted_foreground)
-                    .text_size(theme.text(Text::Label))
-                    .child(detail),
-            )
+        super::Row::new(t!("settings-soloist"), action.into_any_element())
+            .detail(detail)
             .into_any_element()
     }
 }

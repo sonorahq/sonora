@@ -5,13 +5,13 @@
 //! them. The setup is a dialog of three steps that this entity walks through in order: consent
 //! to downloading the program from Spotify, the listener's API key, and pairing the program with
 //! the account from one of Spotify's apps. Once all three are done the playback engine is rebuilt
-//! on Soloist, and removing the setup rebuilds it on librespot. `music::soloist` does the work,
-//! and this only keeps track of where it stands.
+//! on Soloist, and removing the setup rebuilds it on librespot. The `soloist` crate does the
+//! work, and this only keeps track of where it stands.
 
 use std::time::Duration;
 
 use gpui::{App, Context, Entity, EventEmitter, Task};
-use music::soloist::{self, Build, Trouble};
+use soloist::{self, Build, Trouble};
 use tokio::task::AbortHandle;
 
 use crate::{Io, Outcome, Session, SessionEvent, SessionState, Toasts};

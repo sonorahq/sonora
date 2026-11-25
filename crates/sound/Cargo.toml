@@ -1,0 +1,57 @@
+[package]
+name = "sound"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ardftsrc.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+cpal.workspace = true
+dirs.workspace = true
+futures.workspace = true
+jiff.workspace = true
+log.workspace = true
+reqwest.workspace = true
+rodio = { workspace = true, features = [
+    "symphonia-aac",
+    "symphonia-aiff",
+    "symphonia-alac",
+    "symphonia-isomp4",
+    "symphonia-libopus",
+    "symphonia-mkv",
+    "flac",
+    "mp3",
+    "vorbis",
+    "wav",
+] }
+rtrb.workspace = true
+rusty_aac.workspace = true
+rustfft.workspace = true
+serde.workspace = true
+symphonia.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa.workspace = true
+# TODO: move to cpal's native `pipewire` backend, and drop the trip through pipewire-pulse, once a
+# cpal release sets `node.rate` (upstream commit ec35008, unreleased in 0.18) and CI builds on a
+# distro with libpipewire 0.3.53 or newer.
+cpal = { workspace = true, features = ["pulseaudio"] }
+pulseaudio.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-audio.workspace = true
+objc2-core-foundation.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# cpal 0.18 raises its WASAPI thread to real-time priority only with `realtime`. Without it a busy
+# system starves the stream and playback crackles whatever the buffer.
+cpal = { workspace = true, features = ["realtime"] }
+windows.workspace = true
+
+[lints]
+workspace = true

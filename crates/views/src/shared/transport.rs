@@ -15,7 +15,8 @@ pub(crate) const NOTCH: f32 = state::VOLUME_STEP;
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
 
 /// Whether the playing cover is in the air between the player bar and the fullscreen player,
-/// so the player bar leaves its own undrawn until the flight lands.
+/// so the player bar leaves its own undrawn until the flight lands. A narrow player with a panel
+/// open keeps the bar's cover in place and sends nothing flying.
 pub(crate) struct CoverAway(pub(crate) bool);
 
 impl Global for CoverAway {}
@@ -25,6 +26,21 @@ impl Global for CoverAway {}
 pub(crate) struct CoverFade(pub(crate) f32);
 
 impl Global for CoverFade {}
+
+/// How much of its backdrop blurs the opening fullscreen player shows yet, from 0 to 1. The
+/// zoom it opens with is a layer that drops every backdrop inside it, so once that lets go they
+/// rise over the rest of the zoom rather than snapping on in one frame.
+pub(crate) struct Backdrops(pub(crate) f32);
+
+impl Global for Backdrops {}
+
+/// How much room the player bar's cover takes beside the title, from 1 where it shows to 0 where
+/// the title has slid over its place. Below `Room::Wide` the fullscreen player's artwork tab
+/// tucks it away, since its big cover shows the same art, and the player bar under the player
+/// tucks its own along while the player opens and closes, so the two never part.
+pub(crate) struct CoverRoom(pub(crate) f32);
+
+impl Global for CoverRoom {}
 
 /// Which way the fullscreen player is moving between the shells, if it is. The player bar's
 /// fullscreen button and the player's leave button share one spot, so while the player moves
@@ -111,8 +127,7 @@ pub(crate) fn percent(fraction: f32) -> SharedString {
     t!("unit-percent", value = (fraction * 100.).round())
 }
 
-/// The heart that saves or drops `track`. A click toggles the track `playback` holds by then,
-/// which is the one shown, so callers only lend the track to read its state.
+/// The heart that shows whether `track` is saved. A click toggles the track shown at click time.
 pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx: &App) -> Button {
     let theme = *cx.theme();
     let library = Sonora::global(cx).library.clone();
@@ -138,7 +153,9 @@ pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx
         })
         .disabled(id.is_none())
         .on_click(move |_, _, cx| {
-            if let Some(track) = playback.read(cx).track().cloned() {
+            // `track` always returns the local track, which is not the currently played track
+            // if remote playback has taken over. Use `shown_track` instead.
+            if let Some(track) = playback.read(cx).shown_track(cx) {
                 library.update(cx, |library, cx| library.toggle(track, cx));
             }
         })

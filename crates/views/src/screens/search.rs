@@ -99,7 +99,8 @@ pub(crate) struct SearchView {
     /// The text the field last held, so a change of caret or selection is not taken for typing.
     typed: String,
     /// Whether the panel under the field is put away. Opening the page, Escape, a submit and the
-    /// field losing the keyboard put it away. A click in the field or typing brings it back.
+    /// field losing the keyboard put it away, unless a context menu takes the keyboard while it
+    /// is open. A click in the field or typing brings it back.
     dismissed: bool,
     /// The panel row the arrow keys are on.
     pick: Option<usize>,
@@ -172,6 +173,10 @@ impl SearchView {
         })
         .detach();
         cx.on_blur(&field, window, |this, _, cx| {
+            // A submenu's search takes the keyboard while it is open and gives it back after.
+            if this.context_menu.is_some() {
+                return;
+            }
             this.dismissed = true;
             cx.notify();
         })
@@ -296,10 +301,11 @@ impl SearchView {
         offers
     }
 
-    /// Whether the panel shows: the field has the keyboard, nothing put the panel away, and it
-    /// has rows or is still waiting on the first suggestions.
+    /// Whether the panel shows: the field or a context menu opened over the panel has the
+    /// keyboard, nothing put the panel away, and it has rows or is still waiting on the first
+    /// suggestions.
     fn panel_open(&self, window: &Window, cx: &App) -> bool {
-        if self.dismissed || !self.typing(window, cx) {
+        if self.dismissed || !self.typing(window, cx) && self.context_menu.is_none() {
             return false;
         }
         let waiting = !self.typed.trim().is_empty() && self.suggestions.read(cx).is_loading();
@@ -394,18 +400,24 @@ impl SearchView {
         cx.notify();
     }
 
-    /// Escape on the page: it puts the panel away first and lets go of the field second. An
-    /// escape with neither goes on to the workspace.
+    /// Escape in the field puts the panel away and lets go of the field in one press. An escape
+    /// outside the field goes on to the workspace.
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        if self.panel_open(window, cx) {
-            self.close_panel(cx);
+        if !self.typing(window, cx) {
+            cx.propagate();
             return;
         }
-        if self.typing(window, cx) {
+        self.close_panel(cx);
+        window.focus(&self.focus, cx);
+    }
+
+    /// Moves the keyboard from the field to the page after a press started playback, so Space
+    /// pauses what it started instead of typing into the query. A press may already have left the
+    /// keyboard nowhere, so the page takes it then too. Losing the field puts the panel away.
+    fn leave_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.typing(window, cx) || !self.focus.contains_focused(window, cx) {
             window.focus(&self.focus, cx);
-            return;
         }
-        cx.propagate();
     }
 
     fn offer_row(
@@ -560,8 +572,15 @@ impl SearchView {
                 .flex_1()
                 .min_w_0()
                 .open(open)
+                // A press on a context menu opened over the panel lands outside it, and the
+                // menu's own close decides about the panel then.
                 .on_close(move |_, cx| {
-                    me.update(cx, |this, cx| this.close_panel(cx)).ok();
+                    me.update(cx, |this, cx| {
+                        if this.context_menu.is_none() {
+                            this.close_panel(cx);
+                        }
+                    })
+                    .ok();
                 })
                 .when(open, |this| this.child(self.panel_rows(window, cx)))
         };
@@ -847,7 +866,7 @@ impl SearchView {
     }
 
     /// The play button of a hit. Playing from it files the hit in the search history, as opening
-    /// it would.
+    /// it would, and hands the keyboard to the page.
     fn transport(&self, hit: &Hit, me: &WeakEntity<Self>, cx: &App) -> Option<(bool, Play)> {
         let me = me.clone();
         let chosen = hit.clone();
@@ -856,13 +875,14 @@ impl SearchView {
                 let current = track.id.is_some() && track.id == self.playback_status.0;
                 let playing = current && self.playback_status.1 == Some(true);
                 let track = track.clone();
-                let play: Play = Box::new(move |_, _, cx| {
+                let play: Play = Box::new(move |_, window, cx| {
                     chosen.remember(cx);
                     me.update(cx, |this, cx| {
                         this.playback.update(cx, |playback, cx| match current {
                             true => playback.toggle_play(cx),
                             false => playback.play_radio(&track, cx),
                         });
+                        this.leave_field(window, cx);
                     })
                     .ok();
                 });
@@ -877,11 +897,12 @@ impl SearchView {
             }
         };
         let playing = self.playback.read(cx).engaged(&origin, cx);
-        let play: Play = Box::new(move |_, _, cx| {
+        let play: Play = Box::new(move |_, window, cx| {
             chosen.remember(cx);
             me.update(cx, |this, cx| {
                 this.playback
                     .update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+                this.leave_field(window, cx);
             })
             .ok();
         });
@@ -1072,7 +1093,8 @@ impl SearchView {
             .child(
                 Scroller::new("search-browse", &self.browsing)
                     .hold()
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                    .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .fade_top(FADE)
                     .px(gutter)
                     .pb(pad)
@@ -1218,7 +1240,8 @@ impl SearchView {
             .when(leading, |this| this.mt(-FADE))
             .child(
                 Scroller::new(id, bar)
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                    .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .fade_top(FADE)
                     .px(gutter)
                     .pb(theme.metrics.inset)
@@ -1272,8 +1295,8 @@ fn opens(hit: &Hit) -> bool {
     !matches!(hit, Hit::Artist(artist) if artist.id.is_none())
 }
 
-/// What a press on the card of `hit` does: a song starts its radio and anything else opens its
-/// page. The hit moves to the top of the search history.
+/// What a press on the card of `hit` does: a song starts its radio and hands the keyboard to the
+/// page, and anything else opens its page. The hit moves to the top of the search history.
 fn pressed(
     hit: &Hit,
     me: &WeakEntity<SearchView>,
@@ -1281,12 +1304,14 @@ fn pressed(
     let me = me.clone();
     let hit = hit.clone();
 
-    move |_, _, cx| {
+    move |_, window, cx| {
         hit.remember(cx);
         me.update(cx, |this, cx| match &hit {
-            Hit::Song(track) => this
-                .playback
-                .update(cx, |playback, cx| playback.play_radio(track, cx)),
+            Hit::Song(track) => {
+                this.playback
+                    .update(cx, |playback, cx| playback.play_radio(track, cx));
+                this.leave_field(window, cx);
+            }
             Hit::Artist(artist) => {
                 if let Some(id) = &artist.id {
                     navigate(Destination::Artist(id.clone().into()), cx);
@@ -1563,8 +1588,15 @@ impl Render for SearchView {
                 }
             };
 
-            Popup::new(position, menu).on_close(cx.listener(|this, _, _, cx| {
+            Popup::new(position, menu).on_close(cx.listener(|this, _, window, cx| {
                 this.context_menu = None;
+                // The menu hands the keyboard back to the field before the press that closed it
+                // is done, and the panel stays only if the field still holds it after.
+                cx.defer_in(window, |this, window, cx| {
+                    if !this.typing(window, cx) {
+                        this.close_panel(cx);
+                    }
+                });
                 cx.notify();
             }))
         });
