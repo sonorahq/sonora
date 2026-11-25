@@ -20,6 +20,7 @@ mod mosaic;
 mod network;
 mod outputs;
 mod overload;
+mod panels;
 mod pins;
 mod playback;
 mod potoken;
@@ -71,6 +72,7 @@ pub use music::connect::{Elsewhere, Repeat};
 pub use network::{Network, Reconnected};
 pub use outputs::Outputs;
 pub use overload::OutputLevel;
+pub use panels::{Panels, Tool, Zone};
 pub use pins::{PinSort, Pins};
 pub use playback::{
     Origin, Playback, PlaybackState, PositionTick, Sleep, Unreachable, VOLUME_STEP, Whence,

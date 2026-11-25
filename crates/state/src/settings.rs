@@ -39,6 +39,7 @@ use ui::{
 
 use self::equalizer::Profile;
 use crate::equalizer::DeviceRule;
+use crate::panels::{Panels, StoredPanels, Tool};
 use crate::pins::PinSort;
 use crate::queue::{Resume, gap_target};
 use crate::updates::{Channel, updates_itself};
@@ -524,6 +525,10 @@ struct Values {
     /// The optional sidebar rows the user added, which stay out of the sidebar otherwise.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     added_nav: Vec<String>,
+    /// What the title bar, the sidebar and the player bar hold, once the listener arranged
+    /// them. Until then the arrangement follows `hidden_nav`, `added_nav` and `sessions_button`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    panels: Option<StoredPanels>,
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
@@ -808,6 +813,7 @@ impl Default for Values {
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
             added_nav: Vec::new(),
+            panels: None,
             silenced_requirements: Vec::new(),
             legacy_scrobbling: BTreeMap::new(),
             scrobbling_off: BTreeSet::new(),
@@ -1177,9 +1183,9 @@ impl AppSettings {
         &self.values.spotify_connect_custom_name
     }
 
-    /// Whether the player bar shows the Sessions button.
+    /// Whether one of the bars holds the Sessions button.
     pub fn sessions_button(&self) -> bool {
-        self.values.sessions_button
+        self.panels().zone_of(Tool::Sessions).is_some()
     }
 
     /// Whether Sonora Sessions go through the official server.
@@ -1842,7 +1848,31 @@ impl AppSettings {
     }
 
     pub fn set_sessions_button(&mut self, shown: bool, cx: &mut Context<Self>) {
+        let mut panels = self.panels();
+        panels.set_shown(Tool::Sessions, shown);
         self.values.sessions_button = shown;
+        self.set_panels(panels, cx);
+    }
+
+    /// What the title bar, the sidebar and the player bar hold. Until the listener arranges them
+    /// it is the default arrangement less the sidebar rows they hid in older settings.
+    pub fn panels(&self) -> Panels {
+        match &self.values.panels {
+            Some(stored) => Panels::read(stored),
+            None => Panels::seeded(
+                &self.values.hidden_nav,
+                &self.values.added_nav,
+                self.values.sessions_button,
+            ),
+        }
+    }
+
+    pub fn set_panels(&mut self, panels: Panels, cx: &mut Context<Self>) {
+        let stored = panels.stored();
+        if self.values.panels.as_ref() == Some(&stored) {
+            return;
+        }
+        self.values.panels = Some(stored);
         self.schedule_save(cx);
     }
 
@@ -2407,22 +2437,6 @@ impl AppSettings {
         match shown {
             true => self.values.hidden_nav.retain(|hidden| hidden != entry),
             false => self.values.hidden_nav.push(entry.to_owned()),
-        }
-        self.schedule_save(cx);
-    }
-
-    /// Whether the user added the optional sidebar row `entry`. None is added on a first run.
-    pub fn nav_added(&self, entry: &str) -> bool {
-        self.values.added_nav.iter().any(|added| added == entry)
-    }
-
-    pub fn set_nav_added(&mut self, entry: &str, added: bool, cx: &mut Context<Self>) {
-        if self.nav_added(entry) == added {
-            return;
-        }
-        match added {
-            true => self.values.added_nav.push(entry.to_owned()),
-            false => self.values.added_nav.retain(|known| known != entry),
         }
         self.schedule_save(cx);
     }

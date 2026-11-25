@@ -1006,7 +1006,11 @@ impl FullscreenView {
                 .into_any_element(),
             seek: dozing(self.seek(cx), hide).into_any_element(),
             tools: Some(
-                dozing(PlayerBar::tools_like(self.sessions.clone(), cx), hide).into_any_element(),
+                dozing(
+                    PlayerBar::tools_like(self.sessions.clone(), window, cx),
+                    hide,
+                )
+                .into_any_element(),
             ),
             sound: sound.into_any_element(),
             corner: div()

@@ -82,12 +82,6 @@ impl NavEntry {
             Self::Pins => "nav-pinned",
         }
     }
-
-    /// Whether the row stays out of the sidebar until the listener adds it, rather than showing
-    /// until hidden.
-    pub fn optional(self) -> bool {
-        matches!(self, Self::Settings)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -15,7 +15,8 @@ use ui::{
 };
 
 use crate::chrome::{
-    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions, sheet_frame,
+    AppNotice, Chrome, Customizing, PlayerBar, SidebarLeft, SidebarRight, SwipeCue,
+    TitleBarOptions, panels, sheet_frame,
 };
 use crate::shared::menus::CardMenu;
 use crate::shells::Shell;
@@ -94,6 +95,8 @@ impl Workspace {
         let player_bar = cx.new(|cx| PlayerBar::new(playback.clone(), queue, cx));
         let settings = Sonora::global(cx).settings.clone();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        let customizing = Customizing::entity(cx);
+        cx.observe(&customizing, |_, _, cx| cx.notify()).detach();
 
         Self {
             sidebar,
@@ -480,6 +483,11 @@ impl Render for Workspace {
                                 this.child(island_fade(bar_height, window, cx))
                             })
                             .child(self.swipe_cue.clone())
+                            // The palette covers the page while the bars are arranged, beneath
+                            // the sheet's frame so its scrim is cut along the rounded corners.
+                            .when(Customizing::editing(cx), |this| {
+                                this.child(panels::palette(cx))
+                            })
                             .child(sheet_frame(corners, edges, cx)),
                     )
                     .child(sidebar_right)

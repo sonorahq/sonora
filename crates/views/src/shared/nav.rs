@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{Context, ElementId, Hsla};
 use router::NavEntry;
-use state::AppSettings;
+use state::{AppSettings, Tool};
 use ui::Button;
 
 /// A navigation row as the sidebars draw it: a ghost button with its label at the start, in
@@ -43,24 +43,28 @@ pub(crate) fn nav_icon(
         .active(move |style| style.bg(accent))
 }
 
-/// Whether the sidebar shows `entry`. An optional row shows once the listener adds it, any other
-/// until they hide it.
+/// Whether the sidebar shows `entry`. The pinned section follows its own switch, and every other
+/// row is a tool of the sidebar's arrangement.
 pub(crate) fn entry_shown(entry: NavEntry, settings: &AppSettings) -> bool {
-    match entry.optional() {
-        true => settings.nav_added(entry.id()),
-        false => settings.nav_shown(entry.id()),
+    match Tool::from_id(entry.id()) {
+        Some(tool) => settings.panels().in_sidebar(tool),
+        None => settings.nav_shown(entry.id()),
     }
 }
 
-/// Shows or hides `entry` in the sidebar, the counterpart of `entry_shown`.
+/// Shows or hides `entry` in the sidebar, the counterpart of `entry_shown`. A row shown here
+/// leaves whichever other bar held it.
 pub(crate) fn set_entry_shown(
     entry: NavEntry,
     shown: bool,
     settings: &mut AppSettings,
     cx: &mut Context<AppSettings>,
 ) {
-    match entry.optional() {
-        true => settings.set_nav_added(entry.id(), shown, cx),
-        false => settings.set_nav_shown(entry.id(), shown, cx),
-    }
+    let Some(tool) = Tool::from_id(entry.id()) else {
+        settings.set_nav_shown(entry.id(), shown, cx);
+        return;
+    };
+    let mut panels = settings.panels();
+    panels.set_in_sidebar(tool, shown);
+    settings.set_panels(panels, cx);
 }
