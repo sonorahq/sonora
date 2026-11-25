@@ -4,23 +4,30 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::lyrics::ttml;
+use crate::lyrics::{LyricsCredit, ttml};
 use crate::{LyricsHit, LyricsProvider, LyricsQuery};
 
-const SOURCE: &str = "Apple Music";
-const SEARCH: &str = "https://lyrics-api.binimum.org/";
+pub(crate) const SOURCE: &str = "Apple Music";
+/// lrc.red's terms ask every app that shows its sheets to credit it with a link back.
+pub(crate) const CREDIT: LyricsCredit = LyricsCredit {
+    name: "lrc.red",
+    url: "https://lrc.red",
+};
+const SEARCH: &str = "https://lrc.red/api/v1";
 const TRUST: u32 = 180;
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/sonorahq/sonora)"
+    " (https://github.com/sonorahq/sonora; team@sonorahq.org)"
 );
 
-pub struct Binimum {
+/// The lrc.red catalogue of Apple Music lyrics. Its terms ask every client to name itself with a
+/// link and a contact email in the User-Agent.
+pub struct LrcRed {
     http: reqwest::Client,
 }
 
-impl Binimum {
+impl LrcRed {
     /// Sends every request through `http`, which the app shares between its lyrics sources.
     pub fn new(http: reqwest::Client) -> Self {
         Self { http }
@@ -114,7 +121,7 @@ impl Match {
 }
 
 #[async_trait]
-impl LyricsProvider for Binimum {
+impl LyricsProvider for LrcRed {
     fn name(&self) -> &'static str {
         SOURCE
     }

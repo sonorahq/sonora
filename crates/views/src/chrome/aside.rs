@@ -261,7 +261,16 @@ struct Credit {
     source: &'static str,
     writers: Vec<String>,
     language: i18n::Language,
-    lines: (SharedString, Option<SharedString>),
+    lines: CreditLines,
+}
+
+/// The lines of a sheet's credit: its source, its writers when named, and the service it came
+/// through with the address that line opens.
+#[derive(Clone)]
+struct CreditLines {
+    from: SharedString,
+    by: Option<SharedString>,
+    via: Option<(SharedString, &'static str)>,
 }
 
 /// What the height of a settled lyrics row depends on besides its own words. A row off screen is
@@ -1872,7 +1881,8 @@ impl Aside {
 
         if state == LyricsState::Ready
             && shown
-            && let Some((from, by)) = self.credit.as_ref().map(|credit| credit.lines.clone())
+            && let Some(CreditLines { from, by, via }) =
+                self.credit.as_ref().map(|credit| credit.lines.clone())
         {
             let credit = body.len();
             let along = viewport_along(&scroll, credit, scroll.bounds(), drag.downward);
@@ -1891,7 +1901,18 @@ impl Aside {
                 .text_size(theme.text(Text::Small))
                 .text_color(quiet(&theme))
                 .child(ui::spoken("lyrics-credit-source", from))
-                .children(by.map(|by| ui::spoken("lyrics-credit-writers", by)));
+                .children(by.map(|by| ui::spoken("lyrics-credit-writers", by)))
+                .children(via.map(|(via, url)| {
+                    div()
+                        .id("lyrics-credit-link")
+                        .role(Role::Link)
+                        .aria_label(via.clone())
+                        .self_start()
+                        .cursor_pointer()
+                        .hover(|style| style.underline())
+                        .on_click(move |_, _, cx| cx.open_url(url))
+                        .child(via)
+                }));
             body.push(adrift(note, translation, false, window));
         }
         if drifting {
@@ -3398,8 +3419,9 @@ fn selected_romanization(
         .then(|| romanized.text.clone())
 }
 
-/// Which source a sheet came from and, when it names them, who wrote the song.
-fn credit_lines(source: &str, writers: &[String]) -> (SharedString, Option<SharedString>) {
+/// Which source a sheet came from, who wrote the song when it names them, and the service it came
+/// through when that service asks to be credited.
+fn credit_lines(source: &str, writers: &[String]) -> CreditLines {
     let from = match source == music::lyrics::LOCAL {
         true => t!("lyrics-source-local"),
         false => t!("lyrics-source", source = source),
@@ -3408,7 +3430,9 @@ fn credit_lines(source: &str, writers: &[String]) -> (SharedString, Option<Share
         let writers = writers.join(", ");
         t!("lyrics-writers", writers = writers.as_str())
     });
-    (from, by)
+    let via = music::lyrics::credit(source)
+        .map(|credit| (t!("lyrics-via", service = credit.name), credit.url));
+    CreditLines { from, by, via }
 }
 
 /// A fingerprint of a font name, so the sheet notices a change of font without keeping a copy.

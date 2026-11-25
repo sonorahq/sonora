@@ -28,6 +28,19 @@ const TRUSTED: u32 = 25;
 const SYNCED_GRADE: u8 = 2;
 const WORDED_GRADE: u8 = 3;
 
+/// The service a source's sheets come through, which has to be named with a link back wherever
+/// they are shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LyricsCredit {
+    pub name: &'static str,
+    pub url: &'static str,
+}
+
+/// The credit a sheet from `source` has to carry, or `None` when its source asks for none.
+pub fn credit(source: &str) -> Option<LyricsCredit> {
+    (source == crate::lrcred::SOURCE).then_some(crate::lrcred::CREDIT)
+}
+
 pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
     rank_with_priority(query, hits, &[], false)
 }

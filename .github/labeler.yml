@@ -36,7 +36,7 @@ lyrics:
           - crates/music/src/lyrics/**
           - crates/music/src/lrclib/**
           - crates/music/src/musixmatch/**
-          - crates/music/src/binimum/**
+          - crates/music/src/lrcred/**
           - crates/music/src/kugou/**
           - crates/music/src/netease/**
           - crates/state/src/lyrics.rs
