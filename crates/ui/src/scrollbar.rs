@@ -222,6 +222,7 @@ impl Scrollbar {
             self.passive = passive;
             self.hovered = false;
             self.on_thumb = false;
+            self.pointed(cx);
             cx.notify();
         }
     }
@@ -292,10 +293,10 @@ impl Scrollbar {
         self.nudges
     }
 
-    /// Whether the pointer is parked on the bar. Fullscreen reads this to keep
+    /// Whether the pointer is parked on the bar while it shows. Fullscreen reads this to keep
     /// its chrome awake while the reader holds the scrollbar.
     pub fn hovered(&self) -> bool {
-        self.hovered || self.on_thumb
+        (self.hovered || self.on_thumb) && self.showing()
     }
 
     /// Records that the reader moved the view themselves. A precise scroll needs
@@ -558,9 +559,14 @@ impl Scrollbar {
     /// Answers the pointer coming onto the bar or leaving it. It holds a bar that shows, even one
     /// already fading out, and leaving starts its rest over, but it never brings up a hidden one.
     fn pointed(&mut self, cx: &mut Context<Self>) {
-        if self.awake || self.fade.position() > 0. {
+        if self.showing() {
             self.wake(cx);
         }
+    }
+
+    /// Whether the bar can be seen, counting one that is still fading out.
+    fn showing(&self) -> bool {
+        self.always_visible || self.awake || self.fade.position() > 0.
     }
 
     fn moved(&mut self, offset: Pixels, cx: &mut Context<Self>) {
