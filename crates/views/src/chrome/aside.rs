@@ -142,6 +142,9 @@ const SWELL_SHORT: f32 = 1.5;
 const SWELL_LONG: f32 = 2.5;
 /// How much larger a fully swollen letter grows.
 const SWELL: f32 = 0.1;
+/// How far, relative to the verse size, a swollen word inside its row may reach past either of
+/// its ends, so a long word grows less and never closes the space to its neighbours.
+const SWELL_ROOM: f32 = 0.1;
 /// How far below the middle of its line a letter's baseline sits, relative to the verse size. A
 /// swollen letter grows up from its baseline.
 const BASELINE: f32 = 0.35;
@@ -2896,6 +2899,13 @@ fn risen_row(
             false => 0.,
         };
         let big = sung.swell && group.iter().any(|&(word, _, _)| (letters.swells)(word));
+        // a word that ends its row grows into the free room after it, and any other one only as
+        // far as leaves the spaces around it open
+        let room = match cells_end >= cells.len() {
+            true => 1.,
+            false => (SWELL_ROOM * 2. * sung.size.as_f32() / (end - from).as_f32().max(1.) / SWELL)
+                .min(1.),
+        };
         for &(word, syllable_cell, syllable_count) in group {
             let glow = (letters.glow)(word);
             for cell in syllable_cell..syllable_cell + syllable_count {
@@ -2910,10 +2920,12 @@ fn risen_row(
                     share,
                     glow,
                     grown: match big {
-                        true => group
-                            .iter()
-                            .map(|&(word, _, _)| (letters.swell)(word, letter, count))
-                            .fold(0., f32::max),
+                        true => {
+                            room * group
+                                .iter()
+                                .map(|&(word, _, _)| (letters.swell)(word, letter, count))
+                                .fold(0., f32::max)
+                        }
                         false => 0.,
                     },
                     big,
