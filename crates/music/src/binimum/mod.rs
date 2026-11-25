@@ -21,10 +21,9 @@ pub struct Binimum {
 }
 
 impl Binimum {
-    pub fn new() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-        }
+    /// Sends every request through `http`, which the app shares between its lyrics sources.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self { http }
     }
 
     /// Searches the catalogue by title, artist and length, narrowed to `album` when given. The
@@ -83,12 +82,6 @@ impl Binimum {
             .text()
             .await
             .context("cannot read the apple lyrics sheet")
-    }
-}
-
-impl Default for Binimum {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

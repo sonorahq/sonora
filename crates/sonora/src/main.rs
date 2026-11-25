@@ -146,6 +146,7 @@ fn main() -> ExitCode {
                 database.clone(),
                 storage::Cache::standard(),
             ));
+        let lyrics_http = reqwest::Client::new();
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
             Arc::new(music::local::LocalLyrics),
             Arc::new(music::subsonic::SubsonicLyrics::new()),
@@ -153,11 +154,11 @@ fn main() -> ExitCode {
             Arc::new(music::plex::PlexLyrics::new()),
             Arc::new(music::spotify::SpotifyLyrics::from_env()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
-            Arc::new(music::binimum::Binimum::new()),
-            Arc::new(music::musixmatch::Musixmatch::new()),
-            Arc::new(music::lrclib::LrcLib::new()),
-            Arc::new(music::kugou::Kugou::new()),
-            Arc::new(music::netease::NetEase::new()),
+            Arc::new(music::binimum::Binimum::new(lyrics_http.clone())),
+            Arc::new(music::musixmatch::Musixmatch::new(lyrics_http.clone())),
+            Arc::new(music::lrclib::LrcLib::new(lyrics_http.clone())),
+            Arc::new(music::kugou::Kugou::new(lyrics_http.clone())),
+            Arc::new(music::netease::NetEase::new(lyrics_http)),
         ];
         state::init(cx, io, database, providers, local_provider, lyrics);
         #[cfg(target_os = "windows")]

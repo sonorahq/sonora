@@ -20,14 +20,15 @@ struct Probe {
 }
 
 fn providers() -> Vec<Arc<dyn LyricsProvider>> {
+    let http = reqwest::Client::new();
     vec![
         Arc::new(music::spotify::SpotifyLyrics::from_env()),
         Arc::new(music::youtube::YouTubeLyrics::new()),
-        Arc::new(binimum::Binimum::new()),
-        Arc::new(musixmatch::Musixmatch::new()),
-        Arc::new(lrclib::LrcLib::new()),
-        Arc::new(kugou::Kugou::new()),
-        Arc::new(netease::NetEase::new()),
+        Arc::new(binimum::Binimum::new(http.clone())),
+        Arc::new(musixmatch::Musixmatch::new(http.clone())),
+        Arc::new(lrclib::LrcLib::new(http.clone())),
+        Arc::new(kugou::Kugou::new(http.clone())),
+        Arc::new(netease::NetEase::new(http)),
     ]
 }
 
