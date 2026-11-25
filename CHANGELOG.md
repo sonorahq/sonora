@@ -82,6 +82,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 - Highlighted menu entries round their corners in step with the menu's own, instead of half a pixel sharper.
+- Holding down the heart or another button on a song no longer tints the frosted column headers above it with the row's color.
 
 ### Fixed
 
