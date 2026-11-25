@@ -12,7 +12,7 @@ queue-added-by = { $name }님이 추가함
 queue-empty = 재생 목록이 비어 있습니다.
 queue-similar = 비슷한 트랙
 queue-radio = 비슷한 트랙 자동 재생
-queue-return-playing = 재생 화면으로 돌아가기
+queue-return-playing = 지금 재생 중인 곡으로 돌아가기
 
 # player bar
 player-nothing-playing = 재생 중인 곡 없음
