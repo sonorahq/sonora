@@ -98,8 +98,8 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # The dev profile optimises ui, views and music for a usable debug build, which makes
-      # compiling them for the tests take three times as long. The tests do not need it.
+      # The dev profile optimises ui, views and the sound path for a usable debug build, which
+      # makes compiling them for the tests take three times as long. The tests do not need it.
       - name: tests
         if: matrix.task == 'test'
         run: >-
@@ -108,6 +108,7 @@ jobs:
           --config 'profile.dev.package.ui.opt-level=0'
           --config 'profile.dev.package.views.opt-level=0'
           --config 'profile.dev.package.music.opt-level=0'
+          --config 'profile.dev.package.sound.opt-level=0'
 
   # The check job only ever sees the Linux side of a cfg. The next jobs lint the other two
   # platforms' code without paying for codegen, linking or an installer, which is the whole

@@ -15,6 +15,7 @@ runtime-shaders = ["gpui_platform/runtime_shaders"]
 [dependencies]
 anyhow.workspace = true
 cli.workspace = true
+deezer.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
 futures.workspace = true
@@ -33,6 +34,7 @@ views.workspace = true
 webview.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+spotify.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 interprocess.workspace = true

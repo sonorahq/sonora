@@ -1,0 +1,22 @@
+[package]
+name = "probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+deezer.workspace = true
+image.workspace = true
+music.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+spotify.workspace = true
+storage.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+ytmusic.workspace = true
+
+[lints]
+workspace = true

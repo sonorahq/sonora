@@ -12,6 +12,7 @@ repository = "https://github.com/sonorahq/sonora"
 [workspace.dependencies]
 embed = { path = "crates/embed" }
 cli = { path = "crates/cli" }
+deezer = { path = "crates/deezer" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
 music = { path = "crates/music" }
@@ -20,6 +21,9 @@ storage = { path = "crates/storage" }
 input = { path = "crates/input" }
 logic = { path = "crates/logic" }
 router = { path = "crates/router" }
+soloist = { path = "crates/soloist" }
+sound = { path = "crates/sound" }
+spotify = { path = "crates/spotify" }
 ui = { path = "crates/ui" }
 views = { path = "crates/views" }
 webview = { path = "crates/webview" }
@@ -281,6 +285,9 @@ opt-level = 2
 
 # The audio path runs in real time, decoding, resampling and mixing every sample, so it is built
 # fully optimised even in debug builds.
+[profile.dev.package.sound]
+opt-level = 3
+
 [profile.dev.package.music]
 opt-level = 3
 

@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
+use crate::decode::{Decoded, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::jellyfin::client::{Details, JellyfinClient};
 use crate::mp4::{Input, Prepared, Remote};
@@ -160,7 +161,6 @@ impl Jellyfin {
 #[async_trait]
 impl Fetch for Jellyfin {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<Input>;
 
     fn name(&self) -> &'static str {
         "jellyfin"
@@ -259,11 +259,11 @@ impl Fetch for Jellyfin {
 
     /// Opens a decoder over a stream whose metadata was prepared on the cancellable load task,
     /// and places it at `at`.
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let total = loaded.stream.total();
         let mut builder = rodio::Decoder::builder()
             .with_symphonia_decoder::<Aac>()
-            .with_data(loaded.prepared.reader(&loaded.stream));
+            .with_data(Media::new(loaded.prepared.reader(&loaded.stream)));
         if let Some(total) = total {
             builder = builder.with_byte_len(total);
         }
@@ -285,25 +285,22 @@ impl Fetch for Jellyfin {
                 at.as_secs()
             );
         }
-        Some(decoder)
+        Some(Decoded::new(decoder))
     }
 
     /// Opens the track at `at`, from a download started near `at` when the main one is far from
     /// it and the file allows that. Otherwise the decoder waits for the main download to get
     /// there, as [`open`](Fetch::open) does.
-    fn open_near(
-        &self,
-        id: &str,
-        loaded: &Loaded,
-        at: Duration,
-    ) -> Option<(Self::Source, Duration)> {
+    fn open_near(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Decoded, Duration)> {
         let file = loaded.file.as_ref().zip(loaded.details.duration);
         let entered = file.and_then(|(file, length)| {
             file.enter(&loaded.stream, length, at, |reader| {
                 ranged::forward("jellyfin", id, Input::spliced(reader))
             })
         });
-        entered.or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
+        entered
+            .map(|(decoder, start)| (Decoded::new(decoder), start))
+            .or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
     }
 
     /// A decoder opened before its track finished arriving may only read forward, so every seek

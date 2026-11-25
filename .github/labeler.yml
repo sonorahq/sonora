@@ -10,12 +10,12 @@
 playback:
   - changed-files:
       - any-glob-to-any-file:
-          - crates/music/src/audio.rs
-          - crates/music/src/sink.rs
-          - crates/music/src/equalizer.rs
-          - crates/music/src/spectrum.rs
-          - crates/music/src/spotify/playback.rs
-          - crates/music/src/spotify/sink.rs
+          - crates/sound/src/audio.rs
+          - crates/sound/src/sink.rs
+          - crates/sound/src/equalizer/**
+          - crates/sound/src/spectrum/**
+          - crates/spotify/src/playback.rs
+          - crates/spotify/src/sink.rs
           - crates/state/src/playback.rs
           - crates/views/src/shared/visualizer.rs
 
@@ -100,7 +100,9 @@ ui:
 
 spotify:
   - changed-files:
-      - any-glob-to-any-file: crates/music/src/spotify/**
+      - any-glob-to-any-file:
+          - crates/spotify/**
+          - crates/soloist/**
 
 youtube:
   - changed-files:

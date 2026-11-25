@@ -21,7 +21,7 @@ struct Slot {
     key: String,
 }
 
-pub(crate) fn conform(worded: &Lyrics, guide: &Lyrics) -> Option<Lyrics> {
+pub fn conform(worded: &Lyrics, guide: &Lyrics) -> Option<Lyrics> {
     let Lyrics::Synced { lines: guide } = guide else {
         return None;
     };

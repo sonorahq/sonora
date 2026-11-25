@@ -1,47 +1,32 @@
-mod aac;
 pub mod apple;
 pub mod artwork;
-mod audio;
 pub mod binimum;
-mod calendar;
+pub mod calendar;
 pub mod connect;
 pub mod cover;
 pub mod credentials;
-pub mod deezer;
 pub mod drm;
 pub mod engine;
-pub mod equalizer;
 pub mod escape;
 pub mod jellyfin;
 pub mod kugou;
 pub mod link;
-#[cfg(test)]
-mod live_tests;
 pub mod local;
 pub mod lrclib;
 pub mod lyrics;
 mod models;
-mod mp4;
 pub mod musixmatch;
 pub mod netease;
 pub mod order;
-pub mod output;
 pub mod plex;
 pub mod potoken;
 pub mod progress;
-pub mod ranged;
 mod redact;
 pub mod scrobble;
-mod sink;
 pub mod smart;
-pub mod soloist;
-mod spectrum;
 mod sponsorblock;
-pub mod spotify;
-mod stream;
 pub mod subsonic;
 pub mod tidal;
-mod trim;
 pub mod trouble;
 pub mod vault;
 pub mod youtube;
@@ -54,6 +39,9 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
+use sound::{aac, audio, decode, mp4, sink, spectrum, stream, trim};
+
+pub use sound::{equalizer, output, ranged};
 
 pub use audio::Meter;
 pub use equalizer::Equalizer;
@@ -1352,7 +1340,7 @@ pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
 /// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
 /// ids and matching titles of similar duration across releases. Remaster labels do not
 /// distinguish songs.
-fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
+pub fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
     let mut kept: HashMap<String, Vec<Duration>> = HashMap::new();
     let mut ids = HashSet::new();
     tracks

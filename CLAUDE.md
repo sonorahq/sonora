@@ -13,7 +13,14 @@ crates/
   views/      screens, shells (Workspace, FullscreenView) and app chrome
   state/      GPUI entities holding app state, and all async orchestration
   logic/      what the app decides about listening: play order, station rules, lyrics lookup (no GPUI)
-  music/      provider traits and models in the root, one submodule per provider (no GPUI)
+  music/      provider traits and models in the root, the engine, one submodule per provider
+              not yet split out (no GPUI)
+  sound/      the real-time sound path: decoders, progressive download, equalizer, analysers,
+              paced output queue, output devices (no models, no GPUI)
+  spotify/    the Spotify provider, on librespot or Soloist
+  soloist/    Spotify's headless player: its download, pairing and the engine that drives it
+  deezer/     the Deezer provider
+  probe/      ignored live tests against real accounts, and the lyrics probing examples
   storage/    the state.sqlite and cache.sqlite paths, schema and connection setup
   ui/         design system: theme, metrics, layout ladder and reusable elements
   router/     Destination enum, navigation history, Link trait
@@ -28,7 +35,10 @@ crates/
 Dependency direction is strict. Do not create a back edge:
 
 ```
-sonora → views → state → logic → music
+sonora → views → state → logic → music → sound
+         sonora → spotify, deezer → music, sound
+         spotify → soloist → music
+         state, views → soloist
          state, music → storage
          state → webview
          music → widevine
@@ -37,17 +47,22 @@ sonora → views → state → logic → music
 ```
 
 - `state` and `views` see only the traits and models in the root of `music`, never a provider
-  module. Only `sonora/src/main.rs` names a concrete provider.
+  module or crate. Only `sonora/src/main.rs` names a concrete provider. Soloist is not a provider,
+  so `state` and `views` reach it as the `soloist` crate.
 - `music` never depends on `gpui`. `ui` never knows about `music`, `state` or playback. Widgets
   that need app state live in `views/src/chrome/`.
 - `logic` never depends on `gpui` or a UI crate either. The Android app
   links it next to `music`, so a rule both apps follow goes there and `state` wraps it in an
   entity that redraws, saves and posts toasts.
-- `music::engine` is the one playback engine and `music::stream` the one progressive download. A
+- `music::engine` is the one playback engine and `sound::stream` the one progressive download. A
   provider implements `engine::Fetch` and `stream::Body` rather than writing its own. The engine
   applies loudness normalisation, so a provider only reports a track's level through
   `Fetch::loudness`. Spotify is the one exception, because librespot decodes and normalises
   inside its own player.
+- The sound path is built at `opt-level = 3` in debug builds, providers at the default. Generic
+  code compiles in the crate that names its types, so a provider hands the engine a
+  `sound::decode::Decoded` over a `decode::Media`, never a decoder type of its own, and anything
+  that touches every sample lives in `sound` behind a non-generic function.
 - `music::drm` is the only way `state` and `views` reach protected playback. The CDM is never
   shipped in any artefact or package.
 

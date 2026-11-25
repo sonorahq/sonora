@@ -11,12 +11,12 @@ const XML: &str = "http://www.w3.org/XML/1998/namespace";
 const BACKGROUND: &str = "x-bg";
 const ASIDES: [&str; 2] = ["x-translation", "x-roman"];
 
-pub(crate) struct Sheet {
+pub struct Sheet {
     pub lyrics: Lyrics,
     pub writers: Vec<String>,
 }
 
-pub(crate) fn parse(xml: &str) -> Result<Sheet> {
+pub fn parse(xml: &str) -> Result<Sheet> {
     let document = Document::parse(xml).context("cannot read the ttml")?;
     let singers = singers(&document);
     let lead = lead(&document, &singers);

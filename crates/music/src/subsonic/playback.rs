@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
+use crate::decode::{Decoded, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::mp4::{Input, Prepared, Remote};
 use crate::ranged;
@@ -135,7 +136,6 @@ impl Subsonic {
 #[async_trait]
 impl Fetch for Subsonic {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<Input>;
 
     fn name(&self) -> &'static str {
         "subsonic"
@@ -223,11 +223,11 @@ impl Fetch for Subsonic {
     }
 
     /// Opens a track whose metadata was prepared on the cancellable load task.
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let total = loaded.stream.total();
         let mut builder = rodio::Decoder::builder()
             .with_symphonia_decoder::<Aac>()
-            .with_data(loaded.prepared.reader(&loaded.stream));
+            .with_data(Media::new(loaded.prepared.reader(&loaded.stream)));
         if let Some(total) = total {
             builder = builder.with_byte_len(total);
         }
@@ -249,25 +249,22 @@ impl Fetch for Subsonic {
                 at.as_secs()
             );
         }
-        Some(decoder)
+        Some(Decoded::new(decoder))
     }
 
     /// Opens the track at `at`, from a download started near `at` when the main one is far from
     /// it and the file allows that. Otherwise the decoder waits for the main download to get
     /// there, as [`open`](Fetch::open) does.
-    fn open_near(
-        &self,
-        id: &str,
-        loaded: &Loaded,
-        at: Duration,
-    ) -> Option<(Self::Source, Duration)> {
+    fn open_near(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<(Decoded, Duration)> {
         let file = loaded.file.as_ref().zip(loaded.details.duration);
         let entered = file.and_then(|(file, length)| {
             file.enter(&loaded.stream, length, at, |reader| {
                 ranged::forward("subsonic", id, Input::spliced(reader))
             })
         });
-        entered.or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
+        entered
+            .map(|(decoder, start)| (Decoded::new(decoder), start))
+            .or_else(|| self.open(id, loaded, at).map(|source| (source, at)))
     }
 
     /// A decoder opened before a converted track finished arriving can only read forward, so

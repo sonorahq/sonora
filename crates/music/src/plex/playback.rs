@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::aac::Aac;
+use crate::decode::{Decoded, Media};
 use crate::engine::{self, Fetch, Loudness};
 use crate::plex::client::{Details, PlexClient};
-use crate::stream::{Plain, Reader, Stream};
+use crate::stream::{Plain, Stream};
 use crate::vault::{Recording, Shelf};
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
 
@@ -103,7 +104,6 @@ impl Plex {
 #[async_trait]
 impl Fetch for Plex {
     type Loaded = Loaded;
-    type Source = rodio::Decoder<Reader>;
 
     fn name(&self) -> &'static str {
         "plex"
@@ -157,11 +157,11 @@ impl Fetch for Plex {
 
     /// Builds a decoder over a stream and places it at `at`. The bytes past the preroll are
     /// still arriving, so this only reads the header.
-    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Self::Source> {
+    fn open(&self, id: &str, loaded: &Loaded, at: Duration) -> Option<Decoded> {
         let total = loaded.stream.total();
         let mut builder = rodio::Decoder::builder()
             .with_symphonia_decoder::<Aac>()
-            .with_data(loaded.stream.reader())
+            .with_data(Media::new(loaded.stream.reader()))
             .with_seekable(total.is_some());
         if let Some(total) = total {
             builder = builder.with_byte_len(total);
@@ -181,6 +181,6 @@ impl Fetch for Plex {
                 at.as_secs()
             );
         }
-        Some(decoder)
+        Some(Decoded::new(decoder))
     }
 }
