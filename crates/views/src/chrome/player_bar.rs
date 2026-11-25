@@ -677,7 +677,7 @@ impl PlayerBar {
             |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
             |this| match island {
                 true => this.bg(theme.popover).text_color(theme.popover_foreground),
-                false => this.when(!theme.transparent, |this| this.bg(theme.sidebar)),
+                false => this.bg(theme.sidebar),
             },
         )
         // Glass over the page needs an edge, while an opaque bar is chrome that the sheet's own

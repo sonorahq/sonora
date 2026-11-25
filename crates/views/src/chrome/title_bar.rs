@@ -401,12 +401,17 @@ impl Render for TitleBar {
             .h(height)
             .flex_none()
             .when_some(radius, |this, radius| this.rounded_t(radius))
-            .when(!self.options.transparent && !theme.transparent, |this| {
-                this.bg(match self.options.sheet {
-                    true => theme.sidebar,
-                    false => theme.background,
-                })
-            })
+            // A sheet's bar is chrome, which paints its own part of any window. The page colour
+            // a see-through window gets from the root, under every shell without a sheet.
+            .when(
+                !self.options.transparent && (self.options.sheet || !theme.transparent),
+                |this| {
+                    this.bg(match self.options.sheet {
+                        true => theme.sidebar,
+                        false => theme.background,
+                    })
+                },
+            )
             // The height is a border box, so a bar that drops its border centres its controls
             // one pixel lower than one that keeps it. The edge is always an edge; only its
             // colour goes, and fullscreen's controls land where the workspace's do.

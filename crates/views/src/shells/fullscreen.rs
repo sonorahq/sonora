@@ -30,8 +30,8 @@ use crate::shared::menus::ItemMenu;
 use crate::shared::now_playing::track_details;
 use crate::shared::rooted::Rooted;
 use crate::shared::transport::{
-    COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like, moved,
-    transport,
+    Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like,
+    moved, transport,
 };
 use crate::shared::visualizer::VisualizerDrive;
 use crate::shared::volume::{
@@ -1735,6 +1735,9 @@ impl Render for FullscreenView {
             true => 1.,
             false => 1. - hide,
         };
+        let backdrops = cx
+            .try_global::<Backdrops>()
+            .map_or(1., |backdrops| backdrops.0);
         if visualizer_presence > 0. && veiled > 0. && shared::effects() {
             let band = viewport.height * VEIL;
             spectrum.push(
@@ -1744,7 +1747,7 @@ impl Render for FullscreenView {
                     .right_0()
                     .bottom_0()
                     .h(band)
-                    .opacity(veiled * (visualizer_presence * VEIL_LEAD).min(1.))
+                    .opacity(backdrops * veiled * (visualizer_presence * VEIL_LEAD).min(1.))
                     .child(veil(
                         VeilEdge::Bottom,
                         band,

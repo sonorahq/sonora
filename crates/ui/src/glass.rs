@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{App, Hsla, Pixels, px};
 
-use crate::theme::ActiveTheme as _;
+use crate::theme::{ActiveTheme as _, BACKDROP_TRANSPARENCY, Theme};
 
 /// How much of the popover colour a glass control keeps over what it blurs.
 pub const GLASS_FILL: f32 = 0.2;
@@ -14,8 +14,9 @@ const POPOVER_FILL: f32 = 0.82;
 /// read over whatever scrolls by.
 const BAR_FILL: f32 = 0.86;
 const BAR_BLUR: Pixels = px(18.);
-/// The bar's fill on a see-through window. The page wash already sits under the bar, so the thick
-/// fill would stack on it and leave the bar far darker than the window around it.
+/// The thinnest bar fill, which a window at the default transparency or clearer gets. The fill
+/// stacks on the page wash under the bar, so a thick one would leave the bar far darker than the
+/// window around it.
 const CLEAR_BAR_FILL: f32 = 0.3;
 
 /// Whether a surface that only frosts for the look of it should frost at all. A backdrop blur
@@ -65,12 +66,8 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
 /// the bar lets the desktop through about as much as the page does.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
     let theme = cx.theme();
-    let fill = match theme.transparent {
-        true => CLEAR_BAR_FILL,
-        false => BAR_FILL,
-    };
     element
-        .bg(theme.popover.opacity(fill))
+        .bg(theme.popover.opacity(bar_fill(theme)))
         .backdrop_blur(BAR_BLUR)
 }
 
@@ -80,4 +77,13 @@ pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
 /// `blurring` first, since this one has no theme to read.
 pub fn frost<E: Styled>(element: E) -> E {
     element.backdrop_blur(GLASS_BLUR)
+}
+
+/// How much of the popover colour a bar keeps on `theme`'s window. A fill `f` over a page that
+/// lets `clear` of the desktop through hides `f * clear` more of it than the page does, so the
+/// fill thins as the window clears, to hide no more than the thin fill does at the default
+/// transparency. A window that is barely see-through keeps the full fill.
+fn bar_fill(theme: &Theme) -> f32 {
+    let clear = (1. - theme.opacity).max(f32::EPSILON);
+    (CLEAR_BAR_FILL * BACKDROP_TRANSPARENCY / clear).clamp(CLEAR_BAR_FILL, BAR_FILL)
 }
