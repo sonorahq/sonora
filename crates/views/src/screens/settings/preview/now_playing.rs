@@ -8,12 +8,16 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Bounds, Context, EntityId, FontWeight, Pixels, Window, canvas, div};
-use ui::{ActiveTheme as _, Artwork, Levels, Text, Visualizer};
+use ui::{ActiveTheme as _, Artwork, Levels, Room, Text, Visualizer};
 
 use crate::screens::settings::{Layout, SettingsView};
 
 /// How tall the miniature stands for its width, the shape of a window.
 const ASPECT: f32 = 0.5;
+/// How much of the column the miniature takes when it stands beside the settings, and how tall
+/// it stands there for its width, about as tall as the settings beside it.
+const SIDE_SHARE: f32 = 0.38;
+const SIDE_ASPECT: f32 = 1.35;
 /// How much of the miniature's height the cover takes.
 const COVER: f32 = 0.46;
 /// How much of the miniature's width the title and artist may take.
@@ -141,8 +145,13 @@ pub(in crate::screens::settings) fn preview(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Option<AnyElement> {
-    let width = Layout::of(window, cx).width;
-    let height = (width * ASPECT).round();
+    let (width, height) = match beside(window, cx) {
+        Some(width) => (width, (width * SIDE_ASPECT).round()),
+        None => {
+            let width = Layout::of(window, cx).width;
+            (width, (width * ASPECT).round())
+        }
+    };
     let sample = view.previews.playing_or_picked(cx);
     let cover = sample.large_cover(cx);
     let settings = view.settings.read(cx);
@@ -243,6 +252,16 @@ pub(in crate::screens::settings) fn preview(
         )
         .into_any_element(),
     )
+}
+
+/// How wide the miniature stands beside the page's settings, or `None` where the column has no
+/// room for both and the miniature stands over them, as wide as the column.
+pub(in crate::screens::settings) fn beside(window: &Window, cx: &gpui::App) -> Option<Pixels> {
+    let layout = Layout::of(window, cx);
+    layout
+        .room()
+        .fits(Room::Roomy)
+        .then(|| (layout.width * SIDE_SHARE).round())
 }
 
 /// Fills its parent and keeps the parent's bounds in `cell`, redrawing `owner` next frame when

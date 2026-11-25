@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, Task};
 use logic::lyrics::{awaits_better, gather, ordered};
-use music::lyrics::LOCAL;
+use lyrics::LOCAL;
 use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
 
 use crate::sheets::{Sheets, Unsaved};
@@ -180,7 +180,7 @@ impl Lyrics {
         };
         let playback = self.playback.read(cx);
         let position = playback.shown_time(cx).0;
-        music::lyrics::active(lines, position)
+        lyrics::active(lines, position)
     }
 
     fn follow(&mut self, cx: &mut Context<Self>) {
@@ -231,7 +231,7 @@ impl Lyrics {
             .collect();
         let priority = settings.lyrics_provider_priority();
         let worded_first = settings.lyrics_word_synced_first();
-        let instrumental = music::lyrics::instrumental(query, &hits);
+        let instrumental = lyrics::instrumental(query, &hits);
         self.task = None;
         self.settled = true;
         self.hits = ordered(query, hits, &priority, worded_first);
@@ -490,7 +490,7 @@ impl Lyrics {
                         crate::Network::reached(cx);
                         this.keep(id, cached, &hits, answered, cx);
                         if current {
-                            let instrumental = music::lyrics::instrumental(&ranking, &hits);
+                            let instrumental = lyrics::instrumental(&ranking, &hits);
                             let ranked = ordered(&ranking, hits, &priority, worded_first);
                             this.settle(ranked, displayed.as_ref(), instrumental, cx);
                         }
@@ -692,8 +692,8 @@ impl Found {
     fn usable(&self, query: &LyricsQuery, enabled: &[impl AsRef<str>]) -> bool {
         self.hits.iter().any(|hit| {
             enabled.iter().any(|name| name.as_ref() == hit.source)
-                && (music::lyrics::eligible(query, hit)
-                    || (hit.instrumental && music::lyrics::matched(query, hit)))
+                && (lyrics::eligible(query, hit)
+                    || (hit.instrumental && lyrics::matched(query, hit)))
         })
     }
 
@@ -743,7 +743,7 @@ mod tests {
 
     #[test]
     fn a_displayed_karaoke_result_stays_selected_after_final_ranking() {
-        let plain = hit("plain", Sheet::plain("line"));
+        let plain = hit("plain", lyrics::plain("line"));
         let displayed = hit(
             "karaoke",
             Sheet::Synced {

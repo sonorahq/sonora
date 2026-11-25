@@ -13,6 +13,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
+use input::OpenSearch;
 use music::Shape;
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
@@ -79,6 +80,9 @@ const ROW_GAP: Pixels = px(4.);
 /// The rail's side padding in rem.
 const RAIL_INSET: f32 = 0.5;
 const BORDER: Pixels = px(1.);
+/// How far the scrollbar's thumb stands in from the sidebar's edge, which sets it about midway
+/// between the rows and the sheet's edge.
+const BAR_INSET: Pixels = px(2.);
 /// The side padding of a navigation row, which the library heading lines up with. It matches
 /// the regular `ui::Button`.
 const ROW_INSET: Pixels = px(12.);
@@ -102,6 +106,9 @@ pub(crate) struct SidebarLeft {
     closing: bool,
     /// Whether the sidebar still slides away after closing, so it keeps drawing until it is gone.
     lingering: bool,
+    /// How many times the listener has opened or closed the sidebar. The page springs aside only
+    /// when this moves, so an edge drag or a window resize never sets the sidebar sliding.
+    slides: usize,
     pinned_open: bool,
     dropping: bool,
     drop_gap: Option<usize>,
@@ -132,6 +139,7 @@ impl SidebarLeft {
         let scrollbar = cx.new(|_| {
             ui::Scrollbar::new(ScrollHandle::new())
                 .passive()
+                .edge_inset(BAR_INSET)
                 .watching(me)
         });
         let width = sidebar_width(settings.read(cx));
@@ -161,6 +169,7 @@ impl SidebarLeft {
             grabbed: None,
             closing: false,
             lingering: false,
+            slides: 0,
             pinned_open,
             dropping: false,
             drop_gap: None,
@@ -218,6 +227,10 @@ impl SidebarLeft {
         }
     }
 
+    pub fn slides(&self) -> usize {
+        self.slides
+    }
+
     /// How wide the sidebar is when it shows, whether or not it shows now.
     pub fn breadth(&self) -> Pixels {
         match (self.closing, self.folded()) {
@@ -250,6 +263,7 @@ impl SidebarLeft {
     }
 
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
+        self.slides += 1;
         match self.cramped {
             true => self.forced = Some(!self.is_open()),
             false => {
@@ -494,7 +508,11 @@ impl SidebarLeft {
             .flex()
             .flex_none()
             .items_center()
-            .justify_between()
+            // On the rail the toggle stands alone, centred like the icons above it.
+            .map(|header| match folded {
+                true => header.justify_center(),
+                false => header.justify_between(),
+            })
             .w_full()
             .min_w_0()
             .when(!folded, |header| {
@@ -732,10 +750,13 @@ impl SidebarLeft {
 
         row.lit(active, accent)
             .when(active, |button| button.aria_selected(true))
-            .on_click(move |_, _, cx| match destination.in_settings() {
-                true => open_settings(cx),
-                false => navigate(destination.clone(), cx),
-            })
+            .on_click(
+                move |_, window, cx| match (entry, destination.in_settings()) {
+                    (NavEntry::Search, _) => window.dispatch_action(Box::new(OpenSearch), cx),
+                    (_, true) => open_settings(cx),
+                    (_, false) => navigate(destination.clone(), cx),
+                },
+            )
             .into_any_element()
     }
 
@@ -823,11 +844,16 @@ impl Render for SidebarLeft {
 
         let overlaid = self.overlays();
         let rail = self.folded();
+        // The rail is too narrow to give the bar a strip of its own, so there it only marks
+        // where the rows are while they scroll.
+        self.scrollbar
+            .update(cx, |scrollbar, cx| scrollbar.set_passive(rail, cx));
         // The edge drags past the rail to zero, so a drag can close the sidebar.
         let panel = Panel::new("sidebar-left", Side::Left, self.breadth())
             .limits(Pixels::ZERO, MAX_WIDTH)
             .reach(self.ceiling(window, cx))
             .grip_above(super::Chrome::bottom(cx))
+            .clears_scrollbar(!rail)
             .on_resize(cx.listener(|this, width: &Pixels, _, cx| this.resize(*width, cx)))
             .on_drag_move(cx.listener(|this, _: &DragMoveEvent<DraggedPin>, _, cx| {
                 if this.dropping {
@@ -856,7 +882,7 @@ impl Render for SidebarLeft {
                 cx.notify();
             }))
             .when(!self.is_open() && !self.lingering, |this| this.hidden())
-            .when(!theme.transparent, |this| this.bg(sidebar_bg))
+            .bg(sidebar_bg)
             // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
             // the page and keeps its own.
             .border_color(match overlaid {
@@ -880,6 +906,17 @@ impl Render for SidebarLeft {
                             // The rows start right under the title bar, so they fade out there
                             // as they scroll away instead of being cut off at its edge.
                             .fade_scrolled(theme.metrics.inset)
+                            // Above an opaque player bar they end at its edge, so they fade out
+                            // there too. A translucent one lets them pass under it instead.
+                            .fade_remaining(match super::Chrome::bottom(cx) > Pixels::ZERO {
+                                true => Pixels::ZERO,
+                                false => theme.metrics.inset,
+                            })
+                            // Under a floating island the page fades out at its foot, and the
+                            // rows beside it fade there the way they do at the top.
+                            .when(super::PlayerBar::floating(window, cx), |this| {
+                                this.fade_bottom(theme.metrics.inset)
+                            })
                             .size_full()
                             .child(
                                 div()
@@ -903,13 +940,8 @@ impl Render for SidebarLeft {
                             ),
                     )
                     .children(
-                        ui::return_top("sidebar-return-top", &self.scrollbar, cx).map(|perch| {
-                            match super::Chrome::bottom(cx) > Pixels::ZERO {
-                                true => perch
-                                    .bottom(super::Chrome::bottom(cx) + theme.metrics.pad * 1.5),
-                                false => perch,
-                            }
-                        }),
+                        ui::return_top("sidebar-return-top", &self.scrollbar, cx)
+                            .map(|perch| super::Chrome::sidebar_perch(perch, cx)),
                     ),
             )
             .children(self.menu(cx));

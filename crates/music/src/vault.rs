@@ -9,7 +9,7 @@
 //! file readable by the owner alone in the data folder the downloads share. There, copying the
 //! whole data folder carries the key along with the downloads.
 //!
-//! What goes in is what the provider sent, before its [`Body`](crate::stream::Body) touched it.
+//! What goes in is what the provider sent, before its [`Body`](sound::stream::Body) touched it.
 //! A Deezer track stays striped with Blowfish inside the vault, so its decrypted audio still
 //! never reaches the disk. An Apple Music track stays under Widevine and is licensed again on
 //! every play, so peeling off the vault's layer leaves nothing easier to play than the stream
@@ -49,9 +49,8 @@ use bytes::Bytes;
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hkdf, hmac};
+use sound::stream::Source;
 use tokio::sync::watch;
-
-use crate::stream::Source;
 
 /// How much of a track one sealed chunk holds. Big enough that the tags cost nothing, small
 /// enough that a damaged chunk is found long before the decoder needs it.
@@ -199,7 +198,7 @@ impl Vault {
     /// gets what Sonora's own entries leave of it, and at least half, so the oldest of those
     /// entries are evicted here when they take more. The share is fixed for the session, so a
     /// new limit reaches the player at its next sign-in.
-    pub(crate) fn foreign(player: &str) -> Option<(PathBuf, u64)> {
+    pub fn foreign(player: &str) -> Option<(PathBuf, u64)> {
         if !KEEPING.load(Ordering::Relaxed) {
             return None;
         }
@@ -220,7 +219,7 @@ impl Vault {
     /// Registers a running player that keeps its own files, with `clear` emptying its folder
     /// through the player so its own count of what it keeps stays true. `clear` answers false
     /// once the player is gone. A later registration for the same player replaces this one.
-    pub(crate) fn adopt(player: &'static str, clear: impl Fn() -> bool + Send + Sync + 'static) {
+    pub fn adopt(player: &'static str, clear: impl Fn() -> bool + Send + Sync + 'static) {
         let mut players = PLAYERS.lock().unwrap_or_else(|held| held.into_inner());
         players.retain(|(name, _)| *name != player);
         players.push((player, Box::new(clear)));
@@ -277,7 +276,7 @@ impl Vault {
 
     /// The part of the vault one provider keeps its tracks in. `provider` names its folder and
     /// goes into every key, so no provider can open another's entries.
-    pub(crate) fn shelf(self: &Arc<Self>, provider: &'static str) -> Shelf {
+    pub fn shelf(self: &Arc<Self>, provider: &'static str) -> Shelf {
         Shelf {
             vault: self.clone(),
             provider,
@@ -416,7 +415,7 @@ impl fmt::Debug for Shelf {
 
 impl Shelf {
     /// The same shelf for ids that are only unique within `scope`.
-    pub(crate) fn within(mut self, scope: impl Into<String>) -> Self {
+    pub fn within(mut self, scope: impl Into<String>) -> Self {
         self.scope = scope.into();
         self
     }
@@ -424,13 +423,13 @@ impl Shelf {
     /// The same shelf with downloads kept as plain audio files another player opens. Only for a
     /// provider whose bytes carry no protection of their own, since a plain download is exactly
     /// what the provider sent.
-    pub(crate) fn plain(mut self) -> Self {
+    pub fn plain(mut self) -> Self {
         self.plain = true;
         self
     }
 
     /// Whether downloads on this shelf are kept as plain files.
-    pub(crate) fn keeps_plain(&self) -> bool {
+    pub fn keeps_plain(&self) -> bool {
         self.plain
     }
 
@@ -442,7 +441,7 @@ impl Shelf {
     /// `variant` is whatever changes the bytes for the same id, such as the quality asked for.
     /// A download is found whatever the variant, since the listener asked for that copy. A
     /// lookup made while the vault is still unlocking waits for it, up to [`UNLOCK_WAIT`].
-    pub(crate) async fn find(&self, id: &str, variant: &str) -> Option<Kept> {
+    pub async fn find(&self, id: &str, variant: &str) -> Option<Kept> {
         if let Some(kept) = self.find_plain(id) {
             return Some(kept);
         }
@@ -481,7 +480,7 @@ impl Shelf {
     /// A track being downloaded goes to the downloads, and any other to the cache while caching
     /// is on. The source passes through untouched whatever happens to the vault. A disk that
     /// refuses the entry only means the track is not kept.
-    pub(crate) fn keep<S: Source>(
+    pub fn keep<S: Source>(
         &self,
         id: &str,
         variant: &str,
@@ -505,7 +504,7 @@ impl Shelf {
 
     /// Keeps a whole track that arrived in one piece as a download, with the provider's `facts`
     /// beside it.
-    pub(crate) fn pin(&self, id: &str, facts: Vec<u8>, bytes: &[u8]) -> Result<()> {
+    pub fn pin(&self, id: &str, facts: Vec<u8>, bytes: &[u8]) -> Result<()> {
         let mut pending = self
             .begin(Place::Pinned, id, "", Box::new(move || Some(facts)))?
             .context("the vault is locked")?;
@@ -515,27 +514,27 @@ impl Shelf {
 
     /// The download of track `id`, ready to be read anywhere in it, for a player that seeks in
     /// the file itself.
-    pub(crate) fn open_pinned(&self, id: &str) -> Option<(Vec<u8>, StoredReader)> {
+    pub fn open_pinned(&self, id: &str) -> Option<(Vec<u8>, StoredReader)> {
         let kept = self.find_download(id)?;
         Some((kept.facts, kept.source.into_reader(kept.length)))
     }
 
     /// Marks track `id` as being downloaded, so the next fetch of it is kept as a download.
     /// `label` names the file when the download is plain, and `None` names it after a hash.
-    pub(crate) fn want(&self, id: &str, label: Option<String>) {
+    pub fn want(&self, id: &str, label: Option<String>) {
         self.vault
             .wanted()
             .insert((self.provider, id.to_owned()), label);
     }
 
     /// Ends what [`want`](Self::want) started.
-    pub(crate) fn unwant(&self, id: &str) {
+    pub fn unwant(&self, id: &str) {
         self.vault.wanted().remove(&(self.provider, id.to_owned()));
     }
 
     /// Whether track `id` has been downloaded. It answers no while the vault is still unlocking,
     /// so an engine calls [`settle`](Self::settle) first.
-    pub(crate) fn holds(&self, id: &str) -> bool {
+    pub fn holds(&self, id: &str) -> bool {
         self.plain_file(id).is_some() || self.holds_sealed(id)
     }
 
@@ -550,14 +549,14 @@ impl Shelf {
     /// Whether track `id` is still sealed on a shelf that keeps plain files, as a download made
     /// before the shelf did is, so [`unseal`](Self::unseal) has something to do. It answers no
     /// while the vault is locked.
-    pub(crate) fn sealed_download(&self, id: &str) -> bool {
+    pub fn sealed_download(&self, id: &str) -> bool {
         self.plain && self.holds_sealed(id)
     }
 
     /// Rewrites a sealed download of track `id` as a plain file named after `label`, and removes
     /// the sealed copy once the plain one is in place. It reads and writes the whole track, so it
     /// runs on a blocking thread.
-    pub(crate) fn unseal(&self, id: &str, label: Option<String>) -> Result<()> {
+    pub fn unseal(&self, id: &str, label: Option<String>) -> Result<()> {
         if !self.plain {
             return Ok(());
         }
@@ -584,17 +583,17 @@ impl Shelf {
 
     /// Whether track `id` has been downloaded, or may have been since the vault is still
     /// unlocking and cannot tell yet.
-    pub(crate) fn may_hold(&self, id: &str) -> bool {
+    pub fn may_hold(&self, id: &str) -> bool {
         self.vault.unlocking() || self.holds(id)
     }
 
     /// Waits up to [`UNLOCK_WAIT`] for the vault to have its key or give up on it.
-    pub(crate) async fn settle(&self) {
+    pub async fn settle(&self) {
         self.vault.ready().await;
     }
 
     /// Removes the download of track `id`.
-    pub(crate) fn discard(&self, id: &str) {
+    pub fn discard(&self, id: &str) {
         self.discard_plain(id);
         let Some(prk) = self.vault.keys.get() else {
             return;
@@ -932,19 +931,19 @@ impl Shelf {
 }
 
 /// A kept track, ready to be played again.
-pub(crate) struct Kept {
+pub struct Kept {
     /// What the provider stored beside the track when it was kept.
-    pub(crate) facts: Vec<u8>,
+    pub facts: Vec<u8>,
     /// The length of the track as the provider sent it.
-    pub(crate) length: u64,
+    pub length: u64,
     /// The track, chunk by chunk, as the provider sent it.
-    pub(crate) source: Stored,
+    pub source: Stored,
 }
 
 /// The bytes of a kept track, read a chunk at a time as the stream asks for them. A sealed
 /// chunk that fails to open removes the entry, so the next play downloads the track again. A
 /// plain download is read as it lies and never removed here.
-pub(crate) struct Stored {
+pub struct Stored {
     file: File,
     /// What opens each chunk, or `None` for a plain download.
     key: Option<LessSafeKey>,
@@ -972,7 +971,7 @@ impl Source for Stored {
 
 impl Stored {
     /// The same bytes read anywhere in them. `length` is how long the track is.
-    pub(crate) fn into_reader(self, length: u64) -> StoredReader {
+    pub fn into_reader(self, length: u64) -> StoredReader {
         StoredReader {
             file: self.file,
             key: self.key,
@@ -1011,7 +1010,7 @@ impl Stored {
 
 /// A kept track read anywhere in it. Every chunk but the last holds [`CHUNK`] bytes, so a
 /// position names its chunk directly, and the chunk last opened is held for the reads after it.
-pub(crate) struct StoredReader {
+pub struct StoredReader {
     file: File,
     /// What opens each chunk, or `None` for a plain download.
     key: Option<LessSafeKey>,
@@ -1026,7 +1025,7 @@ pub(crate) struct StoredReader {
 
 impl StoredReader {
     /// How long the track is.
-    pub(crate) fn length(&self) -> u64 {
+    pub fn length(&self) -> u64 {
         self.length
     }
 
@@ -1094,7 +1093,7 @@ impl Seek for StoredReader {
 }
 
 /// A source whose bytes are sealed into the vault as they pass through.
-pub(crate) struct Recording<S> {
+pub struct Recording<S> {
     source: S,
     /// The entry being written, until it is kept or given up on.
     pending: Option<Pending>,
@@ -1102,7 +1101,7 @@ pub(crate) struct Recording<S> {
 
 impl<S> Recording<S> {
     /// A source that passes through without keeping anything, for a provider with no shelf.
-    pub(crate) fn through(source: S) -> Self {
+    pub fn through(source: S) -> Self {
         Self {
             source,
             pending: None,

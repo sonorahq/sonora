@@ -26,11 +26,11 @@ use gpui::{
     App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
     WindowBounds, point, px, size,
 };
-use music::lyrics::LOCAL;
-use music::scrobble::Account;
+use lyrics::LOCAL;
 use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
+use scrobble::Account;
 use serde::{Deserialize, Serialize};
 use storage::Database;
 use ui::{
@@ -566,16 +566,19 @@ pub enum PlayerBarLayout {
     Classic,
     Centered,
     Compact,
+    /// A rounded pill that floats over the page instead of a bar across the window's foot.
+    Island,
 }
 
 impl PlayerBarLayout {
-    pub const ALL: [Self; 3] = [Self::Classic, Self::Centered, Self::Compact];
+    pub const ALL: [Self; 4] = [Self::Classic, Self::Centered, Self::Compact, Self::Island];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Classic => "classic",
             Self::Centered => "centered",
             Self::Compact => "compact",
+            Self::Island => "island",
         }
     }
 
@@ -585,6 +588,7 @@ impl PlayerBarLayout {
             Self::Classic => "settings-player-bar-classic",
             Self::Centered => "settings-player-bar-centered",
             Self::Compact => "settings-player-bar-compact",
+            Self::Island => "settings-player-bar-island",
         }
     }
 
@@ -593,6 +597,7 @@ impl PlayerBarLayout {
         match id {
             "centered" => Self::Centered,
             "compact" => Self::Compact,
+            "island" => Self::Island,
             _ => Self::Classic,
         }
     }

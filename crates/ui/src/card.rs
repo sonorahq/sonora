@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::Badge;
 use crate::artwork::cover_palette;
-use crate::artwork::{Artwork, Avatar, ROUNDED};
+use crate::artwork::{Artwork, Avatar};
 use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::Tails as _;
@@ -151,8 +151,10 @@ impl Card {
         let rem = window.rem_size();
         let line = |step: Text| px((theme.text(step) / px(1.) * LEADING).round());
 
-        snapped(
-            art + rem * 0.5 + line(Text::Body) + TIGHT + line(Text::Small),
+        // The cover is added unsnapped, so a cover that grows smoothly grows the tile with it
+        // instead of in whole steps that move every row under it.
+        art + snapped(
+            rem * 0.5 + line(Text::Body) + TIGHT + line(Text::Small),
             window,
         )
     }
@@ -414,6 +416,12 @@ impl RenderOnce for Card {
         let art = art
             .or(tile)
             .unwrap_or_else(|| snapped(height - inset * 2., window));
+        // How round the cover is, which the scrim over it and a glance card around it follow.
+        let corner = match (circle, art_radius) {
+            (true, _) => art / 2.,
+            (false, Some(radius)) => radius,
+            (false, None) => Artwork::rounding(cx),
+        };
         let mut hovered = match (hovered, fill) {
             (Some(style), _) => Some(style),
             (None, true) => Some(StyleRefinement::default().bg(theme.table_hover)),
@@ -501,11 +509,6 @@ impl RenderOnce for Card {
                             .into_any_element()
                     }
                     None => {
-                        let corner = match (circle, art_radius) {
-                            (true, _) => art / 2.,
-                            (false, Some(radius)) => radius,
-                            (false, None) => theme.radius.min(ROUNDED),
-                        };
                         let size = px((art / px(1.) * SCRIM_RATIO).round()).max(SCRIM_MIN);
 
                         div()
@@ -662,9 +665,12 @@ impl RenderOnce for Card {
                     })
                 },
             )
-            .rounded(match tucked {
-                true => crate::metrics::tucked(theme.radius, window),
-                false => theme.radius,
+            .rounded(match (tucked, glance) {
+                (true, _) => crate::metrics::tucked(theme.radius, window),
+                // A glance card is its cover with half the inset round it, so its corners run
+                // alongside the cover's.
+                (false, true) => corner + inset / 2.,
+                (false, false) => theme.radius,
             })
             .when(listed && !glance, |this| {
                 this.flex_none().h(height).py(inset).w_full().min_w_0()

@@ -217,3 +217,5 @@ toast-sample-save-failed = { $name }을(를) 저장하지 못했습니다.
 toast-sample-save-failed-detail = 서버에서 503 Service Unavailable 응답을 보냈습니다.
 toast-sample-lasting = 이 알림은 직접 닫을 때까지 유지됩니다.
 toast-sample-burst = 알림 번호 { $name }
+toast-scrobble-key-refused = { $name }에서 API 키를 거부했습니다.
+toast-scrobble-key-refused-note = 2026년 12월 1일부터 Last.fm은 Last.fm Pro 계정만 지원합니다.

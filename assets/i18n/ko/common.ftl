@@ -164,7 +164,7 @@ filter-streaming-only = 스트리밍만
 
 # view
 view-list = 목록
-view-cards = 그리드
+view-cards = 바둑판식
 
 # toolbar
 tool-sort = 정렬

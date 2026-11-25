@@ -100,6 +100,9 @@ pub struct Button {
     /// A small element drawn after the icon and before the label, as a picker's curve sketch.
     leading: Option<AnyElement>,
     detail: Option<SharedString>,
+    /// A small element drawn where the muted detail goes, as the marks of the services a row
+    /// stands for.
+    aside: Option<AnyElement>,
     trailing: Option<SharedString>,
     variant: Variant,
     small: bool,
@@ -154,6 +157,7 @@ impl Button {
             icon: None,
             leading: None,
             detail: None,
+            aside: None,
             trailing: None,
             variant: Variant::Ghost,
             small: false,
@@ -238,6 +242,14 @@ impl Button {
     /// that opens a page of its own says what is chosen there.
     pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    /// An element shown after the label and before the trailing icon, where `detail` would
+    /// stand. It is drawn only, so a caller whose element means something says so to screen
+    /// readers with `aria_description`.
+    pub fn aside(mut self, aside: impl IntoElement) -> Self {
+        self.aside = Some(aside.into_any_element());
         self
     }
 
@@ -487,6 +499,7 @@ impl RenderOnce for Button {
             icon,
             leading,
             detail,
+            aside,
             trailing,
             variant,
             small,
@@ -541,6 +554,7 @@ impl RenderOnce for Button {
             && reserve.is_empty()
             && leading.is_none()
             && detail.is_none()
+            && aside.is_none()
             && sized_by_content(base.style());
 
         let theme = cx.theme();
@@ -819,9 +833,10 @@ impl RenderOnce for Button {
             })
             .rounded(radius)
             // Mid-resize the box is narrower or wider than what it holds, so the content keeps
-            // its own width from the leading edge and the box clips it as it grows. It leaves the
-            // pixel grid while it springs, so its edge glides instead of stepping a pixel at a
-            // time, and only its width keeps a fraction.
+            // its own width from the leading edge and the box clips it as it grows, all but a
+            // trailing icon, which rides the trailing edge so it stays put beside a button
+            // pinned there. It leaves the pixel grid while it springs, so its edge glides instead
+            // of stepping a pixel at a time, and only its width keeps a fraction.
             .when_some(resizing, |this, width| {
                 this.w(width)
                     .h(window.pixel_snap(height))
@@ -955,12 +970,31 @@ impl RenderOnce for Button {
                         ),
                     )
                 }
+                // Mid-resize a trailing icon holds to the trailing edge, so the label takes what
+                // room is left before it and is cut there without an ellipsis, which would flicker
+                // as the room grows. The label leaves the pixel grid the box leaves only across:
+                // text off it both ways is drawn unhinted on a fractional baseline and would drop
+                // as the box starts to move and jump back as it lands.
                 None => this.child(
                     div()
                         .min_w_0()
-                        .truncate()
-                        .when(trailing.is_some() || detail.is_some(), |this| this.flex_1())
-                        .when(resizing.is_some(), |this| this.flex_none())
+                        .when_else(
+                            resizing.is_some(),
+                            |this| {
+                                this.overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .pixel_snap(true)
+                                    .pixel_snap_x(false)
+                            },
+                            |this| this.truncate(),
+                        )
+                        .when(
+                            trailing.is_some() || detail.is_some() || aside.is_some(),
+                            |this| this.flex_1(),
+                        )
+                        .when(resizing.is_some() && trailing.is_none(), |this| {
+                            this.flex_none()
+                        })
                         .child(label),
                 ),
             })
@@ -974,6 +1008,9 @@ impl RenderOnce for Button {
                         .text_color(theme.muted_foreground)
                         .child(detail),
                 )
+            })
+            .when_some(aside, |this, aside| {
+                this.child(div().flex_none().flex().items_center().child(aside))
             })
             .when_some(trailing, |this, path| {
                 this.child(

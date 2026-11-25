@@ -96,9 +96,9 @@ fn main() -> ExitCode {
     if state::start_staged(!args.is_empty()) {
         return ExitCode::SUCCESS;
     }
-    // reqwest is built without a crypto provider, and opensubsonic still compiles aws-lc-rs in
-    // beside ring, so rustls cannot pick one by itself. Every client uses ring from here on. A
-    // second install only means another crate got there first.
+    // reqwest is built without a crypto provider, so a client built before this line panics.
+    // Every client uses ring from here on. A second install only means another crate got there
+    // first.
     rustls::crypto::ring::default_provider()
         .install_default()
         .ok();
@@ -129,35 +129,37 @@ fn main() -> ExitCode {
 
         let database = storage::Database::standard();
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
-            Arc::new(music::spotify::SpotifyProvider::from_env()),
-            Arc::new(music::apple::AppleProvider::new()),
-            Arc::new(music::youtube::YouTubeProvider::new()),
-            Arc::new(music::subsonic::SubsonicProvider::new()),
-            Arc::new(music::jellyfin::JellyfinProvider::new()),
-            Arc::new(music::plex::PlexProvider::new()),
-            Arc::new(music::deezer::DeezerProvider::new()),
-            Arc::new(music::tidal::TidalProvider::new()),
+            Arc::new(spotify::SpotifyProvider::from_env()),
+            Arc::new(apple::AppleProvider::new()),
+            Arc::new(youtube::YouTubeProvider::new()),
+            Arc::new(subsonic::SubsonicProvider::new()),
+            Arc::new(jellyfin::JellyfinProvider::new()),
+            Arc::new(plex::PlexProvider::new()),
+            Arc::new(deezer::DeezerProvider::new()),
+            Arc::new(tidal::TidalProvider::new()),
         ];
-        let local_provider: Arc<dyn music::MusicProvider> =
-            Arc::new(music::local::LocalProvider::new(
-                dirs::cache_dir()
-                    .unwrap_or_else(std::env::temp_dir)
-                    .join("sonora"),
-                database.clone(),
-                storage::Cache::standard(),
-            ));
+        let local_provider: Arc<dyn music::MusicProvider> = Arc::new(local::LocalProvider::new(
+            dirs::cache_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("sonora"),
+            database.clone(),
+            storage::Cache::standard(),
+        ));
+        let lyrics_http = reqwest::Client::new();
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
-            Arc::new(music::local::LocalLyrics),
-            Arc::new(music::subsonic::SubsonicLyrics::new()),
-            Arc::new(music::jellyfin::JellyfinLyrics::new()),
-            Arc::new(music::plex::PlexLyrics::new()),
-            Arc::new(music::spotify::SpotifyLyrics::from_env()),
-            Arc::new(music::youtube::YouTubeLyrics::new()),
-            Arc::new(music::binimum::Binimum::new()),
-            Arc::new(music::musixmatch::Musixmatch::new()),
-            Arc::new(music::lrclib::LrcLib::new()),
-            Arc::new(music::kugou::Kugou::new()),
-            Arc::new(music::netease::NetEase::new()),
+            Arc::new(local::LocalLyrics),
+            Arc::new(subsonic::SubsonicLyrics::new()),
+            Arc::new(jellyfin::JellyfinLyrics::new()),
+            Arc::new(plex::PlexLyrics::new()),
+            Arc::new(spotify::SpotifyLyrics::from_env()),
+            Arc::new(youtube::YouTubeLyrics::new()),
+            Arc::new(lyric_sources::lrcred::LrcRed::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::musixmatch::Musixmatch::new(
+                lyrics_http.clone(),
+            )),
+            Arc::new(lyric_sources::lrclib::LrcLib::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::kugou::Kugou::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::netease::NetEase::new(lyrics_http)),
         ];
         state::init(cx, io, database, providers, local_provider, lyrics);
         #[cfg(target_os = "windows")]

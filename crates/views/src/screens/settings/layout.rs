@@ -5,7 +5,7 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div, px};
+use gpui::{AnyElement, App, Div, Entity, Global, Pixels, SharedString, Window, div, px};
 use router::{Destination, SettingsPage};
 use ui::{ActiveTheme as _, Button, Room, Scrollbar, Scroller, effects, heading};
 
@@ -28,6 +28,15 @@ pub(crate) struct Layout {
     pub(crate) top: Pixels,
     /// Whether the header has measured itself yet. Until it has, `top` is a guess.
     pub(crate) measured: bool,
+}
+
+/// What a page's title says and what stands at its end, both optional.
+#[derive(Default)]
+pub(crate) struct Heading {
+    /// The title in place of the page's own name, as while a search shows its results.
+    pub(crate) named: Option<SharedString>,
+    /// What stands at the title's end, as the switch that turns the page's feature on.
+    pub(crate) trailing: Option<AnyElement>,
 }
 
 /// The header's height as it last measured itself.
@@ -89,8 +98,14 @@ impl Layout {
 }
 
 /// The top of a page: the back link to the tab a drill-in opened from, and the title, which is
-/// `named` when given and otherwise the name of the tab's first page or the drill-in's own.
-fn title(destination: &Destination, named: Option<SharedString>, cx: &App) -> Div {
+/// `named` when given and otherwise the name of the tab's first page or the drill-in's own,
+/// with `trailing` at its end, as the switch that turns the page's feature on.
+fn title(
+    destination: &Destination,
+    named: Option<SharedString>,
+    trailing: Option<AnyElement>,
+    cx: &App,
+) -> Div {
     let theme = cx.theme();
     let (parent, page) = match destination {
         Destination::Equalizer => (Some(SettingsPage::Sound), "settings-equalizer"),
@@ -117,21 +132,26 @@ fn title(destination: &Destination, named: Option<SharedString>, cx: &App) -> Di
         }))
         .child(headline(
             named.unwrap_or_else(|| i18n::lookup(page, None)),
+            trailing,
             cx,
         ))
 }
 
-/// The title a later page of a tab opens on, as large as the tab's own.
-pub(crate) fn section_title(page: SettingsPage, cx: &App) -> Div {
-    headline(i18n::lookup(page.key(), None), cx)
+/// The title a later page of a tab opens on, as large as the tab's own, with `trailing` at its
+/// end.
+pub(crate) fn section_title(page: SettingsPage, trailing: Option<AnyElement>, cx: &App) -> Div {
+    headline(i18n::lookup(page.key(), None), trailing, cx)
 }
 
 /// A page's large title, standing as tall as a field, and the top heading screen readers find on
-/// the page.
-fn headline(label: SharedString, cx: &App) -> Div {
+/// the page, with `trailing` at the far end of its line.
+fn headline(label: SharedString, trailing: Option<AnyElement>, cx: &App) -> Div {
     div()
+        .w_full()
         .flex()
         .items_center()
+        .justify_between()
+        .gap_4()
         .h(cx.theme().metrics.field)
         .child(
             heading(label.clone(), cx)
@@ -140,15 +160,17 @@ fn headline(label: SharedString, cx: &App) -> Div {
                 .aria_level(1)
                 .aria_label(label),
         )
+        .children(trailing)
 }
 
 /// Lays a settings page out in its column, centred in the content area: the title, then `body`,
 /// scrolling together from just under the floating header, into which they dissolve.
-/// `destination` names the page for its title unless `named` gives one. The page sits out the
-/// frames before the header has measured itself, so it never jumps.
+/// `destination` names the page for its title unless `heading` names it, and the heading's
+/// trailing element stands at the title's end. The page sits out the frames before the header has
+/// measured itself, so it never jumps.
 pub(crate) fn frame(
     destination: &Destination,
-    named: Option<SharedString>,
+    heading: Heading,
     id: &'static str,
     scrollbar: &Entity<Scrollbar>,
     body: impl IntoElement,
@@ -166,7 +188,10 @@ pub(crate) fn frame(
         .when(!layout.measured, |page| page.invisible())
         .child(
             layout
-                .fade(Scroller::new(id, scrollbar).bottom_inset(crate::chrome::Chrome::bottom(cx)))
+                .fade(
+                    Scroller::new(id, scrollbar)
+                        .bottom_inset(crate::chrome::Chrome::track_bottom(cx)),
+                )
                 .flex()
                 .flex_col()
                 .items_center()
@@ -178,7 +203,10 @@ pub(crate) fn frame(
                         .w(layout.width)
                         .pt(layout.top)
                         .pb(theme.metrics.inset * 2.)
-                        .child(title(destination, named, cx).mb(theme.metrics.inset))
+                        .child(
+                            title(destination, heading.named, heading.trailing, cx)
+                                .mb(theme.metrics.inset),
+                        )
                         .child(body),
                 ),
         )

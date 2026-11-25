@@ -547,7 +547,7 @@ impl Devices {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect() && !music::soloist::ready();
+        let wanted = settings.spotify_connect() && !soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,

@@ -60,7 +60,7 @@ pub fn interrupted() -> bool {
 
 /// Marks a scan as running until the returned guard is dropped, which happens however the scan
 /// ends, panic included.
-pub(crate) fn start() -> Scan {
+pub fn start() -> Scan {
     let id = CURRENT.fetch_add(1, Ordering::Relaxed) + 1;
     FOUND.store(0, Ordering::Relaxed);
     READ.store(0, Ordering::Relaxed);
@@ -70,7 +70,7 @@ pub(crate) fn start() -> Scan {
     Scan { id }
 }
 
-pub(crate) struct Scan {
+pub struct Scan {
     id: u64,
 }
 

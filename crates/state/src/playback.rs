@@ -733,7 +733,7 @@ impl Playback {
         cx.on_app_quit(|this, _| {
             this.task = None;
             this.engine = None;
-            music::soloist::stopped()
+            soloist::stopped()
         })
         .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
@@ -3751,12 +3751,12 @@ impl Playback {
                  this session"
             );
         }
-        let note = match music::soloist::ready() {
+        let note = match soloist::ready() {
             true => "toast-soloist-refused",
             false => "toast-keys-refused",
         };
         let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
-        let toast = match music::soloist::supported() {
+        let toast = match soloist::supported() {
             true => toast.lead("soloist-setup-title", Target::PlaybackSettings, |cx| {
                 let soloist = Sonora::global(cx).soloist.clone();
                 soloist.update(cx, |soloist, cx| soloist.begin(cx));

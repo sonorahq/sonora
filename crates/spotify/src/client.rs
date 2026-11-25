@@ -1,0 +1,381 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use anyhow::{Context as _, Result};
+use async_trait::async_trait;
+use librespot_core::Session;
+use librespot_protocol::playlist4_external::SelectedListContent as RootList;
+use music::connect::Connect;
+use music::{
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, RadioSeed,
+    SUGGESTIONS, SavedArtist, Track, UserDetail, UserProfile,
+};
+use music::{MediaKind, MusicApi, escape};
+use protobuf::Message as _;
+
+use crate::{
+    albums, artists, collection, collection2, pathfinder, playlists, profiles, radio, search, wire,
+};
+
+const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
+
+pub struct LibrespotClient {
+    session: Session,
+    connect: Arc<Connect>,
+}
+
+impl LibrespotClient {
+    pub fn new(session: Session) -> Self {
+        let connect = Arc::new(crate::connect::open(session.clone()));
+        Self { session, connect }
+    }
+
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+}
+
+#[async_trait]
+impl MusicApi for LibrespotClient {
+    fn alive(&self) -> bool {
+        !self.session.is_invalid()
+    }
+
+    fn connect(&self) -> Option<Arc<Connect>> {
+        Some(self.connect.clone())
+    }
+
+    fn cover_at(&self, cover: &str, size: CoverSize) -> Option<String> {
+        wire::cover_at(cover, size)
+    }
+
+    fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
+        let kind = match kind {
+            MediaKind::Track => "track",
+            MediaKind::Album => "album",
+            MediaKind::Artist => "artist",
+            MediaKind::Playlist => "playlist",
+        };
+        Some(format!(
+            "https://open.spotify.com/{kind}/{}",
+            escape::component(id)
+        ))
+    }
+
+    async fn profile(&self) -> Result<UserProfile> {
+        Ok(profiles::own(&self.session).await)
+    }
+
+    async fn user(&self, user_id: &str) -> Result<UserDetail> {
+        profiles::profile(&self.session, user_id).await
+    }
+
+    async fn artist(&self, artist_id: &str) -> Result<Artist> {
+        artists::artist(&self.session, artist_id).await
+    }
+
+    async fn artist_catalogue(&self, artist_id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
+        artists::catalogue(&self.session, artist_id, known.to_vec()).await
+    }
+
+    async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
+        artists::tracks(&self.session, artist_id).await
+    }
+
+    async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
+        artists::profile(&self.session, artist_id).await
+    }
+
+    async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>> {
+        artists::images(&self.session, &ids).await
+    }
+
+    async fn saved_tracks(&self) -> Result<Vec<Track>> {
+        collection::saved_tracks(&self.session).await
+    }
+
+    async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
+        collection2::set_track_saved(&self.session, track_id, saved).await
+    }
+
+    async fn track(&self, track_id: &str) -> Result<Track> {
+        collection::track(&self.session, track_id).await
+    }
+
+    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>> {
+        pathfinder::track(&self.session, track_id).await
+    }
+
+    async fn saved_albums(&self) -> Result<Vec<Album>> {
+        albums::saved_albums(&self.session).await
+    }
+
+    async fn set_album_saved(&self, album_id: &str, saved: bool) -> Result<()> {
+        collection2::set_album_saved(&self.session, album_id, saved).await
+    }
+
+    async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
+        artists::saved_artists(&self.session).await
+    }
+
+    async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()> {
+        collection2::set_artist_saved(&self.session, artist_id, saved).await
+    }
+
+    async fn album(&self, album_id: &str) -> Result<AlbumDetail> {
+        albums::album(&self.session, album_id).await
+    }
+
+    async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>> {
+        albums::album_tracks(&self.session, album_id).await
+    }
+
+    /// The artist's own releases without the album the page is already showing. Similar
+    /// artists stay out: the internal queries are persisted by hash, so nothing here can
+    /// ask for a relationship the official client never registered.
+    async fn album_catalogue(
+        &self,
+        album_id: &str,
+        artist_id: Option<&str>,
+    ) -> Result<AlbumCatalogue> {
+        let Some(artist_id) = artist_id else {
+            return Ok(AlbumCatalogue::default());
+        };
+        let mut also_like = artists::discography(&self.session, artist_id)
+            .await
+            .with_context(|| format!("cannot load more from artist {artist_id}"))?;
+        also_like.retain(|album| album.id != album_id);
+        also_like.truncate(SUGGESTIONS);
+        Ok(AlbumCatalogue {
+            also_like,
+            similar: Vec::new(),
+        })
+    }
+
+    async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        let mut detail = playlists::playlist(&self.session, playlist_id).await?;
+        let owner = detail.playlist.owner_id.clone();
+        if !owner.is_empty() {
+            let names =
+                profiles::display_names(&self.session, HashSet::from([owner.clone()])).await;
+            if let Some(name) = names.get(&owner) {
+                detail.playlist.owner = name.clone();
+            }
+        }
+        Ok(detail)
+    }
+
+    async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
+        playlists::covers(&self.session, playlist_id, wanted).await
+    }
+
+    async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        playlists::playlist_tracks(&self.session, playlist_id).await
+    }
+
+    async fn track_radio(
+        &self,
+        track_id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        Ok((radio::track_radio(&self.session, track_id).await?, None))
+    }
+
+    async fn collection_radio(
+        &self,
+        seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        Ok((
+            radio::collection_radio(&self.session, seed, id).await?,
+            None,
+        ))
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<Track>> {
+        search::search(&self.session, query).await
+    }
+
+    async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
+        pathfinder::search_albums(&self.session, query).await
+    }
+
+    async fn search_artists(&self, query: &str) -> Result<Vec<SavedArtist>> {
+        pathfinder::search_artists(&self.session, query).await
+    }
+
+    async fn search_playlists(&self, query: &str) -> Result<Vec<Playlist>> {
+        pathfinder::search_playlists(&self.session, query).await
+    }
+
+    /// Spotify's own home feed followed by the Made For You shelves it leaves out, such as On
+    /// Repeat and Blends. Either half alone still makes a page, and the call fails only when
+    /// both do.
+    async fn home(&self) -> Result<HomeFeed> {
+        let (home, made) = tokio::join!(
+            pathfinder::home(&self.session),
+            pathfinder::genre(&self.session, MADE_FOR_YOU),
+        );
+        let mut feed = home.unwrap_or_else(|error| {
+            log::warn!("home: cannot load the Spotify feed: {error:#}");
+            HomeFeed::default()
+        });
+        match made {
+            Ok(made) => appended(&mut feed, made.sections),
+            Err(error) if feed.listen_again.is_empty() && feed.sections.is_empty() => {
+                return Err(error);
+            }
+            Err(error) => log::warn!("home: cannot load Made For You: {error:#}"),
+        }
+        playlists::name_blanks(&self.session, &mut feed.sections).await;
+
+        Ok(feed)
+    }
+
+    async fn genres(&self) -> Result<Vec<Genre>> {
+        pathfinder::genres(&self.session).await
+    }
+
+    async fn genre(&self, genre_id: &str) -> Result<GenreDetail> {
+        pathfinder::genre(&self.session, genre_id).await
+    }
+
+    async fn create_playlist(&self, name: &str) -> Result<String> {
+        playlists::create(&self.session, name).await
+    }
+
+    async fn rename_playlist(&self, playlist_id: &str, name: &str) -> Result<()> {
+        playlists::rename(&self.session, playlist_id, name).await
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        playlists::delete(&self.session, playlist_id).await
+    }
+
+    async fn remove_playlist_from_library(&self, playlist_id: &str) -> Result<()> {
+        playlists::remove_from_library(&self.session, playlist_id).await
+    }
+
+    async fn add_playlist_to_library(&self, playlist_id: &str) -> Result<()> {
+        playlists::add_to_library(&self.session, playlist_id).await
+    }
+
+    async fn set_playlist_public(&self, playlist_id: &str, public: bool) -> Result<()> {
+        playlists::set_public(&self.session, playlist_id, public).await
+    }
+
+    async fn set_playlist_cover(&self, playlist_id: &str, image: Option<&[u8]>) -> Result<()> {
+        playlists::set_cover(&self.session, playlist_id, image).await
+    }
+
+    async fn add_track_to_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        playlists::add_track(&self.session, playlist_id, track_id).await
+    }
+
+    async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        playlists::remove_track(&self.session, playlist_id, track_id).await
+    }
+
+    async fn reorder_playlist(
+        &self,
+        playlist_id: &str,
+        seen: &[String],
+        wanted: &[String],
+    ) -> Result<()> {
+        playlists::reorder(&self.session, playlist_id, seen, wanted).await
+    }
+
+    async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<music::PinOutcome> {
+        pathfinder::set_pinned(&self.session, uri, pinned).await
+    }
+
+    async fn pin_targets(&self) -> Result<Option<Vec<music::PinTarget>>> {
+        pathfinder::library(&self.session).await.map(Some)
+    }
+
+    async fn playlists(&self) -> Result<Vec<Playlist>> {
+        let mut playlists = Vec::new();
+        let mut offset = 0;
+        let mut seen = HashSet::new();
+        loop {
+            let body = playlists::rootlist_page(&self.session, offset, 300).await?;
+            let rootlist =
+                RootList::parse_from_bytes(&body).context("cannot decode the rootlist protobuf")?;
+            let count = rootlist.contents.items.len();
+            playlists.extend(
+                wire::playlists_from(&rootlist)
+                    .into_iter()
+                    .filter(|playlist| seen.insert(playlist.id.clone())),
+            );
+            offset += count;
+            if count == 0 || !rootlist.contents.truncated() {
+                break;
+            }
+        }
+
+        let owners = playlists
+            .iter()
+            .map(|playlist| playlist.owner_id.clone())
+            .filter(|owner| !owner.is_empty())
+            .collect();
+        let ids = playlists
+            .iter()
+            .map(|playlist| playlist.id.clone())
+            .collect();
+        let (names, stamps) = tokio::join!(
+            profiles::display_names(&self.session, owners),
+            playlists::modified(&self.session, ids)
+        );
+
+        for playlist in &mut playlists {
+            playlist.owned = playlist.owner_id == self.session.username();
+            if let Some(name) = names.get(&playlist.owner_id) {
+                playlist.owner = name.clone();
+            }
+            playlist.modified_at = stamps.get(&playlist.id).copied();
+        }
+
+        Ok(playlists)
+    }
+}
+
+/// Puts `sections` after the feed's own shelves, leaving out every item a shelf already shows
+/// and every shelf whose title is already on the page or that ends up empty.
+fn appended(feed: &mut HomeFeed, sections: Vec<GenreSection>) {
+    let mut titles: HashSet<String> = feed
+        .sections
+        .iter()
+        .map(|section| section.title.clone())
+        .collect();
+    let mut shown: HashSet<String> = feed
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(shelf_key)
+        .collect();
+    for mut section in sections {
+        if titles.contains(&section.title) {
+            continue;
+        }
+        section
+            .items
+            .retain(|item| shelf_key(item).is_none_or(|key| shown.insert(key)));
+        if !section.items.is_empty() {
+            titles.insert(section.title.clone());
+            feed.sections.push(section);
+        }
+    }
+}
+
+/// What tells two shelf items apart, unique across kinds.
+fn shelf_key(item: &GenreItem) -> Option<String> {
+    match item {
+        GenreItem::Playlist(playlist) => Some(format!("playlist:{}", playlist.id)),
+        GenreItem::Album(album) => Some(format!("album:{}", album.id)),
+        GenreItem::Genre(genre) => Some(format!("genre:{}", genre.id)),
+        GenreItem::Track(track) => track.id.as_ref().map(|id| format!("track:{id}")),
+        GenreItem::Artist(artist) => Some(format!("artist:{}", artist.id)),
+    }
+}

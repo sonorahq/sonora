@@ -1129,7 +1129,7 @@ fn lyrics_snapshot(
             snapshot.bounded(false, lines, None)
         }
         Sheet::Synced { lines } => {
-            let active = music::lyrics::active(lines, at);
+            let active = lyrics::active(lines, at);
             let lines = lines
                 .iter()
                 .map(|line| wire::LyricsLine {

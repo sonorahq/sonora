@@ -1,0 +1,24 @@
+[package]
+name = "youtube"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+engine.workspace = true
+futures.workspace = true
+log.workspace = true
+lyrics.workspace = true
+music.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sound.workspace = true
+tokio.workspace = true
+ytmusic.workspace = true
+
+[lints]
+workspace = true
