@@ -9,8 +9,8 @@ use gpui::accesskit::{Role, Toggled};
 use gpui::{
     Animation, AnimationExt as _, App, Bounds, Context, Div, DragMoveEvent, Entity, ExternalPaths,
     FontWeight, MouseDownEvent, MouseUpEvent, Pixels, Point, Render, ScrollHandle, SharedString,
-    Size, SpringConfig, SpringState, Task, UniformListScrollHandle, Window, canvas, div,
-    ease_in_out, px, relative, size, svg, uniform_list,
+    Size, SpringConfig, SpringState, StyledText, Task, UniformListScrollHandle, Window, canvas,
+    div, ease_in_out, px, relative, size, svg, uniform_list,
 };
 use i18n::t;
 use music::{Contributor, RadioSeed, Shape, Track, Voice};
@@ -22,9 +22,9 @@ use state::{
 };
 use ui::{
     ActiveTheme as _, Avatar, Button, Card, DraggedPin, Edge, Glowing as _, Initials, Motion,
-    Motioned as _, PREFETCH_REACH, Pin, Pinnable as _, Popup, Scrollbar, Scroller, Spot, Springs,
-    Tails as _, Text, Vacancy, drop_gap, drop_marker, ease_out_cubic, ease_out_expo, eyebrow,
-    faint, mix, prefetch, snapped, vacant,
+    Motioned as _, PREFETCH_REACH, Perch, Pin, Pinnable as _, Popup, Scrollbar, Scroller, Spot,
+    Springs, Tails as _, Text, Tipped as _, Vacancy, drop_gap, drop_marker, ease_out_cubic,
+    ease_out_expo, eyebrow, faint, mix, prefetch, snapped, vacant,
 };
 use unicode_bidi::{BidiClass, Direction};
 
@@ -2309,6 +2309,8 @@ fn track_place(sections: &Sections, position: QueuePosition) -> (usize, usize) {
 
 fn source_link(name: SharedString, to: Destination, cx: &App) -> impl IntoElement {
     let theme = *cx.theme();
+    let text = StyledText::new(name.clone());
+    let layout = text.layout().clone();
 
     div()
         .id("queue-source")
@@ -2324,7 +2326,8 @@ fn source_link(name: SharedString, to: Destination, cx: &App) -> impl IntoElemen
         .cursor_pointer()
         .hover(|style| style.underline())
         .link(to)
-        .child(name)
+        .child(text)
+        .tip_clipped(name, layout, Perch::Above)
         .glowed_text(theme.muted_foreground, theme.foreground)
 }
 
