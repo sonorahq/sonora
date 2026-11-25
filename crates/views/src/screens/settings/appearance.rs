@@ -776,7 +776,7 @@ pub(super) fn usable_fonts(text_system: std::sync::Arc<gpui::TextSystem>) -> Vec
 
     names
         .into_iter()
-        .filter(|name| !name.starts_with('.'))
+        .filter(|name| !name.starts_with('.') && name != crate::root::HANGUL_FONT)
         .map(SharedString::from)
         .collect()
 }

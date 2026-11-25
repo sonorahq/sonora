@@ -22,6 +22,7 @@ pinned in `Cargo.lock`.
 The binary embeds:
 
 - Inter — SIL Open Font License 1.1, `assets/fonts/LICENSE.txt`
+- Sonora Hangul, cut from Pretendard — SIL Open Font License 1.1, `assets/fonts/LICENSE.txt`
 - Lucide icons — ISC License, `assets/icons/lucide/LICENSE`
 - Iconoir — MIT License, `assets/icons/iconoir/LICENSE`
 - Remix Icon 4.8.0 — Apache License 2.0, `assets/icons/remix/LICENSE`

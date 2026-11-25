@@ -1120,8 +1120,12 @@ impl Root {
 }
 
 const UI_FONT: &str = "Inter";
+/// The embedded Hangul-only font that draws Korean. It has no Latin, so it is never offered as
+/// the interface font.
+pub(crate) const HANGUL_FONT: &str = "Sonora Hangul";
 
-const SCRIPTS: [&str; 18] = [
+const SCRIPTS: [&str; 19] = [
+    HANGUL_FONT,
     "Source Han Sans",
     "Noto Sans CJK JP",
     "Noto Sans CJK SC",
