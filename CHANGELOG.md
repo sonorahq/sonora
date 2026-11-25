@@ -58,6 +58,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening a menu no longer thickens the haze under the Settings header, so the page scrolling beneath it looks the same with the menu open as without.
 - A dropdown in Settings resizes to a newly picked option without shaking: its arrow and edge stay in place, and its text no longer jumps up and down.
 - The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
 - Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
