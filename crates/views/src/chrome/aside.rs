@@ -1536,7 +1536,7 @@ impl Aside {
                     };
                     // A risen letter keeps its height until the verse is left behind or its last
                     // word has rung out, whichever comes later, and then settles with the line.
-                    let rung_out = line.sung_end().map_or(1., |end| {
+                    let rung_out = own_sung_end(line).map_or(1., |end| {
                         progress_between(end, end + Motion::Control.span(), position)
                     });
                     let leaving = match shrinking {
@@ -1547,7 +1547,7 @@ impl Aside {
                         true => 1.,
                         false => (1. - ease_out_cubic(rung_out)).max(leaving),
                     };
-                    let sung_through = line.sung_end().is_some_and(|end| position >= end);
+                    let sung_through = own_sung_end(line).is_some_and(|end| position >= end);
                     let rise = match animations && worded && (primary_karaoke || sung_through) {
                         true => letter_rise(verse, window.scale_factor()) * settle,
                         false => px(0.),
@@ -2793,7 +2793,10 @@ struct Letters<'a> {
 }
 
 /// One letter of a karaoke row and how it stands at the current position.
+#[derive(Clone, Copy)]
 struct Mark {
+    /// Which word on screen it belongs to, counted along the row.
+    word: usize,
     /// Where the letter starts along the row.
     start: Pixels,
     /// Where the next letter starts, or the row ends.
@@ -2894,6 +2897,7 @@ fn risen_row(
             for cell in syllable_cell..syllable_cell + syllable_count {
                 let letter = cell - first_cell;
                 marks.push(Mark {
+                    word: at,
                     start: cells[cell].0 * sung.fit,
                     end: cells
                         .get(cell + 1)
@@ -2933,7 +2937,21 @@ fn risen_row(
     let tint = sung.karaoke_tint;
     let front = reveal.width.unwrap_or(row_width * reveal.share);
     let blur = verse * GLOW_BLUR;
-    let glyphs = marks.iter().zip(texts).map(|(mark, text)| {
+    // a right-to-left word is drawn whole, since its letters join across its syllables and
+    // shaping them one by one would break them apart
+    let mut pieces: Vec<(Mark, SharedString)> = Vec::with_capacity(marks.len());
+    for (mark, text) in marks.iter().zip(texts) {
+        match pieces.last_mut() {
+            Some((last, joined)) if rtl && last.word == mark.word => {
+                last.end = mark.end;
+                last.glow = last.glow.max(mark.glow);
+                last.grown = last.grown.max(mark.grown);
+                *joined = SharedString::from(format!("{joined}{text}"));
+            }
+            _ => pieces.push((*mark, text.clone())),
+        }
+    }
+    let glyphs = pieces.iter().map(|(mark, text)| {
         // a swollen letter is drawn at the size it has grown to rather than scaled as a layer,
         // which would soften it, and its box is the letter's own box at that size
         let drawn = match mark.grown > 0. {
@@ -3016,9 +3034,12 @@ fn risen(word: Div, rise: Pixels, above: Pixels) -> Div {
 }
 
 /// Raises an element in the flow by `rise`, in a wrapper that keeps its place on the pixel grid
-/// and lets the element inside move between pixels.
+/// and lets the element inside move between pixels. An element at rest stays on the grid.
 fn raised(word: Div, rise: Pixels) -> Div {
-    div().pixel_snap(false).child(risen(word, rise, px(0.)))
+    match rise > px(0.) {
+        true => div().pixel_snap(false).child(risen(word, rise, px(0.))),
+        false => word,
+    }
 }
 
 /// How far a fully risen letter of a `verse` sized line stands above it, in whole device pixels
@@ -4094,6 +4115,14 @@ fn own_sung_end(line: &music::LyricsLine) -> Option<std::time::Duration> {
         .or(line.end)
 }
 
+/// How long a line keeps its karaoke after its own words end, so a swollen letter settles and a
+/// paced fill catches up before the line is drawn plain.
+fn karaoke_tail() -> std::time::Duration {
+    std::time::Duration::from_secs_f32(SWELL_SETTLE + SWELL_WAVE)
+        .max(PACE_LAG)
+        .max(Motion::Control.span())
+}
+
 fn primary_karaoke_visible(
     line: &music::LyricsLine,
     line_active: bool,
@@ -4101,7 +4130,7 @@ fn primary_karaoke_visible(
 ) -> bool {
     line_active
         || (position >= line.start
-            && own_sung_end(line).is_some_and(|end| position < end + Motion::Control.span()))
+            && own_sung_end(line).is_some_and(|end| position < end + karaoke_tail()))
 }
 
 fn primary_karaoke_fade(
@@ -4205,8 +4234,8 @@ mod tests {
 
     use super::{
         QueuePosition, Sections, Slot, active_lyrics_row, anchored_lyrics_offset,
-        background_line_singing, karaoke_fragments, karaoke_window, lag_spring, line_has_passed,
-        line_row, lyric_row_count, plain_lyrics_fragments, primary_karaoke_fade,
+        background_line_singing, karaoke_fragments, karaoke_tail, karaoke_window, lag_spring,
+        line_has_passed, line_row, lyric_row_count, plain_lyrics_fragments, primary_karaoke_fade,
         primary_karaoke_visible, wrap_fragment_widths,
     };
     use gpui::px;
@@ -4499,7 +4528,7 @@ mod tests {
         assert!(!primary_karaoke_visible(
             &line,
             false,
-            Duration::from_secs(8) + Motion::Base.span()
+            Duration::from_secs(8) + karaoke_tail()
         ));
     }
 
