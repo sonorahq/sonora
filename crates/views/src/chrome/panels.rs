@@ -42,18 +42,26 @@ const SLACK: Pixels = px(2.);
 /// The width of the marker where a dragged tool would land, and the rule a separator draws.
 const MARKER: Pixels = px(2.);
 const RULE: Pixels = px(1.);
-/// How faded a tile is while it is picked up, or while its tool has nothing to show right now.
+/// How faded a tile is while it is picked up, or while its tool has nothing to show right now,
+/// and a bar that cannot take the tool in flight.
 const LIFTED: f32 = 0.3;
 const RESTING: f32 = 0.55;
-/// The palette's width as a share of the cover metric, and a palette tile's as a share of a
-/// control's height.
+const BARRED: f32 = 0.3;
+/// The palette's width as a share of the cover metric, how many tiles a row of it holds, few
+/// enough for a name like Flexible space to fit on one line, and a tile's height as a share of a
+/// control's.
 const PALETTE_WIDTH: f32 = 3.2;
-const TILE_WIDTH: f32 = 2.9;
+const COLUMNS: u16 = 3;
 const TILE_HEIGHT: f32 = 2.2;
 /// The hover group of a tile, which shows its badge.
 const TILE_GROUP: &str = "panel-tile";
 /// How transparent the outline of a bar being arranged is.
 const OUTLINE: f32 = 0.45;
+/// One pulse, out and back, in seconds, of a bar that would take the tool in flight, how strongly
+/// such a bar is tinted at the height of it, and how strongly the bar the tool would land in is.
+const PULSE_PERIOD: f32 = 1.1;
+const GLOW: f32 = 0.14;
+const AIMED_GLOW: f32 = 0.24;
 
 /// Whether the bars are being arranged, and the drag in flight while they are.
 pub(crate) struct Customizing {
@@ -62,6 +70,8 @@ pub(crate) struct Customizing {
     aim: Option<(Zone, usize)>,
     /// The tool being dragged and where it was picked up from, `None` for one from the palette.
     held: Option<(Tool, Option<(Zone, usize)>)>,
+    /// When a tool was last picked up, which the bars that would take it pulse from.
+    picked: Option<Instant>,
 }
 
 struct Installed(Entity<Customizing>);
@@ -93,6 +103,7 @@ impl Customizing {
                 since: None,
                 aim: None,
                 held: None,
+                picked: None,
             });
             cx.set_global(Installed(customizing));
         }
@@ -154,6 +165,7 @@ impl Customizing {
     fn hold(tool: Tool, from: Option<(Zone, usize)>, cx: &mut App) {
         Self::entity(cx).update(cx, |this, cx| {
             this.held = Some((tool, from));
+            this.picked = Some(Instant::now());
             this.aim = None;
             cx.notify();
         });
@@ -179,6 +191,18 @@ impl Customizing {
         let period = JIGGLE_PERIOD * (1. + (seed % 3) as f32 * JIGGLE_SPREAD);
         let phase = seed as f32 * PHASE_STEP;
         (since.elapsed().as_secs_f32() * TAU / period + phase).sin() * JIGGLE_DEGREES / 360.
+    }
+
+    /// How lit a bar that would take the tool in flight is now, from 0 to 1. It starts lit the
+    /// moment the tool is picked up, and holds lit when the motion setting stills the pulse.
+    fn pulse(cx: &App) -> f32 {
+        let Some(picked) = Self::read(cx).and_then(|this| this.picked) else {
+            return 1.;
+        };
+        if cx.reduce_motion() {
+            return 1.;
+        }
+        0.5 + 0.5 * (picked.elapsed().as_secs_f32() * TAU / PULSE_PERIOD).cos()
     }
 
     /// Puts the dragged tool where it was aimed in `zone`. gpui takes the drag out of `cx` before
@@ -286,12 +310,21 @@ pub(crate) fn label(tool: Tool) -> &'static str {
         Tool::Downloads => "panels-downloads",
         Tool::PageTools => "panels-page-tools",
         Tool::Account => "tool-account",
-        Tool::Panel => "nav-sidebar-right",
+        Tool::Panel => "panels-side-panel",
         Tool::Lyrics => "lyrics-title",
         Tool::Queue => "queue-title",
         Tool::Sessions => "player-sessions",
         Tool::Spacer => "panels-spacer",
         Tool::Separator => "panels-separator",
+    }
+}
+
+/// The Fluent key of the tooltip on the button of `tool`, which says what a press does where the
+/// name alone would not.
+fn tip(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Panel => "nav-sidebar-right",
+        tool => label(tool),
     }
 }
 
@@ -402,8 +435,8 @@ pub(crate) fn icon_tool(tool: Tool, zone: Zone, window: &Window, cx: &App) -> Op
     let id = SharedString::from(format!("{}-{}", zone.id(), tool.id()));
     let button = Button::new(id).ghost().small().icon(icon(tool));
     let button = match zone {
-        Zone::PlayerBar => button.tooltip_above(label(tool)),
-        _ => button.tooltip(label(tool)),
+        Zone::PlayerBar => button.tooltip_above(tip(tool)),
+        _ => button.tooltip(tip(tool)),
     };
     let tint = |on: bool| match on {
         true => theme.foreground,
@@ -470,10 +503,22 @@ pub(crate) fn menu() -> Menu {
 }
 
 /// Wraps the tiles of `zone` while the bars are arranged: a dashed outline that takes a dragged
-/// tool, named for screen readers as the list it is.
+/// tool, named for screen readers as the list it is. While a tool is in flight, every bar that
+/// would take it pulses, the one it would land in holds lit and the rest fade.
 pub(crate) fn zone(zone: Zone, base: Stateful<Div>, cx: &App) -> Stateful<Div> {
     let theme = *cx.theme();
-    let fits = Customizing::held(cx).is_none_or(|(tool, _)| tool.fits(zone));
+    let held = Customizing::held(cx);
+    let fits = held.is_none_or(|(tool, _)| tool.fits(zone));
+    let aimed = Customizing::aim(cx).is_some_and(|(aimed, _)| aimed == zone);
+    // The outline's and the tint's strength.
+    let lit = match (held.is_some() && fits, aimed) {
+        (false, _) => None,
+        (true, true) => Some((1., AIMED_GLOW)),
+        (true, false) => {
+            let pulse = Customizing::pulse(cx);
+            Some((OUTLINE + (1. - OUTLINE) * pulse, GLOW * pulse))
+        }
+    };
     let count = Sonora::global(cx)
         .settings
         .read(cx)
@@ -488,7 +533,11 @@ pub(crate) fn zone(zone: Zone, base: Stateful<Div>, cx: &App) -> Stateful<Div> {
         .border_1()
         .border_dashed()
         .border_color(theme.primary.opacity(OUTLINE))
-        .when(!fits, |this| this.opacity(RESTING))
+        .when_some(lit, |this, (outline, glow)| {
+            this.border_color(theme.primary.opacity(outline))
+                .bg(theme.primary.opacity(glow))
+        })
+        .when(!fits, |this| this.opacity(BARRED))
         .on_drag_move(move |event: &DragMoveEvent<DraggedTool>, _, cx| {
             let inside = event.bounds.contains(&event.event.position);
             let aimed = Customizing::aim(cx).map(|(aimed, _)| aimed);
@@ -713,8 +762,8 @@ fn face(tool: Tool, zone: Zone, key: &str, turn: f32, folded: bool, cx: &App) ->
             .icon(icon(tool))
             .turned(turn)
             .map(|button| match zone {
-                Zone::PlayerBar => button.tooltip_above(label(tool)),
-                _ => button.tooltip(label(tool)),
+                Zone::PlayerBar => button.tooltip_above(tip(tool)),
+                _ => button.tooltip(tip(tool)),
             })
             .into_any_element(),
     }
@@ -863,8 +912,8 @@ pub(crate) fn palette(cx: &App) -> AnyElement {
                 .id("panels-offers")
                 .role(Role::List)
                 .aria_label(t!("panels-offers"))
-                .flex()
-                .flex_wrap()
+                .grid()
+                .grid_cols(COLUMNS)
                 .gap_2()
                 .children(tiles),
         )
@@ -946,7 +995,6 @@ fn offer(tool: Tool, index: usize, count: usize, cx: &App) -> AnyElement {
         .items_center()
         .justify_center()
         .gap_1p5()
-        .w(theme.metrics.control * TILE_WIDTH)
         .h(theme.metrics.control * TILE_HEIGHT)
         .px_2()
         .rounded(theme.radius)
@@ -961,6 +1009,7 @@ fn offer(tool: Tool, index: usize, count: usize, cx: &App) -> AnyElement {
                 .w_full()
                 .text_center()
                 .line_clamp(2)
+                .text_ellipsis()
                 .text_size(theme.text(Text::Small))
                 .text_color(theme.muted_foreground)
                 .child(name),

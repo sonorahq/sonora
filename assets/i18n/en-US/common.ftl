@@ -89,6 +89,7 @@ panels-zone-sidebar = Sidebar
 panels-zone-player-bar = Player
 panels-spacer = Flexible space
 panels-separator = Separator
+panels-side-panel = Side panel
 panels-page-tools = Page tools
 panels-downloads = Downloads
 library-liked-songs = Favorites
