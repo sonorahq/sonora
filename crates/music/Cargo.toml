@@ -12,46 +12,20 @@ widevine = ["widevine/cdm"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-base64.workspace = true
 bytes.workspace = true
-fastrand.workspace = true
-flate2.workspace = true
-futures.workspace = true
-gethostname.workspace = true
-deunicode.workspace = true
 dirs.workspace = true
+futures.workspace = true
 image.workspace = true
 jiff.workspace = true
-lofty.workspace = true
-kakasi.workspace = true
 log.workspace = true
-md-5.workspace = true
-open.workspace = true
-opensubsonic.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
 ring.workspace = true
-roxmltree.workspace = true
-rodio.workspace = true
-rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde-saphyr.workspace = true
 sound.workspace = true
-storage.workspace = true
-symphonia.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true
 widevine.workspace = true
-ytmusic.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-
-[dev-dependencies]
-env_logger.workspace = true
-rustls.workspace = true
 
 [lints]
 workspace = true

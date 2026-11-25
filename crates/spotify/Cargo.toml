@@ -19,6 +19,7 @@ librespot-core.workspace = true
 librespot-playback.workspace = true
 librespot-protocol.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 oauth2.workspace = true
 open.workspace = true

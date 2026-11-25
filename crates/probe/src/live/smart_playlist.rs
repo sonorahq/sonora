@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, bail};
 use music::MusicApi;
 use music::smart::{RuleGroup, SmartPlaylistUpdate, SmartRules};
-use music::subsonic::{SubsonicClient, auth};
+use subsonic::{SubsonicClient, auth};
 
 const NAME: &str = "Sonora live smart playlist test - safe to delete";
 

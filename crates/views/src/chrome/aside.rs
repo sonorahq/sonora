@@ -3422,7 +3422,7 @@ fn selected_romanization(
 /// Which source a sheet came from, who wrote the song when it names them, and the service it came
 /// through when that service asks to be credited.
 fn credit_lines(source: &str, writers: &[String]) -> CreditLines {
-    let from = match source == music::lyrics::LOCAL {
+    let from = match source == lyrics::LOCAL {
         true => t!("lyrics-source-local"),
         false => t!("lyrics-source", source = source),
     };
@@ -3430,8 +3430,8 @@ fn credit_lines(source: &str, writers: &[String]) -> CreditLines {
         let writers = writers.join(", ");
         t!("lyrics-writers", writers = writers.as_str())
     });
-    let via = music::lyrics::credit(source)
-        .map(|credit| (t!("lyrics-via", service = credit.name), credit.url));
+    let via =
+        lyrics::credit(source).map(|credit| (t!("lyrics-via", service = credit.name), credit.url));
     CreditLines { from, by, via }
 }
 
@@ -3994,7 +3994,7 @@ fn active_lyrics_row(lines: &[music::LyricsLine], position: std::time::Duration)
 fn sung_line(lines: &[music::LyricsLine], position: std::time::Duration) -> Option<usize> {
     match active_instrumental(lines, position) {
         Some(_) => None,
-        None => music::lyrics::active(lines, position),
+        None => lyrics::active(lines, position),
     }
 }
 

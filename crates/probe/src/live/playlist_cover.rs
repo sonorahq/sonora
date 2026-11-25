@@ -5,13 +5,13 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow, bail};
 use deezer::DeezerProvider;
 use image::{DynamicImage, ImageFormat, RgbImage};
-use music::local::LocalProvider;
-use music::subsonic::{SubsonicClient, auth};
-use music::tidal::TidalProvider;
-use music::youtube::YouTubeProvider;
+use local::LocalProvider;
 use music::{MusicApi, MusicProvider, ProviderSession, SignIn};
 use spotify::SpotifyProvider;
 use storage::{Cache, Database};
+use subsonic::{SubsonicClient, auth};
+use tidal::TidalProvider;
+use youtube::YouTubeProvider;
 
 const NAME: &str = "Sonora live cover test - safe to delete";
 const VERIFY_ATTEMPTS: usize = 30;

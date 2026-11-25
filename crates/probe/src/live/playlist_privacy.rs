@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use music::youtube::YouTubeProvider;
 use music::{MusicApi, MusicProvider, ProviderSession};
 use spotify::SpotifyProvider;
+use youtube::YouTubeProvider;
 
 const NAME: &str = "Sonora live privacy test — safe to delete";
 const VERIFY_ATTEMPTS: usize = 30;

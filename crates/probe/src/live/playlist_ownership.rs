@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use music::youtube::YouTubeProvider;
 use music::{MusicApi, MusicProvider, Playlist, ProviderSession};
+use youtube::YouTubeProvider;
 
 const NAME: &str = "Sonora live ownership test - safe to delete";
 const QUERY: &str = "Rick Astley Never Gonna Give You Up";

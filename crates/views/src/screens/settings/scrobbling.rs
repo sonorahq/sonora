@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, SharedString, Window, div, px};
 use i18n::t;
-use music::scrobble::{Link, Secret};
+use scrobble::{Link, Secret};
 use state::ScrobbleState;
 use ui::{ActiveTheme as _, Button, Form, Modal, Room, Switch};
 
@@ -17,7 +17,7 @@ struct Field {
 }
 
 impl SettingsView {
-    /// One card per scrobbling service, in the order `music::scrobble` lists them, then the
+    /// One card per scrobbling service, in the order the `scrobble` crate lists them, then the
     /// switch for the active provider's plays when a provider is signed in.
     pub(super) fn scrobbling_groups(&self, cx: &App) -> Vec<Group> {
         let provider = self.session.read(cx).provider_slug().is_some();

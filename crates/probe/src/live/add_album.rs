@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use music::youtube::YouTubeProvider;
 use music::{Album, MusicApi, MusicProvider, ProviderSession};
 use spotify::SpotifyProvider;
+use youtube::YouTubeProvider;
 
 const SPOTIFY_ALBUMS: &[&str] = &["1vHPNtDfd0V29ol70EMqP8", "2Ef2E0yk88zQfjvOJunK8A"];
 const YOUTUBE_ALBUMS: &[&str] = &["MPREb_vupB1BNh7XE", "MPREb_3SWMG6RbCTQ"];

@@ -2,12 +2,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use music::youtube::YouTubeClient;
-use music::{
-    Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, kugou, lrclib,
-    lrcred, musixmatch, netease,
-};
+use lyric_sources::{kugou, lrclib, lrcred, musixmatch, netease};
+use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey};
 use spotify::{AuthConfig, LibrespotClient, auth};
+use youtube::YouTubeClient;
 use ytmusic::YtMusic;
 
 const LISTED: usize = 4;
@@ -23,7 +21,7 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     let http = reqwest::Client::new();
     vec![
         Arc::new(spotify::SpotifyLyrics::from_env()),
-        Arc::new(music::youtube::YouTubeLyrics::new()),
+        Arc::new(youtube::YouTubeLyrics::new()),
         Arc::new(lrcred::LrcRed::new(http.clone())),
         Arc::new(musixmatch::Musixmatch::new(http.clone())),
         Arc::new(lrclib::LrcLib::new(http.clone())),
@@ -81,11 +79,11 @@ async fn main() -> Result<()> {
         .iter()
         .flat_map(|found| found.hits.iter().cloned())
         .collect();
-    let ranked = music::lyrics::rank(&query, all);
+    let ranked = lyrics::rank(&query, all);
     match ranked.is_empty() {
         true => println!(
             "nothing survived ranking{}",
-            match music::lyrics::instrumental(&query, &ranked) {
+            match lyrics::instrumental(&query, &ranked) {
                 true => ", the track reads as instrumental",
                 false => "",
             }
@@ -97,14 +95,14 @@ async fn main() -> Result<()> {
                     "  {:>2}. {:<12} {:>6} {:<8} {}",
                     place + 1,
                     hit.source,
-                    music::lyrics::score(&query, hit),
+                    lyrics::score(&query, hit),
                     kind(&hit.lyrics),
                     shape(&hit.lyrics),
                 );
             }
 
             let mut reshaped = ranked.clone();
-            music::lyrics::reshape(&mut reshaped);
+            lyrics::reshape(&mut reshaped);
             let winner = &reshaped[0];
             println!();
             println!(
@@ -195,7 +193,7 @@ fn report(query: &LyricsQuery, found: &Probe) {
     let mut scored: Vec<(i64, &LyricsHit)> = found
         .hits
         .iter()
-        .map(|hit| (music::lyrics::score(query, hit), hit))
+        .map(|hit| (lyrics::score(query, hit), hit))
         .collect();
     scored.sort_by(|(left, _), (right, _)| right.cmp(left));
 
@@ -206,7 +204,7 @@ fn report(query: &LyricsQuery, found: &Probe) {
         };
         println!(
             "{head}  {score:>6} {:>4} {:<8} {} — {}{}",
-            match music::lyrics::eligible(query, hit) {
+            match lyrics::eligible(query, hit) {
                 true => "yes",
                 false => "no",
             },

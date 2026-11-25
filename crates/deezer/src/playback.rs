@@ -1,4 +1,4 @@
-//! Playback for Deezer: what [`music::engine`] needs that is Deezer's own.
+//! Playback for Deezer: what [`engine`] needs that is Deezer's own.
 //!
 //! One thing, really. The body arrives encrypted in 2048-byte stripes, so the stream decrypts
 //! each one as it lands and what the buffer holds is always in the clear. From there rodio
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use music::engine::{self, Fetch, Loudness};
+use engine::{self, Fetch, Loudness};
 use music::vault::{Recording, Shelf};
 use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 use reqwest::header::HeaderMap;

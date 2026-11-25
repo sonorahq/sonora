@@ -107,7 +107,7 @@ jobs:
           --config 'profile.dev.debug="line-tables-only"'
           --config 'profile.dev.package.ui.opt-level=0'
           --config 'profile.dev.package.views.opt-level=0'
-          --config 'profile.dev.package.music.opt-level=0'
+          --config 'profile.dev.package.engine.opt-level=0'
           --config 'profile.dev.package.sound.opt-level=0'
 
   # The check job only ever sees the Linux side of a cfg. The next jobs lint the other two

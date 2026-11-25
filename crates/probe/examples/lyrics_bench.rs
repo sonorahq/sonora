@@ -2,10 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use music::{
-    Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey, kugou, lrclib,
-    lrcred, musixmatch, netease,
-};
+use lyric_sources::{kugou, lrclib, lrcred, musixmatch, netease};
+use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey};
 use spotify::{AuthConfig, LibrespotClient, auth};
 
 const SOURCES: [&str; 7] = [
@@ -41,7 +39,7 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     let http = reqwest::Client::new();
     vec![
         Arc::new(spotify::SpotifyLyrics::from_env()),
-        Arc::new(music::youtube::YouTubeLyrics::new()),
+        Arc::new(youtube::YouTubeLyrics::new()),
         Arc::new(lrcred::LrcRed::new(http.clone())),
         Arc::new(musixmatch::Musixmatch::new(http.clone())),
         Arc::new(lrclib::LrcLib::new(http.clone())),
@@ -165,7 +163,7 @@ async fn measure(track: &Track, providers: &[Arc<dyn LyricsProvider>]) -> Row {
     }
     measured.sort_by_key(|found| found.elapsed);
     for found in &mut measured {
-        let ranked = music::lyrics::rank(&query, found.hits.clone());
+        let ranked = lyrics::rank(&query, found.hits.clone());
         found.best = ranked.first().map(|hit| quality(&hit.lyrics));
         found.top = ranked.first().map(|hit| hit.lyrics.clone());
     }
@@ -174,9 +172,9 @@ async fn measure(track: &Track, providers: &[Arc<dyn LyricsProvider>]) -> Row {
         .iter()
         .flat_map(|found| found.hits.iter().cloned())
         .collect();
-    let raw = music::lyrics::rank(&query, all);
+    let raw = lyrics::rank(&query, all);
     let mut ranked = raw.clone();
-    music::lyrics::reshape(&mut ranked);
+    lyrics::reshape(&mut ranked);
 
     Row {
         title: track.name.clone(),

@@ -10,6 +10,7 @@
 playback:
   - changed-files:
       - any-glob-to-any-file:
+          - crates/engine/**
           - crates/sound/src/audio.rs
           - crates/sound/src/sink.rs
           - crates/sound/src/equalizer/**
@@ -24,7 +25,8 @@ player:
       - any-glob-to-any-file:
           - crates/state/src/queue.rs
           - crates/state/src/remote.rs
-          - crates/state/src/discord.rs
+          - crates/artwork/**
+          - crates/state/src/discord/**
           - crates/views/src/chrome/player_bar.rs
           - crates/views/src/chrome/sidebar_right.rs
           - crates/views/src/shared/transport.rs
@@ -33,12 +35,8 @@ player:
 lyrics:
   - changed-files:
       - any-glob-to-any-file:
-          - crates/music/src/lyrics/**
-          - crates/music/src/lrclib/**
-          - crates/music/src/musixmatch/**
-          - crates/music/src/lrcred/**
-          - crates/music/src/kugou/**
-          - crates/music/src/netease/**
+          - crates/lyrics/**
+          - crates/lyric-sources/**
           - crates/state/src/lyrics.rs
           - crates/views/src/shells/fullscreen.rs
 
@@ -106,15 +104,15 @@ spotify:
 
 youtube:
   - changed-files:
-      - any-glob-to-any-file: crates/music/src/youtube/**
+      - any-glob-to-any-file: crates/youtube/**
 
 subsonic:
   - changed-files:
-      - any-glob-to-any-file: crates/music/src/subsonic/**
+      - any-glob-to-any-file: crates/subsonic/**
 
 local:
   - changed-files:
-      - any-glob-to-any-file: crates/music/src/local/**
+      - any-glob-to-any-file: crates/local/**
 
 # Only when the change is nothing but translation work. A feature that happens to add a string
 # is not an i18n pull request, so every changed file has to fall inside this one pattern.

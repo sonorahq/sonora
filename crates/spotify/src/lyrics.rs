@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, header};
 use librespot_core::{Session, spclient::CLIENT_TOKEN};
-use music::lyrics::{catalog, lrc};
+use lyrics::{catalog, lrc};
 use music::{
     Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice, escape,
 };
@@ -188,7 +188,7 @@ fn sheet(sheet: Sheet) -> Option<Lyrics> {
             .filter(|words| !words.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        return (!text.trim().is_empty()).then(|| Lyrics::plain(text));
+        return (!text.trim().is_empty()).then(|| lyrics::plain(text));
     }
 
     let mut lines: Vec<LyricsLine> = sheet.lines.iter().filter_map(verse).collect();
