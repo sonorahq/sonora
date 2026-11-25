@@ -47,6 +47,8 @@ const BEACON_BUILD: &str = "AppleMusic/1.0 Linux/0.0 model/Linux x86_64 build/26
 /// The user-agent the web player reports in the beacon body, alongside the build string.
 const BEACON_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:156.0) Gecko/20100101 Firefox/156.0";
 
+/// Container type 2 is a playlist: the surface a playlist play is reported from.
+const CONTAINER_PLAYLIST: u8 = 2;
 /// Container type 3 is an album: the surface a catalog play is reported from.
 const CONTAINER_ALBUM: u8 = 3;
 
@@ -1540,7 +1542,7 @@ impl MusicApi for AppleClient {
     ///
     /// The field shape is read off music.apple.com's MusicKit rather than documented: the
     /// service silently drops a beacon missing the tokens and client identity it expects.
-    async fn report_play(&self, track_id: &str) -> Result<()> {
+    async fn report_play(&self, track_id: &str, playlist_id: Option<&str>) -> Result<()> {
         if Self::is_mine(track_id) {
             return Ok(());
         }
@@ -1601,8 +1603,15 @@ impl MusicApi for AppleClient {
             "user-token": self.user_token.as_ref(),
             "utc-offset-in-seconds": 0,
         });
-        // The album container is set only when the lookup gave one.
-        if let Some(album) = album {
+        // A playlist is the play's source; otherwise its album is the best available container.
+        if let Some(playlist_id) = playlist_id {
+            let key = match Self::is_mine(playlist_id) {
+                true => "universal-library-id",
+                false => "global-playlist-id",
+            };
+            item["container-type"] = serde_json::json!(CONTAINER_PLAYLIST);
+            item["container-ids"] = serde_json::json!({ (key): playlist_id });
+        } else if let Some(album) = album {
             item["container-type"] = serde_json::json!(CONTAINER_ALBUM);
             item["container-ids"] = serde_json::json!({ "album-adam-id": album });
         }
