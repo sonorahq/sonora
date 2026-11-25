@@ -2426,7 +2426,7 @@ impl Playback {
         }
         if self.can_restart_queue(cx) {
             if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
-                self.load_after(&track, Start::Pick, cx);
+                self.follow_after(track, Start::Pick, cx);
             }
             return;
         }
