@@ -254,6 +254,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "apple"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "engine",
+ "fastrand",
+ "futures",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "widevine",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -307,6 +329,20 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
+name = "artwork"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "fastrand",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -697,29 +733,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7178fe5f7d460b13895ebb9dcb28a3a6216d2df2574a0806cb51b555d297f38"
 dependencies = [
  "arrayvec",
-]
-
-[[package]]
-name = "aws-lc-rs"
-version = "1.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "048006790404103c488e6c5616b3e7e702a71292aadda08e8f7698a9e0d2eb53"
-dependencies = [
- "aws-lc-sys",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
- "pkg-config",
 ]
 
 [[package]]
@@ -1124,7 +1137,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1214,7 +1227,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1757,6 +1770,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "deezer"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blowfish",
+ "cbc 0.2.1",
+ "engine",
+ "fastrand",
+ "futures",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1829,7 +1865,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2051,7 +2087,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "embed"
-version = "0.50.0"
+version = "0.50.3"
 
 [[package]]
 name = "embed-resource"
@@ -2095,6 +2131,19 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "engine"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "log",
+ "music",
+ "sound",
+ "tokio",
+]
 
 [[package]]
 name = "enum-primitive-derive"
@@ -2492,12 +2541,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs_extra"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
-
-[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2772,7 +2815,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2847,7 +2890,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2888,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2932,7 +2975,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2971,7 +3014,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2982,7 +3025,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2994,7 +3037,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "schemars",
  "serde",
@@ -3004,7 +3047,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "anyhow",
  "log",
@@ -3014,7 +3057,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3041,7 +3084,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3299,7 +3342,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3420,8 +3463,9 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
+ "embed",
  "fluent-bundle",
  "gpui",
  "log",
@@ -3455,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "icons"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "anyhow",
  "embed",
@@ -3678,7 +3722,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "gpui",
  "ui",
@@ -3781,6 +3825,32 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "jellyfin"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "engine",
+ "fastrand",
+ "futures",
+ "gethostname",
+ "log",
+ "lyrics",
+ "music",
+ "open",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
 
 [[package]]
 name = "jiff"
@@ -4275,6 +4345,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
+name = "local"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 7.0.0",
+ "engine",
+ "fastrand",
+ "lofty",
+ "log",
+ "lyrics",
+ "music",
+ "percent-encoding",
+ "rodio",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sound",
+ "storage",
+ "symphonia",
+ "tokio",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4316,6 +4411,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "logic"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "fastrand",
+ "futures",
+ "log",
+ "lyrics",
+ "music",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4389,6 +4499,37 @@ dependencies = [
  "float_next_after",
  "lyon_path",
  "num-traits",
+]
+
+[[package]]
+name = "lyric-sources"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "dirs 7.0.0",
+ "flate2",
+ "log",
+ "lyrics",
+ "music",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "lyrics"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "deunicode",
+ "kakasi",
+ "music",
+ "roxmltree 0.21.2",
 ]
 
 [[package]]
@@ -4630,64 +4771,24 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "music"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
- "alsa",
  "anyhow",
- "ardftsrc",
  "async-trait",
- "base64 0.23.1",
- "blowfish",
  "bytes",
- "cbc 0.2.1",
- "cpal",
- "deunicode",
  "dirs 7.0.0",
- "env_logger",
- "fastrand",
- "flate2",
  "futures",
- "gethostname",
- "http",
  "image",
  "jiff",
- "kakasi",
- "libc",
- "librespot-core",
- "librespot-playback",
- "librespot-protocol",
- "lofty",
  "log",
- "md-5 0.11.0",
- "oauth2",
- "objc2-core-audio",
- "objc2-core-foundation",
- "open",
- "opensubsonic",
  "percent-encoding",
- "protobuf",
- "pulseaudio",
  "reqwest 0.13.5",
  "ring",
- "rodio",
- "roxmltree 0.21.2",
- "rtrb",
- "rusqlite",
- "rustfft",
- "rustls",
- "rusty_aac",
  "serde",
- "serde-saphyr",
  "serde_json",
- "sha1 0.11.0",
- "storage",
- "symphonia",
- "tempfile",
+ "sound",
  "tokio",
- "tokio-tungstenite 0.30.0",
  "widevine",
- "windows 0.62.2",
- "ytmusic",
 ]
 
 [[package]]
@@ -5477,8 +5578,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 [[package]]
 name = "opensubsonic"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b583f99d2448f9a7578a6577944c8888336abc47a4cf96fa6ab3e6e39e7dc934"
+source = "git+https://github.com/sonorahq/opensubsonic-rs?rev=486fe6bec8eb7464e084c21e251d776d6ee48db0#486fe6bec8eb7464e084c21e251d776d6ee48db0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -5772,6 +5872,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "plex"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "engine",
+ "fastrand",
+ "gethostname",
+ "log",
+ "lyrics",
+ "music",
+ "reqwest 0.13.5",
+ "rodio",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5910,6 +6030,31 @@ dependencies = [
  "equivalent",
  "indexmap",
  "serde",
+]
+
+[[package]]
+name = "probe"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "apple",
+ "deezer",
+ "image",
+ "local",
+ "lyric-sources",
+ "lyrics",
+ "music",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde_json",
+ "spotify",
+ "storage",
+ "subsonic",
+ "tempfile",
+ "tidal",
+ "tokio",
+ "youtube",
+ "ytmusic",
 ]
 
 [[package]]
@@ -6180,7 +6325,6 @@ version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
 dependencies = [
- "aws-lc-rs",
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
@@ -6530,7 +6674,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "derive_refineable",
 ]
@@ -6649,7 +6793,6 @@ dependencies = [
  "log",
  "percent-encoding",
  "pin-project-lite",
- "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -6753,7 +6896,7 @@ dependencies = [
 
 [[package]]
 name = "router"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "gpui",
  "ui",
@@ -6940,7 +7083,6 @@ version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
- "aws-lc-rs",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -7004,7 +7146,6 @@ version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
- "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -7079,7 +7220,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "async-task",
  "backtrace",
@@ -7150,6 +7291,24 @@ dependencies = [
  "objc-foundation",
  "objc_id",
  "once_cell",
+]
+
+[[package]]
+name = "scrobble"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "jiff",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "open",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -7545,12 +7704,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "sonora"
-version = "0.50.0"
+name = "soloist"
+version = "0.50.3"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "dirs 7.0.0",
+ "flate2",
+ "futures",
+ "libc",
+ "log",
+ "music",
+ "percent-encoding",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "sonora"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "apple",
  "block2 0.6.2",
  "cli",
+ "deezer",
  "dirs 7.0.0",
  "embed",
  "env_logger",
@@ -7562,21 +7743,28 @@ dependencies = [
  "image",
  "input",
  "interprocess",
+ "jellyfin",
  "ksni",
  "libc",
+ "local",
  "log",
+ "lyric-sources",
  "music",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "plex",
  "raw-window-handle",
  "reqwest 0.13.5",
  "resvg 0.49.0",
  "router",
  "rustls",
  "sha2 0.11.1",
+ "spotify",
  "state",
  "storage",
+ "subsonic",
+ "tidal",
  "tokio",
  "tray-icon",
  "ui",
@@ -7587,7 +7775,37 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "x11rb 0.14.0",
+ "youtube",
  "zbus 6.2.1",
+]
+
+[[package]]
+name = "sound"
+version = "0.50.3"
+dependencies = [
+ "alsa",
+ "anyhow",
+ "ardftsrc",
+ "async-trait",
+ "bytes",
+ "cpal",
+ "dirs 7.0.0",
+ "futures",
+ "jiff",
+ "log",
+ "objc2-core-audio",
+ "objc2-core-foundation",
+ "pulseaudio",
+ "reqwest 0.13.5",
+ "rodio",
+ "rtrb",
+ "rustfft",
+ "rusty_aac",
+ "serde",
+ "symphonia",
+ "tempfile",
+ "tokio",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -7654,6 +7872,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "spotify"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "fastrand",
+ "flate2",
+ "futures",
+ "gethostname",
+ "http",
+ "jiff",
+ "librespot-core",
+ "librespot-playback",
+ "librespot-protocol",
+ "log",
+ "lyrics",
+ "music",
+ "oauth2",
+ "open",
+ "protobuf",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "soloist",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "sqlite-wasm-rs"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7671,9 +7922,10 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "state"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "anyhow",
+ "artwork",
  "ashpd 0.14.0",
  "async-trait",
  "base64 0.23.1",
@@ -7689,6 +7941,8 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "logic",
+ "lyrics",
  "moka",
  "mpris-server",
  "music",
@@ -7697,9 +7951,11 @@ dependencies = [
  "objc2-io-kit",
  "reqwest 0.13.5",
  "rusqlite",
+ "scrobble",
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "soloist",
  "souvlaki",
  "storage",
  "tempfile",
@@ -7718,7 +7974,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -7797,6 +8053,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "subsonic"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "engine",
+ "fastrand",
+ "futures",
+ "jiff",
+ "log",
+ "lyrics",
+ "music",
+ "opensubsonic",
+ "reqwest 0.13.5",
+ "rodio",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7805,7 +8084,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "heapless",
  "rayon",
@@ -8233,6 +8512,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "tidal"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "engine",
+ "futures",
+ "log",
+ "md-5 0.11.0",
+ "music",
+ "open",
+ "reqwest 0.13.5",
+ "rodio",
+ "roxmltree 0.21.2",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
 ]
 
 [[package]]
@@ -8748,7 +9050,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "ashpd 0.14.0",
  "futures",
@@ -9067,7 +9369,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "views"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "dirs 7.0.0",
  "gpui",
@@ -9077,9 +9379,12 @@ dependencies = [
  "input",
  "jiff",
  "log",
+ "lyrics",
  "music",
  "open",
  "router",
+ "scrobble",
+ "soloist",
  "state",
  "ui",
  "unicode-bidi",
@@ -9372,7 +9677,7 @@ dependencies = [
 
 [[package]]
 name = "webview"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
@@ -9649,7 +9954,7 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "widevine"
-version = "0.50.0"
+version = "0.50.3"
 dependencies = [
  "anyhow",
  "cc",
@@ -10302,9 +10607,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "youtube"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "engine",
+ "futures",
+ "log",
+ "lyrics",
+ "music",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sound",
+ "tokio",
+ "ytmusic",
+]
+
+[[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=99f7d14#99f7d141a7b35050ae69322822b72126a807b906"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=62b36b8#62b36b8fa70e14918d57257ff9d258d9bb660e8c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10672,7 +10997,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -10681,7 +11006,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=880974875426bd26fed55c092c74b82c3931ea64#880974875426bd26fed55c092c74b82c3931ea64"
+source = "git+https://github.com/sonorahq/gpui?rev=431997367c8ef0e781a3dffdb8c149763bd7b382#431997367c8ef0e781a3dffdb8c149763bd7b382"
 
 [[package]]
 name = "zune-core"

@@ -5,54 +5,36 @@ use gpui::{App, AssetSource, SharedString};
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
+/// Embeds a file from the workspace's `assets` folder, through the copy the build script stages
+/// into `OUT_DIR`. The file must be listed in `ARTWORK` in build.rs. `#[macro_use]` on the module
+/// makes it available to the modules declared after it.
+macro_rules! artwork {
+    ($path:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/embedded/assets/", $path))
+    };
+}
+
 /// Where About asks for the app icon, and the icon this platform shows for the app.
 const APP_ICON: &str = "brand/sonora.svg";
 #[cfg(target_os = "macos")]
-const APP_ICON_SVG: &[u8] = include_bytes!("../../../assets/macos/sonora.svg");
+const APP_ICON_SVG: &[u8] = artwork!("macos/sonora.svg");
 #[cfg(target_os = "windows")]
-const APP_ICON_SVG: &[u8] = include_bytes!("../../../assets/windows/sonora.svg");
+const APP_ICON_SVG: &[u8] = artwork!("windows/sonora.svg");
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-const APP_ICON_SVG: &[u8] = include_bytes!("../../../assets/linux/sonora.svg");
+const APP_ICON_SVG: &[u8] = artwork!("linux/sonora.svg");
 
 /// RGBA icon sizes shared by X11 windows and status notifier pixmaps.
 #[cfg(target_os = "linux")]
 pub const LINUX_ICONS: &[(u32, &[u8])] = &[
-    (
-        16,
-        include_bytes!("../../../assets/linux/icons/hicolor/16x16/apps/sonora.png"),
-    ),
-    (
-        22,
-        include_bytes!("../../../assets/linux/icons/hicolor/22x22/apps/sonora.png"),
-    ),
-    (
-        24,
-        include_bytes!("../../../assets/linux/icons/hicolor/24x24/apps/sonora.png"),
-    ),
-    (
-        32,
-        include_bytes!("../../../assets/linux/icons/hicolor/32x32/apps/sonora.png"),
-    ),
-    (
-        48,
-        include_bytes!("../../../assets/linux/icons/hicolor/48x48/apps/sonora.png"),
-    ),
-    (
-        64,
-        include_bytes!("../../../assets/linux/icons/hicolor/64x64/apps/sonora.png"),
-    ),
-    (
-        128,
-        include_bytes!("../../../assets/linux/icons/hicolor/128x128/apps/sonora.png"),
-    ),
-    (
-        256,
-        include_bytes!("../../../assets/linux/icons/hicolor/256x256/apps/sonora.png"),
-    ),
-    (
-        512,
-        include_bytes!("../../../assets/linux/icons/hicolor/512x512/apps/sonora.png"),
-    ),
+    (16, artwork!("linux/icons/hicolor/16x16/apps/sonora.png")),
+    (22, artwork!("linux/icons/hicolor/22x22/apps/sonora.png")),
+    (24, artwork!("linux/icons/hicolor/24x24/apps/sonora.png")),
+    (32, artwork!("linux/icons/hicolor/32x32/apps/sonora.png")),
+    (48, artwork!("linux/icons/hicolor/48x48/apps/sonora.png")),
+    (64, artwork!("linux/icons/hicolor/64x64/apps/sonora.png")),
+    (128, artwork!("linux/icons/hicolor/128x128/apps/sonora.png")),
+    (256, artwork!("linux/icons/hicolor/256x256/apps/sonora.png")),
+    (512, artwork!("linux/icons/hicolor/512x512/apps/sonora.png")),
 ];
 
 /// Embedded fonts and platform artwork exposed to GPUI alongside the active icon pack.

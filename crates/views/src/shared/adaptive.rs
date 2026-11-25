@@ -115,6 +115,14 @@ impl Adaptive {
                 self.apply(palette, instant, cx);
             }
             None => {
+                // Fullscreen must not open in the workspace's theme while its cover is sampled,
+                // so a change of dress goes on at once and the cover's colours fade in after.
+                let (kind, _) = self.dress(cx);
+                let redress = instant && self.worn != Some((kind, self.plain(cx)));
+                if redress {
+                    self.apply(self.painted, true, cx);
+                }
+                let instant = instant && !redress;
                 let palette = ui::palette(cover, cx);
                 self.task = Some(cx.spawn(async move |this, cx| {
                     let palette = palette.await;

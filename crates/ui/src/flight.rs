@@ -80,6 +80,7 @@ pub struct Flight {
     zoom: Option<Rc<Cell<Zoom>>>,
     above: bool,
     scales: bool,
+    present: f32,
     spring: SpringConfig,
     transfer_spring: Option<SpringConfig>,
 }
@@ -136,6 +137,7 @@ impl Flight {
             zoom: None,
             above: false,
             scales: true,
+            present: 1.,
             spring: Springs::FLIGHT,
             transfer_spring: None,
         }
@@ -197,6 +199,15 @@ impl Flight {
     /// what holds it, so it stays whole while the screen around it changes.
     pub fn above(mut self) -> Self {
         self.above = true;
+        self
+    }
+
+    /// Draws the element at `scale` of its size about its centre, through the same layer that
+    /// carries it while it flies, for one shown larger or smaller than its layout. A layer scale
+    /// of the element's own would nest a second layer inside the flight's every frame it flies.
+    /// [`reports`](Self::reports) and sightings leave it out.
+    pub fn presents_at(mut self, scale: f32) -> Self {
+        self.present = scale;
         self
     }
 
@@ -364,7 +375,7 @@ impl Element for Flight {
         if let Some(report) = &self.zoom {
             report.set(zoom);
         }
-        self.pose.set((offset, scale));
+        self.pose.set((offset, scale * self.present));
         if let Some(name) = &self.seen_as {
             cx.default_global::<Sightings>()
                 .0

@@ -26,11 +26,11 @@ use gpui::{
     App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
     WindowBounds, point, px, size,
 };
-use music::lyrics::LOCAL;
-use music::scrobble::Account;
+use lyrics::LOCAL;
 use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
+use scrobble::Account;
 use serde::{Deserialize, Serialize};
 use storage::Database;
 use ui::{
@@ -70,7 +70,7 @@ impl ConnectName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-spotify-connect-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Both => "settings-spotify-connect-name-both",
             Self::Computer => "settings-spotify-connect-name-computer",
             Self::Custom => "settings-spotify-connect-name-custom",
@@ -119,7 +119,7 @@ impl DiscordName {
 
     pub fn key(self) -> &'static str {
         match self {
-            Self::Sonora => "settings-discord-name-sonora",
+            Self::Sonora => "common-sonora",
             Self::Provider => "settings-discord-name-provider",
             Self::Music => "settings-discord-name-music",
             Self::Title => "settings-discord-name-title",
@@ -353,10 +353,11 @@ const DEFAULT_STARTUP: &str = "home";
 pub const SYSTEM_FONT: &str = "auto";
 /// Every lyrics source Sonora knows by the name its provider reports, in the order a fresh
 /// install prefers them.
-pub const LYRICS_SOURCES: [&str; 10] = [
+pub const LYRICS_SOURCES: [&str; 11] = [
     LOCAL,
     "Subsonic",
     "Jellyfin",
+    "Plex",
     "Spotify",
     "YouTube Music",
     "Apple Music",
@@ -479,13 +480,17 @@ struct Values {
     jellyfin_lyrics_offered: bool,
     /// Whether lyrics show anywhere and are looked up at all.
     lyrics_enabled: bool,
+    /// Set once Plex has been added to a list saved before it existed, so a user who turns it
+    /// off afterwards is not given it back.
+    plex_lyrics_offered: bool,
     lyrics_providers: Vec<String>,
     /// Every known lyrics source, the preferred one first. Lyrics of the same kind from two
     /// sources go to the one listed higher.
     lyrics_provider_priority: Vec<String>,
     /// Whether lyrics timed word by word are shown ahead of any others, whatever source they
-    /// come from. The source order then only settles lyrics of the same kind.
-    lyrics_word_synced_first: bool,
+    /// come from. The source order then only settles lyrics of the same kind. It took a new key
+    /// when it came on by default, so settings saved while it was off pick up the new default.
+    lyrics_prefer_word_synced: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
     romanized_lyrics: bool,
@@ -494,6 +499,9 @@ struct Values {
     romanization_scripts: RomanizationScripts,
     adaptive_menu: bool,
     check_updates: bool,
+    /// Whether a release found is downloaded in the background and installed the next time
+    /// Sonora starts, rather than only offered.
+    auto_update: bool,
     /// The release channel chosen in settings, by its id. Empty follows the running build's own
     /// channel, and a copy a package manager installed ignores it.
     update_channel: String,
@@ -502,6 +510,9 @@ struct Values {
     stay_awake: bool,
     /// Whether a file handed in by the OS goes straight to the now playing view.
     now_playing_on_file_open: bool,
+    /// Whether the Windows taskbar button fills with the track's progress while it plays. Off
+    /// clears the fill, so the button shows only its icon.
+    taskbar_progress: bool,
     language: String,
     #[serde(default = "system_font")]
     font: String,
@@ -516,8 +527,14 @@ struct Values {
     /// Missing system requirements the user asked never to hear about again.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     silenced_requirements: Vec<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    scrobbling: BTreeMap<String, Account>,
+    /// Scrobbling accounts as Sonora kept them here before they moved into the accounts folder.
+    /// The first launch that finds one moves it out, and only one that cannot move stays.
+    // TODO(0.52.0): remove this field and the migration that reads it.
+    #[serde(rename = "scrobbling", skip_serializing_if = "BTreeMap::is_empty")]
+    legacy_scrobbling: BTreeMap<String, LegacyScrobbler>,
+    /// Linked scrobbling services, by slug, that the user switched off. Their link stays.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    scrobbling_off: BTreeSet<String>,
     /// Providers, by slug, whose plays stay out of the linked scrobbling services. Some of them
     /// scrobble to Last.fm on their own, and with both on every listen is counted twice.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
@@ -532,6 +549,16 @@ struct Values {
     appearance: Appearance,
 }
 
+/// A scrobbling account as `settings.json` held it, with its on switch beside the secrets.
+// TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct LegacyScrobbler {
+    #[serde(flatten)]
+    pub account: Account,
+    pub enabled: bool,
+}
+
 /// The arrangement of the workspace's player bar, independent of its surface material.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PlayerBarLayout {
@@ -539,16 +566,19 @@ pub enum PlayerBarLayout {
     Classic,
     Centered,
     Compact,
+    /// A rounded pill that floats over the page instead of a bar across the window's foot.
+    Island,
 }
 
 impl PlayerBarLayout {
-    pub const ALL: [Self; 3] = [Self::Classic, Self::Centered, Self::Compact];
+    pub const ALL: [Self; 4] = [Self::Classic, Self::Centered, Self::Compact, Self::Island];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Classic => "classic",
             Self::Centered => "centered",
             Self::Compact => "compact",
+            Self::Island => "island",
         }
     }
 
@@ -558,6 +588,7 @@ impl PlayerBarLayout {
             Self::Classic => "settings-player-bar-classic",
             Self::Centered => "settings-player-bar-centered",
             Self::Compact => "settings-player-bar-compact",
+            Self::Island => "settings-player-bar-island",
         }
     }
 
@@ -566,7 +597,44 @@ impl PlayerBarLayout {
         match id {
             "centered" => Self::Centered,
             "compact" => Self::Compact,
+            "island" => Self::Island,
             _ => Self::Classic,
+        }
+    }
+}
+
+/// How wide pages stretch on a wide window. `Centered` caps a page at `metrics.page` and stands
+/// it in the middle of the content area, `Wide` lets it fill the whole content area.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageWidth {
+    #[default]
+    Centered,
+    Wide,
+}
+
+impl PageWidth {
+    pub const ALL: [Self; 2] = [Self::Centered, Self::Wide];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Centered => "centered",
+            Self::Wide => "wide",
+        }
+    }
+
+    /// The label's Fluent key, resolved by the view when it renders the option cards.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Centered => "settings-page-width-centered",
+            Self::Wide => "settings-page-width-wide",
+        }
+    }
+
+    /// Reads a saved width id, keeping the centred layout for missing or unknown choices.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "wide" => Self::Wide,
+            _ => Self::Centered,
         }
     }
 }
@@ -592,6 +660,8 @@ struct Appearance {
     player_bar_time_left: bool,
     icons: String,
     rounding: String,
+    /// How wide pages stretch on a wide window, by its id. See `PageWidth`.
+    page_width: String,
     /// Whether the app paints its frosted treatments. The key kept its old name, which stood
     /// for a blurred desktop behind the window, so a stored preference carries over.
     blur: bool,
@@ -709,13 +779,14 @@ impl Default for Values {
             subsonic_lyrics_offered: false,
             jellyfin_lyrics_offered: false,
             lyrics_enabled: true,
+            plex_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
-            lyrics_providers: LYRICS_SOURCES[..8]
+            lyrics_providers: LYRICS_SOURCES[..9]
                 .iter()
                 .map(|name| name.to_string())
                 .collect(),
-            lyrics_word_synced_first: false,
+            lyrics_prefer_word_synced: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
             romanized_lyrics: true,
@@ -724,11 +795,13 @@ impl Default for Values {
             romanization_scripts: RomanizationScripts::default(),
             adaptive_menu: false,
             check_updates: cfg!(target_os = "windows") || updates_itself(),
+            auto_update: true,
             update_channel: String::new(),
             close_to_tray: true,
             tray_icon: true,
             stay_awake: true,
             now_playing_on_file_open: true,
+            taskbar_progress: true,
             language: i18n::AUTO.to_owned(),
             font: system_font(),
             startup: DEFAULT_STARTUP.to_owned(),
@@ -736,7 +809,8 @@ impl Default for Values {
             hidden_nav: Vec::new(),
             added_nav: Vec::new(),
             silenced_requirements: Vec::new(),
-            scrobbling: BTreeMap::new(),
+            legacy_scrobbling: BTreeMap::new(),
+            scrobbling_off: BTreeSet::new(),
             unscrobbled: BTreeSet::new(),
             keybinds: BTreeMap::new(),
             appearance: Appearance::default(),
@@ -906,6 +980,7 @@ impl Default for Appearance {
             player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
+            page_width: PageWidth::default().id().to_owned(),
             blur: true,
             blur_window: true,
             font_size: DEFAULT_FONT_SIZE,
@@ -988,18 +1063,25 @@ impl AppSettings {
         let (values, writable, disk, broken) = match parsed {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
             Some((Err(_), bytes)) if empty_settings(&bytes) => {
-                (Values::default().settled(), writable, Some(bytes), None)
+                let values = Values {
+                    subsonic_lyrics_offered: true,
+                    jellyfin_lyrics_offered: true,
+                    plex_lyrics_offered: true,
+                    ..Values::default()
+                };
+                (values.settled(), writable, Some(bytes), None)
             }
             Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
                 (Values::default().settled(), false, None, Some(error.line()))
             }
-            // The default provider list already has Subsonic and Jellyfin, so a fresh install marks
-            // them offered and a user who turns one off does not get it back on the next launch.
+            // The default provider list already has Subsonic, Jellyfin and Plex, so a fresh install
+            // marks them offered and a user who turns one off does not get it back on the next launch.
             None => {
                 let values = Values {
                     subsonic_lyrics_offered: true,
                     jellyfin_lyrics_offered: true,
+                    plex_lyrics_offered: true,
                     ..Values::default()
                 };
                 (values.settled(), writable, None, None)
@@ -1236,7 +1318,7 @@ impl AppSettings {
 
     /// Whether lyrics timed word by word are shown ahead of any others, whatever their source.
     pub fn lyrics_word_synced_first(&self) -> bool {
-        self.values.lyrics_word_synced_first
+        self.values.lyrics_prefer_word_synced
     }
 
     pub fn lyrics_provider_enabled(&self, provider: &str) -> bool {
@@ -1286,6 +1368,10 @@ impl AppSettings {
         self.values.check_updates
     }
 
+    pub fn auto_update(&self) -> bool {
+        self.values.auto_update
+    }
+
     pub fn close_to_tray(&self) -> bool {
         self.values.close_to_tray
     }
@@ -1304,24 +1390,26 @@ impl AppSettings {
         self.values.now_playing_on_file_open
     }
 
+    /// Whether the Windows taskbar button fills with the track's progress while it plays.
+    pub fn taskbar_progress(&self) -> bool {
+        self.values.taskbar_progress
+    }
+
     /// Whether plays from the provider with this slug are submitted to the linked scrobbling
     /// services. The provider itself hears about them either way.
     pub fn scrobbles(&self, provider: &str) -> bool {
         !self.values.unscrobbled.contains(provider)
     }
 
-    /// Every linked scrobbling account, keyed by its service slug.
-    pub fn scrobbling(&self) -> &BTreeMap<String, Account> {
-        &self.values.scrobbling
+    /// Whether listens go to the scrobbling service with this slug once it is linked.
+    pub fn scrobbling_on(&self, service: &str) -> bool {
+        !self.values.scrobbling_off.contains(service)
     }
 
-    /// One service's account, blank when it was never linked.
-    pub fn account(&self, service: &str) -> Account {
-        self.values
-            .scrobbling
-            .get(service)
-            .cloned()
-            .unwrap_or_default()
+    /// The scrobbling accounts an older Sonora left in `settings.json`, keyed by service slug.
+    // TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+    pub(crate) fn legacy_scrobbling(&self) -> &BTreeMap<String, LegacyScrobbler> {
+        &self.values.legacy_scrobbling
     }
 
     pub fn sidebar_width(&self) -> f32 {
@@ -1511,6 +1599,11 @@ impl AppSettings {
 
     pub fn rounding(&self) -> &str {
         &self.values.appearance.rounding
+    }
+
+    /// How wide pages stretch on a wide window. An unknown saved id reads as centred.
+    pub fn page_width(&self) -> PageWidth {
+        PageWidth::from_id(&self.values.appearance.page_width)
     }
 
     /// Whether the app paints its frosted treatments. See `ui::blurring`.
@@ -1876,7 +1969,7 @@ impl AppSettings {
     }
 
     pub fn set_lyrics_word_synced_first(&mut self, first: bool, cx: &mut Context<Self>) {
-        self.values.lyrics_word_synced_first = first;
+        self.values.lyrics_prefer_word_synced = first;
         self.schedule_save(cx);
     }
 
@@ -1949,6 +2042,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_auto_update(&mut self, auto_update: bool, cx: &mut Context<Self>) {
+        self.values.auto_update = auto_update;
+        self.schedule_save(cx);
+    }
+
     pub fn set_close_to_tray(&mut self, close_to_tray: bool, cx: &mut Context<Self>) {
         self.values.close_to_tray = close_to_tray;
         self.schedule_save(cx);
@@ -1969,6 +2067,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_taskbar_progress(&mut self, taskbar_progress: bool, cx: &mut Context<Self>) {
+        self.values.taskbar_progress = taskbar_progress;
+        self.schedule_save(cx);
+    }
+
     pub fn set_scrobbles(&mut self, provider: &str, enabled: bool, cx: &mut Context<Self>) {
         match enabled {
             true => self.values.unscrobbled.remove(provider),
@@ -1977,25 +2080,34 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    /// Stores a linked account, or forgets the service when the account carries no session.
-    pub fn set_account(&mut self, service: &str, account: Account, cx: &mut Context<Self>) {
-        match account.linked() {
-            true => {
-                self.values.scrobbling.insert(service.to_owned(), account);
-            }
-            false => {
-                self.values.scrobbling.remove(service);
-            }
+    /// Turns submissions to one scrobbling service on or off, leaving its link alone.
+    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
+        let changed = match enabled {
+            true => self.values.scrobbling_off.remove(service),
+            false => self.values.scrobbling_off.insert(service.to_owned()),
+        };
+        if changed {
+            self.schedule_save(cx);
         }
-        self.schedule_save(cx);
     }
 
-    /// Turns submissions to one linked service on or off, leaving the link itself alone.
-    pub fn set_scrobbling(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
-        let Some(account) = self.values.scrobbling.get_mut(service) else {
+    /// Drops the legacy accounts that now live in the accounts folder, keeping the on switch of
+    /// each. `moved` pairs a service slug with whether it was on.
+    // TODO(0.52.0): remove with `Values::legacy_scrobbling`.
+    pub(crate) fn forget_legacy_scrobbling(
+        &mut self,
+        moved: &[(String, bool)],
+        cx: &mut Context<Self>,
+    ) {
+        if moved.is_empty() {
             return;
-        };
-        account.enabled = enabled;
+        }
+        for (service, enabled) in moved {
+            self.values.legacy_scrobbling.remove(service);
+            if !enabled {
+                self.values.scrobbling_off.insert(service.clone());
+            }
+        }
         self.schedule_save(cx);
     }
 
@@ -2457,6 +2569,16 @@ impl AppSettings {
 
     pub fn set_rounding(&mut self, rounding: impl Into<String>, cx: &mut Context<Self>) {
         self.values.appearance.rounding = rounding.into();
+        self.schedule_save(cx);
+    }
+
+    /// Saves the page width and redraws every window, since each page reads it while rendering.
+    pub fn set_page_width(&mut self, width: PageWidth, cx: &mut Context<Self>) {
+        if self.page_width() == width {
+            return;
+        }
+        self.values.appearance.page_width = width.id().to_owned();
+        cx.refresh_windows();
         self.schedule_save(cx);
     }
 
@@ -2965,6 +3087,7 @@ fn offer_new_lyrics(mut values: Values) -> Values {
     let sources = [
         (&mut values.subsonic_lyrics_offered, "Subsonic"),
         (&mut values.jellyfin_lyrics_offered, "Jellyfin"),
+        (&mut values.plex_lyrics_offered, "Plex"),
     ];
     for (offered, name) in sources {
         if !*offered {
@@ -3096,15 +3219,33 @@ fn save_settings(path: &Path, bytes: &[u8], previous: Option<&[u8]>) -> Result<(
     if let Some(previous) =
         previous.filter(|previous| serde_json::from_slice::<Values>(json(previous)).is_ok())
     {
-        write_settings(&path.with_file_name("sonora.backup.json"), previous)
-            .context("cannot back up settings")?;
+        write_settings(
+            &path.with_file_name("sonora.backup.json"),
+            &without_scrobbling(previous),
+        )
+        .context("cannot back up settings")?;
     }
     write_settings(path, bytes)
 }
 
+/// Settings without the scrobbling accounts an older Sonora kept in them, so the backup of the
+/// file they are moved out of does not keep a copy. Settings without them come back unchanged.
+// TODO(0.52.0): remove with `Values::legacy_scrobbling` and back up `previous` as it is.
+fn without_scrobbling(previous: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let Ok(mut values) =
+        serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(json(previous))
+    else {
+        return previous.into();
+    };
+    if values.remove("scrobbling").is_none() {
+        return previous.into();
+    }
+    serde_json::to_vec_pretty(&values).map_or_else(|_| previous.into(), Into::into)
+}
+
 /// Replaces settings with a synced file beside the destination, so an interrupted save leaves
-/// the previous contents intact. Symlinks keep pointing to their target. The file can hold
-/// scrobbling keys, so on unix only its owner may read it.
+/// the previous contents intact. Symlinks keep pointing to their target. On unix only the owner
+/// may read it, since an older Sonora kept scrobbling keys in it.
 fn write_settings(path: &Path, bytes: &[u8]) -> Result<()> {
     let path = match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -3330,6 +3471,67 @@ mod tests {
     use ui::PinKind;
 
     #[test]
+    fn taskbar_progress_defaults_on_and_loads_off_from_settings_json_after_a_restart() {
+        let values: Values = serde_json::from_str("{}").unwrap();
+        assert!(values.taskbar_progress);
+
+        let root = scratch("taskbar-progress");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(&path, r#"{"taskbar_progress": false}"#).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let settings = AppSettings::load_from(path, store);
+        assert!(!settings.taskbar_progress());
+    }
+
+    #[test]
+    fn page_width_defaults_to_centered_when_no_setting_is_stored() {
+        let values: Values = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            PageWidth::from_id(&values.appearance.page_width),
+            PageWidth::Centered
+        );
+
+        let root = scratch("page-width-default");
+        fs::create_dir_all(&root).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let settings = AppSettings::load_from(root.join("settings.json"), store);
+        assert_eq!(settings.page_width(), PageWidth::Centered);
+    }
+
+    #[test]
+    fn page_width_wide_loads_from_settings_json_and_unknown_ids_read_as_centered() {
+        assert_eq!(PageWidth::from_id("wide"), PageWidth::Wide);
+        assert_eq!(PageWidth::from_id("bogus"), PageWidth::Centered);
+
+        let root = scratch("page-width-wide");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(&path, r#"{"appearance": {"page_width": "wide"}}"#).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let settings = AppSettings::load_from(path, store);
+        assert_eq!(settings.page_width(), PageWidth::Wide);
+    }
+
+    #[test]
+    fn page_width_survives_a_restart() {
+        let root = scratch("page-width-restart");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        fs::write(&path, r#"{"appearance": {"page_width": "wide"}}"#).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let before = AppSettings::load_from(path.clone(), store);
+        assert_eq!(before.page_width(), PageWidth::Wide);
+
+        // Write what a save would write, then load again as a fresh launch does.
+        let saved = serde_json::to_vec(&before.values).unwrap();
+        fs::write(&path, saved).unwrap();
+        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let after = AppSettings::load_from(path, store);
+        assert_eq!(after.page_width(), PageWidth::Wide);
+    }
+
+    #[test]
     fn lyrics_priority_defaults_and_round_trips_independently_of_enablement() {
         let mut values: Values = serde_json::from_str("{}").unwrap();
         assert_eq!(
@@ -3338,6 +3540,7 @@ mod tests {
                 LOCAL,
                 "Subsonic",
                 "Jellyfin",
+                "Plex",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",
@@ -3367,7 +3570,7 @@ mod tests {
     fn lyrics_priority_ignores_unknown_and_duplicate_sources_and_appends_missing_ones() {
         let order = lyrics_priority(&["LrcLib".into(), "unknown".into(), "LrcLib".into()]);
         assert_eq!(order[0], "LrcLib");
-        assert_eq!(order.len(), 10);
+        assert_eq!(order.len(), LYRICS_SOURCES.len());
         assert!(!order.iter().any(|name| name == "unknown"));
         assert_eq!(order.iter().filter(|name| *name == "LrcLib").count(), 1);
     }

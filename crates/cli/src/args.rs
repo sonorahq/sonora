@@ -118,6 +118,10 @@ enum Sub {
         items: Vec<Item>,
         #[command(flatten)]
         searched: Searched,
+        /// Queue at this 1-based position: 1 plays next, 2 leaves one track ahead. Suggested
+        /// tracks do not count.
+        #[arg(long, allow_hyphen_values = true, value_parser = position)]
+        at: Option<usize>,
     },
     /// Queue files or links right after the current track.
     PlayNext {
@@ -314,7 +318,17 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
         Sub::Like { switch } => Request::Like(switch.map(Switch::from)),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
-        Sub::Add { items, searched } => Request::Queue(QueueCommand::Add(searched.or(items))),
+        Sub::Add {
+            items,
+            searched,
+            at,
+        } => {
+            let items = searched.or(items);
+            match at {
+                Some(position) => Request::Queue(QueueCommand::At { items, position }),
+                None => Request::Queue(QueueCommand::Add(items)),
+            }
+        }
         Sub::PlayNext { items, searched } => {
             Request::Queue(QueueCommand::PlayNext(searched.or(items)))
         }
@@ -446,6 +460,16 @@ fn clock(text: &str) -> Option<u64> {
     (count <= 3).then_some(seconds)
 }
 
+/// A 1-based position in the upcoming queue: 1 puts the item right after the playing track.
+fn position(text: &str) -> Result<usize, String> {
+    let value: usize = text
+        .parse()
+        .map_err(|_| "position must be a positive number".to_owned())?;
+    (value > 0)
+        .then_some(value)
+        .ok_or_else(|| "position must be at least 1".to_owned())
+}
+
 /// An item to queue as typed: an address goes as it is, a path has to name a file here.
 fn queued(text: &str) -> Result<Item, String> {
     if item::is_address(text) {
@@ -569,6 +593,32 @@ mod tests {
     fn like_rejects_an_unknown_switch() {
         let args = ["sonora", "like", "perhaps"].map(OsString::from);
         assert!(parse(args.to_vec(), "0.0.0").is_err());
+    }
+
+    #[test]
+    fn add_places_a_search_at_a_chosen_position() {
+        let CommandType::Remote(request, _) = parsed(&["add", "--at", "3", "-s", "daft", "punk"])
+        else {
+            panic!("a search should ask the running Sonora");
+        };
+        assert_eq!(
+            request,
+            Request::Queue(QueueCommand::At {
+                items: vec![Item::Search {
+                    text: "daft punk".to_owned(),
+                    kind: Kind::Song,
+                }],
+                position: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn add_refuses_a_position_below_one() {
+        for at in ["0", "-1", "not-a-number"] {
+            let args = ["sonora", "add", "--at", at, "-s", "queen"].map(OsString::from);
+            assert!(parse(args.to_vec(), "0.0.0").is_err(), "position: {at}");
+        }
     }
 
     #[test]

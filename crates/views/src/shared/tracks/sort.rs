@@ -7,6 +7,8 @@ use super::TrackField;
 use crate::shared::blend::Joined;
 use crate::shared::text::{folded, holds};
 
+/// Orders two rows by one field. Date liked lives in the library rather than on the track, so the
+/// source orders it and this keeps the rows as they are.
 pub(super) fn compare(
     tracks: Joined<'_, Track>,
     field: TrackField,
@@ -35,7 +37,7 @@ pub(super) fn compare(
             .get(a)
             .map(|track| track.duration)
             .cmp(&tracks.get(b).map(|track| track.duration)),
-        TrackField::Index | TrackField::Cover => a.cmp(&b),
+        TrackField::Index | TrackField::Cover | TrackField::LikedAt => a.cmp(&b),
     }
 }
 

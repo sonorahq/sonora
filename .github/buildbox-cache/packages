@@ -1,0 +1,8 @@
+# Arch packages the snapshot builds against. A machine reuses the snapshot only while it has the
+# same toolchain and libraries.
+base-devel git rsync util-linux which
+rustup clang lld mold cmake ninja meson pkgconf sccache
+python python-pip nodejs npm go zig
+alsa-lib libpulse pipewire jack2 dbus openssl libxkbcommon wayland wayland-protocols
+libx11 libxcursor libxrandr libxi libxcb vulkan-icd-loader vulkan-headers mesa
+fontconfig freetype2 gtk3 gtk4 libadwaita webkit2gtk-4.1

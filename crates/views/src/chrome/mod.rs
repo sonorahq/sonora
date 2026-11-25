@@ -1,12 +1,13 @@
 mod aside;
 mod downloads;
-mod jam;
-mod members;
+pub(crate) mod jam;
+pub(crate) mod members;
 mod notice;
 mod output_picker;
 mod player_bar;
 mod session;
 mod sessions_button;
+mod sheet;
 mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
@@ -22,8 +23,10 @@ pub(crate) use jam::{JamCode, JamInvite, JamJoin};
 pub(crate) use members::Members;
 pub(crate) use notice::AppNotice;
 pub(crate) use output_picker::OutputPicker;
-pub(crate) use player_bar::PlayerBar;
+pub(crate) use player_bar::{BarParts, COVER_GAP, PlayerBar, Volume};
 pub(crate) use session::{SessionCode, SessionJoin};
+pub(crate) use sessions_button::SessionsButton;
+pub(crate) use sheet::{SHEET_EDGE, inner_corners, sheet_frame};
 pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
 pub(crate) use swipe_cue::SwipeCue;
@@ -37,10 +40,11 @@ pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, Div, Entity, Global, Pixels, SharedString, Window, div};
+use gpui::{App, Corners, Div, Edges, Entity, Global, Pixels, SharedString, Window, div};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use state::AppSettings;
-use ui::{ActiveTheme as _, MIN_CONTENT, Room, eyebrow};
+use state::{PageWidth, Sonora};
+use ui::{ActiveTheme as _, MIN_CONTENT, Room, Rounding, eyebrow};
 
 /// The radius every element touching a corner of the window rounds that corner with, or `None`
 /// under server-side decorations or `Rounding::Square`. It never exceeds half the title bar's
@@ -76,6 +80,15 @@ pub(crate) fn cap(min: Pixels, max: Pixels, keep: Pixels, window: &Window) -> Pi
     max.min(room.max(min))
 }
 
+/// The width a page takes out of a content area of `content`. The centred layout stops at
+/// `page`, and the wide layout takes the whole of `content`.
+fn page_fit(content: Pixels, page: Pixels, width: PageWidth) -> Pixels {
+    match width {
+        PageWidth::Centered => content.min(page),
+        PageWidth::Wide => content,
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct Chrome {
     sidebar_left: Pixels,
@@ -85,6 +98,10 @@ pub(crate) struct Chrome {
     reserved_right: Pixels,
     /// The part of a page covered by the translucent player bar.
     player_bottom: Pixels,
+    /// Whether the bar is an island standing on the sheet clear of both sidebars.
+    island_clear: bool,
+    /// How round each corner of the page's sheet is once every sidebar has landed.
+    sheet_corners: Corners<Pixels>,
 }
 
 struct Installed(Entity<Chrome>);
@@ -105,7 +122,7 @@ impl Chrome {
             sidebar_left: left,
             sidebar_right: right,
             reserved_right,
-            player_bottom: Self::get(cx).player_bottom,
+            ..Self::get(cx)
         };
         let chrome = Self::entity(cx);
         chrome.update(cx, |chrome, cx| {
@@ -126,9 +143,93 @@ impl Chrome {
         Self::get(cx).reserved_right
     }
 
+    /// How round each corner of the sheet the page lies on is. A corner rounds where it meets
+    /// the chrome and stays square against the window's edge.
+    pub fn sheet_corners(cx: &App) -> Corners<Pixels> {
+        Self::get(cx).sheet_corners
+    }
+
+    /// Publishes the corners of the sheet the page lies on once every sidebar has landed, which
+    /// pages pad against. The arguments are those of `sheet_shape`.
+    pub(crate) fn set_sheet(left: f32, right: f32, bottom: bool, cx: &mut App) {
+        let (corners, _) = Self::sheet_shape(left, right, bottom, cx);
+        Self::entity(cx).update(cx, |chrome, cx| {
+            if chrome.sheet_corners != corners {
+                chrome.sheet_corners = corners;
+                cx.notify();
+            }
+        });
+    }
+
+    /// The corners and edges of a sheet with `left` and `right` of a sidebar beside it, from 0
+    /// where the side meets the window's edge to 1 where the sidebar has slid all the way out,
+    /// and whose bottom runs to the window's foot when `bottom` holds. A corner rounds in step
+    /// with its side and a side with nothing beside it draws no edge. The corners stop growing at
+    /// the `Rounded` setting, since rounder ones cut into what the page lays along its top.
+    pub(crate) fn sheet_shape(
+        left: f32,
+        right: f32,
+        bottom: bool,
+        cx: &App,
+    ) -> (Corners<Pixels>, Edges<Pixels>) {
+        let radius = cx.theme().radius.min(Rounding::Rounded.radius()) * 1.5;
+        let round = |beside: f32| radius * beside.clamp(0., 1.);
+        let edge = |beside: f32| match beside > 0. {
+            true => SHEET_EDGE,
+            false => Pixels::ZERO,
+        };
+        let below = match bottom {
+            true => 0.,
+            false => 1.,
+        };
+        let corners = Corners {
+            top_left: round(left),
+            top_right: round(right),
+            bottom_left: round(left.min(below)),
+            bottom_right: round(right.min(below)),
+        };
+        let edges = Edges {
+            top: SHEET_EDGE,
+            left: edge(left),
+            right: edge(right),
+            bottom: edge(below),
+        };
+        (corners, edges)
+    }
+
     /// The extra scroll space needed to bring a page's last item above the player bar.
     pub fn bottom(cx: &App) -> Pixels {
         Self::get(cx).player_bottom
+    }
+
+    /// How far above a page's foot its scrollbar ends: clear of a translucent player bar, or of
+    /// the sheet's rounded bottom corner where the page stops above an opaque one.
+    pub fn track_bottom(cx: &App) -> Pixels {
+        let chrome = Self::get(cx);
+        chrome.player_bottom.max(chrome.sheet_corners.bottom_right)
+    }
+
+    /// Places a button perched over a sidebar's rows. Beside an island standing clear of the
+    /// sidebar it lines up with the island's middle. Over a bar that runs under the sidebar it
+    /// stands above that bar, and with no bar there it keeps its own place at the foot.
+    pub fn sidebar_perch(perch: Div, cx: &App) -> Div {
+        let chrome = Self::get(cx);
+        let metrics = cx.theme().metrics;
+        match (chrome.island_clear, chrome.player_bottom > Pixels::ZERO) {
+            (true, _) => perch.bottom((chrome.player_bottom - metrics.control_small) / 2.),
+            (false, true) => perch.bottom(chrome.player_bottom + metrics.pad * 1.5),
+            (false, false) => perch,
+        }
+    }
+
+    /// Publishes whether the island stands on the sheet clear of both sidebars.
+    pub(crate) fn set_island_clear(clear: bool, cx: &mut App) {
+        Self::entity(cx).update(cx, |chrome, cx| {
+            if chrome.island_clear != clear {
+                chrome.island_clear = clear;
+                cx.notify();
+            }
+        });
     }
 
     /// Publishes the player bar's overlap after its responsive height has been resolved.
@@ -151,9 +252,11 @@ impl Chrome {
         Room::of(Self::content(window, cx))
     }
 
-    /// The width a page lays itself out in, which is the content area up to `metrics.page`.
+    /// The width a page lays itself out in. The centred layout stops it at `metrics.page`, and
+    /// the wide layout lets it fill the content area. This is the one place the choice is read.
     pub fn page(window: &Window, cx: &App) -> Pixels {
-        Self::content(window, cx).min(cx.theme().metrics.page)
+        let width = Sonora::global(cx).settings.read(cx).page_width();
+        page_fit(Self::content(window, cx), cx.theme().metrics.page, width)
     }
 
     /// How much wider than its page the content area is on each side. A page adds it to its
@@ -166,5 +269,34 @@ impl Chrome {
     /// Classifies chrome that spans the whole window, including the space under sidebars.
     pub fn window_room(window: &Window) -> Room {
         Room::of(window.viewport_size().width)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::px;
+    use state::PageWidth;
+
+    use super::page_fit;
+
+    #[test]
+    fn centred_pages_stop_at_the_page_width_on_a_wide_window() {
+        assert_eq!(
+            page_fit(px(2400.), px(1600.), PageWidth::Centered),
+            px(1600.)
+        );
+    }
+
+    #[test]
+    fn centred_pages_fill_a_window_narrower_than_the_page_width() {
+        assert_eq!(
+            page_fit(px(1200.), px(1600.), PageWidth::Centered),
+            px(1200.)
+        );
+    }
+
+    #[test]
+    fn wide_pages_fill_the_content_area_even_past_the_page_width() {
+        assert_eq!(page_fit(px(2400.), px(1600.), PageWidth::Wide), px(2400.));
     }
 }

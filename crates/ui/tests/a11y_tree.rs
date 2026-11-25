@@ -377,6 +377,26 @@ async fn spoken_text_names_itself_from_its_value(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn steady_text_speaks_only_its_value(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |_, _| {
+        let element = ui::spoken_steady("rate", "48 kHz", ["44.1 kHz".into(), "192 kHz".into()])
+            .into_element();
+        snapshot("spoken-steady", &element)
+    });
+    let lines = rendered(&lines, "spoken-steady");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("role=Label") && line.contains("name=Some(\"48 kHz\")")),
+        "steady text is not announced by its value: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("192 kHz")),
+        "steady text announces the widths it only measures: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn checkbox_takes_a_name_without_a_label(cx: &mut TestAppContext) {
     let lines = open_probe(cx, |window, cx| {
         let element = Checkbox::new("consent", false)
@@ -492,6 +512,35 @@ async fn option_card_reads_as_a_named_radio(cx: &mut TestAppContext) {
             .iter()
             .any(|line| line.contains("description=Some(\"Easy on the eyes\")")),
         "option card drops its detail line: {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn page_width_card_keeps_its_id_role_and_name(cx: &mut TestAppContext) {
+    // The Appearance page builds its page width cards with a SharedString id, so this does too.
+    let lines = open_probe(cx, |window, cx| {
+        let element = OptionCard::new(gpui::SharedString::from("page-width-wide"))
+            .label("Wide")
+            .selected(true)
+            .on_click(|_, _, _| {})
+            .render(window, cx)
+            .into_element();
+        snapshot("page-width-card", &element)
+    });
+    let lines = rendered(&lines, "page-width-card");
+    assert!(
+        lines.iter().any(|line| line.contains("role=RadioButton")),
+        "page width card exposes no Role::RadioButton, screen readers skip it: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("page-width-wide")),
+        "page width card loses its stable id: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("name=Some(\"Wide\")")),
+        "page width card exposes no accessible name for its label: {lines:?}"
     );
 }
 

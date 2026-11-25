@@ -10,9 +10,10 @@ use crate::screens::equalizer::EqualizerView;
 /// strip, so this is also the widest the haze gets.
 const BLUR: Pixels = px(1.);
 
-/// The search field and the pill bar of tabs that float over every settings page in the
-/// workspace. The workspace lays it over the content outside the page's transition, so a page
-/// change fades the rows and nothing else. It measures itself so the pages start below it.
+/// The search field, with its panel of suggested settings, and the pill bar of tabs that float
+/// over every settings page in the workspace. The workspace lays it over the content outside the
+/// page's transition, so a page change fades the rows and nothing else. It measures itself so the
+/// pages start below it.
 pub struct SettingsHeader {
     view: Entity<SettingsView>,
     /// The equalizer page, which starts below the header too and has to hear when it moves.
@@ -43,8 +44,10 @@ impl Render for SettingsHeader {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let layout = Layout::of(window, cx);
         let theme = *cx.theme();
+        let search = self
+            .view
+            .update(cx, |view, cx| view.search_field(window, cx));
         let view = self.view.read(cx);
-        let search = view.search();
         // a search lights no tab, since its results come from all of them
         let chosen = match view.searching() {
             true => None,

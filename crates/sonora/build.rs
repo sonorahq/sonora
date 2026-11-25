@@ -2,8 +2,28 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+/// The artwork `artwork!` embeds, relative to the workspace's `assets` folder.
+const ARTWORK: &[&str] = &[
+    "linux/sonora.svg",
+    "linux/icons/hicolor/16x16/apps/sonora.png",
+    "linux/icons/hicolor/22x22/apps/sonora.png",
+    "linux/icons/hicolor/24x24/apps/sonora.png",
+    "linux/icons/hicolor/32x32/apps/sonora.png",
+    "linux/icons/hicolor/48x48/apps/sonora.png",
+    "linux/icons/hicolor/64x64/apps/sonora.png",
+    "linux/icons/hicolor/128x128/apps/sonora.png",
+    "linux/icons/hicolor/256x256/apps/sonora.png",
+    "linux/icons/hicolor/512x512/apps/sonora.png",
+    "macos/sonora.svg",
+    "macos/sonora.icns",
+    "tray/template-18.png",
+    "tray/template-36.png",
+    "windows/sonora.svg",
+];
+
 fn main() {
     fonts();
+    artwork();
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let icon = concat!(
@@ -31,13 +51,23 @@ fn fonts() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-/// The workspace root, taken from the crate's own manifest directory without touching the
-/// filesystem, since `canonicalize` fails on a shared drive inside a Windows VM.
+/// Stages the artwork into `OUT_DIR`, where `artwork!` embeds it from. Embedding the copies instead
+/// of the files under `assets` keeps a target directory copied to another checkout fresh, since
+/// cargo records an embedded file outside the crate by its absolute path.
+fn artwork() {
+    let assets = workspace().join("assets");
+    for file in ARTWORK {
+        let file = assets.join(file);
+        embed::rerun_if_changed(&file);
+        embed::staged(&file);
+    }
+}
+
+/// The workspace root, reached through the crate's own manifest directory without touching the
+/// filesystem, since `canonicalize` fails on a shared drive inside a Windows VM. Keeping the
+/// manifest directory in the path lets cargo record every file this script reads relative to the
+/// crate, so a target directory copied to another checkout stays fresh.
 fn workspace() -> PathBuf {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo names the crate"));
-    manifest
-        .ancestors()
-        .nth(2)
-        .expect("the crate lives two levels under the workspace")
-        .to_path_buf()
+    manifest.join("..").join("..")
 }

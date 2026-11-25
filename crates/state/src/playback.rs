@@ -1,16 +1,18 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use futures::future::{BoxFuture, join_all};
+use futures::future::BoxFuture;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use logic::station::{self, unheard};
 use music::connect::{self, Command, Repeat};
 use music::vault::Vault;
 use music::{
-    Analyzer, Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
-    PlaybackFactory, Player, Quality, QueueAppend, Spectrum, Track, TrackSignal, Transcode,
+    Analyzer, Capabilities, Contributor, Meter, MusicApi, PlaybackConfig,
+    PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory, Player, Quality, RadioSeed,
+    Spectrum, Track, TrackSignal, Transcode,
 };
 use ui::{Pin, PinKind};
 
@@ -56,71 +58,21 @@ enum Intent {
     Pause,
 }
 
-/// Identifies the newest Soloist queue snapshot whose metadata is still being resolved.
-#[derive(Default)]
-struct SoloistQueueRevision(u64);
-
-impl SoloistQueueRevision {
-    /// Starts a newer queue snapshot, making every earlier completion stale.
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(1);
-        self.0
-    }
-
-    /// Whether a completed snapshot still matches the newest request.
-    fn is_current(&self, revision: u64) -> bool {
-        self.0 == revision
-    }
-}
-
-/// Collection entries that still need an acknowledged append to Soloist's shared queue.
-struct SoloistPublish {
-    tail: VecDeque<String>,
-    awaiting: Option<String>,
-}
-
-impl SoloistPublish {
-    /// Returns every collection occurrence that is not yet visible in an acknowledged snapshot.
-    fn retained(&self) -> Vec<String> {
-        self.awaiting.iter().chain(&self.tail).cloned().collect()
-    }
-
-    /// Starts one append, never issuing another until its command result arrives.
-    fn next(&mut self) -> Option<String> {
-        if self.awaiting.is_some() {
-            return None;
-        }
-        let id = self.tail.pop_front()?;
-        self.awaiting = Some(id.clone());
-        Some(id)
-    }
-
-    /// Clears the one append this publication is waiting to confirm.
-    fn confirm(&mut self, id: &str) -> bool {
-        if self.awaiting.as_deref() != Some(id) {
-            return false;
-        }
-        self.awaiting = None;
-        true
-    }
-
-    /// Whether every collection entry has reached Soloist.
-    fn complete(&self) -> bool {
-        self.awaiting.is_none() && self.tail.is_empty()
-    }
-}
-
 use crate::queue::{Queue, QueuePlacement};
 use serde::{Deserialize, Serialize};
 
 use crate::devices::collection_of;
 use crate::{
-    AppSettings, Devices, Elsewhere, Equalizer, Io, Network, Outcome, Session, SessionEvent,
-    SessionState, Sonora, Target, Toast, Toasts,
+    AppSettings, Devices, Elsewhere, Equalizer, Io, Network, Outcome, QueueKind, QueuePosition,
+    Session, SessionEvent, SessionState, Sonora, Target, Toast, Toasts,
 };
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
 const CLOCK_SETTLE: Duration = Duration::from_secs(1);
+/// How far a position report may be from the clock and still be eased in. A report further off
+/// means the clock was wrong rather than drifting, as when an engine started somewhere other
+/// than where it said, so the clock jumps to it.
+const CLOCK_JUMP: Duration = Duration::from_secs(2);
 /// Position reports that can still arrive from before a seek: one already in the channel and
 /// one for a packet decoded before the engine read the command. A successful seek keeps the
 /// engine busy, so more than this while one is in flight means it never left the old position.
@@ -163,15 +115,6 @@ const MUTE_THRESHOLD: f32 = 0.001;
 /// The level a mute button restores when the volume was already zero.
 const DEFAULT_UNMUTE_VOLUME: f32 = 0.7;
 const SIMILAR_LIMIT: usize = 20;
-
-/// How few tracks may be left to play before radio asks for the next batch of suggestions.
-/// Asking this early keeps the wait for the station off the gap between two tracks.
-const RADIO_LOOKAHEAD: usize = 10;
-
-/// How many continuations in a row may bring nothing the queue has not heard before the station
-/// is dropped. An empty stretch lands with the queue still short, which asks for the next one
-/// straight away, so a provider serving the same tracks over would otherwise never be let go of.
-const STATION_DRY_LIMIT: u8 = 3;
 
 /// How many unreadable files a toast names before it cuts the list short.
 const LISTED_FILES: usize = 5;
@@ -244,16 +187,24 @@ impl LiveClock {
         self.settle = CLOCK_SETTLE.as_secs_f64();
     }
 
-    /// Folds a reported position in without a jump.
+    /// Folds a reported position in without a jump, unless it is more than `CLOCK_JUMP` off.
     fn correct(&mut self, toward: Duration) {
         self.correct_at(toward, Instant::now());
     }
 
     fn correct_at(&mut self, toward: Duration, now: Instant) {
         let shown = self.at(now);
-        self.base = shown;
         self.since = Some(now);
-        self.correction = signed_gap(toward, shown);
+        let gap = signed_gap(toward, shown);
+        // Eased in, a gap of a minute would hold the clock nearly still for that minute.
+        if gap.abs() > CLOCK_JUMP.as_secs_f64() {
+            self.base = toward;
+            self.correction = 0.;
+            self.settle = CLOCK_SETTLE.as_secs_f64();
+            return;
+        }
+        self.base = shown;
+        self.correction = gap;
         // A negative correction is spread over longer than the discrepancy itself, which keeps
         // the clock moving forward while it converges instead of ever snapping back.
         self.settle = CLOCK_SETTLE.as_secs_f64() + self.correction.abs();
@@ -430,7 +381,11 @@ pub enum Whence {
     Album,
     Playlist,
     Artist,
+    /// The radio of a track, whose id the origin carries.
     Radio,
+    /// The radio of a whole album, playlist or artist, whose id the origin carries.
+    #[serde(rename = "collection-radio")]
+    CollectionRadio(RadioSeed),
     Saved,
     Local,
 }
@@ -471,6 +426,10 @@ impl Origin {
         Self::of(Whence::Radio, id)
     }
 
+    pub fn collection_radio(seed: RadioSeed, id: impl Into<String>) -> Self {
+        Self::of(Whence::CollectionRadio(seed), id)
+    }
+
     pub fn saved() -> Self {
         Self::of(Whence::Saved, String::new())
     }
@@ -484,30 +443,57 @@ impl Origin {
         self
     }
 
+    /// Whether `load` can fetch this collection from its provider. Local files are listed only
+    /// by the library, which starts them from its own table.
+    fn fetched(&self) -> bool {
+        !matches!(self.whence, Whence::Local)
+    }
+
     /// Loads the collection once for playback or queue placement, retaining radio continuation.
-    /// When `stations` is false the provider cannot seed a radio, so a song collection is just
-    /// the track itself.
+    /// `capabilities` are those of the provider holding it. Without `radio` a song collection is
+    /// just the track itself, and a collection's radio cannot be had at all.
     pub(crate) async fn load(
         &self,
         client: &dyn MusicApi,
-        stations: bool,
+        capabilities: Capabilities,
     ) -> Result<(Vec<Track>, Option<String>)> {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
             Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
-            Whence::Radio => {
-                if !stations {
-                    return Ok((vec![client.track(&self.id).await?], None));
-                }
-                let (mut tracks, next) = client.track_radio(&self.id, None).await?;
+            Whence::Radio if !capabilities.radio => {
+                return Ok((vec![client.track(&self.id).await?], None));
+            }
+            Whence::CollectionRadio(_) if !capabilities.radio => {
+                anyhow::bail!("the provider seeds no radio")
+            }
+            Whence::Radio | Whence::CollectionRadio(_) => {
+                let (mut tracks, next) = self.station(client, capabilities, None).await?;
                 tracks.retain(|track| track.playable);
                 return Ok((tracks, next));
             }
             Whence::Local => anyhow::bail!("local collections are supplied by the library"),
         };
         Ok((tracks, None))
+    }
+
+    /// The stretch of the station this origin names, from its start or from the continuation
+    /// `from`. Only a radio is a station. `capabilities` decide whether a collection's radio comes
+    /// from the provider or is blended from track radios.
+    async fn station(
+        &self,
+        client: &dyn MusicApi,
+        capabilities: Capabilities,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        match self.whence {
+            Whence::CollectionRadio(seed) => {
+                let native = capabilities.collection_radio.contains(&seed);
+                station::collection_radio(client, seed, &self.id, native, from).await
+            }
+            _ => client.track_radio(&self.id, from).await,
+        }
     }
 
     fn of(whence: Whence, id: impl Into<String>) -> Self {
@@ -532,11 +518,22 @@ impl From<&Pin> for Origin {
     }
 }
 
-/// A station the queue was started from, and the continuation its next stretch is fetched with.
+/// A station the queue was started from: the collection its tracks are tagged with, and the
+/// continuation its next stretch is fetched with.
 #[derive(Clone, PartialEq)]
 struct Station {
     origin: Origin,
-    next: String,
+    rest: station::Station,
+}
+
+impl Station {
+    /// The station of `origin`, a radio, that the provider continues at `next`.
+    fn of(origin: Origin, next: String) -> Self {
+        Self {
+            rest: station::Station::new(origin.id.clone(), next),
+            origin,
+        }
+    }
 }
 
 /// Where files dropped on the queue go: `gap` upcoming tracks in, before the track whose queue
@@ -659,16 +656,6 @@ pub struct Playback {
     /// The collection last fetched for a play button, before or after its press.
     warm: Option<Warm>,
     enqueue: Option<Task<()>>,
-    /// Reads tracks another Spotify app put on Soloist's queue.
-    soloist_queue: Option<Task<()>>,
-    /// The current occurrence named by the Soloist snapshot being resolved.
-    soloist_queue_current: Option<String>,
-    /// Rejects older queue snapshots that finish resolving after a newer one.
-    soloist_queue_revision: SoloistQueueRevision,
-    /// Reads a queued track Soloist moved to before Sonora knew its metadata.
-    soloist_track: Option<Task<()>>,
-    /// The collection tail being published to Soloist's append-only shared queue.
-    soloist_publish: Option<SoloistPublish>,
     suggest: Option<Task<()>>,
     /// The track the engine was asked to fetch ahead, so it is asked once.
     preloaded: Option<Preloaded>,
@@ -726,6 +713,9 @@ pub struct Playback {
     /// How many tracks played out to their end, which a Sonora Session tells apart from the
     /// listener moving on.
     ends: u64,
+    /// Where the music of the track with this id starts after a section SponsorBlock skips from
+    /// its opening. The previous button counts its restart window from there.
+    lead_in: Option<(String, Duration)>,
 }
 
 impl EventEmitter<PlaybackEvent> for Playback {}
@@ -743,7 +733,7 @@ impl Playback {
         cx.on_app_quit(|this, _| {
             this.task = None;
             this.engine = None;
-            music::soloist::stopped()
+            soloist::stopped()
         })
         .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
@@ -855,11 +845,6 @@ impl Playback {
             sought: None,
             warm: None,
             enqueue: None,
-            soloist_queue: None,
-            soloist_queue_current: None,
-            soloist_queue_revision: SoloistQueueRevision::default(),
-            soloist_track: None,
-            soloist_publish: None,
             suggest: None,
             preloaded: None,
             skipped: None,
@@ -886,6 +871,7 @@ impl Playback {
             local: false,
             seeks: 0,
             ends: 0,
+            lead_in: None,
         };
         // Start the local engine at startup so files can play before the first scan.
         if let Some(factory) = playback.session.read(cx).local_playback() {
@@ -946,6 +932,26 @@ impl Playback {
         }
     }
 
+    /// Who queued the shown track by hand, when the queue knows them by name. A track that plays
+    /// on from an album or a playlist names nobody, even where the playlist credits whoever added
+    /// it, so in a Jam this always answers who picked the song.
+    pub fn shown_adder(&self, cx: &App) -> Option<Arc<Contributor>> {
+        let queued = match self.steering(cx) {
+            Some((_, remote)) => remote
+                .state
+                .track
+                .as_ref()
+                .is_some_and(|track| track.queued),
+            None => self.queue.read(cx).kind(QueuePosition::Current) == Some(QueueKind::Queued),
+        };
+        if !queued {
+            return None;
+        }
+        self.shown_track(cx)?
+            .added_by
+            .filter(|added| !added.name.is_empty() && added.name != added.id)
+    }
+
     /// How far into the shown track playback is, and how long that track is.
     pub fn shown_time(&self, cx: &App) -> (Duration, Duration) {
         match self.steered(cx) {
@@ -1004,6 +1010,9 @@ impl Playback {
                     state: Arc::new(connect::Snapshot {
                         context: origin.and_then(|origin| match origin.whence {
                             Whence::Radio => Some(connect::Collection::Radio(origin.id.clone())),
+                            Whence::CollectionRadio(seed) => Some(
+                                connect::Collection::CollectionRadio(seed, origin.id.clone()),
+                            ),
                             _ => collection_of(origin),
                         }),
                         track: Some(connect::QueuedTrack::new(id, false)),
@@ -1016,6 +1025,23 @@ impl Playback {
             },
             cx,
         )
+    }
+
+    /// The album or playlist the queue plays `id` from in that collection's own order, for an
+    /// engine that can show the rest of it on the account's other devices. `None` while the
+    /// queue shuffles, or when the track is not the current one or was queued on its own.
+    fn collection_for(&self, id: &str, cx: &App) -> Option<connect::Collection> {
+        let queue = self.queue.read(cx);
+        let current = queue.current()?.id.as_deref() == Some(id);
+        if !current || queue.shuffle() || queue.place().is_none() {
+            return None;
+        }
+        collection_of(queue.origin()?).filter(|collection| {
+            matches!(
+                collection,
+                connect::Collection::Album(_) | connect::Collection::Playlist(_)
+            )
+        })
     }
 
     /// Plays a track the user picked, from its start.
@@ -1105,6 +1131,10 @@ impl Playback {
         {
             return;
         }
+        // A gapless join only ever happens inside one engine. Lining a track up in the engine
+        // the current track does not play through would join it to whatever that engine last
+        // held, and the load that follows would resume that track instead of this one.
+        let segue = segue && music::is_local_id(id) == self.local_active();
         if self
             .preloaded
             .as_ref()
@@ -1153,12 +1183,6 @@ impl Playback {
         if self.engine_for(&id).is_none() {
             return;
         }
-        if self.soloist_queue_current.as_deref() == Some(&id) {
-            self.soloist_track = None;
-            self.soloist_publish = None;
-        } else {
-            self.cancel_soloist_work();
-        }
         self.silence_other(&id);
         if !matches!(start, Start::Segue | Start::Retry) {
             self.failures = 0;
@@ -1195,6 +1219,7 @@ impl Playback {
                 let Some(engine) = this.engine_for(&id) else {
                     return;
                 };
+                engine.within(this.collection_for(&id, cx).as_ref());
                 if let Err(error) = engine.load(&id, at, start == Start::Segue) {
                     let reason = crate::blamed(&error, cx);
                     this.failed(reason, cx);
@@ -1305,10 +1330,7 @@ impl Playback {
             },
             move |this, loaded, cx| match loaded {
                 Ok((tracks, next)) if this.origin(cx) == Some(&origin) => {
-                    this.station = next.map(|next| Station {
-                        origin: origin.clone(),
-                        next,
-                    });
+                    this.station = next.map(|next| Station::of(origin.clone(), next));
                     this.queue
                         .update(cx, |queue, cx| queue.extend_context(tracks, origin, cx));
                 }
@@ -1328,155 +1350,6 @@ impl Playback {
     /// Appends a track, or starts playing it when nothing is queued.
     pub fn enqueue(&mut self, track: Track, cx: &mut Context<Self>) {
         self.enqueue_tracks(vec![track], None, QueuePlacement::End, cx);
-    }
-
-    /// Whether the active player can honour a local queue placement other than appending.
-    pub fn can_order_queue(&self) -> bool {
-        self.active_engine().is_none_or(Player::can_order_queue)
-    }
-
-    /// Whether Soloist owns the current playback and its remote queue may replace Sonora's.
-    fn soloist_owns_playback(&self) -> bool {
-        !self.local_active()
-            && self
-                .engine
-                .as_deref()
-                .is_some_and(|engine| !engine.can_order_queue())
-    }
-
-    /// Cancels metadata work that belongs to an older Soloist selection or session.
-    fn cancel_soloist_work(&mut self) {
-        self.soloist_queue = None;
-        self.soloist_queue_current = None;
-        self.soloist_queue_revision.next();
-        self.soloist_track = None;
-        self.soloist_publish = None;
-    }
-
-    /// Replaces Sonora's Spotify queue with Soloist's reported remote window.
-    fn sync_soloist_queue(
-        &mut self,
-        current: Option<connect::QueuedTrack>,
-        previous: Vec<connect::QueuedTrack>,
-        upcoming: Vec<connect::QueuedTrack>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.soloist_owns_playback() {
-            return;
-        }
-        let Some(client) = self.session.read(cx).client() else {
-            return;
-        };
-        let previous_len = previous.len();
-        self.soloist_queue_current = current.as_ref().map(|entry| entry.id.clone());
-        let entries: Vec<_> = previous.into_iter().chain(upcoming).collect();
-        let revision = self.soloist_queue_revision.next();
-        let retained = self
-            .soloist_publish
-            .as_ref()
-            .map_or_else(Vec::new, SoloistPublish::retained);
-        self.soloist_queue = Some(Io::global(cx).load(
-            async move {
-                let current = match current {
-                    Some(entry) => Some((client.track(&entry.id).await?, entry)),
-                    None => None,
-                };
-                let tracks = join_all(entries.iter().map(|entry| client.track(&entry.id)))
-                    .await
-                    .into_iter()
-                    .collect::<Result<Vec<_>>>()?;
-                Ok((current, entries, tracks))
-            },
-            move |this, found, cx| {
-                if !this.soloist_queue_revision.is_current(revision)
-                    || !this.soloist_owns_playback()
-                {
-                    return;
-                }
-                this.soloist_queue = None;
-                this.soloist_queue_current = None;
-                match found {
-                    Ok((current, entries, tracks)) => {
-                        let (previous, upcoming) =
-                            split_soloist_window(entries, tracks, previous_len);
-                        this.queue.update(cx, |queue, cx| {
-                            queue.replace_soloist_remote(current, previous, upcoming, &retained, cx)
-                        });
-                    }
-                    Err(error) => log::warn!("soloist: cannot read the remote queue: {error:#}"),
-                }
-            },
-            cx,
-        ));
-    }
-
-    /// Follows a track selected from Soloist's queue rather than advancing Sonora's own queue.
-    fn follow_soloist_track(&mut self, id: String, at: Duration, cx: &mut Context<Self>) {
-        if !self.soloist_owns_playback() {
-            return;
-        }
-        if let Some(track) = self
-            .queue
-            .read(cx)
-            .current()
-            .filter(|track| track.id.as_deref() == Some(&id))
-            .cloned()
-        {
-            return self.load_from(&track, at, Start::Pick, cx);
-        }
-        if let Some(track) = self.queue.update(cx, |queue, cx| queue.select_id(&id, cx)) {
-            return self.load_from(&track, at, Start::Pick, cx);
-        }
-        let Some(client) = self.session.read(cx).client() else {
-            return;
-        };
-        let wanted = id.clone();
-        self.soloist_track = Some(Io::global(cx).load(
-            async move { client.track(&wanted).await },
-            move |this, found, cx| {
-                this.soloist_track = None;
-                match found {
-                    Ok(track) if track.id.as_deref() == Some(&id) => {
-                        let selected = this.queue.update(cx, |queue, cx| {
-                            queue.insert([track], None, QueuePlacement::End, cx);
-                            queue.select_id(&id, cx)
-                        });
-                        if let Some(track) = selected {
-                            this.load_from(&track, at, Start::Pick, cx);
-                        }
-                    }
-                    Ok(_) => log::warn!("soloist: the remote queue returned the wrong track"),
-                    Err(error) => log::warn!("soloist: cannot read the selected track: {error:#}"),
-                }
-            },
-            cx,
-        ));
-    }
-
-    /// Appends the pending collection tail after Soloist accepted its first track.
-    fn publish_soloist_collection(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.soloist_publish.as_mut().and_then(SoloistPublish::next) else {
-            if self
-                .soloist_publish
-                .as_ref()
-                .is_some_and(SoloistPublish::complete)
-            {
-                self.soloist_publish = None;
-            }
-            return;
-        };
-        let Some(engine) = self.engine.as_deref() else {
-            self.soloist_publish = None;
-            return;
-        };
-        match engine.append_to_queue(&id, QueueAppend::Publication) {
-            Ok(true) => {}
-            Ok(false) | Err(_) => {
-                self.soloist_publish = None;
-                log::warn!("playback: cannot publish the collection tail to Soloist");
-                Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
-            }
-        }
     }
 
     pub fn play_next(&mut self, track: Track, cx: &mut Context<Self>) {
@@ -1543,36 +1416,6 @@ impl Playback {
                 _ => QueuePlacement::End,
             };
             return sent.then_some(placed);
-        }
-        if playing && !self.local && self.soloist_owns_playback() {
-            if placement != QueuePlacement::End {
-                log::debug!("playback: Soloist cannot order a shared queue");
-                return None;
-            }
-            let engine = self.engine.as_deref()?;
-            if !tracks.iter().all(|track| {
-                track
-                    .id
-                    .as_deref()
-                    .is_some_and(|id| !music::is_local_id(id))
-            }) {
-                log::info!("playback: cannot append a mixed local and Spotify batch to Soloist");
-                Toasts::show(Outcome::Info, "toast-queue-local-elsewhere", cx);
-                return None;
-            }
-            let sent = tracks.iter().all(|track| {
-                track.id.as_deref().is_some_and(|id| {
-                    match engine.append_to_queue(id, QueueAppend::User) {
-                        Ok(true) => true,
-                        Ok(false) => false,
-                        Err(error) => {
-                            log::warn!("playback: cannot append to Soloist queue: {error:#}");
-                            false
-                        }
-                    }
-                })
-            });
-            return sent.then_some(QueuePlacement::End);
         }
         if !playing {
             self.begin(tracks, 0, origin, cx);
@@ -1768,10 +1611,12 @@ impl Playback {
     /// keep a queue going, so the radio paths leave it alone rather than asking and getting
     /// nothing back.
     fn stations(&self, id: &str, cx: &Context<Self>) -> bool {
-        self.session
-            .read(cx)
-            .capabilities_of(crate::Shelf::of(id))
-            .radio
+        self.capabilities(id, cx).radio
+    }
+
+    /// What the provider that owns `id` can do.
+    fn capabilities(&self, id: &str, cx: &Context<Self>) -> Capabilities {
+        self.session.read(cx).capabilities_of(crate::Shelf::of(id))
     }
 
     /// Fetches tracks for the queue on the tokio runtime and places them on arrival, with a
@@ -1799,12 +1644,12 @@ impl Playback {
         };
         let id = id.to_owned();
         let from = origin.clone();
-        let stations = self.stations(&id, cx);
+        let capabilities = self.capabilities(&id, cx);
         self.enqueue = Some(Io::global(cx).load(
             async move {
                 match from {
                     Some(origin) => origin
-                        .load(&*client, stations)
+                        .load(&*client, capabilities)
                         .await
                         .map(|(tracks, _)| tracks),
                     None => client.track(&id).await.map(|track| vec![track]),
@@ -1863,10 +1708,7 @@ impl Playback {
     /// press starts it at once. One collection is kept at a time. Asking again for the one held
     /// or the one playing does nothing.
     pub fn warm_origin(&mut self, origin: &Origin, cx: &mut Context<Self>) {
-        if !matches!(
-            origin.whence,
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
-        ) {
+        if !origin.fetched() {
             return;
         }
         if self.origin(cx) == Some(origin) || self.awaits(origin) {
@@ -1894,14 +1736,14 @@ impl Playback {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let io = Io::global(cx);
-        let stations = self.stations(&origin.id, cx);
+        let capabilities = self.capabilities(&origin.id, cx);
         cx.spawn(async move |this, cx| {
             if !dwell.is_zero() {
                 cx.background_executor().timer(dwell).await;
             }
             let from = origin.clone();
             let loaded =
-                crate::join(io.spawn(async move { from.load(&*client, stations).await })).await;
+                crate::join(io.spawn(async move { from.load(&*client, capabilities).await })).await;
             this.update(cx, |this, cx| this.collected(origin, loaded, cx))
                 .ok();
         })
@@ -1983,10 +1825,7 @@ impl Playback {
                 .update(cx, |queue, cx| queue.set_shuffle(true, cx));
         }
         let index = self.opener(&tracks, cx).unwrap_or_default();
-        let station = next.map(|next| Station {
-            origin: origin.clone(),
-            next,
-        });
+        let station = next.map(|next| Station::of(origin.clone(), next));
         if self.begin(tracks, index, Some(origin), cx) {
             self.station = station;
         }
@@ -2030,20 +1869,6 @@ impl Playback {
         };
         self.leave_station();
         self.play(&track, cx);
-        if self.soloist_owns_playback() {
-            let ids: Vec<_> = self
-                .queue
-                .read(cx)
-                .upcoming()
-                .filter_map(|track| track.id.as_deref())
-                .filter(|id| !music::is_local_id(id))
-                .map(str::to_owned)
-                .collect();
-            self.soloist_publish = (!ids.is_empty()).then_some(SoloistPublish {
-                tail: ids.into(),
-                awaiting: None,
-            });
-        }
         true
     }
 
@@ -2083,6 +1908,13 @@ impl Playback {
         }
         self.fetch = None;
         let start = self.burst();
+        // Next on the last song of a repeating queue wraps like the end of the song does
+        if self.repeat == Repeat::All && self.queue.read(cx).ahead() == 0 {
+            if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
+                self.follow_after(track, start, cx);
+            }
+            return;
+        }
         self.follow_queue(start, cx);
     }
 
@@ -2131,9 +1963,18 @@ impl Playback {
     /// Asks the engine to fetch the track that plays after this one. With `segue` it is also
     /// lined up to follow gaplessly, which waits for the end because the queue can still change.
     fn preload_upcoming(&mut self, segue: bool, cx: &Context<Self>) {
-        let next = match self.repeat != Repeat::One {
-            true => self.queue.read(cx).upcoming().next().cloned(),
-            false => None,
+        let queue = self.queue.read(cx);
+        let next = match self.repeat {
+            // nothing plays after the track a sleep request ends on
+            _ if self.sleep == Some(Sleep::EndOfTrack) => None,
+            Repeat::One => None,
+            // the end of the queue wraps to its first playable song, which `advance` rewinds to
+            Repeat::All if queue.ahead() == 0 => queue
+                .past()
+                .chain(queue.current())
+                .find(|track| track.playable)
+                .cloned(),
+            _ => queue.upcoming().next().cloned(),
         };
         let Some(next) = next else {
             self.preloaded = None;
@@ -2172,13 +2013,13 @@ impl Playback {
         self.queue.read(cx).current().cloned()
     }
 
-    /// Fetches the station's next stretch once fewer than `RADIO_LOOKAHEAD` tracks are left to
+    /// Fetches the station's next stretch once fewer than `station::LOOKAHEAD` tracks are left to
     /// play, so the queue never reaches its end while the provider has more. What the queue
     /// has already heard is left out. The station is the queue itself, so it goes on whether
     /// or not radio suggestions are on; a fetch that fails drops the continuation and hands the
     /// end of the queue back to `advance` through `stranded`.
     fn continue_station(&mut self, cx: &mut Context<Self>) {
-        if self.topping.is_some() || self.queue.read(cx).ahead() >= RADIO_LOOKAHEAD {
+        if self.topping.is_some() || !station::runs_low(self.queue.read(cx).ahead()) {
             return;
         }
         let Some(station) = self.station.clone() else {
@@ -2189,11 +2030,12 @@ impl Playback {
         };
 
         let heard = self.queue.read(cx).ids();
-        let seed = station.origin.id.clone();
-        let token = station.next.clone();
+        let capabilities = self.capabilities(&station.origin.id, cx);
+        let seed = station.origin.clone();
+        let token = station.rest.next().to_owned();
         self.topping = Some(Io::global(cx).load(
             async move {
-                let (mut tracks, next) = client.track_radio(&seed, Some(&token)).await?;
+                let (mut tracks, next) = seed.station(&*client, capabilities, Some(&token)).await?;
                 unheard(&mut tracks, &heard);
                 anyhow::Ok((tracks, next))
             },
@@ -2204,16 +2046,10 @@ impl Playback {
                 }
                 match loaded {
                     Ok((tracks, next)) => {
-                        this.dry = match tracks.is_empty() {
-                            true => this.dry.saturating_add(1),
-                            false => 0,
-                        };
-                        this.station =
-                            next.filter(|_| this.dry < STATION_DRY_LIMIT)
-                                .map(|next| Station {
-                                    origin: station.origin.clone(),
-                                    next,
-                                });
+                        this.dry = station::dry_after(this.dry, tracks.len());
+                        this.station = next
+                            .filter(|_| !station::ran_dry(this.dry))
+                            .map(|next| Station::of(station.origin.clone(), next));
                         let idle = this.track.is_none() && !this.queue.read(cx).has_next();
                         this.queue.update(cx, |queue, cx| {
                             queue.extend_context(tracks, station.origin.clone(), cx)
@@ -2247,7 +2083,7 @@ impl Playback {
     }
 
     /// Fills the suggestions from the current track's radio when radio is on and there are
-    /// none, and tops them up once fewer than `RADIO_LOOKAHEAD` tracks are left to play, so the
+    /// none, and tops them up once fewer than `station::LOOKAHEAD` tracks are left to play, so the
     /// next batch has arrived long before the queue reaches it. What is already queued is left
     /// out, and the provider's best `SIMILAR_LIMIT` of the rest are kept. A failure is shown
     /// only when `asked`, that is when the user just turned radio on, since a top-up failing
@@ -2257,7 +2093,7 @@ impl Playback {
             return;
         }
         let held = self.queue.read(cx).similar().count();
-        if held > 0 && self.queue.read(cx).upcoming().len() >= RADIO_LOOKAHEAD {
+        if held > 0 && !station::runs_low(self.queue.read(cx).upcoming().len()) {
             return;
         }
         let Some(seed) = self.seed(cx) else {
@@ -2319,9 +2155,19 @@ impl Playback {
             return;
         }
         self.repeat = repeat;
+        self.unline();
         self.settings
             .update(cx, |settings, cx| settings.set_repeat(repeat, cx));
         cx.notify();
+    }
+
+    /// Takes back the track lined up behind the current one, for a change that alters what
+    /// follows it.
+    fn unline(&mut self) {
+        self.preloaded = None;
+        if let Some(engine) = self.active_engine() {
+            engine.unline();
+        }
     }
 
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
@@ -2381,7 +2227,7 @@ impl Playback {
                 Some(track) => self.load_after(&track, Start::Segue, cx),
                 None => self.segue_queue(cx),
             },
-            Repeat::All if !self.queue.read(cx).has_next() => {
+            Repeat::All if self.queue.read(cx).ahead() == 0 => {
                 self.fetch = None;
                 if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
                     self.follow_after(track, Start::Segue, cx);
@@ -2480,10 +2326,30 @@ impl Playback {
     }
 
     /// Whether the previous button restarts the track rather than going back: a few seconds
-    /// in, or nothing to go back to.
+    /// past its lead-in, or nothing to go back to.
     fn restarts(&self, cx: &App) -> bool {
         self.track.is_some()
-            && (self.live_position() > RESTART_WINDOW || !self.queue.read(cx).has_previous())
+            && (self.live_position() > self.restart_at() + RESTART_WINDOW
+                || !self.queue.read(cx).has_previous())
+    }
+
+    /// Where the current track's music starts, past an opening SponsorBlock skips.
+    fn restart_at(&self) -> Duration {
+        let current = self.track.as_ref().and_then(|track| track.id.as_deref());
+        self.lead_in
+            .as_ref()
+            .filter(|(id, _)| current == Some(id.as_str()))
+            .map_or(Duration::ZERO, |(_, at)| *at)
+    }
+
+    pub fn lead_in(&self) -> Option<&(String, Duration)> {
+        self.lead_in.as_ref()
+    }
+
+    /// Records where the music of the track with this id starts, so a restart lands there and
+    /// going back still works right after the opening was skipped. It notifies nothing.
+    pub fn set_lead_in(&mut self, lead_in: Option<(String, Duration)>) {
+        self.lead_in = lead_in;
     }
 
     pub fn previous(&mut self, cx: &mut Context<Self>) {
@@ -2491,7 +2357,7 @@ impl Playback {
             return;
         }
         if self.restarts(cx) {
-            return self.seek(Duration::ZERO, cx);
+            return self.seek(self.restart_at(), cx);
         }
         self.fetch = None;
         let start = self.burst();
@@ -2520,6 +2386,23 @@ impl Playback {
             self.leave_station();
         }
         self.load_after(&track, Start::Pick, cx);
+    }
+
+    /// Moves the queue on to the upcoming track at `index` and plays it from `at`, as a Sonora
+    /// Session does when it moves to a track this queue already has, so the rest of it stays.
+    pub(crate) fn play_upcoming_at(&mut self, index: usize, at: Duration, cx: &mut Context<Self>) {
+        use crate::QueuePosition;
+        let position = QueuePosition::Upcoming(index);
+        self.fetch = None;
+        let suggested = self.queue.read(cx).kind(position) == Some(crate::QueueKind::Suggested);
+        let track = self
+            .queue
+            .update(cx, |queue, cx| queue.select(position, cx));
+        let Some(track) = track else { return };
+        if suggested {
+            self.leave_station();
+        }
+        self.load_from(&track, at, Start::Pick, cx);
     }
 
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
@@ -2577,6 +2460,7 @@ impl Playback {
         let Some(engine) = self.engine_for(id) else {
             return;
         };
+        engine.within(self.collection_for(id, cx).as_ref());
         match engine.load_paused_at(id, at) {
             Ok(()) => {
                 self.resume_ready = true;
@@ -2669,6 +2553,9 @@ impl Playback {
     /// Replaces the active sleep request, dropping its timer task when cancelled or superseded.
     /// A timer that runs out while music plays pauses it and says so on a toast.
     pub fn set_sleep(&mut self, sleep: Option<Sleep>, cx: &mut Context<Self>) {
+        if sleep == Some(Sleep::EndOfTrack) {
+            self.unline();
+        }
         self.sleep = sleep;
         self.sleep_task = match sleep {
             Some(Sleep::After(after)) => Some(cx.spawn(async move |this, cx| {
@@ -2748,22 +2635,16 @@ impl Playback {
         self.has_active_playback().then(|| self.wants_playing())
     }
 
+    /// Starts `origin` once its tracks are loaded. Local files are left to the library table.
     pub fn play_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
-        match origin.whence {
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio => {
-                self.gather(origin, false, cx)
-            }
-            // the table plays these
-            Whence::Saved | Whence::Local => {}
+        if origin.fetched() {
+            self.gather(origin, false, cx);
         }
     }
 
     /// Turns shuffle on and plays `origin` from a random track once its tracks are loaded.
     pub fn shuffle_origin(&mut self, origin: Origin, cx: &mut Context<Self>) {
-        if matches!(
-            origin.whence,
-            Whence::Album | Whence::Playlist | Whence::Artist | Whence::Radio
-        ) {
+        if origin.fetched() {
             self.gather(origin, true, cx);
         }
     }
@@ -2805,11 +2686,23 @@ impl Playback {
         }
         // The clock parks at the target; the engine's Seeked starts it again once audio from
         // there is playing. A loading or paused engine takes the seek at once and reports the
-        // position with its Playing, so only a playing one needs the seek tracked.
+        // position with its Playing, so only a playing one needs the seek tracked. A loading
+        // engine keeps only the latest target itself, and the audio thread merges seeks that
+        // queue up behind a slow reopen.
         self.position = position;
         self.clock.reset(position, false);
         self.seek_target = Some(position);
-        match (self.state == PlaybackState::Playing, self.seek_in_flight) {
+        let playing = self.state == PlaybackState::Playing;
+        let parked = playing && self.seek_in_flight.is_some();
+        log::debug!(
+            "playback: seek to {position:?} while {:?}{}",
+            self.state,
+            match parked {
+                true => ", parked behind the one in flight",
+                false => "",
+            }
+        );
+        match (playing, self.seek_in_flight) {
             (true, Some(_)) => self.seek_next = Some(position),
             (true, None) => {
                 self.seek_in_flight = Some(position);
@@ -2836,10 +2729,12 @@ impl Playback {
         }
     }
 
-    /// Sends the seek that queued up behind the one that just landed.
+    /// Sends the seek that queued up behind the one that just landed. It was counted in `seeks`
+    /// when it was asked for, so it goes out as this app's own doing, or a Sonora Session would
+    /// share a seek the session itself made as the listener's.
     fn follow_up_seek(&mut self, cx: &mut Context<Self>) {
         if let Some(next) = self.seek_next.take() {
-            self.seek(next, cx);
+            self.locally(cx, |this, cx| this.seek(next, cx));
         }
     }
 
@@ -3454,46 +3349,6 @@ impl Playback {
             self.learn_signal(id, track, cx);
             return;
         }
-        if let BackendEvent::QueueRejected { id, append } = event {
-            if self.soloist_publish.as_ref().is_some_and(|publish| {
-                append == QueueAppend::Publication && publish.awaiting.as_deref() == Some(&id)
-            }) {
-                self.soloist_publish = None;
-                self.soloist_queue = None;
-                self.soloist_queue_current = None;
-                self.soloist_queue_revision.next();
-            }
-            log::warn!("playback: Soloist rejected a shared queue addition");
-            Toasts::show(Outcome::Failed, "toast-queue-failed", cx);
-            return;
-        }
-        if let BackendEvent::QueueAppended { id, append } = event {
-            if self
-                .soloist_publish
-                .as_mut()
-                .is_some_and(|publish| append == QueueAppend::Publication && publish.confirm(&id))
-            {
-                self.publish_soloist_collection(cx);
-            }
-            return;
-        }
-        if let BackendEvent::QueueChanged {
-            current,
-            previous,
-            upcoming,
-        } = event
-        {
-            if !local && self.soloist_owns_playback() {
-                self.sync_soloist_queue(current, previous, upcoming, cx);
-            }
-            return;
-        }
-        if let BackendEvent::QueuedTrack { id, at } = event {
-            if !local && self.soloist_owns_playback() {
-                self.follow_soloist_track(id, at, cx);
-            }
-            return;
-        }
         if local != self.local_active() {
             return;
         }
@@ -3522,15 +3377,11 @@ impl Playback {
         }
         match event {
             // rebuilt or kept before the filters above
-            BackendEvent::OutputChanged { .. }
-            | BackendEvent::Signal { .. }
-            | BackendEvent::QueueChanged { .. }
-            | BackendEvent::QueuedTrack { .. }
-            | BackendEvent::QueueRejected { .. }
-            | BackendEvent::QueueAppended { .. } => {}
+            BackendEvent::OutputChanged { .. } | BackendEvent::Signal { .. } => {}
             BackendEvent::Unavailable { .. }
             | BackendEvent::Throttled { .. }
             | BackendEvent::Refused
+            | BackendEvent::Blocked
                 if self.resume_ready =>
             {
                 self.resume_ready = false;
@@ -3562,7 +3413,6 @@ impl Playback {
                 if started {
                     cx.emit(PlaybackEvent::StartedPlayback);
                 }
-                self.publish_soloist_collection(cx);
                 self.follow_up_seek(cx);
             }
             BackendEvent::Paused { at, .. } => {
@@ -3631,12 +3481,22 @@ impl Playback {
                     false => self.advance(ended, cx),
                 }
             }
+            BackendEvent::SteppedBack { .. } => {
+                self.track = None;
+                self.state = PlaybackState::Idle;
+                self.position = Duration::ZERO;
+                self.clock.reset(Duration::ZERO, false);
+                cx.emit(PlaybackEvent::EndedPlayback);
+                if let Some(track) = self.queue.update(cx, |queue, cx| queue.previous(cx)) {
+                    self.load_after(&track, Start::Segue, cx);
+                }
+            }
             BackendEvent::Throttled { .. } => self.throttled(cx),
             BackendEvent::Unavailable { .. } if self.ask_for_reconnect(cx) => {
                 self.state = PlaybackState::Loading;
                 log::warn!("playback: the provider went stale, waiting for a reconnect");
             }
-            BackendEvent::Unavailable { .. } => {
+            BackendEvent::Unavailable { timed_out, .. } => {
                 let failed = self.track.take();
                 let target = failed.as_ref().and_then(song_target);
                 let name = failed
@@ -3655,20 +3515,34 @@ impl Playback {
                 match exhausted {
                     true => {
                         log::warn!("playback: {FAILURE_LIMIT} tracks failed in a row, stopping");
-                        match self.module_suspect(cx) {
-                            true => {
+                        match timed_out || !self.module_suspect(cx) {
+                            true => Toasts::show(
+                                Outcome::Failed,
+                                match timed_out {
+                                    true => "toast-playback-timed-out",
+                                    false => "toast-playback-stopped",
+                                },
+                                cx,
+                            ),
+                            false => {
                                 let toast = Toast::new(Outcome::Failed, "toast-widevine-failed")
                                     .note("toast-widevine-borrowed")
-                                    .open("toast-open-settings", Target::PlaybackSettings)
+                                    .open("nav-settings", Target::PlaybackSettings)
                                     .lasting();
                                 Toasts::post(toast, cx);
                             }
-                            false => Toasts::show(Outcome::Failed, "toast-playback-stopped", cx),
                         }
                     }
-                    false => {
-                        Toasts::linked(Outcome::Failed, "toast-track-unplayable", name, target, cx)
-                    }
+                    false => Toasts::linked(
+                        Outcome::Failed,
+                        match timed_out {
+                            true => "toast-track-timed-out",
+                            false => "toast-track-unplayable",
+                        },
+                        name,
+                        target,
+                        cx,
+                    ),
                 }
                 cx.emit(PlaybackEvent::EndedPlayback);
                 match (exhausted || self.intent == Intent::Pause, self.repeat) {
@@ -3685,6 +3559,7 @@ impl Playback {
                 self.gate(cx);
                 cx.emit(PlaybackEvent::EndedPlayback);
             }
+            BackendEvent::Blocked => self.network_blocked(cx),
         }
         cx.notify();
     }
@@ -3704,7 +3579,6 @@ impl Playback {
         self.task = None;
         self.engine = None;
         self.signals.retain(|(id, _)| music::is_local_id(id));
-        self.cancel_soloist_work();
 
         if !self.local_active() {
             self.load = None;
@@ -3785,6 +3659,21 @@ impl Playback {
         self.load_from(&track, at, Start::Retry, cx);
     }
 
+    /// Holds the track the provider would not load because it refuses the network the app
+    /// connects from. Every other track would fail the same way, so the queue stays put, and
+    /// pressing play tries again once the listener has changed networks.
+    fn network_blocked(&mut self, cx: &mut Context<Self>) {
+        let provider = self
+            .session
+            .read(cx)
+            .provider_name()
+            .unwrap_or("this provider")
+            .to_owned();
+        log::warn!("playback: {provider} refuses requests from this network, waiting for play");
+        Toasts::about(Outcome::Failed, "toast-network-blocked", provider, cx);
+        self.hold(self.position, cx);
+    }
+
     /// Turns down a track that has to be streamed while the network is gone. Whatever plays
     /// keeps playing, since a local file needs nothing, and only a track the user picked says
     /// so out loud: the queue moving on by itself would otherwise toast once a track.
@@ -3862,13 +3751,13 @@ impl Playback {
                  this session"
             );
         }
-        let note = match music::soloist::ready() {
+        let note = match soloist::ready() {
             true => "toast-soloist-refused",
             false => "toast-keys-refused",
         };
         let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
-        let toast = match music::soloist::supported() {
-            true => toast.lead("toast-soloist-setup", Target::PlaybackSettings, |cx| {
+        let toast = match soloist::supported() {
+            true => toast.lead("soloist-setup-title", Target::PlaybackSettings, |cx| {
                 let soloist = Sonora::global(cx).soloist.clone();
                 soloist.update(cx, |soloist, cx| soloist.begin(cx));
             }),
@@ -3883,17 +3772,6 @@ impl Playback {
         }
         cx.notify();
     }
-}
-
-/// Keeps the playable tracks that are not among `heard`, the ids a queue already holds.
-fn unheard(tracks: &mut Vec<Track>, heard: &HashSet<String>) {
-    tracks.retain(|track| {
-        track.playable
-            && track
-                .id
-                .as_ref()
-                .is_some_and(|id| !heard.contains(id.as_str()))
-    });
 }
 
 fn song_target(track: &Track) -> Option<Target> {
@@ -3962,23 +3840,6 @@ fn throttle_wait(throttles: u8) -> Duration {
         .min(THROTTLE_CAP)
 }
 
-type ResolvedSoloistTrack = (Track, connect::QueuedTrack);
-
-/// Splits a resolved Soloist queue snapshot without changing the daemon's reported order.
-fn split_soloist_window(
-    entries: Vec<connect::QueuedTrack>,
-    tracks: Vec<Track>,
-    previous_len: usize,
-) -> (Vec<ResolvedSoloistTrack>, Vec<ResolvedSoloistTrack>) {
-    let mut window: Vec<_> = entries
-        .into_iter()
-        .zip(tracks)
-        .map(|(entry, track)| (track, entry))
-        .collect();
-    let upcoming = window.split_off(previous_len);
-    (window, upcoming)
-}
-
 /// Drops an engine on a thread of its own. Spotify's waits for its player thread to end, which
 /// sits out an output device that takes CoreAudio ten seconds to give up on, so dropping it here
 /// would hold the window for as long.
@@ -4009,66 +3870,11 @@ fn seek_target(at: Duration, total: Duration, forward: bool) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
     use std::time::{Duration, Instant};
 
     use super::{
-        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, SoloistPublish, SoloistQueueRevision,
-        VOLUME_STEP, gain, seek_target, split_soloist_window, volume_after,
+        DEFAULT_UNMUTE_VOLUME, LiveClock, MuteMemory, VOLUME_STEP, gain, seek_target, volume_after,
     };
-    use music::{Track, connect::QueuedTrack};
-
-    #[test]
-    fn newest_soloist_queue_snapshot_wins() {
-        let mut revision = SoloistQueueRevision::default();
-        let older = revision.next();
-        let newer = revision.next();
-
-        assert!(!revision.is_current(older));
-        assert!(revision.is_current(newer));
-    }
-
-    #[test]
-    fn soloist_collection_waits_for_its_own_append() {
-        let mut publish = SoloistPublish {
-            tail: VecDeque::from(["b".into(), "c".into()]),
-            awaiting: None,
-        };
-
-        assert_eq!(publish.next().as_deref(), Some("b"));
-        assert_eq!(publish.next(), None);
-        assert!(!publish.confirm("other"));
-        assert!(publish.confirm("b"));
-        assert_eq!(publish.next().as_deref(), Some("c"));
-    }
-
-    #[test]
-    fn soloist_window_keeps_remote_order_and_queue_kind() {
-        let entries = vec![
-            QueuedTrack::new("past".into(), false),
-            QueuedTrack::new("manual".into(), true),
-            QueuedTrack::new("context".into(), false),
-        ];
-        let tracks = ["past", "manual", "context"]
-            .into_iter()
-            .map(|name| Track {
-                name: name.to_owned(),
-                ..Default::default()
-            })
-            .collect();
-
-        let (previous, upcoming) = split_soloist_window(entries, tracks, 1);
-
-        assert_eq!(previous[0].0.name, "past");
-        assert!(!previous[0].1.queued);
-        assert_eq!(
-            upcoming
-                .iter()
-                .map(|(track, queued)| (track.name.as_str(), queued.queued))
-                .collect::<Vec<_>>(),
-            [("manual", true), ("context", false)]
-        );
-    }
 
     #[test]
     fn never_amplifies_past_unity() {

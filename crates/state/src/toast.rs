@@ -31,7 +31,7 @@ pub enum Target {
     Playlist(SharedString),
     /// The Playback tab of settings, where the Widevine module and Soloist are managed.
     PlaybackSettings,
-    /// The Providers tab of settings, where a provider is signed in again.
+    /// The streaming services page of settings, where a provider is signed in again.
     ProviderSettings,
 }
 
@@ -206,7 +206,7 @@ impl Toast {
     /// Adds an Undo button. `run` puts back what the toast reports was removed, and has to cope
     /// with everything that may have changed since, since the toast stays up for seconds.
     pub fn undo(self, run: impl Fn(&mut App) + 'static) -> Self {
-        self.action("toast-undo", run)
+        self.action("common-undo", run)
     }
 
     /// Shows how far the work has got, from 0 to 1, as a ring that fills in place of the spinner.

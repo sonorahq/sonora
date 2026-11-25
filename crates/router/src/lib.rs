@@ -158,7 +158,7 @@ impl Screen {
 }
 
 /// One page of settings. The first thirteen are sections of the six tabs, each tab showing its sections
-/// one after another on one scrolling page, and the last two are drill-ins that open from a row
+/// one after another on one scrolling page, and the last three are drill-ins that open from a row
 /// on their parent page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsPage {
@@ -177,11 +177,12 @@ pub enum SettingsPage {
     Keybinds,
     LyricsSources,
     MusicFolders,
+    Accounts,
 }
 
 impl SettingsPage {
     /// Every page, the sections first and the drill-ins after them.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Providers,
         Self::General,
         Self::Appearance,
@@ -197,6 +198,7 @@ impl SettingsPage {
         Self::Keybinds,
         Self::LyricsSources,
         Self::MusicFolders,
+        Self::Accounts,
     ];
 
     pub fn id(self) -> &'static str {
@@ -216,6 +218,7 @@ impl SettingsPage {
             Self::Keybinds => "keybinds",
             Self::LyricsSources => "lyrics-sources",
             Self::MusicFolders => "music-folders",
+            Self::Accounts => "accounts",
         }
     }
 
@@ -235,8 +238,9 @@ impl SettingsPage {
             Self::Scrobbling => "settings-page-scrobbling",
             Self::About => "settings-page-about",
             Self::Keybinds => "settings-page-keybinds",
-            Self::LyricsSources => "settings-page-lyrics-sources",
-            Self::MusicFolders => "settings-page-music-folders",
+            Self::LyricsSources => "settings-lyrics-sources",
+            Self::MusicFolders => "settings-music-folders",
+            Self::Accounts => "settings-accounts",
         }
     }
 
@@ -244,7 +248,7 @@ impl SettingsPage {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::LyricsSources => Some(Self::Lyrics),
-            Self::MusicFolders => Some(Self::Providers),
+            Self::MusicFolders | Self::Accounts => Some(Self::Providers),
             _ => None,
         }
     }
@@ -256,7 +260,7 @@ impl SettingsPage {
     /// The tab the page shows in. A drill-in belongs to its parent's tab.
     pub fn tab(self) -> SettingsTab {
         match self {
-            Self::Providers | Self::MusicFolders | Self::General | Self::About => {
+            Self::Providers | Self::MusicFolders | Self::Accounts | Self::General | Self::About => {
                 SettingsTab::General
             }
             Self::Appearance | Self::PlayerBar | Self::NowPlaying => SettingsTab::Appearance,

@@ -9,18 +9,25 @@ use gpui::{
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Button, MenuItem, Picker, Popovers, Spin};
+use ui::{ActiveTheme as _, Badge, Button, MenuItem, Picker, Popovers, Spin};
 
 use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
-use router::{Destination, Navigation, SettingsPage, navigate, open_settings};
+use music::SignIn;
+use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
 /// The rule between the current screen's controls and the account and sidebar segment.
 const SEGMENT_RULE: Pixels = px(1.);
+/// The branch a debug build was compiled from, as `build.rs` found it, or `None` when it found none.
+/// An empty `SONORA_BRANCH` set for the build reaches rustc as it is, so it counts as none.
+const BRANCH: Option<&str> = match option_env!("SONORA_BRANCH") {
+    Some(branch) if !branch.is_empty() => Some(branch),
+    _ => None,
+};
 
 /// Tells whether the page a refresh reloaded is still waiting for its data.
 pub(crate) type Busy = Box<dyn Fn(&App) -> bool>;
@@ -48,6 +55,8 @@ pub(crate) struct TitleBarOptions {
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
     pub border: bool,
+    /// Gives the bar the chrome's colour, for a shell whose page lies on it as a sheet.
+    pub sheet: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
     pub transparent: bool,
@@ -60,6 +69,7 @@ impl Default for TitleBarOptions {
             sidebar_open: false,
             sidebar_right: None,
             border: true,
+            sheet: false,
             content: None,
             transparent: false,
         }
@@ -226,15 +236,15 @@ impl TitleBar {
             )
     }
 
-    /// The account button and the menu it opens: the connected services to switch between, a
-    /// way to manage them, then History and Settings. A guest session shows as guest mode, and
-    /// only while it is the one in use.
+    /// The account button and the menu it opens: the connected services to switch between,
+    /// guest mode when a provider offers it, a way to manage them, then History and Settings.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
-        let guest = session
-            .read(cx)
-            .providers()
-            .any(|info| info.active && info.guest);
+        let guest = session.read(cx).providers().find(|info| {
+            info.options
+                .iter()
+                .any(|option| matches!(option, SignIn::Anonymous))
+        });
         let mut services: Vec<MenuItem> = session
             .read(cx)
             .connected()
@@ -246,15 +256,37 @@ impl TitleBar {
                     .icon(crate::shared::provider_logo(slug))
                     .selected(info.active)
                     .on_click(move |_, _, cx| {
+                        let before = session.read(cx).provider_slug();
                         session.update(cx, |session, cx| session.switch(slug, cx));
+                        if session.read(cx).provider_slug() != before {
+                            open_startup(cx);
+                        }
                     })
             })
             .collect();
-        if guest {
+        if let Some(info) = guest {
+            let (slug, stored) = (info.slug, info.guest);
             services.push(
                 MenuItem::new("account-guest", t!("login-guest-title"))
                     .icon("icons/hat-glasses.svg")
-                    .selected(true),
+                    .selected(info.active && info.guest)
+                    .on_click(move |_, _, cx| {
+                        let before = session.read(cx).provider_slug();
+                        let idle = !session.read(cx).is_pending();
+                        session.update(cx, |session, cx| match stored {
+                            true => session.switch(slug, cx),
+                            false => session.sign_in(slug, SignIn::Anonymous, cx),
+                        });
+                        // an anonymous sign-in only takes over the provider once it lands, so a
+                        // started one counts as the switch
+                        let switched = match stored {
+                            true => session.read(cx).provider_slug() != before,
+                            false => idle && session.read(cx).is_pending() && before != Some(slug),
+                        };
+                        if switched {
+                            open_startup(cx);
+                        }
+                    }),
             );
         }
 
@@ -274,7 +306,7 @@ impl TitleBar {
                         MenuItem::new("account-manage", t!("account-manage"))
                             .icon("icons/user-round.svg")
                             .on_click(|_, _, cx| {
-                                navigate(Destination::Settings(SettingsPage::Providers), cx)
+                                navigate(Destination::Settings(SettingsPage::Accounts), cx)
                             }),
                     )
                     .item(MenuItem::separator("account-pages"))
@@ -369,9 +401,17 @@ impl Render for TitleBar {
             .h(height)
             .flex_none()
             .when_some(radius, |this, radius| this.rounded_t(radius))
-            .when(!self.options.transparent && !theme.transparent, |this| {
-                this.bg(theme.background)
-            })
+            // A sheet's bar is chrome, which paints its own part of any window. The page colour
+            // a see-through window gets from the root, under every shell without a sheet.
+            .when(
+                !self.options.transparent && (self.options.sheet || !theme.transparent),
+                |this| {
+                    this.bg(match self.options.sheet {
+                        true => theme.sidebar,
+                        false => theme.background,
+                    })
+                },
+            )
             // The height is a border box, so a bar that drops its border centres its controls
             // one pixel lower than one that keeps it. The edge is always an edge; only its
             // colour goes, and fullscreen's controls land where the workspace's do.
@@ -432,6 +472,7 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
+                    .when(cfg!(debug_assertions), |this| this.child(dev_badge()))
                     .child(div().flex_1())
                     .when(navigation, |this| {
                         this.child(
@@ -519,6 +560,33 @@ fn traffic_lights_inset(settings: &AppSettings, height: Pixels) -> Option<Pixels
     #[cfg(not(target_os = "macos"))]
     let _ = (settings, height);
     None
+}
+
+/// The tag a debug build carries in its title bar, so it is never mistaken for a release. It names
+/// the branch the build came from, or says "dev" when the build saw no branch. A long branch is cut
+/// off at the badge's edge, which gives way before the bar's other controls do.
+fn dev_badge() -> impl IntoElement {
+    let (label, text) = match BRANCH {
+        Some(branch) => (
+            t!("app-dev-build-branch", branch = branch),
+            SharedString::new_static(branch),
+        ),
+        None => (t!("app-dev-build"), t!("app-dev-badge")),
+    };
+    div()
+        .id("dev-badge")
+        .role(Role::Label)
+        .aria_value(label)
+        .min_w_0()
+        .ml_1()
+        .child(Badge::text(text).justify_start().overflow_hidden())
+}
+
+/// Opens the screen chosen as the startup page in Settings, where a newly switched provider lands.
+fn open_startup(cx: &mut App) {
+    let startup = Sonora::global(cx).settings.read(cx).startup().to_owned();
+    let screen = Screen::from_id(&startup).unwrap_or(Screen::Home);
+    navigate(screen.destination(), cx);
 }
 
 fn window_controls(leading: bool, traffic_light: bool) -> AnyElement {

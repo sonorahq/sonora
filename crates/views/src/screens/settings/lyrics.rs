@@ -31,18 +31,15 @@ impl SettingsView {
         if !self.settings.read(cx).lyrics_enabled() {
             return groups;
         }
+        groups.push(Group::new("settings-group-display").rows([
+            Slot::Karaoke,
+            Slot::BlurLyrics,
+            Slot::Romanized,
+            Slot::PanelLyricsSize,
+            Slot::FullscreenLyricsSize,
+        ]));
         groups.push(
-            Group::new("settings-group-display", "icons/mic-vocal.svg").rows([
-                Slot::Karaoke,
-                Slot::BlurLyrics,
-                Slot::Romanized,
-                Slot::PanelLyricsSize,
-                Slot::FullscreenLyricsSize,
-            ]),
-        );
-        groups.push(
-            Group::new("settings-group-sources", "icons/list-music.svg")
-                .rows([Slot::LyricsSources, Slot::LyricsForLocal]),
+            Group::new("settings-group-sources").rows([Slot::LyricsSources, Slot::LyricsForLocal]),
         );
         groups
     }
@@ -65,8 +62,7 @@ impl SettingsView {
     pub(super) fn lyrics_sources_groups(&self) -> Vec<Group> {
         vec![
             Group::untitled().rows([Slot::WordSyncedFirst]),
-            Group::new("settings-group-lyrics-order", "icons/arrow-up-down.svg")
-                .rows([Slot::LyricsPriority]),
+            Group::new("settings-group-lyrics-order").rows([Slot::LyricsPriority]),
         ]
     }
 
@@ -141,12 +137,10 @@ impl SettingsView {
             .items_center()
             .gap_2()
             .child(step("smaller", "\u{2212}", "settings-font-smaller", -0.1))
-            .child(ui::spoken(
+            .child(ui::spoken_steady(
                 SharedString::from(format!("{id}-value")),
-                t!(
-                    "settings-lyrics-size-value",
-                    size = (scale * 100.).round() as i64
-                ),
+                percent(scale),
+                [percent(MIN_LYRICS_SCALE), percent(MAX_LYRICS_SCALE)],
             ))
             .child(step("larger", "+", "settings-font-larger", 0.1));
 
@@ -446,12 +440,12 @@ pub(super) fn romanization_script_copy(
     writing_system: WritingSystem,
 ) -> (&'static str, &'static str) {
     match writing_system {
-        WritingSystem::Japanese => ("romanization-japanese", "settings-romanization-japanese"),
-        WritingSystem::Chinese => ("romanization-chinese", "settings-romanization-chinese"),
-        WritingSystem::Korean => ("romanization-korean", "settings-romanization-korean"),
+        WritingSystem::Japanese => ("romanization-japanese", "language-ja"),
+        WritingSystem::Chinese => ("romanization-chinese", "language-zh"),
+        WritingSystem::Korean => ("romanization-korean", "language-ko"),
         WritingSystem::Cyrillic => ("romanization-cyrillic", "settings-romanization-cyrillic"),
         WritingSystem::Greek => ("romanization-greek", "settings-romanization-greek"),
-        WritingSystem::Arabic => ("romanization-arabic", "settings-romanization-arabic"),
+        WritingSystem::Arabic => ("romanization-arabic", "language-ar"),
         WritingSystem::Other => ("romanization-other", "settings-romanization-other"),
     }
 }
@@ -465,9 +459,10 @@ impl Render for DraggedSource {
 /// The name a lyrics source goes by in the settings, falling back to the provider's own name.
 pub(super) fn source_name(provider: &str) -> SharedString {
     let key = match provider {
-        music::lyrics::LOCAL => "settings-lyrics-provider-local",
+        lyrics::LOCAL => "common-local-files",
         "Subsonic" => "settings-lyrics-provider-subsonic",
         "Jellyfin" => "settings-lyrics-provider-jellyfin",
+        "Plex" => "settings-lyrics-provider-plex",
         "Spotify" => "settings-lyrics-provider-spotify",
         "YouTube Music" => "settings-lyrics-provider-youtube",
         "Apple Music" => "settings-lyrics-provider-apple-music",
@@ -478,4 +473,9 @@ pub(super) fn source_name(provider: &str) -> SharedString {
         _ => return SharedString::from(provider.to_owned()),
     };
     i18n::lookup(key, None)
+}
+
+/// A lyrics scale as the percentage its stepper shows.
+fn percent(scale: f32) -> SharedString {
+    t!("unit-percent", value = (scale * 100.).round() as i64)
 }

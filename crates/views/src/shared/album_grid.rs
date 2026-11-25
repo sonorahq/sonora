@@ -12,7 +12,13 @@ use crate::shared::cards;
 
 pub(crate) const CARD_MIN: Pixels = px(130.);
 pub(crate) const CARD_MAX: Pixels = px(190.);
-const CARD_GAP: Pixels = px(32.);
+/// The least room between two cards in a row. The gap grows past it to spread the room a row
+/// of cards leaves.
+const CARD_GAP: Pixels = px(16.);
+/// How finely a card and its gap are cut, as a fraction of a pixel. Neither rounds to a whole
+/// pixel, since a card that grows a pixel at a time moves the columns back and forth while the
+/// width changes every frame, as it does while a sidebar slides.
+const STEP: f32 = 64.;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CardLayout {
@@ -29,9 +35,9 @@ impl CardLayout {
             .max(1.)) as usize;
         let count = columns as f32;
         let spread = available - CARD_GAP * (count - 1.);
-        let card = (spread / count).min(CARD_MAX).floor();
+        let card = fine((spread / count).min(CARD_MAX));
         let gap = match columns > 1 {
-            true => ((available - card * count) / (count - 1.)).floor(),
+            true => fine((available - card * count) / (count - 1.)),
             false => Pixels::ZERO,
         };
 
@@ -259,6 +265,12 @@ impl RenderOnce for AlbumGrid {
             .gap_y_6()
             .children(cards)
     }
+}
+
+/// Cuts `length` down to the next `STEP`th of a pixel, so the cards and gaps of a row never add
+/// up to more than the row.
+fn fine(length: Pixels) -> Pixels {
+    px((length / px(1.) * STEP).floor() / STEP)
 }
 
 #[cfg(test)]

@@ -101,7 +101,11 @@ flatpak install --user https://sonorahq.github.io/sonora/sonora.flatpakref
 
 #### Snap
 
-Install from the [Snap Store](https://snapcraft.io/sonora): `sudo snap install sonora`.
+Install from the [Snap Store](https://snapcraft.io/sonora): 
+
+```sh
+sudo snap install sonora
+```
 
 #### AppImage
 
@@ -112,6 +116,12 @@ it:
 chmod +x sonora-*.AppImage
 ./sonora-*.AppImage
 ```
+
+#### Other distributions
+
+Some distributions package Sonora themselves. [Repology](https://repology.org/project/sonora/versions) lists them.
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/sonora.svg)](https://repology.org/project/sonora/versions)
 
 ### Nix
 
@@ -154,6 +164,14 @@ Configuration with NixOS or Home Manager is provided by the module under `progra
 
 ### Windows
 
+#### WinGet
+
+Install with [WinGet](https://github.com/microsoft/winget-cli), which comes with Windows 10 and 11:
+
+```powershell
+winget install SonoraHQ.Sonora
+```
+
 #### Installer
 
 Download and run the [installer](https://github.com/sonorahq/sonora/releases/latest/download/Sonora-Setup.exe),
@@ -166,7 +184,7 @@ Download the latest `windows-msvc.exe` for your architecture from [Releases](htt
 
 ### Nightly
 
-[Nightly builds](https://github.com/sonorahq/sonora/releases/tag/nightly) are available.
+[Nightly builds](https://github.com/sonorahq/sonora/releases/tag/nightly-build) are available.
 
 ```sh
 brew install --cask nolight132/tap/sonora-nightly
@@ -185,24 +203,24 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1343/1343 | 100% |
-| Deutsch (`de`) | 1106/1343 | 82% |
-| Español (`es`) | 1104/1343 | 82% |
-| Français (`fr`) | 1105/1343 | 82% |
-| Italiano (`it`) | 1104/1343 | 82% |
-| Bahasa Indonesia (`id`) | 1104/1343 | 82% |
-| 日本語 (`ja`) | 1104/1343 | 82% |
-| 한국어 (`ko`) | 1339/1343 | 100% |
-| Русский (`ru`) | 1214/1343 | 90% |
-| Українська (`uk`) | 1106/1343 | 82% |
-| Polski (`pl`) | 1106/1343 | 82% |
-| Čeština (`cs`) | 1104/1343 | 82% |
-| Português (Brasil) (`pt-BR`) | 1104/1343 | 82% |
-| Português (Portugal) (`pt-PT`) | 1104/1343 | 82% |
-| 简体中文 (`zh-CN`) | 1104/1343 | 82% |
-| Türkçe (`tr`) | 1104/1343 | 82% |
-| Shqip (`sq`) | 1104/1343 | 82% |
-| Tiếng Việt (`vi`) | 1339/1343 | 100% |
+| English (`en-US`) | 1383/1383 | 100% |
+| Deutsch (`de`) | 1021/1383 | 74% |
+| Español (`es`) | 1019/1383 | 74% |
+| Français (`fr`) | 1020/1383 | 74% |
+| Italiano (`it`) | 1019/1383 | 74% |
+| Bahasa Indonesia (`id`) | 1322/1383 | 96% |
+| 日本語 (`ja`) | 1019/1383 | 74% |
+| 한국어 (`ko`) | 1383/1383 | 100% |
+| Русский (`ru`) | 1138/1383 | 82% |
+| Українська (`uk`) | 1022/1383 | 74% |
+| Polski (`pl`) | 1022/1383 | 74% |
+| Čeština (`cs`) | 1019/1383 | 74% |
+| Português (Brasil) (`pt-BR`) | 1332/1383 | 96% |
+| Português (Portugal) (`pt-PT`) | 1019/1383 | 74% |
+| 简体中文 (`zh-CN`) | 1019/1383 | 74% |
+| Türkçe (`tr`) | 1328/1383 | 96% |
+| Shqip (`sq`) | 1019/1383 | 74% |
+| Tiếng Việt (`vi`) | 1240/1383 | 90% |
 
 <!-- i18n:end -->
 

@@ -30,6 +30,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora shuffle [on\|off\|toggle]` | Print shuffle, or switch it |
 | `sonora repeat [off\|all\|one]` | Print repeat, or set it |
 | `sonora add <file\|link>...` | Queue after the tracks queued by hand |
+| `sonora add --at N <file\|link>...` | Queue at position `N`: 1 plays next, 2 leaves one track ahead |
 | `sonora play-next <file\|link>...` | Queue right after the current track |
 | `sonora add -s <query> [-t TYPE]` | Queue the best hit of a search, the one `search` lists first |
 | `sonora play -s <query> --local` | Search the local library instead of the current provider; `add` and `play-next` take `--local` too |
@@ -66,6 +67,10 @@ given. `play` puts them right after the current track and skips to them, as `pla
   `sonora provider`.
 - Everything is fetched before anything is queued. When one item fails, nothing is queued and the
   command says which item it was.
+- `add --at N` puts the items at a 1-based position in the upcoming queue: `1` is the same as
+  `play-next`, `2` leaves one upcoming track ahead, and a position past the end appends. Suggested
+  tracks do not count, so a position never lands among them. It works with `-s` too, as in
+  `sonora add -s "one more time" --at 2`.
 
 ### Seeking
 

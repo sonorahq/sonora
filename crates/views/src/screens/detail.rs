@@ -31,7 +31,6 @@ use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
 use crate::shared::album_grid::CardGrid;
 use crate::shared::blend::Joined;
 use crate::shared::cards;
-use crate::shared::confirm::Confirm;
 use crate::shared::cover_viewer::CoverViewer;
 use crate::shared::hero::{
     ACTION_GAP, HeroMetaStrip, HeroPlayButton, PageHero, copyright_notices, release_date_label,
@@ -66,7 +65,7 @@ impl RailTab {
 
     fn label(self) -> SharedString {
         match self {
-            Self::Albums => t!("album-tab-albums"),
+            Self::Albums => t!("nav-albums"),
             Self::Artists => t!("album-tab-artists"),
         }
     }
@@ -466,7 +465,7 @@ impl DetailView {
         let listed = self.detail.read(cx).tracks();
         let duration: std::time::Duration = listed.iter().map(|track| track.duration).sum();
         let eyebrow = match kind {
-            Collection::Playlist => t!("detail-playlist"),
+            Collection::Playlist => t!("kind-playlist"),
             Collection::Album => i18n::lookup(cards::release_key(release), None),
         };
 
@@ -636,21 +635,23 @@ impl DetailView {
                 true => heart.tint(theme.primary),
                 false => heart,
             }
-            .on_click(move |_, _, cx| match &target {
-                Saveable::Album(album) if saved && !Confirm::unstarring(&album.id, cx) => {
-                    Confirm::albums(vec![album.clone()], cx)
-                }
-                Saveable::Album(album) => {
-                    library.update(cx, |library, cx| library.heart_album(album.clone(), cx));
-                }
-                Saveable::Playlist(playlist) if saved => {
-                    Confirm::playlists(vec![playlist.id.clone()], cx)
-                }
-                Saveable::Playlist(playlist) => {
-                    library.update(cx, |library, cx| {
+            .on_click(move |_, _, cx| {
+                library.update(cx, |library, cx| match &target {
+                    // Over a catalog the heart only unstars, so it is the way back and needs no
+                    // toast.
+                    Saveable::Album(album)
+                        if saved && !library.shape(Shelf::of(&album.id)).is_catalog() =>
+                    {
+                        library.toggle_album(album.clone(), cx)
+                    }
+                    Saveable::Album(album) => library.heart_album(album.clone(), cx),
+                    Saveable::Playlist(playlist) if saved => {
+                        library.remove_playlist_from_library(playlist.id.clone(), cx)
+                    }
+                    Saveable::Playlist(playlist) => {
                         library.add_playlist_to_library(playlist.clone(), cx)
-                    });
-                }
+                    }
+                });
             }),
         )
     }
@@ -916,10 +917,9 @@ impl Render for DetailView {
             self.table.set_width(width, cx);
         }
 
-        let scroll = self.scrollbar.read(cx).scroll().clone();
         let viewport = match framed {
-            true => page::past_border(page::viewport(&scroll, inset, window, cx)),
-            false => page::viewport(&scroll, inset, window, cx),
+            true => page::past_border(page::viewport(&self.scrollbar, inset, window, cx)),
+            false => page::viewport(&self.scrollbar, inset, window, cx),
         };
         self.table
             .update(cx, |table, _| table.set_viewport(viewport));
@@ -952,7 +952,8 @@ impl Render for DetailView {
             .child(
                 Scroller::new("detail-page", &self.scrollbar)
                     .hold()
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                    .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)

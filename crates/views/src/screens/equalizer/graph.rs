@@ -499,10 +499,7 @@ impl Render for EqualizerGraph {
                     .size_full()
                     .response(points)
                     .nodes(nodes)
-                    .reference(
-                        preamp as f32,
-                        t!("equalizer-graph-preamp", db = figure(preamp, 1)),
-                    )
+                    .reference(preamp as f32, t!("unit-db", value = figure(preamp, 1)))
                     .bypassed(!on)
                     .reshape(advanced)
                     .on_edit(

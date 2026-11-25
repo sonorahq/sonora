@@ -12,7 +12,7 @@ pub fn install_icon() {
     let Some(mtm) = MainThreadMarker::new() else {
         return log::warn!("dock: cannot set the app icon off the main thread");
     };
-    let data = NSData::with_bytes(include_bytes!("../../../assets/macos/sonora.icns"));
+    let data = NSData::with_bytes(artwork!("macos/sonora.icns"));
     let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
         return log::warn!("dock: cannot decode the app icon");
     };

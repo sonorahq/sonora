@@ -291,7 +291,7 @@ impl SmartPlaylistEditor {
                 });
                 Self {
                     edit: None,
-                    name: cx.new(|cx| Input::new("smart-rules-name-placeholder", cx)),
+                    name: cx.new(|cx| Input::new("playlist-name-placeholder", cx)),
                     rules: None,
                     had_rules: false,
                     synced: false,

@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
@@ -195,11 +196,14 @@ impl Held {
                     artists: &mut ready.artists,
                 })
             }
-            Shape::Catalog(_) => Some(FavoritesMut {
-                tracks: &mut self.starred.tracks,
-                albums: &mut self.starred.albums,
-                artists: &mut self.starred.artists,
-            }),
+            Shape::Catalog(_) => {
+                self.starred.dates.take();
+                Some(FavoritesMut {
+                    tracks: &mut self.starred.tracks,
+                    albums: &mut self.starred.albums,
+                    artists: &mut self.starred.artists,
+                })
+            }
         }
     }
 }
@@ -209,6 +213,50 @@ struct Starred {
     tracks: Rows<Track>,
     albums: Rows<Album>,
     artists: Rows<SavedArtist>,
+    /// When each favorite above was made, read from the rows on first use. Whatever changes the
+    /// rows empties it.
+    dates: OnceCell<Dates>,
+}
+
+impl Starred {
+    fn dates(&self) -> &Dates {
+        self.dates.get_or_init(|| Dates {
+            tracks: dated(
+                self.tracks
+                    .iter()
+                    .map(|track| (track.id.as_deref(), track.added_at)),
+            ),
+            albums: dated(
+                self.albums
+                    .iter()
+                    .map(|album| (Some(album.id.as_str()), album.added_at)),
+            ),
+            artists: dated(
+                self.artists
+                    .iter()
+                    .map(|artist| (Some(artist.id.as_str()), artist.added_at)),
+            ),
+        })
+    }
+}
+
+/// The day each favorite of a catalog shelf was made, by id and kind, since ids of two kinds
+/// may collide on a provider that numbers them.
+struct Dates {
+    tracks: HashMap<String, i64>,
+    albums: HashMap<String, i64>,
+    artists: HashMap<String, i64>,
+}
+
+impl Dates {
+    fn of(&self, part: LibraryPart) -> Option<&HashMap<String, i64>> {
+        match part {
+            LibraryPart::Tracks => Some(&self.tracks),
+            LibraryPart::Albums => Some(&self.albums),
+            LibraryPart::Artists => Some(&self.artists),
+            LibraryPart::Playlists => None,
+        }
+    }
 }
 
 struct Favorites<'a> {
@@ -609,6 +657,7 @@ fn settle(
 /// the listener's own whatever its shape, so there is no second set to load and no
 /// `saved_playlists` on `MusicApi` to load it from.
 fn star(held: &mut Held, landed: Landed) -> bool {
+    held.starred.dates.take();
     match landed {
         Landed::Tracks(result) => hold("tracks", result, &mut held.starred.tracks),
         Landed::Albums(result) => hold("albums", result, &mut held.starred.albums),
@@ -628,6 +677,12 @@ fn hold<T>(what: &str, result: anyhow::Result<Vec<T>>, into: &mut Rows<T>) -> bo
             false
         }
     }
+}
+
+/// Maps each dated row with an id to its date.
+fn dated<'a>(rows: impl Iterator<Item = (Option<&'a str>, Option<i64>)>) -> HashMap<String, i64> {
+    rows.filter_map(|(id, at)| Some((id?.to_owned(), at?)))
+        .collect()
 }
 
 fn stamp() -> i64 {
@@ -1451,6 +1506,7 @@ impl Library {
                     tracks: starred_tracks.into(),
                     albums: starred_albums.into(),
                     artists: starred_artists.into(),
+                    dates: OnceCell::new(),
                 };
                 held.state = LibraryState::Ready(Ready {
                     tracks: tracks.into(),
@@ -1657,6 +1713,31 @@ impl Library {
         self.held(shelf).shape
     }
 
+    /// When the listener favorited an item of `part`, on a catalog shelf whose rows carry the day
+    /// each item joined the catalog instead. `None` for an item that is not a favorite and on a
+    /// shelf whose rows are the favorites, since their `added_at` already holds that day.
+    pub fn liked_at(&self, part: LibraryPart, id: &str) -> Option<i64> {
+        let held = self.held(Shelf::of(id));
+        if !held.shape.is_catalog() {
+            return None;
+        }
+        held.starred.dates().of(part)?.get(id).copied()
+    }
+
+    /// Whether a catalog shelf knows the day any favorite of `part` was made, so a Date liked
+    /// column has something to show.
+    pub fn dates_likes(&self, part: LibraryPart) -> bool {
+        [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
+            let held = self.held(shelf);
+            held.shape.is_catalog()
+                && held
+                    .starred
+                    .dates()
+                    .of(part)
+                    .is_some_and(|by_id| !by_id.is_empty())
+        })
+    }
+
     /// How many rows a part will have once it has all arrived, when the provider said on the
     /// first page. Nothing while nothing is known and nothing once the part has arrived, since
     /// the rows kept are then the count and the provider's total may have counted unplayable ones.
@@ -1714,6 +1795,7 @@ impl Library {
                     .retain(|track| !track.id.as_ref().is_some_and(|id| ids.contains(id)));
                 removed |= ready.tracks.len() != before;
             }
+            held.starred.dates.take();
             let before = held.starred.tracks.len();
             held.starred
                 .tracks

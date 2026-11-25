@@ -134,7 +134,7 @@ impl OutputMeter {
                     .join(&t!("equalizer-status-separator"));
                 if labels.len() > INLINE {
                     text.push(' ');
-                    text.push_str(&t!("equalizer-status-more", count = labels.len() - INLINE));
+                    text.push_str(&t!("common-more-count", count = labels.len() - INLINE));
                 }
                 (
                     "icons/info.svg",

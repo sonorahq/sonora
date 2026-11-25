@@ -4,8 +4,11 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{Context, Entity, Render, SharedString, Window, div};
+use std::sync::Arc;
+
+use gpui::{Context, Entity, Pixels, Render, SharedString, Window, div, px, svg};
 use i18n::t;
+use music::Contributor;
 use music::connect::JamMember;
 use state::{Devices, Listening, Sonora};
 use ui::{ActiveTheme as _, Button, Glowing as _, Text, eyebrow, snapped, vacant};
@@ -14,6 +17,10 @@ use crate::chrome::{jam, session};
 
 /// How many faces the summary shows before it counts the rest.
 const FACES: usize = 6;
+/// The ring round the face of whoever queued the song playing now, and the gap between it and
+/// the face. Every face keeps the room for one, so the names line up whoever is ringed.
+const PICK_RING: Pixels = px(1.5);
+const PICK_GAP: Pixels = px(1.5);
 
 /// What the panel lists: a Sonora Session first, since the two never play together, or else a
 /// Jam on a provider with a device network the listener keeps on.
@@ -40,6 +47,9 @@ impl Members {
         let devices = Sonora::global(cx).devices.clone();
         cx.observe(&listening, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
+        // the face of whoever queued the song playing now is ringed, so a new song redraws
+        let playback = Sonora::global(cx).playback.clone();
+        cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         Self { listening, devices }
     }
 
@@ -133,9 +143,9 @@ impl Render for Members {
             .flex_none()
             .items_center()
             .h(snapped(theme.metrics.header, window))
-            .px_2()
-            .border_b_1()
-            .border_color(theme.border)
+            // The title starts where the queue's section labels do.
+            .pl_4()
+            .pr_2()
             .child(eyebrow(t!("members-title"), cx));
         let root = div()
             .id("members")
@@ -176,7 +186,11 @@ impl Render for Members {
 
         let devices = self.devices.clone();
         let listening = self.listening.clone();
+        let picker = picked_by(cx).map(|added| added.id.clone());
+        let ring = snapped(PICK_RING, window);
+        let ring_gap = snapped(PICK_GAP, window);
         let rows = people.iter().enumerate().map(|(index, member)| {
+            let picked = picker.as_deref() == Some(member.id.as_str());
             let id = member.id.clone();
             // the listener reads as "You", the way the list in a Jam names them
             let shown: SharedString = match member.you {
@@ -191,14 +205,35 @@ impl Render for Members {
                 .aria_label(shown.clone())
                 .aria_position_in_set(index + 1)
                 .aria_size_of_set(count)
+                .when(picked, |this| this.aria_description(t!("members-picked")))
                 .flex()
                 .items_center()
                 .gap_2()
                 .h(theme.metrics.row)
                 .px_2()
                 .rounded(theme.radius)
-                .child(jam::face(member, theme.metrics.control_small))
+                .child(
+                    div()
+                        .flex_none()
+                        .p(ring_gap)
+                        .rounded_full()
+                        .border(ring)
+                        .border_color(match picked {
+                            true => theme.primary,
+                            false => gpui::transparent_black(),
+                        })
+                        .child(jam::face(member, theme.metrics.control_small)),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(shown))
+                .when(picked, |this| {
+                    this.child(
+                        svg()
+                            .flex_none()
+                            .path(icons::path("icons/music.svg"))
+                            .size(theme.text(Text::Small))
+                            .text_color(theme.primary),
+                    )
+                })
                 .when(member.host, |this| {
                     this.child(jam::badge(
                         ("member-host", index),
@@ -296,4 +331,13 @@ pub(crate) fn gathered(cx: &gpui::App) -> Vec<JamMember> {
         .filter(|_| devices.available())
         .map(|jam| jam.members.clone())
         .unwrap_or_default()
+}
+
+/// Who queued the song playing now, while the listener shares playback with someone else in a
+/// Sonora Session or a Jam. Alone, the song is always the listener's own and names nobody.
+pub(crate) fn picked_by(cx: &gpui::App) -> Option<Arc<Contributor>> {
+    if gathered(cx).len() < 2 {
+        return None;
+    }
+    Sonora::global(cx).playback.read(cx).shown_adder(cx)
 }

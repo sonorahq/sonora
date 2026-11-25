@@ -1,0 +1,24 @@
+[package]
+name = "plex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+engine.workspace = true
+fastrand.workspace = true
+gethostname.workspace = true
+log.workspace = true
+lyrics.workspace = true
+music.workspace = true
+reqwest.workspace = true
+rodio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sound.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

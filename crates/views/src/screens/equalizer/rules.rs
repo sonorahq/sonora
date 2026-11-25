@@ -84,7 +84,7 @@ impl EqualizerView {
         let theme = *cx.theme();
         let marker = match (playing, connected) {
             (true, _) => Some(t!("equalizer-rule-playing")),
-            (false, false) => Some(t!("equalizer-rule-disconnected")),
+            (false, false) => Some(t!("common-not-connected")),
             (false, true) => None,
         };
         let shape = sound_curve(self.settings.read(cx), &rule.sound).map(|curve| sketch(&curve));
@@ -194,7 +194,7 @@ impl EqualizerView {
                 let detail = match (ruled(&device), playing, connected || playing) {
                     (true, _, _) => Some(t!("equalizer-rule-replaces")),
                     (false, true, _) => Some(t!("equalizer-rule-playing")),
-                    (false, false, false) => Some(t!("equalizer-rule-disconnected")),
+                    (false, false, false) => Some(t!("common-not-connected")),
                     (false, false, true) => about.map(|about| about.clone().into()),
                 };
                 let id = SharedString::from(format!(

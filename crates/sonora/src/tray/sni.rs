@@ -164,7 +164,7 @@ impl ksni::Tray for Item {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        self.send(Event::Show);
+        self.send(Event::Window);
     }
 
     fn secondary_activate(&mut self, _x: i32, _y: i32) {

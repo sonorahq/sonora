@@ -724,8 +724,8 @@ fn paint_grid(
             theme.border.opacity(GRID_FAINT),
         ));
         let label = match hz >= 1000. {
-            true => t!("response-graph-khz", value = hz / 1000.),
-            false => t!("response-graph-hz", value = hz),
+            true => t!("unit-khz", value = hz / 1000.),
+            false => t!("unit-hz", value = hz),
         };
         text(
             label,
@@ -759,7 +759,7 @@ fn paint_grid(
             continue;
         }
         text(
-            t!("response-graph-db", value = db),
+            t!("unit-db", value = db),
             point(bounds.left() - pad, y - theme.text(Text::Tiny) / 2.),
             1.,
             theme.muted_foreground.opacity(LABEL),
@@ -925,11 +925,8 @@ fn readout(
     let hz = node.position.frequency_hz;
     let frequency = match hz >= 1000. {
         // Rounded in f64, because an f32 hundredth widens to a long tail of digits in Fluent.
-        true => t!(
-            "response-graph-khz",
-            value = f64::from((hz / 10.).round()) / 100.
-        ),
-        false => t!("response-graph-hz", value = hz.round()),
+        true => t!("unit-khz", value = f64::from((hz / 10.).round()) / 100.),
+        false => t!("unit-hz", value = hz.round()),
     };
     // A tenth of a decibel, rounded in f64 for the same reason, and the sign left to Fluent.
     let gain = (f64::from(node.readout_db) * 10.).round() / 10.;

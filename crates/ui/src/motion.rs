@@ -184,7 +184,7 @@ impl Saver {
 
     pub fn label(self) -> SharedString {
         match self.rate() {
-            Some(fps) => t!("saver-fps", fps = fps),
+            Some(fps) => t!("unit-fps", value = fps),
             None => t!("saver-off"),
         }
     }
@@ -792,6 +792,17 @@ impl Sprung {
     /// Where the spring stands now.
     pub fn position(&self) -> f32 {
         self.state.position
+    }
+
+    /// How fast the spring moves now, in units a second.
+    pub fn velocity(&self) -> f32 {
+        self.state.velocity
+    }
+
+    /// Sets how fast the spring moves, in units a second, keeping where it stands and its clock,
+    /// so a motion turned mid-flight carries on without a stalled frame.
+    pub fn set_velocity(&mut self, velocity: f32) {
+        self.state.velocity = velocity;
     }
 
     /// Whether the spring has come to rest where it was last sent, rather than moving.

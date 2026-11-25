@@ -1,6 +1,7 @@
 Every icon pack keeps its own licence beside its files:
 
-  common/   Sonora window controls plus Simple Icons brand marks (CC0 1.0)
+  common/   Sonora window controls, Simple Icons brand marks (CC0 1.0) and scrobbling
+            services' marks (see common/LICENSE; ListenBrainz's is CC BY-SA 4.0)
   lucide/   Lucide (ISC)
   iconoir/  Iconoir (MIT)
   remix/    Remix Icon 4.8.0 (Apache 2.0)

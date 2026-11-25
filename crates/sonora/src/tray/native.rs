@@ -11,8 +11,8 @@ use super::{Art, Event, Shown};
 const TOOLTIP: &str = "Sonora";
 #[cfg(target_os = "macos")]
 const TEMPLATES: [&[u8]; 2] = [
-    include_bytes!("../../../../assets/tray/template-18.png"),
-    include_bytes!("../../../../assets/tray/template-36.png"),
+    artwork!("tray/template-18.png"),
+    artwork!("tray/template-36.png"),
 ];
 const MENU_ON_CLICK: bool = cfg!(target_os = "macos");
 #[cfg(target_os = "macos")]

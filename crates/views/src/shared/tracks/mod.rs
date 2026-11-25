@@ -19,7 +19,8 @@ use gpui::{
 use music::{Arrival, Track};
 use router::Destination;
 use state::{
-    Detail, History, Library, Network, Origin, Playback, Progress, Reorder, Shelf, Sonora,
+    Detail, History, Library, LibraryPart, Network, Origin, Playback, Progress, Reorder, Shelf,
+    Sonora,
 };
 use ui::{
     ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
@@ -28,11 +29,11 @@ use ui::{
 
 use crate::shared::blend::{Joined, Reach};
 use crate::shared::cells;
-use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::pins::{Pinned as _, origin_tag};
 
 pub(crate) use columns::{
-    HISTORY_COLUMNS, LIBRARY_COLUMNS, TrackField, album_columns, artist_columns, playlist_columns,
+    HISTORY_COLUMNS, LIBRARY_COLUMNS, SONGS_COLUMNS, TrackField, album_columns, artist_columns,
+    playlist_columns,
 };
 pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
@@ -65,6 +66,12 @@ pub(crate) trait Tracks: 'static {
     /// that has dates or comes in some other order.
     fn arrival(&self, _cx: &App) -> Option<Arrival> {
         None
+    }
+
+    /// When a row was added, as the Date added column shows and sorts it. A list may leave out
+    /// a date the track carries when its neighbours from the same provider have none.
+    fn added_at(&self, track: &Track, _cx: &App) -> Option<i64> {
+        track.added_at
     }
 }
 
@@ -109,7 +116,8 @@ pub(crate) fn drop_picked(table: &Entity<TableState<TrackSource>>, cx: &mut App)
     drop_picked_if(table, |_| true, cx);
 }
 
-/// Asks to drop the picked rows that `keep` holds to, and leaves the rest of the pick alone.
+/// Drops the picked rows that `keep` holds to, and leaves the rest of the pick alone. It runs
+/// without asking, since every removal it makes is reported in a toast with an Undo.
 pub(crate) fn drop_picked_if(
     table: &Entity<TableState<TrackSource>>,
     keep: impl Fn(&Track) -> bool,
@@ -132,25 +140,11 @@ pub(crate) fn drop_picked_if(
     if tracks.is_empty() {
         return;
     }
-    let kind = if playlist.is_some() {
-        Kind::PlaylistSongs(tracks.len())
-    } else if history.is_some() {
-        Kind::History(tracks.len())
-    } else {
-        Kind::LibrarySongs(tracks.len())
-    };
-    let table = table.clone();
-    Confirm::ask(
-        kind,
-        move |cx| {
-            forget(&tracks, playlist.as_ref(), history.as_ref(), cx);
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        },
-        cx,
-    );
+    forget(&tracks, playlist.as_ref(), history.as_ref(), cx);
+    table.update(cx, |table, cx| {
+        table.delegate_mut().clear_selection();
+        cx.notify();
+    });
 }
 
 fn forget(
@@ -362,27 +356,28 @@ impl TrackSource {
         })
     }
 
-    /// How the rows of this table are numbered. A catalog shelf holds only the files it was
-    /// given, so an album there is numbered by each track's own place in it and a missing file
-    /// leaves a gap.
+    /// How the rows of this table are numbered. An album that spans more than one disc counts
+    /// each track behind its disc on every shelf. A single-disc album on a catalog shelf is
+    /// numbered by each track's own place, since the shelf holds only the files it was given and a
+    /// missing one leaves a gap.
     fn numbering(&self, cx: &App) -> Numbering {
         let Some(id) = self.album.as_ref().and_then(|album| album.read(cx).id()) else {
             return Numbering::Listing;
         };
-        if !Sonora::global(cx)
+        let tracks = self.provider.tracks(cx);
+        let first = tracks.first().map(disc);
+        if tracks.iter().any(|track| Some(disc(track)) != first) {
+            return Numbering::Disc;
+        }
+
+        let catalog = Sonora::global(cx)
             .library
             .read(cx)
             .shape(Shelf::of(id))
-            .is_catalog()
-        {
-            return Numbering::Listing;
-        }
-
-        let tracks = self.provider.tracks(cx);
-        let first = tracks.first().map(disc);
-        match tracks.iter().any(|track| Some(disc(track)) != first) {
-            true => Numbering::Disc,
-            false => Numbering::Track,
+            .is_catalog();
+        match catalog {
+            true => Numbering::Track,
+            false => Numbering::Listing,
         }
     }
 
@@ -404,6 +399,14 @@ impl TrackSource {
             (Some(library), Some(id)) => library.read(cx).saved(id),
             _ => false,
         }
+    }
+
+    /// The day the listener favorited a track, when a catalog shelf knows it.
+    fn liked_at(&self, track: &Track, cx: &App) -> Option<i64> {
+        let (Some(library), Some(id)) = (&self.is_liked, track.id.as_deref()) else {
+            return None;
+        };
+        library.read(cx).liked_at(LibraryPart::Tracks, id)
     }
 
     pub(crate) fn with_playlist(mut self, detail: Entity<Detail>) -> Self {
@@ -607,6 +610,12 @@ impl TableSource for TrackSource {
         if field == TrackField::AddedAt && self.provider.arrival(cx).is_some() {
             return false;
         }
+        if field == TrackField::LikedAt {
+            return self
+                .is_liked
+                .as_ref()
+                .is_some_and(|library| library.read(cx).dates_likes(LibraryPart::Tracks));
+        }
         let tracks = self.provider.tracks(cx);
         if tracks.is_empty() {
             return true;
@@ -616,9 +625,10 @@ impl TableSource for TrackSource {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
             TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
-            TrackField::AddedAt | TrackField::PlayedAt => {
-                tracks.iter().any(|track| track.added_at.is_some())
-            }
+            TrackField::AddedAt => tracks
+                .iter()
+                .any(|track| self.provider.added_at(track, cx).is_some()),
+            TrackField::PlayedAt => tracks.iter().any(|track| track.added_at.is_some()),
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
@@ -805,9 +815,12 @@ impl TableSource for TrackSource {
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),
-                cells::stamp(track.added_at),
+                cells::stamp(self.provider.added_at(track, cx)),
                 detail,
             ),
+            TrackField::LikedAt => {
+                cells::dim(&cell, cells::stamp(self.liked_at(track, cx)), detail)
+            }
             TrackField::AddedBy => match track.added_by.as_deref() {
                 Some(added) => cells::added_by(&cell, added, detail),
                 None => cells::blank(&cell),
@@ -878,9 +891,22 @@ impl TableSource for TrackSource {
     }
 
     fn compare(&self, field: TrackField, a: usize, b: usize, cx: &App) -> Ordering {
-        match self.provider.arrival(cx) {
-            Some(arrival) if field == TrackField::AddedAt => sort::by_arrival(arrival, a, b),
-            _ => sort::compare(self.provider.tracks(cx), field, a, b),
+        let tracks = self.provider.tracks(cx);
+        match (field, self.provider.arrival(cx)) {
+            (TrackField::AddedAt, Some(arrival)) => sort::by_arrival(arrival, a, b),
+            (TrackField::AddedAt, None) => {
+                let at = |row| {
+                    tracks
+                        .get(row)
+                        .and_then(|track| self.provider.added_at(track, cx))
+                };
+                at(a).cmp(&at(b))
+            }
+            (TrackField::LikedAt, _) => {
+                let at = |row| tracks.get(row).and_then(|track| self.liked_at(track, cx));
+                at(a).cmp(&at(b))
+            }
+            _ => sort::compare(tracks, field, a, b),
         }
     }
 

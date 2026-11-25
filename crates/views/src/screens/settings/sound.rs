@@ -30,21 +30,21 @@ impl SettingsView {
             }
         };
         vec![
-            Group::new("settings-group-output", "icons/volume-2.svg").rows(output),
-            Group::new("settings-equalizer", "icons/sliders-horizontal.svg")
-                .rows([Slot::Equalizer]),
+            Group::new("settings-group-output").rows(output),
+            Group::new("settings-equalizer").rows([Slot::Equalizer]),
         ]
     }
 
     /// The device picker, whose "System default" follows whatever the system plays on. While
-    /// Soloist plays Spotify the row says the output settings reach local files only.
+    /// Soloist plays Spotify a red mark by the picker says the output settings reach local
+    /// files only.
     pub(super) fn output_device_row(&self, cx: &App) -> AnyElement {
         let row = Row::new(
             t!("settings-output-device"),
             self.output_picker.clone().into_any_element(),
         );
         match self.local_only(cx) {
-            Some(note) => row.detail(note),
+            Some(note) => row.warning(note),
             None => row,
         }
         .into_any_element()
@@ -103,10 +103,11 @@ impl SettingsView {
                 music::output::system_audio_settings_uri(device.map(|device| device.id.as_str()))
             }
         };
+        let khz = |rate: u32| t!("unit-khz", value = f64::from(rate) / 1_000.);
         let rate = current
-            .map(|rate| t!("settings-sample-rate-value", khz = f64::from(rate) / 1_000.))
+            .map(khz)
             .unwrap_or_else(|| t!("settings-output-idle"));
-        let rate = ui::spoken("sample-rate-value", rate);
+        let rate = ui::spoken_steady("sample-rate-value", rate, rates.iter().copied().map(khz));
         let stepper = current
             .filter(|_| rates.len() > 1 && !following)
             .map(|current| {
@@ -188,7 +189,13 @@ impl SettingsView {
         let buffer = current
             .map(|frames| SharedString::from(frames.to_string()))
             .unwrap_or_else(|| t!("settings-output-idle"));
-        let buffer = ui::spoken("buffer-value", buffer);
+        let buffer = ui::spoken_steady(
+            "buffer-value",
+            buffer,
+            buffers
+                .iter()
+                .map(|frames| SharedString::from(frames.to_string())),
+        );
         let stepper = current.filter(|_| buffers.len() > 1).map(|current| {
             output_stepper(
                 "buffer",
@@ -240,24 +247,23 @@ impl SettingsView {
             .rounded(theme.radius)
             .cursor_pointer()
             .on_click(|_, _, cx| navigate(Destination::Equalizer, cx))
-            .when_some(note.clone(), |row, note| row.py_2().aria_description(note))
+            .when_some(note.clone(), |row, note| row.aria_description(note))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().truncate().child(t!("settings-equalizer")))
-                    .when_some(note, |title, note| {
-                        title.child(
-                            div()
-                                .text_size(theme.text(Text::Small))
-                                .text_color(theme.muted_foreground)
-                                .child(note),
-                        )
-                    }),
+                    .truncate()
+                    .child(t!("settings-equalizer")),
             )
+            .children(note.map(|note| {
+                super::rows::mark(
+                    "settings-equalizer-soloist".into(),
+                    "icons/triangle-alert.svg",
+                    theme.status_error,
+                    note,
+                    cx,
+                )
+            }))
             .child(
                 div()
                     .flex_none()

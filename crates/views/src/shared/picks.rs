@@ -5,9 +5,10 @@ use gpui::prelude::*;
 use gpui::{App, ClickEvent, Entity, MouseDownEvent, Pixels, SharedString, Window, div};
 use music::{GenreItem, Track};
 use state::Playback;
-use ui::{ActiveTheme as _, Button, Card, eyebrow, heading, snapped, vacant};
+use ui::{ActiveTheme as _, Button, Card, heading, snapped, vacant};
 
 use crate::shared::cards;
+use crate::shared::shelves::heading_line;
 use crate::shared::track_card::{ContextHandler, StartHandler, TrackCard};
 
 const ROWS: usize = 5;
@@ -57,12 +58,12 @@ impl Rows {
     }
 }
 
-/// A framed deck of list rows in up to three columns, paged with the arrows in its head.
+/// A deck of list rows in up to three columns, framed together under a title and paged with the
+/// arrows beside it.
 #[derive(IntoElement)]
 pub(crate) struct Picks {
     id: &'static str,
     title: &'static str,
-    eyebrow: Option<SharedString>,
     vacancy: &'static str,
     rows: Rows,
     playback: Entity<Playback>,
@@ -87,7 +88,6 @@ impl Picks {
         Self {
             id,
             title: "",
-            eyebrow: None,
             vacancy: "",
             rows: Rows::Tracks(tracks),
             playback,
@@ -114,7 +114,6 @@ impl Picks {
         Self {
             id,
             title: "",
-            eyebrow: None,
             vacancy: "",
             rows: Rows::Mixed(items),
             playback,
@@ -131,12 +130,6 @@ impl Picks {
 
     pub(crate) fn title(mut self, key: &'static str) -> Self {
         self.title = key;
-        self
-    }
-
-    /// The small line over the title, already worded: a key looked up at render, or a name.
-    pub(crate) fn eyebrow(mut self, label: impl Into<SharedString>) -> Self {
-        self.eyebrow = Some(label.into());
         self
     }
 
@@ -205,47 +198,29 @@ impl RenderOnce for Picks {
             .w_full()
             .flex()
             .flex_col()
-            .overflow_hidden()
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .flex()
                     .items_end()
                     .justify_between()
                     .gap_4()
-                    .px_4()
-                    .pt_4()
                     .pb_3()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_0()
-                            .children(self.eyebrow.map(|label| {
-                                eyebrow(label.clone(), cx)
-                                    .id(SharedString::from(format!("{id}-eyebrow")))
-                                    .role(Role::Label)
-                                    .aria_value(label)
-                            }))
-                            .child({
-                                let title = i18n::lookup(self.title, None);
-                                heading(title.clone(), cx)
-                                    .id(SharedString::from(format!("{id}-heading")))
-                                    .role(Role::Heading)
-                                    .aria_level(2)
-                                    .aria_label(title)
-                            }),
-                    )
+                    .child({
+                        let title = i18n::lookup(self.title, None);
+                        heading(title.clone(), cx)
+                            .id(SharedString::from(format!("{id}-heading")))
+                            .role(Role::Heading)
+                            .aria_level(2)
+                            .aria_label(title)
+                    })
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .pb_1()
+                            // As tall as the title's line and at the bottom of the header with
+                            // it, so the arrows centre on the title.
+                            .h(heading_line(window, cx))
                             .child(
                                 Button::new(SharedString::from(format!("{id}-previous")))
                                     .small()
@@ -284,61 +259,76 @@ impl RenderOnce for Picks {
                 )
             })
             .when(!barren, |this| {
-                this.child(div().flex().gap_2().p_2().when_else(
-                    empty,
-                    |this| {
-                        this.children((0..shape.columns).map(|column| {
-                            column_shell(column, theme.border)
-                                .children((0..ROWS).map(|slot| skeleton(id, column * ROWS + slot)))
-                        }))
-                    },
-                    |this| {
-                        this.children((0..shape.columns).map(|column| {
-                            column_shell(column, theme.border).children((0..ROWS).map(|slot| {
-                                let place = start + column * ROWS + slot;
-
-                                match &rows {
-                                    Rows::Tracks(tracks) if place < tracks.len() => TrackCard::new(
-                                        id,
-                                        place,
-                                        tracks.clone(),
-                                        self.playback.clone(),
+                this.child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .p_2()
+                        .rounded(theme.radius)
+                        .border_1()
+                        .border_color(theme.border)
+                        .when_else(
+                            empty,
+                            |this| {
+                                this.children((0..shape.columns).map(|column| {
+                                    column_shell(column, theme.border).children(
+                                        (0..ROWS).map(|slot| skeleton(id, column * ROWS + slot)),
                                     )
-                                    .detailed(self.detailed)
-                                    .context(on_context_menu.clone())
-                                    .start(on_start.clone())
-                                    .render(cx)
-                                    .into_any_element(),
+                                }))
+                            },
+                            |this| {
+                                this.children((0..shape.columns).map(|column| {
+                                    column_shell(column, theme.border).children((0..ROWS).map(
+                                        |slot| {
+                                            let place = start + column * ROWS + slot;
 
-                                    Rows::Mixed(items) if place < items.len() => {
-                                        let context = on_context_menu.clone();
+                                            match &rows {
+                                                Rows::Tracks(tracks) if place < tracks.len() => {
+                                                    TrackCard::new(
+                                                        id,
+                                                        place,
+                                                        tracks.clone(),
+                                                        self.playback.clone(),
+                                                    )
+                                                    .detailed(self.detailed)
+                                                    .context(on_context_menu.clone())
+                                                    .start(on_start.clone())
+                                                    .render(cx)
+                                                    .into_any_element()
+                                                }
 
-                                        cards::listed(
-                                            (id, place),
-                                            &items[place],
-                                            &self.playback,
-                                            cx,
-                                        )
-                                        .aria_position_in_set(place + 1)
-                                        .aria_size_of_set(items.len())
-                                        .when_some(context, |card, handler| {
-                                            card.menu(move |event, window, cx| {
-                                                handler(place, event, window, cx)
-                                            })
-                                        })
-                                        .into_any_element()
-                                    }
+                                                Rows::Mixed(items) if place < items.len() => {
+                                                    let context = on_context_menu.clone();
 
-                                    _ => div().flex_none().h(row).into_any_element(),
-                                }
-                            }))
-                        }))
-                    },
-                ))
+                                                    cards::listed(
+                                                        (id, place),
+                                                        &items[place],
+                                                        &self.playback,
+                                                        cx,
+                                                    )
+                                                    .aria_position_in_set(place + 1)
+                                                    .aria_size_of_set(items.len())
+                                                    .when_some(context, |card, handler| {
+                                                        card.menu(move |event, window, cx| {
+                                                            handler(place, event, window, cx)
+                                                        })
+                                                    })
+                                                    .into_any_element()
+                                                }
+
+                                                _ => div().flex_none().h(row).into_any_element(),
+                                            }
+                                        },
+                                    ))
+                                }))
+                            },
+                        ),
+                )
             })
     }
 }
 
+/// One column of rows, parted from the column before it by a rule.
 fn column_shell(column: usize, border: gpui::Hsla) -> gpui::Div {
     div()
         .flex()
@@ -351,7 +341,7 @@ fn column_shell(column: usize, border: gpui::Hsla) -> gpui::Div {
         })
 }
 
-fn skeleton(id: &'static str, place: usize) -> impl IntoElement {
+fn skeleton(id: &'static str, place: usize) -> Card {
     Card::skeleton((id, place))
 }
 

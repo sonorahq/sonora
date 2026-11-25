@@ -36,6 +36,7 @@ use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegG
 use windows::Win32::UI::Controls::{
     HIMAGELIST, ILC_COLOR32, ImageList_Create, ImageList_Destroy, ImageList_ReplaceIcon,
 };
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::{
     DefSubclassProc, ITaskbarList3, RemoveWindowSubclass, SetWindowSubclass, TBPF_NOPROGRESS,
     TBPF_NORMAL, TBPF_PAUSED, THB_BITMAP, THB_FLAGS, THB_TOOLTIP, THBF_DISABLED, THBF_ENABLED,
@@ -209,7 +210,7 @@ impl ThumbBar {
         cx.observe(&settings, |this, _, cx| this.publish(cx))
             .detach();
 
-        let shown = shown(cx);
+        let shown = shown(cx, bar.hwnd);
         bar.show(&shown);
         let progress = progress(cx);
         bar.mark(progress);
@@ -232,7 +233,7 @@ impl ThumbBar {
             self.tick(cx);
         }
 
-        let shown = shown(cx);
+        let shown = shown(cx, self.bar.hwnd);
         if shown == self.shown {
             return;
         }
@@ -563,9 +564,16 @@ fn glyph(name: &str, look: Look) -> Option<HICON> {
     };
     // Pack SVGs are stroked and filled with `currentColor`, which has no meaning
     // outside a document; give it one before parsing.
-    let source = std::str::from_utf8(bytes)
+    let mut source = std::str::from_utf8(bytes)
         .ok()?
         .replace("currentColor", colour);
+    // Thin skip strokes blur at taskbar size, so they are thickened. Iconoir and
+    // Solar stroke at 1.5 and Lucide at 2, while Remix fills its glyphs.
+    if name.starts_with("skip") {
+        source = source
+            .replace("stroke-width=\"1.5\"", "stroke-width=\"2.25\"")
+            .replace("stroke-width=\"2\"", "stroke-width=\"2.75\"");
+    }
 
     let tree = resvg::usvg::Tree::from_str(&source, &resvg::usvg::Options::default()).ok()?;
     let size = look.size.max(1) as u32;
@@ -646,7 +654,7 @@ fn icon(rgba: &[u8], size: u32) -> Option<HICON> {
 }
 
 /// Reads what the toolbar should be showing right now.
-fn shown(cx: &App) -> Shown {
+fn shown(cx: &App, hwnd: HWND) -> Shown {
     let playback = Sonora::global(cx).playback.read(cx);
     let playing = match playback.steered(cx) {
         Some(remote) => remote.state.playing,
@@ -665,14 +673,33 @@ fn shown(cx: &App) -> Shown {
         next: t!("player-next").to_string(),
         playing,
         idle: playback.shown_track(cx).is_none(),
-        look: look(),
+        look: look(hwnd),
+    }
+}
+
+/// What the taskbar progress should show right now: the played part of the track, or nothing
+/// while the listener has the bar turned off. Hiding it returns `Mode::Hidden`, which clears the
+/// bar on the button rather than leaving it on its last value.
+fn progress(cx: &App) -> Progress {
+    let enabled = Sonora::global(cx).settings.read(cx).taskbar_progress();
+    visible(enabled, played(cx))
+}
+
+/// Passes `progress` through when the bar is on, and swaps it for a hidden bar when it is off.
+fn visible(enabled: bool, progress: Progress) -> Progress {
+    match enabled {
+        true => progress,
+        false => Progress {
+            mode: Mode::Hidden,
+            done: 0,
+        },
     }
 }
 
 /// Reads how far the shown track has played, on the steered device when there
 /// is one. A track that is loading counts as playing, so the bar does not flick
 /// to yellow between tracks.
-fn progress(cx: &App) -> Progress {
+fn played(cx: &App) -> Progress {
     let hidden = Progress {
         mode: Mode::Hidden,
         done: 0,
@@ -708,11 +735,18 @@ fn progress(cx: &App) -> Progress {
     }
 }
 
-fn look() -> Look {
+/// The glyph size follows the window's own DPI, not the system DPI captured at
+/// launch, so a window on a scaled monitor is not stretched by the shell.
+fn look(hwnd: HWND) -> Look {
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let size = match dpi {
+        0 => unsafe { GetSystemMetrics(SM_CXSMICON) },
+        dpi => unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) },
+    };
     Look {
         pack: icons::active().id,
         light: light_theme(),
-        size: unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16),
+        size: size.max(16),
     }
 }
 
@@ -734,4 +768,27 @@ fn light_theme() -> bool {
         )
     };
     read.is_ok() && value == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn playing() -> Progress {
+        Progress {
+            mode: Mode::Playing,
+            done: 420,
+        }
+    }
+
+    #[test]
+    fn progress_passes_through_while_the_bar_is_on() {
+        assert_eq!(visible(true, playing()), playing());
+    }
+
+    #[test]
+    fn turning_the_bar_off_hides_progress_even_while_a_track_plays() {
+        assert_eq!(visible(false, playing()).mode, Mode::Hidden);
+        assert_eq!(visible(false, playing()).done, 0);
+    }
 }

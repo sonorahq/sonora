@@ -34,8 +34,8 @@ impl SettingsView {
         }
         downloads.push(Slot::DownloadsUsage);
         vec![
-            Group::new("settings-group-cache", "icons/rotate-ccw-clock.svg").rows(cache),
-            Group::new("settings-group-downloads", "icons/download.svg").rows(downloads),
+            Group::new("settings-group-cache").rows(cache),
+            Group::new("settings-group-downloads").rows(downloads),
         ]
     }
 
@@ -59,7 +59,7 @@ impl SettingsView {
                             .update(cx, |playback, cx| playback.clear_cache(cx));
                     })),
             );
-        self.row(t!("settings-cache-used"), control.into_any_element())
+        self.row(t!("settings-space-used"), control.into_any_element())
     }
 
     /// Offline mode, which keeps Sonora to what was downloaded until it is turned off again.
@@ -127,7 +127,7 @@ impl SettingsView {
                         );
                     }),
             );
-        self.row(t!("settings-downloads-used"), control.into_any_element())
+        self.row(t!("settings-space-used"), control.into_any_element())
     }
 }
 
@@ -140,12 +140,12 @@ fn size(bytes: Option<u64>) -> SharedString {
     let mut args = i18n::FluentArgs::new();
     match bytes >= GIGABYTE {
         true => {
-            args.set("size", format!("{:.1}", bytes as f64 / GIGABYTE as f64));
-            i18n::lookup("settings-size-gb", Some(&args))
+            args.set("value", format!("{:.1}", bytes as f64 / GIGABYTE as f64));
+            i18n::lookup("unit-gb", Some(&args))
         }
         false => {
-            args.set("size", (bytes / MEGABYTE) as i64);
-            i18n::lookup("settings-size-mb", Some(&args))
+            args.set("value", (bytes / MEGABYTE) as i64);
+            i18n::lookup("unit-mb", Some(&args))
         }
     }
 }

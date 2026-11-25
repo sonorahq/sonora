@@ -3,4 +3,4 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [alias]
 prof = "run --release --package sonora --features profiler"
-prober = "run --package music --example lyrics-prober --"
+prober = "run --package probe --example lyrics-prober --"

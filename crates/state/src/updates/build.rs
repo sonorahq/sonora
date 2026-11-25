@@ -56,9 +56,10 @@ impl Build {
 
 /// Searches beside the executable, in a macOS bundle's `Resources` and under the installation
 /// prefix for package metadata. The bundle keeps it out of `Contents/MacOS` because `codesign`
-/// rejects anything there that is not signed code.
+/// rejects anything there that is not signed code. Symlinks are followed, so the link Homebrew
+/// puts in its `bin` still finds the bundle.
 fn metadata() -> Vec<PathBuf> {
-    let Ok(exe) = std::env::current_exe() else {
+    let Ok(exe) = std::env::current_exe().and_then(|exe| exe.canonicalize()) else {
         return Vec::new();
     };
     let Some(directory) = exe.parent() else {

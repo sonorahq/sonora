@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use crate::chrome::tools::{self, Sliders};
 use crate::chrome::{Chrome, Searchable, Toolbar, Tooled};
-use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::menus::{ItemMenu, liked_menu, new_playlist_menu};
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
 
@@ -28,7 +27,7 @@ use state::{
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pin, Pinnable, Popovers,
     Popup, Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState,
-    Text, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    Text, Vacancy, Viewport, heading, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumTiles, CardGrid, TileLook};
@@ -36,7 +35,7 @@ use crate::shared::blend::{self, Joined};
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::pins::Pinned as _;
 use crate::shared::tracks::{
-    self, LIBRARY_COLUMNS, PlaybackStatus, TrackField, TrackSource, Tracks, playback_status,
+    self, PlaybackStatus, SONGS_COLUMNS, TrackField, TrackSource, Tracks, playback_status,
 };
 use crate::shared::{cards, cells, local, page, trouble};
 use albums::{AlbumField, AlbumSource};
@@ -193,6 +192,26 @@ impl Tracks for ShelfTracks {
             .capabilities_of(Shelf::Streaming)
             .song_arrival
     }
+
+    /// A streaming song shows no date when its provider dates none of its songs, even once a
+    /// like made here stamped it with today's. Only the local files beside it then show one.
+    fn added_at(&self, track: &Track, cx: &App) -> Option<i64> {
+        let streaming = track
+            .id
+            .as_deref()
+            .is_some_and(|id| Shelf::of(id) == Shelf::Streaming);
+        let undated = streaming
+            && Sonora::global(cx)
+                .session
+                .read(cx)
+                .capabilities_of(Shelf::Streaming)
+                .song_arrival
+                .is_some();
+        match undated {
+            true => None,
+            false => track.added_at,
+        }
+    }
 }
 
 /// Whether a section is still waiting for rows from either shelf.
@@ -259,7 +278,7 @@ impl LibraryView {
             let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             crate::shared::tracks::follow_downloads(cx);
             let source = TrackSource::new(
-                LIBRARY_COLUMNS,
+                SONGS_COLUMNS,
                 ShelfTracks {
                     library: library.clone(),
                 },
@@ -668,8 +687,15 @@ impl LibraryView {
 
     /// The viewport of a table that opens the page with no header above it. `lead` is the space
     /// the page leaves above the table.
-    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window, cx: &App) -> Viewport {
-        quantize(scroll, window);
+    fn viewport(
+        scrollbar: &Entity<Scrollbar>,
+        lead: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Viewport {
+        let scrollbar = scrollbar.read(cx);
+        scrollbar.quantize(window);
+        let scroll = scrollbar.scroll();
         let visible = scroll.bounds().size.height;
 
         Viewport::measured(scrolled(scroll) - lead, visible, window).covered(Chrome::bottom(cx))
@@ -727,7 +753,7 @@ impl LibraryView {
             true => (
                 t!("library-liked-songs"),
                 "icons/heart-filled.svg",
-                t!("detail-playlist"),
+                t!("kind-playlist"),
             ),
             false => (t!("nav-songs"), LibraryTab::Songs.icon(), t!("nav-library")),
         };
@@ -822,25 +848,15 @@ impl LibraryView {
         if albums.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.albums.clone();
-        let count = albums.len();
-        let starred = Confirm::unstarring(&albums[0].id, cx);
-        let apply = move |cx: &mut App| {
-            library.update(cx, |library, cx| {
-                for album in albums {
-                    library.toggle_album(album, cx);
-                }
-            });
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Confirm::ask(Kind::Albums(count), apply, cx),
-        }
+        self.library.update(cx, |library, cx| {
+            for album in albums {
+                library.toggle_album(album, cx);
+            }
+        });
+        self.albums.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn drop_artists(&mut self, cx: &mut Context<Self>) {
@@ -862,25 +878,15 @@ impl LibraryView {
         if artists.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.artists.clone();
-        let count = artists.len();
-        let starred = Confirm::unstarring(&artists[0].id, cx);
-        let apply = move |cx: &mut App| {
-            library.update(cx, |library, cx| {
-                for artist in artists {
-                    library.toggle_artist(artist, cx);
-                }
-            });
-            table.update(cx, |table, cx| {
-                table.delegate_mut().clear_selection();
-                cx.notify();
-            });
-        };
-        match starred {
-            true => apply(cx),
-            false => Confirm::ask(Kind::Artists(count), apply, cx),
-        }
+        self.library.update(cx, |library, cx| {
+            for artist in artists {
+                library.toggle_artist(artist, cx);
+            }
+        });
+        self.artists.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn drop_playlists(&mut self, cx: &mut Context<Self>) {
@@ -897,21 +903,13 @@ impl LibraryView {
         if ids.is_empty() {
             return;
         }
-        let library = self.library.clone();
-        let table = self.playlists.clone();
-        Confirm::ask(
-            Kind::Playlists(ids.len()),
-            move |cx| {
-                library.update(cx, |library, cx| {
-                    library.remove_playlists_from_library(ids, cx)
-                });
-                table.update(cx, |table, cx| {
-                    table.delegate_mut().clear_selection();
-                    cx.notify();
-                });
-            },
-            cx,
-        );
+        self.library.update(cx, |library, cx| {
+            library.remove_playlists_from_library(ids, cx)
+        });
+        self.playlists.update(cx, |table, cx| {
+            table.delegate_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn resize(&mut self, window: &Window, cx: &mut Context<Self>) {
@@ -953,7 +951,8 @@ impl LibraryView {
         let circle = self.section == Section::Artists;
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
             .child(
@@ -986,22 +985,25 @@ impl LibraryView {
         let gap = deck_gap(window);
         let tile = Card::tile_height(card, window, cx);
         let heading = head_height(window, cx);
-        let depth = (scrolled(&scroll) - inset).max(Pixels::ZERO);
+        let depth =
+            (scrolled(&scroll) - deck_lead(&self.card_rows, inset, window)).max(Pixels::ZERO);
 
         let repacked = self.card_columns != columns
             || (self.card_tile - tile).abs() >= px(0.5)
             || (self.card_heading - heading).abs() >= px(0.5);
-        let anchor = (repacked && self.card_columns != 0 && !self.cards_dirty)
-            .then(|| {
-                let heights = deck_heights(&self.card_rows, self.card_tile, self.card_heading);
-                let (index, offset) = Deck::at(&heights, gap, depth);
-                let share = match heights.get(index) {
-                    Some(height) if *height > Pixels::ZERO => offset / *height,
-                    _ => 0.,
-                };
-                deck_key(&self.card_rows, index).map(|key| (key, share))
-            })
-            .flatten();
+        // A deck still at its top stays there, since only a row scrolled into needs holding.
+        let anchor =
+            (repacked && self.card_columns != 0 && !self.cards_dirty && depth > Pixels::ZERO)
+                .then(|| {
+                    let heights = deck_heights(&self.card_rows, self.card_tile, self.card_heading);
+                    let (index, offset) = Deck::at(&heights, gap, depth);
+                    let share = match heights.get(index) {
+                        Some(height) if *height > Pixels::ZERO => offset / *height,
+                        _ => 0.,
+                    };
+                    deck_key(&self.card_rows, index).map(|key| (key, share))
+                })
+                .flatten();
 
         if self.card_columns != columns {
             self.card_columns = columns;
@@ -1019,6 +1021,7 @@ impl LibraryView {
         }
         self.card_tile = tile;
         self.card_heading = heading;
+        let lead = deck_lead(&self.card_rows, inset, window);
 
         let heights = deck_heights(&self.card_rows, tile, heading);
         if let Some((index, share)) =
@@ -1029,7 +1032,7 @@ impl LibraryView {
                 .copied()
                 .unwrap_or(Pixels::ZERO);
             let into = heights.get(index).copied().unwrap_or(Pixels::ZERO) * share;
-            scroll.set_offset(point(Pixels::ZERO, -(top + into + inset)));
+            scroll.set_offset(point(Pixels::ZERO, -(top + into + lead)));
         }
 
         let rows = self.card_rows.clone();
@@ -1039,9 +1042,11 @@ impl LibraryView {
         let playback = self.playback.clone();
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
-            .py(inset)
+            .pt(lead)
+            .pb(inset)
             .child(
                 Deck::new("library-deck")
                     .rows(heights)
@@ -1264,12 +1269,12 @@ impl Render for LibraryView {
         let framed = page::framed(window, cx);
         if mode == Mode::List {
             self.table(self.section).claim(cx);
-            let scroll = self.scrollbar.read(cx).scroll().clone();
+            let bar = &self.scrollbar;
             let viewport = match (self.section.listing(), framed) {
-                (true, true) => page::past_border(page::viewport(&scroll, inset, window, cx)),
-                (true, false) => page::viewport(&scroll, inset, window, cx),
-                (false, true) => page::past_border(Self::viewport(&scroll, inset, window, cx)),
-                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window, cx),
+                (true, true) => page::past_border(page::viewport(bar, inset, window, cx)),
+                (true, false) => page::viewport(bar, inset, window, cx),
+                (false, true) => page::past_border(Self::viewport(bar, inset, window, cx)),
+                (false, false) => Self::viewport(bar, Pixels::ZERO, window, cx),
             };
             self.table(self.section).set_viewport(viewport, cx);
         }
@@ -1306,7 +1311,8 @@ impl Render for LibraryView {
                 .into_any_element(),
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                    .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
                     .pb(inset)
@@ -1316,7 +1322,8 @@ impl Render for LibraryView {
                     .into_any_element()
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+                .top_inset(page::below_head(window, cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
                 .when(framed, |this| this.pt(inset))
                 .pb(inset)
@@ -1531,7 +1538,23 @@ fn head(display: usize, label: SharedString, cx: &App) -> AnyElement {
 fn head_height(window: &Window, cx: &App) -> Pixels {
     let title = px((cx.theme().text(Text::Title) / px(1.) * LEADING).round());
 
-    snapped(window.rem_size() * 0.5 + title, window)
+    snapped(head_lead(window) + title, window)
+}
+
+/// The room a letter heading keeps above its title, which `head` pads with `pt_2`.
+fn head_lead(window: &Window) -> Pixels {
+    snapped(window.rem_size() * 0.5, window)
+}
+
+/// The room above the first row of a deck. A letter heading brings room of its own above its
+/// title, so a deck that opens on one starts that much higher and the title lines up with the
+/// cards' side inset. Pass the rows the deck draws this frame, or it stays shifted until the
+/// next redraw.
+fn deck_lead(rows: &[DeckRow], inset: Pixels, window: &Window) -> Pixels {
+    match rows.first() {
+        Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
+        _ => inset,
+    }
 }
 
 fn deck_gap(window: &Window) -> Pixels {

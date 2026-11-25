@@ -14,7 +14,7 @@ use crate::shared::blend::Joined;
 use crate::shared::cells;
 use i18n::t;
 use music::{SavedArtist, Track};
-use state::{AppSettings, ArtistDetail, Origin, Playback, Sonora};
+use state::{AppSettings, ArtistDetail, Origin, Playback, Shelf, Sonora};
 use ui::ActiveTheme as _;
 use ui::Listing as _;
 use ui::{
@@ -28,7 +28,6 @@ use crate::chrome::{Toolbar, Tooled};
 use crate::shared::about::{AboutArtist, about_modal};
 use crate::shared::album_grid::CardGrid;
 use crate::shared::cards::{self, ReleaseFilter};
-use crate::shared::confirm::Confirm;
 use crate::shared::cover_viewer::CoverViewer;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::menus::{ItemMenu, artist_menu};
@@ -42,6 +41,8 @@ const SECTION: &str = "artist";
 const RELEASE_ROWS: usize = 2;
 const LISTED: usize = 5;
 const LISTED_MAX: usize = 10;
+/// The outline of a release filter chip, above and below its label.
+const CHIP_OUTLINE: Pixels = px(1.);
 /// The favorites dialog gives two song columns enough room for titles and controls.
 const FAVORITES_WIDTH: f32 = 5.;
 /// The least and the most room the banner adds above the hero, as shares of the cover's edge.
@@ -95,15 +96,16 @@ const BANNER_SHADE: f32 = 0.85;
 /// The blur over a portrait standing in for a missing banner, enough to leave only its colours.
 const BANNER_WASH: Pixels = px(48.);
 
+/// The popular tracks the list can expand to. The table caps how many show, after sorting, so
+/// the collapsed list is the head of the expanded one.
 struct ArtistTracks {
     detail: Entity<ArtistDetail>,
-    shown: Rc<Cell<usize>>,
 }
 
 impl Tracks for ArtistTracks {
     fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track> {
         let tracks = self.detail.read(cx).tracks();
-        tracks[..self.shown.get().min(tracks.len())].into()
+        tracks[..LISTED_MAX.min(tracks.len())].into()
     }
 
     fn is_loading(&self, cx: &App) -> bool {
@@ -131,7 +133,8 @@ pub(crate) struct ArtistView {
     about_open: bool,
     favorites_open: bool,
     table: Entity<TableState<TrackSource>>,
-    shown: Rc<Cell<usize>>,
+    /// How many popular tracks the list shows, `LISTED` or `LISTED_MAX`.
+    shown: usize,
     mode: Mode,
     popular: Rc<Vec<Track>>,
     popular_page: usize,
@@ -177,7 +180,6 @@ impl ArtistView {
                 .playcounts,
         );
         let scroll = scrollbar.read(cx).scroll().clone();
-        let shown = Rc::new(Cell::new(LISTED));
         let table = cx.new(|cx| {
             let menu_scrollbar = cx.new(|_| Scrollbar::inset().watching(id));
             crate::shared::tracks::follow_downloads(cx);
@@ -185,7 +187,6 @@ impl ArtistView {
                 columns,
                 ArtistTracks {
                     detail: detail.clone(),
-                    shown: shown.clone(),
                 },
                 playback.clone(),
                 menu_scrollbar,
@@ -203,6 +204,7 @@ impl ArtistView {
             let source = source.table(cx.weak_entity());
             let mut delegate = TableDelegate::new(source, width, cx);
             delegate.set_layout(saved, cx);
+            delegate.set_limit(Some(LISTED), cx);
             delegate.set_sorting(sorting.flatten(), cx);
             TableState::new(delegate, cx).follow(scroll)
         });
@@ -231,7 +233,7 @@ impl ArtistView {
                 this.about_open = false;
                 this.favorites_open = false;
                 this.rails.clear();
-                this.shown.set(LISTED);
+                this.show(LISTED, cx);
                 this.scrollbar.update(cx, |bar, cx| {
                     bar.set_max_offset(None, cx);
                     bar.scroll().set_offset(gpui::Point::default());
@@ -300,7 +302,7 @@ impl ArtistView {
             about_open: false,
             favorites_open: false,
             table,
-            shown,
+            shown: LISTED,
             mode,
             popular_page: 0,
             popular_columns: 0,
@@ -331,6 +333,14 @@ impl ArtistView {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
             table.rebuild(cx);
+        });
+    }
+
+    fn show(&mut self, count: usize, cx: &mut Context<Self>) {
+        self.shown = count;
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_limit(Some(count), cx);
+            cx.notify();
         });
     }
 
@@ -582,12 +592,13 @@ impl ArtistView {
                 false => heart,
             }
             .on_click(move |_, _, cx| {
-                match saved && !Confirm::unstarring(&target.id, cx) {
-                    true => Confirm::artists(vec![target.clone()], cx),
-                    false => {
-                        library.update(cx, |library, cx| library.heart_artist(target.clone(), cx));
+                // Over a catalog the heart only unstars, so it is the way back and needs no toast.
+                library.update(cx, |library, cx| {
+                    match saved && !library.shape(Shelf::of(&target.id)).is_catalog() {
+                        true => library.toggle_artist(target.clone(), cx),
+                        false => library.heart_artist(target.clone(), cx),
                     }
-                }
+                });
             }),
         )
     }
@@ -851,6 +862,9 @@ impl ArtistView {
                                     .label(filter.label())
                                     .small()
                                     .outline()
+                                    // The label's line fills the chip inside its outline, so
+                                    // the label sits on whole pixels in the middle of it.
+                                    .line_height(theme.metrics.control_small - CHIP_OUTLINE * 2.)
                                     .selected(self.release_filter == filter)
                                     .aria_toggled(Toggled::from(self.release_filter == filter))
                                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -890,8 +904,8 @@ impl ArtistView {
         Some(
             Button::new("artist-releases-more")
                 .label(match expanded {
-                    true => t!("artist-releases-less"),
-                    false => t!("artist-releases-more"),
+                    true => t!("common-show-less"),
+                    false => t!("common-show-all"),
                 })
                 .trailing(chevron(expanded))
                 .small()
@@ -970,23 +984,25 @@ impl ArtistView {
 
     fn listed(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
-        let expanded = self.shown.get() > LISTED;
+        let expanded = self.shown > LISTED;
         let more = (self.popular.len() > LISTED).then(|| {
             Button::new("artist-popular-more")
                 .label(match expanded {
-                    true => t!("artist-popular-less"),
-                    false => t!("artist-popular-more"),
+                    true => t!("common-show-less"),
+                    false => t!("common-show-all"),
                 })
                 .trailing(chevron(expanded))
                 .small()
                 .ghost()
                 .aria_expanded(expanded)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.shown.set(match expanded {
-                        true => LISTED,
-                        false => LISTED_MAX,
-                    });
-                    this.rebuild(cx);
+                    this.show(
+                        match expanded {
+                            true => LISTED,
+                            false => LISTED_MAX,
+                        },
+                        cx,
+                    );
                     cx.notify();
                 }))
         });
@@ -1028,7 +1044,6 @@ impl ArtistView {
             self.popular_page,
         )
         .title("artist-popular")
-        .eyebrow(i18n::lookup("artist-popular-eyebrow", None))
         .vacancy("artist-popular-empty")
         .detailed()
         .loading(self.detail.read(cx).is_loading())
@@ -1310,7 +1325,7 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let viewport = page::past_border(page::viewport(&scroll, inset, window, cx));
+            let viewport = page::past_border(page::viewport(&self.scrollbar, inset, window, cx));
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }
@@ -1367,7 +1382,8 @@ impl Render for ArtistView {
         });
         let rails = self.recommended(window, &notify, cx);
         let page = Scroller::new("artist-page", &self.scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(inset)
             .pt(inset)
             .pb(inset)

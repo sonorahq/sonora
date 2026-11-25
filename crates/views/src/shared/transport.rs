@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::{App, Entity, Global, SharedString, div};
 use i18n::t;
 use state::{Elsewhere, Playback, Repeat, Sonora};
-use ui::{ActiveTheme as _, Button, Side};
+use ui::{ActiveTheme as _, Button, Side, clock};
 
 use crate::shared::ambient;
 
@@ -15,7 +15,8 @@ pub(crate) const NOTCH: f32 = state::VOLUME_STEP;
 pub(crate) const COVER_FLIGHT: &str = "playing-cover";
 
 /// Whether the playing cover is in the air between the player bar and the fullscreen player,
-/// so the player bar leaves its own undrawn until the flight lands.
+/// so the player bar leaves its own undrawn until the flight lands. A narrow player with a panel
+/// open keeps the bar's cover in place and sends nothing flying.
 pub(crate) struct CoverAway(pub(crate) bool);
 
 impl Global for CoverAway {}
@@ -25,6 +26,21 @@ impl Global for CoverAway {}
 pub(crate) struct CoverFade(pub(crate) f32);
 
 impl Global for CoverFade {}
+
+/// How much of its backdrop blurs the opening fullscreen player shows yet, from 0 to 1. The
+/// zoom it opens with is a layer that drops every backdrop inside it, so once that lets go they
+/// rise over the rest of the zoom rather than snapping on in one frame.
+pub(crate) struct Backdrops(pub(crate) f32);
+
+impl Global for Backdrops {}
+
+/// How much room the player bar's cover takes beside the title, from 1 where it shows to 0 where
+/// the title has slid over its place. Below `Room::Wide` the fullscreen player's artwork tab
+/// tucks it away, since its big cover shows the same art, and the player bar under the player
+/// tucks its own along while the player opens and closes, so the two never part.
+pub(crate) struct CoverRoom(pub(crate) f32);
+
+impl Global for CoverRoom {}
 
 /// Which way the fullscreen player is moving between the shells, if it is. The player bar's
 /// fullscreen button and the player's leave button share one spot, so while the player moves
@@ -39,6 +55,11 @@ pub(crate) enum ShellSwap {
 
 impl Global for ShellSwap {}
 const STEP: f32 = 0.004;
+/// The width of a seek bar clock in ems, for a track under and over an hour.
+const CLOCK_SHORT: f32 = 3.4;
+const CLOCK_LONG: f32 = 5.4;
+/// The extra room, in ems, the right clock takes while it leads with a minus sign.
+const CLOCK_SIGN: f32 = 0.6;
 
 /// The other device playback is on, which the player shows instead of this app's own.
 pub(crate) fn steered(cx: &App) -> Option<Elsewhere> {
@@ -53,6 +74,46 @@ pub(crate) fn fraction(elapsed: Duration, total: Duration) -> f32 {
     }
 }
 
+/// The width of one seek bar clock in ems. It fits a clock for a track of `total`, and adds the
+/// minus sign when `time_left` makes the right clock count down.
+pub(crate) fn clock_ems(total: Duration, time_left: bool) -> f32 {
+    let base = match total.as_secs() >= 3600 {
+        true => CLOCK_LONG,
+        false => CLOCK_SHORT,
+    };
+    match time_left {
+        true => base + CLOCK_SIGN,
+        false => base,
+    }
+}
+
+/// The clock on the right of a seek bar. The player bar and the fullscreen player both use it,
+/// so they count down the same way. With `time_left` it reads the time still to play with a
+/// minus sign, and `spoken` holds what a screen reader says for it. Otherwise it reads the
+/// track's length and has no spoken form.
+pub(crate) struct EndClock {
+    pub(crate) text: SharedString,
+    pub(crate) spoken: Option<SharedString>,
+}
+
+/// The right-hand clock for a track at `elapsed` of `total`. Call it in `render`, since it
+/// resolves Fluent strings.
+pub(crate) fn end_clock(elapsed: Duration, total: Duration, time_left: bool) -> EndClock {
+    match time_left {
+        true => {
+            let left = clock(total.saturating_sub(elapsed));
+            EndClock {
+                text: t!("player-time-left", time = &left),
+                spoken: Some(t!("player-time-left-spoken", time = &left)),
+            }
+        }
+        false => EndClock {
+            text: clock(total),
+            spoken: None,
+        },
+    }
+}
+
 pub(crate) fn volume_icon(level: f32) -> &'static str {
     match level {
         level if level <= 0.0001 => "icons/volume-x.svg",
@@ -63,11 +124,10 @@ pub(crate) fn volume_icon(level: f32) -> &'static str {
 }
 
 pub(crate) fn percent(fraction: f32) -> SharedString {
-    t!("player-percent", value = (fraction * 100.).round())
+    t!("unit-percent", value = (fraction * 100.).round())
 }
 
-/// The heart that saves or drops `track`. A click toggles the track `playback` holds by then,
-/// which is the one shown, so callers only lend the track to read its state.
+/// The heart that shows whether `track` is saved. A click toggles the track shown at click time.
 pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx: &App) -> Button {
     let theme = *cx.theme();
     let library = Sonora::global(cx).library.clone();
@@ -93,7 +153,9 @@ pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx
         })
         .disabled(id.is_none())
         .on_click(move |_, _, cx| {
-            if let Some(track) = playback.read(cx).track().cloned() {
+            // `track` always returns the local track, which is not the currently played track
+            // if remote playback has taken over. Use `shown_track` instead.
+            if let Some(track) = playback.read(cx).shown_track(cx) {
                 library.update(cx, |library, cx| library.toggle(track, cx));
             }
         })
@@ -234,5 +296,41 @@ pub(crate) fn moved(before: Option<f32>, after: Option<f32>) -> bool {
     match (before, after) {
         (Some(before), Some(after)) => (before - after).abs() > STEP,
         (before, after) => before.is_some() != after.is_some(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clock_width_adds_the_sign_only_when_counting_down() {
+        let short = Duration::from_secs(225);
+        let long = Duration::from_secs(3600);
+
+        assert!((clock_ems(short, false) - CLOCK_SHORT).abs() < 1e-6);
+        assert!((clock_ems(short, true) - (CLOCK_SHORT + CLOCK_SIGN)).abs() < 1e-6);
+        assert!((clock_ems(long, false) - CLOCK_LONG).abs() < 1e-6);
+        assert!((clock_ems(long, true) - (CLOCK_LONG + CLOCK_SIGN)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn right_clock_counts_down_the_time_still_to_play() {
+        let left = clock(Duration::from_secs(160));
+        let end = end_clock(Duration::from_secs(65), Duration::from_secs(225), true);
+
+        assert_eq!(end.text, t!("player-time-left", time = &left));
+        assert_eq!(
+            end.spoken,
+            Some(t!("player-time-left-spoken", time = &left))
+        );
+    }
+
+    #[test]
+    fn right_clock_shows_the_length_when_not_counting_down() {
+        let end = end_clock(Duration::from_secs(65), Duration::from_secs(225), false);
+
+        assert_eq!(end.text, clock(Duration::from_secs(225)));
+        assert_eq!(end.spoken, None);
     }
 }

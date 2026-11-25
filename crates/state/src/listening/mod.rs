@@ -26,6 +26,10 @@ use wire::{Reason, Reply, Request, Shared, VERSION};
 pub const CODE_LENGTH: usize = 6;
 /// How many upcoming tracks are shared. The server keeps no more than this either.
 const UPCOMING: usize = 100;
+/// How many of the collection's upcoming tracks are shared after the ones queued by hand. The
+/// rest follow as playback reaches them, so starting a song from a big library does not hand the
+/// session all of it.
+const WINDOW: usize = 20;
 /// How far playback here may stray from the session's before it is moved back in step.
 const DRIFT: Duration = Duration::from_millis(250);
 /// How far it may stray when the session pauses or resumes, or a track here has just loaded,
@@ -77,7 +81,8 @@ impl Room {
 struct Mark {
     track: Option<String>,
     playing: bool,
-    upcoming: Vec<String>,
+    /// The shared upcoming tracks, and whether each was queued by hand.
+    upcoming: Vec<(String, bool)>,
 }
 
 /// The listener's Sonora Session: the link to the server, the room it reports, and the work of
@@ -671,13 +676,10 @@ impl Listening {
         let at = self.expected(&state);
         let queue = self.queue.clone();
         let current = queue.read(cx).current().and_then(|track| track.id.clone());
-        let upcoming = ids(&state.upcoming);
-        let shown = ids(queue.read(cx).chosen_upcoming());
-        let Shared {
-            upcoming: next,
-            playing,
-            ..
-        } = state;
+        let next = state.upcoming_marked();
+        let upcoming = ids(&next);
+        let shown = ids(&shared_upcoming(queue.read(cx)));
+        let playing = state.playing;
         self.playback.update(cx, |playback, cx| {
             playback.locally(cx, |playback, cx| {
                 if current.as_deref() != Some(id.as_str()) {
@@ -685,11 +687,15 @@ impl Listening {
                     if queue.read(cx).shuffle() {
                         queue.update(cx, |queue, cx| queue.set_shuffle(false, cx));
                     }
-                    let tracks: Vec<Track> = std::iter::once(track).chain(next).collect();
-                    playback.start_at(tracks, 0, None, at, cx);
+                    // a track this queue already has is moved on to, so the rest of it stays
+                    match queue.read(cx).upcoming_index(&id) {
+                        Some(index) => playback.play_upcoming_at(index, at, cx),
+                        None => playback.start_at(vec![track], 0, None, at, cx),
+                    }
                     if !playing {
                         playback.pause(cx);
                     }
+                    queue.update(cx, |queue, cx| queue.share_upcoming(next, cx));
                     return;
                 }
                 if upcoming != shown {
@@ -820,7 +826,7 @@ impl Listening {
                 .and_then(|track| track.id.clone())
                 .filter(|id| !music::is_local_id(id)),
             playing: self.playback.read(cx).wants_playing(),
-            upcoming: ids(queue.chosen_upcoming()),
+            upcoming: ids(&shared_upcoming(queue)),
         }
     }
 
@@ -828,13 +834,16 @@ impl Listening {
     fn snapshot(&self, cx: &App) -> Shared {
         let queue = self.queue.read(cx);
         let playback = self.playback.read(cx);
+        let (upcoming, queued) = shared_upcoming(queue)
+            .into_iter()
+            .unzip::<_, _, Vec<_>, Vec<_>>();
         Shared {
             track: queue.current().filter(|track| shareable(track)).cloned(),
-            upcoming: queue
-                .chosen_upcoming()
-                .filter(|track| shareable(track))
-                .take(UPCOMING)
-                .cloned()
+            upcoming,
+            queued: queued
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, queued)| queued.then_some(index))
                 .collect(),
             playing: playback.wants_playing(),
             position: playback.live_position().as_millis() as u64,
@@ -960,13 +969,21 @@ fn shareable(track: &Track) -> bool {
         .is_some_and(|id| !music::is_local_id(id))
 }
 
-/// The ids of the shareable tracks among the first `UPCOMING` of `tracks`.
-fn ids<'a>(tracks: impl IntoIterator<Item = &'a Track>) -> Vec<String> {
-    tracks
-        .into_iter()
-        .filter(|track| shareable(track))
+/// The upcoming tracks of `queue` a session sees: those queued by hand and the next `WINDOW` of
+/// the collection's, no more than `UPCOMING` in all, each with whether it was queued by hand.
+fn shared_upcoming(queue: &Queue) -> Vec<(Track, bool)> {
+    queue
+        .shared_upcoming(WINDOW)
         .take(UPCOMING)
-        .filter_map(|track| track.id.clone())
+        .map(|(track, queued)| (track.clone(), queued))
+        .collect()
+}
+
+/// The ids of `tracks`, and whether each was queued by hand.
+fn ids(tracks: &[(Track, bool)]) -> Vec<(String, bool)> {
+    tracks
+        .iter()
+        .filter_map(|(track, queued)| Some((track.id.clone()?, *queued)))
         .collect()
 }
 

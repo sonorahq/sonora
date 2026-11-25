@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use artwork::{ArtworkQuery, ArtworkSearch};
 use discord_rich_presence::{DiscordIpc, activity};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
-use music::artwork::{ArtworkQuery, ArtworkSearch};
 use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 

@@ -33,6 +33,9 @@ const NEUTRAL_PIVOT: f32 = 0.5;
 /// The least lightness gap `legible` leaves between a tint and the surface under it.
 const LEGIBLE_DISTANCE: f32 = 0.34;
 const SYSTEM_FILLS: bool = cfg!(target_os = "windows");
+/// Whether the compositor can make the window see-through on its own, such as a Hyprland or
+/// KWin rule that dims an unfocused window. Window blur then stays available at full opacity.
+pub const COMPOSITOR_OPACITY: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
 
 /// What a fill keeps of itself once the window is fully see-through. The page
 /// background has no floor — a clear window is the point — but everything drawn
@@ -46,13 +49,17 @@ const HEADER_FLOOR: f32 = 0.15;
 /// How much of a fill's alpha survives on a see-through window before the
 /// slider takes its share. A surface reads denser than its own alpha because the
 /// page is still painted underneath it, which leaves the floor almost inert in
-/// the middle of the slider; a flat cut is the one lever that thins a fill
-/// across the whole of it. The same backing is what makes the cut safe at the top
-/// of the slider — a barely transparent page hides the step on its own. The head
-/// is cut harder: it replaces the page rather than sitting on it, and takes the
-/// page back only while it is pinned, so at rest it can be nearly glass.
+/// the middle of the slider; a cut is the one lever that thins a fill across the
+/// whole of it. The head is cut harder: it replaces the page rather than sitting
+/// on it, and takes the page back only while it is pinned, so at rest it can be
+/// nearly glass.
 const SURFACE_WEIGHT: f32 = 0.68;
 const HEADER_WEIGHT: f32 = 0.5;
+/// How much of the desktop a window lets through before the cuts above land in
+/// full. A fill is mixed against the page under it, so a cut taken whole at the top
+/// of the slider would shift every control the moment the window stops being
+/// opaque; they ease in across this stretch instead.
+const CLEAR_RAMP: f32 = 0.1;
 
 /// Whether the platform blurs the desktop behind a see-through window. A Linux or FreeBSD
 /// compositor may or may not, and may change its mind while Sonora runs, so the root keeps this
@@ -78,10 +85,11 @@ impl WindowBlur {
 }
 
 /// The window background a look asks the platform for. Blur needs something to show through,
-/// so only a see-through window gets it, and only an opaque one can take the platform's own
-/// fill. A platform that cannot blur draws a blurred background as a plain see-through one.
+/// so it goes to a see-through window, or to any window where the compositor can make it
+/// see-through. Only an opaque window can take the platform's own fill. A platform that cannot
+/// blur draws a blurred background as a plain see-through one.
 pub fn backdrop(blur_window: bool, transparent: bool) -> WindowBackgroundAppearance {
-    match blur_window && transparent {
+    match blur_window && (transparent || COMPOSITOR_OPACITY) {
         true => WindowBackgroundAppearance::Blurred,
         false => match SYSTEM_FILLS && !transparent {
             true => WindowBackgroundAppearance::Opaque,
@@ -231,6 +239,10 @@ pub struct ThemeOverrides {
     pub table_hover: Option<String>,
     pub table_active: Option<String>,
     pub table_active_border: Option<String>,
+    pub status_error: Option<String>,
+    pub status_success: Option<String>,
+    pub status_warning: Option<String>,
+    pub status_info: Option<String>,
     pub radius: Option<f32>,
     pub font_size: Option<f32>,
 }
@@ -279,6 +291,10 @@ impl ThemeOverrides {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         self.radius = overlay.radius.or(self.radius);
         self.font_size = overlay.font_size.or(self.font_size);
@@ -320,6 +336,10 @@ impl ThemeOverrides {
                 | "table_hover"
                 | "table_active"
                 | "table_active_border"
+                | "status_error"
+                | "status_success"
+                | "status_warning"
+                | "status_info"
         )
     }
 
@@ -366,6 +386,10 @@ impl ThemeOverrides {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         None
     }
@@ -422,10 +446,19 @@ pub struct Theme {
     pub table_hover: Hsla,
     pub table_active: Hsla,
     pub table_active_border: Hsla,
+    /// The hues of a status mark drawn on a popover, such as the icon of a toast that failed,
+    /// succeeded, warns or informs. They are bright enough to read as an icon, unlike `danger`,
+    /// which fills a button.
+    pub status_error: Hsla,
+    pub status_success: Hsla,
+    pub status_warning: Hsla,
+    pub status_info: Hsla,
     pub radius: Pixels,
     pub font_size: Pixels,
     pub metrics: Metrics,
     pub transparent: bool,
+    /// What the window keeps of its own fill: 1 on an opaque window, less on a see-through one.
+    pub opacity: f32,
     /// Whether the frosted treatments are painted. Read it through `ui::blurring` rather
     /// than reaching for the field, so every site asks the same question.
     pub blur: bool,
@@ -450,7 +483,7 @@ impl Global for Transition {}
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            background: rgb(0x0a0a0a).into(),
+            background: rgb(0x0b0b0b).into(),
             foreground: rgb(0xfafafa).into(),
             border: rgba(0x50505066).into(),
             muted: rgb(0x262626).into(),
@@ -470,9 +503,9 @@ impl Theme {
             popover_foreground: rgb(0xfafafa).into(),
             progress_bar: rgb(0xf5f5f5).into(),
             selection: rgb(0x1d4ed8).into(),
-            sidebar: rgb(0x0a0a0a).into(),
+            sidebar: rgb(0x070707).into(),
             sidebar_accent: rgba(0x50505066).into(),
-            sidebar_border: rgb(0x262626).into(),
+            sidebar_border: rgb(0x181818).into(),
             title_bar_border: rgb(0x262626).into(),
             table_head: rgba(0x171717cc).into(),
             table_head_foreground: rgb(0x8a8a8a).into(),
@@ -480,10 +513,15 @@ impl Theme {
             table_hover: rgba(0x50505033).into(),
             table_active: rgba(0x1e40af33).into(),
             table_active_border: rgb(0x1d4ed8).into(),
+            status_error: rgb(0xff6369).into(),
+            status_success: rgb(0x4ade80).into(),
+            status_warning: rgb(0xfbbf24).into(),
+            status_info: rgb(0x60a5fa).into(),
             radius: px(6.),
             font_size: px(14.),
             metrics: Metrics::default(),
             transparent: false,
+            opacity: 1.,
             blur: false,
             blur_window: false,
             tint: None,
@@ -513,9 +551,9 @@ impl Theme {
             popover_foreground: rgb(0x171717).into(),
             progress_bar: rgb(0x262626).into(),
             selection: rgb(0x2563eb).into(),
-            sidebar: rgb(0xf5f5f5).into(),
+            sidebar: rgb(0xededed).into(),
             sidebar_accent: rgba(0xcdcdcd66).into(),
-            sidebar_border: rgb(0xd4d4d4).into(),
+            sidebar_border: rgb(0xe4e4e4).into(),
             title_bar_border: rgb(0xd4d4d4).into(),
             table_head: rgba(0xf5f5f5e6).into(),
             table_head_foreground: rgb(0x666666).into(),
@@ -523,10 +561,15 @@ impl Theme {
             table_hover: rgba(0xcdcdcd33).into(),
             table_active: rgba(0x2563eb1f).into(),
             table_active_border: rgb(0x2563eb).into(),
+            status_error: rgb(0xdc2626).into(),
+            status_success: rgb(0x16a34a).into(),
+            status_warning: rgb(0xd97706).into(),
+            status_info: rgb(0x2563eb).into(),
             radius: px(6.),
             font_size: px(14.),
             metrics: Metrics::default(),
             transparent: false,
+            opacity: 1.,
             blur: false,
             blur_window: false,
             tint: None,
@@ -730,6 +773,10 @@ impl Theme {
             table_hover,
             table_active,
             table_active_border,
+            status_error,
+            status_success,
+            status_warning,
+            status_info,
         );
         theme
     }
@@ -773,6 +820,10 @@ impl Theme {
         apply_color!(table_hover);
         apply_color!(table_active);
         apply_color!(table_active_border);
+        apply_color!(status_error);
+        apply_color!(status_success);
+        apply_color!(status_warning);
+        apply_color!(status_info);
 
         if let Some(radius) = overrides.radius {
             self.radius = px(radius.clamp(0., 24.));
@@ -786,8 +837,9 @@ impl Theme {
     /// Thins every fill the window draws, so a see-through window stays one
     /// surface instead of a sheet of glass with opaque slabs floating on it.
     ///
-    /// `opacity` is what the window itself keeps. The page background follows it
-    /// all the way down; anything painted *over* that background — a field, a
+    /// `opacity` is what the window itself keeps. The page background and the
+    /// chrome's follow it all the way down, so each still paints its own part of
+    /// the window once; anything painted *over* them — a field, a
     /// card, a hover — keeps a floor, because those read as layers above the
     /// glass and have to stay legible once the glass is gone entirely. The
     /// table head is flattened first: it is a tint meant to sit on an opaque
@@ -797,12 +849,15 @@ impl Theme {
     /// content rather than wallpaper, so thinning it only lets the page bleed
     /// through the thing that was raised to be read.
     fn see_through(&mut self, opacity: f32) {
+        let clearing = clearing(opacity);
+        let weight = |full: f32| 1. - (1. - full) * clearing;
+
         self.table_head = veil(
             self.background.blend(self.table_head),
             opacity,
             HEADER_FLOOR,
         )
-        .opacity(HEADER_WEIGHT);
+        .opacity(weight(HEADER_WEIGHT));
 
         self.background = veil(self.background, opacity, 0.);
         self.sidebar = veil(self.sidebar, opacity, 0.);
@@ -816,7 +871,7 @@ impl Theme {
             &mut self.table_hover,
             &mut self.table_active,
         ] {
-            *surface = veil(*surface, opacity, SURFACE_FLOOR).opacity(SURFACE_WEIGHT);
+            *surface = veil(*surface, opacity, SURFACE_FLOOR).opacity(weight(SURFACE_WEIGHT));
         }
     }
 
@@ -832,8 +887,12 @@ impl Theme {
         }
         theme.radius = look.rounding.radius();
         theme = theme.with_overrides(overrides);
+        theme.opacity = match look.transparent {
+            true => 1. - look.transparency.clamp(0., MAX_TRANSPARENCY),
+            false => 1.,
+        };
         if look.transparent {
-            theme.see_through(1. - look.transparency.clamp(0., MAX_TRANSPARENCY));
+            theme.see_through(theme.opacity);
         }
         theme.font_size = base;
         theme.metrics = Metrics::new(base);
@@ -896,6 +955,12 @@ fn resolve(look: Look, cx: &App) -> Look {
         kind: look.kind.resolved(cx),
         ..look
     }
+}
+
+/// How far the cuts have set in on a window that keeps `opacity` of itself, from 0 on an
+/// opaque window to 1 once it lets through `CLEAR_RAMP` of the desktop or more.
+fn clearing(opacity: f32) -> f32 {
+    ((1. - opacity) / CLEAR_RAMP).clamp(0., 1.)
 }
 
 /// Thins one fill for a window that keeps `opacity` of itself, leaving `floor`

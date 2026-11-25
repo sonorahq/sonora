@@ -78,7 +78,7 @@ impl Render for WidevinePrompt {
         };
         let (detail, note, license, action) = match &state {
             CdmState::Wanted => (wanted, None, None, true),
-            CdmState::Offering => (wanted, Some(t!("widevine-prompt-downloading")), None, false),
+            CdmState::Offering => (wanted, Some(t!("settings-downloading")), None, false),
             CdmState::Offered(terms) => (
                 t!("widevine-prompt-terms", version = terms.version.as_str()),
                 None,
@@ -87,7 +87,7 @@ impl Render for WidevinePrompt {
             ),
             _ => (
                 t!("widevine-prompt-terms", version = ""),
-                Some(t!("widevine-prompt-installing")),
+                Some(t!("settings-installing")),
                 None,
                 false,
             ),
@@ -99,7 +99,7 @@ impl Render for WidevinePrompt {
         };
         let decline = match accepting {
             true => t!("widevine-prompt-decline"),
-            false => t!("widevine-prompt-later"),
+            false => t!("common-not-now"),
         };
 
         div()
@@ -116,7 +116,7 @@ impl Render for WidevinePrompt {
                 this.proceed(window, cx);
             }))
             .child(
-                Modal::new("widevine-prompt", t!("widevine-prompt-title"))
+                Modal::new("widevine-prompt", t!("settings-widevine"))
                     .detail(detail)
                     .when_some(license, |modal, license| {
                         modal.child(

@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
 use i18n::t;
-use music::soloist::{DASHBOARD, DEVICE, TERMS};
+use soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,
@@ -34,9 +34,9 @@ impl SoloistSetup {
         let soloist = Sonora::global(cx).soloist.clone();
         cx.observe(&soloist, |_, _, cx| cx.notify()).detach();
         let key = cx.new(|cx| {
-            Input::new("soloist-key-hint", cx)
+            Input::new("common-api-key", cx)
                 .masked()
-                .name("soloist-key-hint")
+                .name("common-api-key")
         });
         cx.observe(&key, |_, _, cx| cx.notify()).detach();
         Self {
@@ -105,7 +105,7 @@ impl SoloistSetup {
             progress(
                 [
                     t!("soloist-step-download"),
-                    t!("soloist-step-key"),
+                    t!("common-api-key"),
                     t!("soloist-step-pair"),
                 ],
                 match step {
@@ -188,7 +188,7 @@ impl SoloistSetup {
                     ])
                     .into_any_element(),
                 );
-                // said only once pairing has waited a while, when a firewall is the likely cause
+                // said only once pairing has waited a while
                 if let Some(port) = self.soloist.read(cx).blocked_port() {
                     // as text, so no locale groups the digits of a port number
                     let port = port.to_string();
@@ -230,7 +230,7 @@ impl Render for SoloistSetup {
             SoloistStep::Pairing => modal.action(
                 Button::new("soloist-back")
                     .ghost()
-                    .label(t!("soloist-back"))
+                    .label(t!("nav-back"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.soloist.update(cx, |soloist, cx| soloist.back(cx));
                     })),
@@ -240,7 +240,7 @@ impl Render for SoloistSetup {
                     Button::new("soloist-cancel")
                         .ghost()
                         .label(match step {
-                            SoloistStep::Consent => t!("soloist-later"),
+                            SoloistStep::Consent => t!("common-not-now"),
                             _ => t!("common-cancel"),
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),

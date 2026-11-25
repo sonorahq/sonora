@@ -9,7 +9,7 @@ use music::connect::{
     Collection, Command, Connect, Device, Elsewhere, Event, Invite, Jam, Naming, QueuedTrack,
     Request, Roster, Snapshot, Start,
 };
-use music::{Contributor, MusicApi, Track};
+use music::{Capabilities, Contributor, MusicApi, Track};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::queue::Reach;
@@ -370,7 +370,7 @@ impl Devices {
                 .upcoming
                 .iter()
                 .take_while(|row| self.readable(&row.id))
-                .map(kind_of),
+                .map(QueueKind::of),
         )
     }
 
@@ -574,7 +574,7 @@ impl Devices {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect() && !music::soloist::ready();
+        let wanted = settings.spotify_connect() && !soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -776,6 +776,7 @@ impl Devices {
             ),
             Collection::Saved => (Origin::saved(), None),
             Collection::Radio(id) => (Origin::radio(id), None),
+            Collection::CollectionRadio(seed, id) => (Origin::collection_radio(*seed, id), None),
         };
         Some(match name {
             Some(name) => origin.named(name),
@@ -1027,6 +1028,7 @@ impl Devices {
             return;
         };
         self.filling = None;
+        let capabilities = self.session.read(cx).capabilities();
         let state = start.state.clone();
         let restart = start.restart;
         let reach = match restart {
@@ -1040,7 +1042,7 @@ impl Devices {
         let shown = self.snapshot(cx);
         let known = self.known_tracks(cx);
         self.changing = Some(self.io.load(
-            load(client, start, known),
+            load(client, capabilities, start, known),
             move |this, loaded, cx| {
                 this.changing = None;
                 let moved = match restart {
@@ -1097,6 +1099,7 @@ impl Devices {
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
+        let capabilities = self.session.read(cx).capabilities();
         let revision = self.queue.read(cx).revision();
         let start = Start {
             state,
@@ -1105,7 +1108,7 @@ impl Devices {
         };
         let known = self.known_tracks(cx);
         self.filling = Some(self.io.load(
-            load(client, start, known),
+            load(client, capabilities, start, known),
             move |this, loaded, cx| {
                 this.filling = None;
                 if this.queue.read(cx).revision() != revision {
@@ -1290,10 +1293,12 @@ async fn person(client: &dyn MusicApi, id: String) -> Option<(String, Arc<Contri
 }
 
 /// Reads in what a start names: the collection if it has one the track is in, otherwise the
-/// track and the tracks that follow it. A handover reads only its current song beyond what is
-/// known, so it plays at once, and says whether songs are missing for `Devices::fill` to read.
+/// track and the tracks that follow it. `capabilities` are the provider's, which pick where a
+/// collection's radio comes from. A handover reads only its current song beyond what is known,
+/// so it plays at once, and says whether songs are missing for `Devices::fill` to read.
 async fn load(
     client: Arc<dyn MusicApi>,
+    capabilities: Capabilities,
     start: Start,
     mut known: HashMap<String, Track>,
 ) -> Result<Loaded> {
@@ -1322,6 +1327,11 @@ async fn load(
                 tracks.retain(|track| track.playable && track.id.as_deref() != Some(id));
                 tracks.insert(0, client.track(id).await?);
                 (tracks, Some(Origin::radio(id)))
+            }
+            Some(Collection::CollectionRadio(seed, id)) => {
+                let origin = Origin::collection_radio(*seed, id);
+                let (tracks, _) = origin.load(&*client, capabilities).await?;
+                (tracks, Some(origin))
             }
             None => (Vec::new(), None),
         }
@@ -1428,16 +1438,6 @@ async fn resolve_queue(
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()
-}
-
-/// Why a track another device lists is in its play order: queued by hand, picked by the
-/// provider to follow the collection, or part of the collection itself.
-pub(crate) fn kind_of(row: &QueuedTrack) -> QueueKind {
-    match (row.queued, row.suggested) {
-        (true, _) => QueueKind::Queued,
-        (false, true) => QueueKind::Suggested,
-        (false, false) => QueueKind::Context,
-    }
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.

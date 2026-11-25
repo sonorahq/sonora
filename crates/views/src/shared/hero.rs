@@ -280,7 +280,7 @@ impl HeroPlayButton {
         let listing = self.listing;
         let playback = self.playback;
 
-        MenuItem::new("hero-shuffle", t!("play-shuffle"))
+        MenuItem::new("hero-shuffle", t!("player-shuffle"))
             .icon("icons/shuffle.svg")
             .when(disabled, MenuItem::disabled)
             .on_click(move |_, _, cx| {
@@ -295,7 +295,7 @@ impl HeroPlayButton {
 
         Button::new(self.id)
             .icon("icons/shuffle.svg")
-            .tooltip("play-shuffle")
+            .tooltip("player-shuffle")
             .outline()
             .disabled(disabled)
             .on_click(move |_, _, cx| {
@@ -323,8 +323,8 @@ impl RenderOnce for HeroPlayButton {
         let [play, pause] = Self::labels();
         let reserve = [play.clone(), pause.clone()];
         let (label, icon) = match playing {
-            Some(true) => (pause, "icons/pause.svg"),
-            Some(false) | None => (play, "icons/play.svg"),
+            Some(true) => (pause, "icons/pause-filled.svg"),
+            Some(false) | None => (play, "icons/play-filled.svg"),
         };
         let disabled = !self.listing.can_start(cx);
         let listing = self.listing;

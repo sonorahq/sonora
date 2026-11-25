@@ -28,6 +28,7 @@ pub(super) enum AlbumField {
     Year,
     TrackCount,
     AddedAt,
+    LikedAt,
 }
 
 const COLUMN: ColumnSpec<AlbumField> = ColumnSpec::filling(AlbumField::Index);
@@ -83,6 +84,16 @@ const ADDED_AT: ColumnSpec<AlbumField> = ColumnSpec {
     ..COLUMN
 };
 
+/// The day a favorite was made, for a shelf that lists its whole catalog and so dates each row by
+/// when it joined. It stays off until the listener turns it on, and sorts from the sort menu.
+const LIKED_AT: ColumnSpec<AlbumField> = ColumnSpec {
+    field: AlbumField::LikedAt,
+    key: "liked-at",
+    header: "column-date-liked",
+    optional: true,
+    ..ADDED_AT
+};
+
 pub(super) const COLUMNS: &[ColumnSpec<AlbumField>] = &[
     INDEX,
     COVER,
@@ -90,6 +101,7 @@ pub(super) const COLUMNS: &[ColumnSpec<AlbumField>] = &[
     ARTISTS,
     RELEASE_YEAR,
     ADDED_AT,
+    LIKED_AT,
     TRACK_COUNT,
 ];
 
@@ -101,15 +113,19 @@ pub(super) struct AlbumSource {
     /// The shelf the Local only or Streaming only filter keeps the albums to.
     reach: Reach,
     year_span: Option<(f32, f32)>,
+    /// The span of track counts the Tracks filter keeps, or every album while it is unset.
+    tracks_span: Option<(f32, f32)>,
     starred: bool,
     /// Keep only albums that were downloaded whole.
     downloaded: bool,
     spread: RefCell<Option<Spread>>,
 }
 
+/// The distinct years and track counts of the library, kept until the album count changes.
 struct Spread {
     stamp: usize,
     years: Vec<f32>,
+    counts: Vec<f32>,
 }
 
 impl AlbumSource {
@@ -124,6 +140,7 @@ impl AlbumSource {
             menu,
             reach: Reach::default(),
             year_span: None,
+            tracks_span: None,
             starred: false,
             downloaded: false,
             spread: RefCell::new(None),
@@ -153,27 +170,34 @@ impl AlbumSource {
     /// the search and the other filters, so narrowing the grid to nothing still leaves the
     /// slider standing at its full span.
     pub(super) fn years(&self, cx: &App) -> Vec<f32> {
-        let stamp = self.albums(cx).len();
+        self.spread(cx, |spread| spread.years.clone())
+    }
+
+    /// Every track count the library's albums have, in order and without repeats, read the same
+    /// way as `years`.
+    fn counts(&self, cx: &App) -> Vec<f32> {
+        self.spread(cx, |spread| spread.counts.clone())
+    }
+
+    /// Reads the cached spread, measuring the library again once its album count changed.
+    fn spread<T>(&self, cx: &App, read: impl FnOnce(&Spread) -> T) -> T {
+        let albums = self.albums(cx);
+        let stamp = albums.len();
         if let Some(spread) = self.spread.borrow().as_ref()
             && spread.stamp == stamp
         {
-            return spread.years.clone();
+            return read(spread);
         }
 
-        let mut years: Vec<f32> = self
-            .albums(cx)
-            .iter()
-            .filter(|album| album.year > 0)
-            .map(|album| album.year as f32)
-            .collect();
-        years.sort_by(f32::total_cmp);
-        years.dedup();
-        *self.spread.borrow_mut() = Some(Spread {
+        let spread = Spread {
             stamp,
-            years: years.clone(),
-        });
+            years: stops(albums.iter().map(|album| album.year as f32)),
+            counts: stops(albums.iter().map(|album| album.track_count as f32)),
+        };
+        let value = read(&spread);
+        *self.spread.borrow_mut() = Some(spread);
 
-        years
+        value
     }
 
     /// The albums of both shelves, the streaming ones first.
@@ -188,6 +212,13 @@ impl AlbumSource {
         [Shelf::Streaming, Shelf::Local].into_iter().any(|shelf| {
             library.shape(shelf).is_catalog() && !library.state(shelf).albums().is_empty()
         })
+    }
+
+    /// The day the listener favorited an album, when a catalog shelf knows it.
+    fn liked_at(&self, album: &Album, cx: &App) -> Option<i64> {
+        self.library
+            .read(cx)
+            .liked_at(LibraryPart::Albums, &album.id)
     }
 
     /// Whether offline mode keeps every album to its downloads, which holds only while there
@@ -233,6 +264,12 @@ impl TableSource for AlbumSource {
                     return false;
                 }
             }
+            if let Some((low, high)) = self.tracks_span {
+                let count = album.track_count as f32;
+                if album.track_count == 0 || count < low - 0.5 || count > high + 0.5 {
+                    return false;
+                }
+            }
             hits(album, query)
         })
     }
@@ -251,6 +288,22 @@ impl TableSource for AlbumSource {
                     value,
                     unit: Unit::Plain,
                     values: Some(years),
+                }
+                .clamped(),
+            ));
+        }
+        let counts = self.counts(cx);
+        if let (Some(first), Some(last)) = (counts.first(), counts.last()) {
+            let bounds = (*first, *last);
+            let value = self.tracks_span.unwrap_or(bounds);
+            axes.push(Filter::Range(
+                RangeAxis {
+                    key: "filter-tracks",
+                    label: t!("filter-tracks"),
+                    bounds,
+                    value,
+                    unit: Unit::Plain,
+                    values: Some(counts),
                 }
                 .clamped(),
             ));
@@ -284,6 +337,10 @@ impl TableSource for AlbumSource {
                 self.year_span = Some(value);
                 true
             }
+            FilterChange::Range("filter-tracks", value) => {
+                self.tracks_span = Some(value);
+                true
+            }
             FilterChange::Flag("filter-favorites", value) => {
                 self.starred = value;
                 true
@@ -294,6 +351,7 @@ impl TableSource for AlbumSource {
             }
             FilterChange::Reset => {
                 self.year_span = None;
+                self.tracks_span = None;
                 self.starred = false;
                 self.downloaded = false;
                 self.reach = Reach::default();
@@ -304,7 +362,11 @@ impl TableSource for AlbumSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.year_span.is_some() || self.starred || self.downloaded || self.reach.active()
+        self.year_span.is_some()
+            || self.tracks_span.is_some()
+            || self.starred
+            || self.downloaded
+            || self.reach.active()
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
@@ -339,6 +401,13 @@ impl TableSource for AlbumSource {
         self.menu.reset(cx);
     }
 
+    fn populated(&self, field: AlbumField, cx: &App) -> bool {
+        match field {
+            AlbumField::LikedAt => self.library.read(cx).dates_likes(LibraryPart::Albums),
+            _ => true,
+        }
+    }
+
     fn cell(&self, cell: Cell<AlbumField>, cx: &mut App) -> AnyElement {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
@@ -368,6 +437,7 @@ impl TableSource for AlbumSource {
             AlbumField::Year => cells::dim(&cell, year(album), muted),
             AlbumField::TrackCount => cells::dim(&cell, format!("{}", album.track_count), muted),
             AlbumField::AddedAt => cells::dim(&cell, cells::stamp(album.added_at), muted),
+            AlbumField::LikedAt => cells::dim(&cell, cells::stamp(self.liked_at(album, cx)), muted),
             AlbumField::Index => cells::blank(&cell),
         }
     }
@@ -396,6 +466,10 @@ impl TableSource for AlbumSource {
                 .get(a)
                 .map(|album| album.added_at)
                 .cmp(&albums.get(b).map(|album| album.added_at)),
+            AlbumField::LikedAt => {
+                let at = |index| albums.get(index).and_then(|album| self.liked_at(album, cx));
+                at(a).cmp(&at(b))
+            }
             AlbumField::Index | AlbumField::Cover => a.cmp(&b),
         }
     }
@@ -413,6 +487,14 @@ impl TableSource for AlbumSource {
             _ => None,
         }
     }
+}
+
+/// The positive values among `values`, sorted and without repeats, as a range filter's stops.
+fn stops(values: impl Iterator<Item = f32>) -> Vec<f32> {
+    let mut stops: Vec<f32> = values.filter(|value| *value > 0.).collect();
+    stops.sort_by(f32::total_cmp);
+    stops.dedup();
+    stops
 }
 
 fn hits(album: &Album, query: &str) -> bool {

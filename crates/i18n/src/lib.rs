@@ -143,19 +143,21 @@ fn bundle(language: Language) -> FluentBundle<FluentResource> {
     let mut bundle = FluentBundle::new_concurrent(vec![language.tag()]);
     bundle.set_use_isolating(false);
 
-    match FluentResource::try_new(language.source().to_owned()) {
-        Ok(resource) => {
-            if let Err(errors) = bundle.add_resource(resource) {
-                for error in errors {
-                    log::error!("i18n: cannot load {}: {error}", language.id());
+    for (name, source) in language.sources() {
+        match FluentResource::try_new((*source).to_owned()) {
+            Ok(resource) => {
+                if let Err(errors) = bundle.add_resource(resource) {
+                    for error in errors {
+                        log::error!("i18n: cannot load {}/{name}.ftl: {error}", language.id());
+                    }
                 }
             }
-        }
-        Err((resource, errors)) => {
-            for error in errors {
-                log::error!("i18n: cannot parse {}: {error}", language.id());
+            Err((resource, errors)) => {
+                for error in errors {
+                    log::error!("i18n: cannot parse {}/{name}.ftl: {error}", language.id());
+                }
+                bundle.add_resource_overriding(resource);
             }
-            bundle.add_resource_overriding(resource);
         }
     }
     bundle
@@ -164,8 +166,9 @@ fn bundle(language: Language) -> FluentBundle<FluentResource> {
 #[cfg(test)]
 fn keys(language: Language) -> Vec<&'static str> {
     let mut keys: Vec<&str> = language
-        .source()
-        .lines()
+        .sources()
+        .iter()
+        .flat_map(|(_, source)| source.lines())
         .filter(|line| !line.starts_with([' ', '#', '.', '*', '[']))
         .filter_map(|line| line.split_once(" =").map(|(key, _)| key))
         .filter(|key| !key.is_empty() && !key.starts_with('-'))
