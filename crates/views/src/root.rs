@@ -609,7 +609,6 @@ impl Root {
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
-        Customizing::stop(cx);
         match self.view {
             RootView::Workspace => navigate(Destination::Fullscreen, cx),
             RootView::Fullscreen => back(cx),
@@ -979,6 +978,10 @@ impl Root {
     fn show(&mut self, destination: Destination, cx: &mut Context<Self>) {
         clear_listing(cx);
         let opening = matches!(destination, Destination::Fullscreen);
+        // Fullscreen shows none of the bars, whether the button or history opened it.
+        if opening {
+            Customizing::stop(cx);
+        }
         if opening != matches!(self.view, RootView::Fullscreen) {
             self.os_follow = Some(opening);
             self.parted = Some(*cx.theme());
