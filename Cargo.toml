@@ -266,6 +266,9 @@ strip = "debuginfo"
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# File and line numbers for backtraces and profilers, without the types and variables a debugger
+# shows. Full debug info made compiling the workspace crates take 30% more CPU time.
+debug = "line-tables-only"
 
 [profile.dev.package.ui]
 debug = false
