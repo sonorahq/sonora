@@ -53,9 +53,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Scrobbling services are cards with each service's logo, like the streaming services.
 - Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
 - Toasts move on springs: they glide into the pile, a toast you let go of after a short swipe slides back, and a flicked one flies off at the speed you threw it.
+- Apple Music lyrics credit lrc.red, the service they come from, with a link to its site under the lyrics.
 
 ### Fixed
 
+- A dropdown in Settings resizes to a newly picked option without shaking: its arrow and edge stay in place, and its text no longer jumps up and down.
 - The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
 - Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
 - On Windows, changing the output device's format in the system sound settings moves Sonora to the new sample rate within a second, even while nothing plays, instead of only after a restart.

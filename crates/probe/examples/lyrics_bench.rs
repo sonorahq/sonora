@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use lyric_sources::{binimum, kugou, lrclib, musixmatch, netease};
+use lyric_sources::{kugou, lrclib, lrcred, musixmatch, netease};
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey};
 use spotify::{AuthConfig, LibrespotClient, auth};
 
@@ -40,7 +40,7 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
     vec![
         Arc::new(spotify::SpotifyLyrics::from_env()),
         Arc::new(youtube::YouTubeLyrics::new()),
-        Arc::new(binimum::Binimum::new(http.clone())),
+        Arc::new(lrcred::LrcRed::new(http.clone())),
         Arc::new(musixmatch::Musixmatch::new(http.clone())),
         Arc::new(lrclib::LrcLib::new(http.clone())),
         Arc::new(kugou::Kugou::new(http.clone())),

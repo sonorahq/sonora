@@ -24,7 +24,7 @@ crates/
   scrobble/   scrobbling to Last.fm, Libre.fm, ListenBrainz, Maloja and teal.fm
   lyrics/     LRC and TTML parsing, romanisation and the ranking of what every source found
   lyric-sources/
-              the standalone lyrics sources: LRCLIB, Musixmatch, NetEase, Kugou and Binimum
+              the standalone lyrics sources: LRCLIB, Musixmatch, NetEase, Kugou and lrc.red
   artwork/    public cover lookup and upload for a track whose own art cannot be shared
   probe/      ignored live tests against real accounts, and the lyrics probing examples
   storage/    the state.sqlite and cache.sqlite paths, schema and connection setup

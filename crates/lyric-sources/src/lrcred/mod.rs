@@ -2,24 +2,27 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use lyrics::ttml;
-use music::{LyricsHit, LyricsProvider, LyricsQuery};
 use serde::Deserialize;
 
-const SOURCE: &str = "Apple Music";
-const SEARCH: &str = "https://lyrics-api.binimum.org/";
+use lyrics::ttml;
+use music::{LyricsHit, LyricsProvider, LyricsQuery};
+
+const SOURCE: &str = lyrics::LRC_RED;
+const SEARCH: &str = "https://lrc.red/api/v1";
 const TRUST: u32 = 180;
 const AGENT: &str = concat!(
     "sonora/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/sonorahq/sonora)"
+    " (https://github.com/sonorahq/sonora; team@sonorahq.org)"
 );
 
-pub struct Binimum {
+/// The lrc.red catalogue of Apple Music lyrics. Its terms ask every client to name itself with a
+/// link and a contact email in the User-Agent.
+pub struct LrcRed {
     http: reqwest::Client,
 }
 
-impl Binimum {
+impl LrcRed {
     /// Sends every request through `http`, which the app shares between its lyrics sources.
     pub fn new(http: reqwest::Client) -> Self {
         Self { http }
@@ -113,7 +116,7 @@ impl Match {
 }
 
 #[async_trait]
-impl LyricsProvider for Binimum {
+impl LyricsProvider for LrcRed {
     fn name(&self) -> &'static str {
         SOURCE
     }

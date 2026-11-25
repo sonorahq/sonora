@@ -40,6 +40,27 @@ const TRUSTED: u32 = 25;
 const SYNCED_GRADE: u8 = 2;
 const WORDED_GRADE: u8 = 3;
 
+/// The service a source's sheets come through, which has to be named with a link back wherever
+/// they are shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LyricsCredit {
+    pub name: &'static str,
+    pub url: &'static str,
+}
+
+/// The source lrc.red's Apple Music sheets are listed under.
+pub const LRC_RED: &str = "Apple Music";
+/// lrc.red's terms ask every app that shows its sheets to credit it with a link back.
+const LRC_RED_CREDIT: LyricsCredit = LyricsCredit {
+    name: "lrc.red",
+    url: "https://lrc.red",
+};
+
+/// The credit a sheet from `source` has to carry, or `None` when its source asks for none.
+pub fn credit(source: &str) -> Option<LyricsCredit> {
+    (source == LRC_RED).then_some(LRC_RED_CREDIT)
+}
+
 pub fn rank(query: &LyricsQuery, hits: Vec<LyricsHit>) -> Vec<LyricsHit> {
     rank_with_priority(query, hits, &[], false)
 }

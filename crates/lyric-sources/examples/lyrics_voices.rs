@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lyric_sources::{binimum, musixmatch};
+use lyric_sources::{lrcred, musixmatch};
 use music::{Lyrics, LyricsProvider, LyricsQuery, Voice};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -38,7 +38,7 @@ async fn main() {
     ];
     let http = reqwest::Client::new();
     let providers: Vec<Arc<dyn LyricsProvider>> = vec![
-        Arc::new(binimum::Binimum::new(http.clone())),
+        Arc::new(lrcred::LrcRed::new(http.clone())),
         Arc::new(musixmatch::Musixmatch::new(http)),
     ];
 

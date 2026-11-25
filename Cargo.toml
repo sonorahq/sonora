@@ -68,8 +68,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "1e8d9aa3a2010dc34c69172d4cc4fbb33e7f46d5" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "1e8d9aa3a2010dc34c69172d4cc4fbb33e7f46d5", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "bc92ae1b12a44c226aed616662b3ee12a4d85d1b" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "bc92ae1b12a44c226aed616662b3ee12a4d85d1b", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -282,6 +282,9 @@ strip = "debuginfo"
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# File and line numbers for backtraces and profilers, without the types and variables a debugger
+# shows. Full debug info made compiling the workspace crates take 30% more CPU time.
+debug = "line-tables-only"
 
 [profile.dev.package.ui]
 debug = false

@@ -153,7 +153,7 @@ fn main() -> ExitCode {
             Arc::new(plex::PlexLyrics::new()),
             Arc::new(spotify::SpotifyLyrics::from_env()),
             Arc::new(youtube::YouTubeLyrics::new()),
-            Arc::new(lyric_sources::binimum::Binimum::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::lrcred::LrcRed::new(lyrics_http.clone())),
             Arc::new(lyric_sources::musixmatch::Musixmatch::new(
                 lyrics_http.clone(),
             )),
