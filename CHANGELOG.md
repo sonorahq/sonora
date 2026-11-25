@@ -51,6 +51,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A setting's description waits behind an info mark next to its name and shows the moment you point at it, and settings Soloist keeps to local files carry a red mark instead.
 - Scrobbling services are cards with each service's logo, like the streaming services.
 - Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
+- Toasts move on springs: they settle into the pile with a little bounce, a toast you let go of after a short swipe springs back, and a flicked one flies off at the speed you threw it.
 
 ### Fixed
 

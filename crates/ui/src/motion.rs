@@ -805,6 +805,13 @@ impl Sprung {
         *self = Self::at(position);
     }
 
+    /// Sets the spring at `position` moving at `velocity` units a second, for something the hand
+    /// lets go of, so it carries on at the speed it was thrown before the spring takes over.
+    pub fn launch(&mut self, position: f32, velocity: f32) {
+        self.state = SpringState { position, velocity };
+        self.beat = None;
+    }
+
     /// Moves where the spring stands by `delta`, keeping its velocity.
     pub fn shift(&mut self, delta: f32) {
         self.state.position += delta;
