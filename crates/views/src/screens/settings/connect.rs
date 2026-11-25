@@ -21,10 +21,7 @@ impl SettingsView {
             return vec![Group::new("settings-group-jellyfin-remote").rows([Slot::SpotifyConnect])];
         }
         if youtube(cx) {
-            return vec![
-                Group::new("settings-group-youtube-cast", "icons/tv.svg")
-                    .rows([Slot::SpotifyConnect]),
-            ];
+            return vec![Group::new("settings-group-youtube-cast").rows([Slot::SpotifyConnect])];
         }
 
         let settings = self.settings.read(cx);
