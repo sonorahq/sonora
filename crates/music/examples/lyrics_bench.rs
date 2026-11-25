@@ -51,6 +51,10 @@ fn providers() -> Vec<Arc<dyn LyricsProvider>> {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+
     let sample: usize = std::env::var("SAMPLE")
         .ok()
         .and_then(|value| value.parse().ok())
