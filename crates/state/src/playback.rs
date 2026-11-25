@@ -2602,7 +2602,7 @@ impl Playback {
         self.sleep_task = None;
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
-            return;
+            return self.finish_queue(cx);
         };
         self.track = Some(track);
         self.resume_at = Some(Duration::ZERO);
