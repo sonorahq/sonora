@@ -138,6 +138,7 @@ pub fn snapped(value: Pixels, window: &Window) -> Pixels {
     px((value / px(1.) * scale).round() / scale)
 }
 
+/// How wide `text` sets in the window's current text style, on one line.
 pub fn text_width(text: impl Into<SharedString>, window: &Window) -> Pixels {
     let text = text.into();
     if text.is_empty() {
@@ -161,6 +162,11 @@ pub fn text_width(text: impl Into<SharedString>, window: &Window) -> Pixels {
         .width
 }
 
+/// The corner radius for something set `p_1` inside a hairline-bordered container rounded at
+/// `radius`, so the two corners stay concentric. The padding and border are snapped to device
+/// pixels the way the layout snaps them, or a quarter rem that falls on a half pixel leaves the
+/// inner corner half a pixel too sharp.
 pub fn tucked(radius: Pixels, window: &Window) -> Pixels {
-    (radius - window.rem_size() * INSET - BORDER).max(Pixels::ZERO)
+    let inset = window.pixel_snap(window.rem_size() * INSET) + window.pixel_snap(BORDER);
+    (radius - inset).max(Pixels::ZERO)
 }

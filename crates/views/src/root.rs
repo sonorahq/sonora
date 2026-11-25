@@ -363,6 +363,15 @@ impl Root {
             .detach();
         update_focus_for_wake(window, cx);
 
+        // A focused element that leaves the page takes the focus with it, and the shell takes it
+        // up again.
+        cx.on_focus_lost(window, |_, window, cx| {
+            if let Some(fallback) = ui::focus_fallback(cx) {
+                window.focus(&fallback, cx);
+            }
+        })
+        .detach();
+
         ui::WindowBlur::update(window, cx);
         window
             .observe_window_appearance(|window, cx| {
@@ -543,6 +552,8 @@ impl Root {
         (view, detail)
     }
 
+    /// Opens the search page with the keyboard in its field. The shortcut and the sidebar's
+    /// Search entry come here, and nothing else focuses the field on its own.
     fn open_search(&mut self, cx: &mut Context<Self>) {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
@@ -617,6 +628,18 @@ impl Root {
                 }
             }
         }
+    }
+
+    /// Points the keyboard's fallback at the shell on show, or at nothing under the sign-in
+    /// screen. Without focus, every shortcut and every action a button dispatches stops at the
+    /// window's root and never reaches the handlers on this view.
+    fn follow_focus_fallback(&self, cx: &mut App) {
+        let fallback = match (self.signing_in, &self.view) {
+            (true, _) => None,
+            (false, RootView::Workspace) => Some(self.shells.workspace.read(cx).focus_handle()),
+            (false, RootView::Fullscreen) => Some(self.shells.fullscreen.read(cx).focus_handle()),
+        };
+        ui::set_focus_fallback(fallback, cx);
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
@@ -1009,8 +1032,10 @@ impl Root {
         }
         self.announce_fullscreen(false, cx);
         self.view = RootView::Workspace;
-        self.pending = Some(match destination {
-            Destination::Search => Focus::Search,
+        // Only `open_search` hands the search field the keyboard, so coming back to the page from
+        // fullscreen or through history leaves the field alone.
+        self.pending = Some(match (&destination, self.pending.take()) {
+            (Destination::Search, Some(Focus::Search)) => Focus::Search,
             _ => Focus::Workspace,
         });
 
@@ -1095,8 +1120,12 @@ impl Root {
 }
 
 const UI_FONT: &str = "Inter";
+/// The embedded Hangul-only font that draws Korean. It has no Latin, so it is never offered as
+/// the interface font.
+pub(crate) const HANGUL_FONT: &str = "Sonora Hangul";
 
-const SCRIPTS: [&str; 18] = [
+const SCRIPTS: [&str; 19] = [
+    HANGUL_FONT,
     "Source Han Sans",
     "Noto Sans CJK JP",
     "Noto Sans CJK SC",
@@ -1193,6 +1222,7 @@ impl Render for Root {
             SessionState::Authorizing(_) => self.signing_in,
         };
         self.signing_in = show_sign_in;
+        self.follow_focus_fallback(cx);
 
         match self.pending.take() {
             Some(Focus::Search) => self

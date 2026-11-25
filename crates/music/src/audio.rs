@@ -144,13 +144,15 @@ impl Chain {
     /// `source` run through the equalizer and then the volume ramp, with the spectrum tap at the
     /// end, ready for the mixer. Every chunk queued on `source` publishes into `format`, and
     /// `clamped` holds it within full scale, for a device whose integer samples would wrap.
+    /// `rate` is what the device runs at, which every chunk is resampled to before it is queued.
     pub(crate) fn apply<S: Source>(
         &self,
         source: S,
         format: PublishedFormat,
+        rate: u32,
         clamped: bool,
     ) -> Chained<S> {
-        Chained::new(source, self, format, clamped)
+        Chained::new(source, self, format, SampleRate::new(rate), clamped)
     }
 }
 
@@ -171,6 +173,10 @@ pub(crate) struct Chained<I> {
     /// Whether the output is held within full scale, for a device whose integer samples would
     /// wrap. The tap and the meter hear the sample before the clamp, so they still see the over.
     clamped: bool,
+    /// The device's rate, reported while no chunk has played yet. rodio's empty queue reports a
+    /// 48 kHz default, and the mixer then resamples the silence of a player that never plays,
+    /// such as the idle local engine's, which takes a third of a core on a 44.1 kHz device.
+    idle_rate: Option<SampleRate>,
 
     current: f32,
     target: f32,
@@ -180,7 +186,13 @@ pub(crate) struct Chained<I> {
 }
 
 impl<I: Source> Chained<I> {
-    fn new(input: I, chain: &Chain, format: PublishedFormat, clamped: bool) -> Self {
+    fn new(
+        input: I,
+        chain: &Chain,
+        format: PublishedFormat,
+        idle_rate: Option<SampleRate>,
+        clamped: bool,
+    ) -> Self {
         let gain = chain.volume.get();
         Self {
             input,
@@ -192,6 +204,7 @@ impl<I: Source> Chained<I> {
             unscaled: false,
             meter: chain.meter.clone(),
             clamped,
+            idle_rate,
             current: gain,
             target: gain,
             step: 0.0,
@@ -272,7 +285,10 @@ impl<I: Source> Source for Chained<I> {
     }
 
     fn sample_rate(&self) -> NonZero<u32> {
-        self.input.sample_rate()
+        match self.idle_rate {
+            Some(rate) if self.frames.rate() == 0 => rate,
+            _ => self.input.sample_rate(),
+        }
     }
 
     fn total_duration(&self) -> Option<Duration> {

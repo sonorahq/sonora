@@ -24,13 +24,15 @@ use crate::youtube::playback::Factory;
 
 use crate::{
     AccountChoices, AccountKind, Arrival, Capabilities, InputSource, MusicProvider,
-    PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInFailure, SignInProblem,
-    SignInPrompt, UserProfile, WebSignIn, credentials,
+    PlaybackFactory, PromptSink, ProviderSession, RadioSeed, Shape, SignIn, SignInFailure,
+    SignInProblem, SignInPrompt, UserProfile, WebSignIn, credentials,
 };
 pub use client::YouTubeClient;
 pub use lyrics::YouTubeLyrics;
 
 const GUEST_ID: &str = "youtube-guest";
+/// Every collection YouTube Music starts a radio from itself.
+const RADIO_SEEDS: &[RadioSeed] = &[RadioSeed::Playlist, RadioSeed::Album, RadioSeed::Artist];
 /// Google's sign-in page, told to come back to YouTube Music once the account is in: the same url
 /// YouTube Music's own Sign in button opens, `www.youtube.com/signin` hop included, so that the
 /// second load the sign-in window falls back on runs exactly what that button would.
@@ -161,6 +163,7 @@ impl YouTubeProvider {
             capabilities: Capabilities {
                 playcounts: false,
                 playlist_covers: true,
+                collection_radio: RADIO_SEEDS,
                 qualities: playback::QUALITIES,
                 song_arrival: Some(Arrival::NewestFirst),
                 playlist_arrival: Some(Arrival::OldestFirst),
@@ -182,6 +185,7 @@ impl YouTubeProvider {
             authenticated: false,
             capabilities: Capabilities {
                 playcounts: false,
+                collection_radio: RADIO_SEEDS,
                 qualities: playback::QUALITIES,
                 song_arrival: Some(Arrival::NewestFirst),
                 ..Capabilities::ALL

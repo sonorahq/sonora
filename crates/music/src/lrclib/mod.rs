@@ -20,16 +20,9 @@ pub struct LrcLib {
 }
 
 impl LrcLib {
-    pub fn new() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-        }
-    }
-}
-
-impl Default for LrcLib {
-    fn default() -> Self {
-        Self::new()
+    /// Sends every request through `http`, which the app shares between its lyrics sources.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self { http }
     }
 }
 

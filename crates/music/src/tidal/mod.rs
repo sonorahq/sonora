@@ -22,7 +22,7 @@ use crate::tidal::auth::{Credentials, Lane};
 use crate::tidal::playback::Factory;
 use crate::{
     Capabilities, InputSource, MusicApi as _, MusicProvider, PlaybackFactory, PromptSink,
-    ProviderSession, Shape, SignIn, SignInFailure, SignInProblem,
+    ProviderSession, RadioSeed, Shape, SignIn, SignInFailure, SignInProblem,
 };
 
 pub use client::TidalClient;
@@ -187,6 +187,7 @@ async fn session(client: TidalClient) -> Result<ProviderSession> {
         shape: Shape::Saved,
         authenticated: true,
         capabilities: Capabilities {
+            collection_radio: &[RadioSeed::Artist],
             playcounts: false,
             playlist_covers: true,
             qualities: client::QUALITIES,

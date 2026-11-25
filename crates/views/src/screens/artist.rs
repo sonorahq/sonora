@@ -1044,7 +1044,6 @@ impl ArtistView {
             self.popular_page,
         )
         .title("artist-popular")
-        .eyebrow(i18n::lookup("artist-popular-eyebrow", None))
         .vacancy("artist-popular-empty")
         .detailed()
         .loading(self.detail.read(cx).is_loading())
@@ -1326,7 +1325,7 @@ impl Render for ArtistView {
         }
         if self.mode == Mode::List {
             self.table.claim(cx);
-            let viewport = page::past_border(page::viewport(&scroll, inset, window, cx));
+            let viewport = page::past_border(page::viewport(&self.scrollbar, inset, window, cx));
             self.table
                 .update(cx, |table, _| table.set_viewport(viewport));
         }
@@ -1383,7 +1382,8 @@ impl Render for ArtistView {
         });
         let rails = self.recommended(window, &notify, cx);
         let page = Scroller::new("artist-page", &self.scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
+            .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(inset)
             .pt(inset)
             .pb(inset)

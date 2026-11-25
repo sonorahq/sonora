@@ -232,3 +232,5 @@ toast-sample-save-failed = { $name } could not be saved
 toast-sample-save-failed-detail = The server answered 503 Service Unavailable
 toast-sample-lasting = This one stays until you close it
 toast-sample-burst = Toast number { $name }
+toast-scrobble-key-refused = { $name } refused your API key
+toast-scrobble-key-refused-note = Since 1 December 2026, Last.fm only accepts Last.fm Pro accounts.

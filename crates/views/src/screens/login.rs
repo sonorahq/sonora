@@ -600,7 +600,7 @@ impl Render for LoginView {
         });
         let waiting = match &state {
             SessionState::Authorizing(prompt) => {
-                manual_secret.is_none() && !matches!(prompt, Some(SignInPrompt::Accounts(_)))
+                manual_secret.is_none() && !matches!(prompt, Some(SignInPrompt::Accounts(..)))
             }
             _ => false,
         };
@@ -617,6 +617,7 @@ impl Render for LoginView {
                 t!("login-welcome-detail")
             }
             SessionState::Restoring => t!("login-restoring"),
+
             SessionState::Authorizing(_) => t!("login-authorizing"),
             SessionState::SignedIn(profile) => t!("login-signed-in", name = &profile.display_name),
         };

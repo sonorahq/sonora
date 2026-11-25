@@ -20,7 +20,7 @@ use crate::jellyfin::wire::{self, Covers, Item, Items, Permission, PlaylistInfo}
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Codec, CoverSize,
     Encoding, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page,
-    Pages, Playlist, PlaylistDetail, Report, SUGGESTIONS, SavedArtist, SignInFailure,
+    Pages, Playlist, PlaylistDetail, RadioSeed, Report, SUGGESTIONS, SavedArtist, SignInFailure,
     SignInProblem, Track, Transcode, UserProfile, distinct_covers,
 };
 
@@ -1270,6 +1270,17 @@ impl MusicApi for JellyfinClient {
                 .collect(),
             None,
         ))
+    }
+
+    /// The instant mix of a whole album, playlist or artist, which Jellyfin serves through the
+    /// same endpoint as a track's.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        self.track_radio(id, from).await
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

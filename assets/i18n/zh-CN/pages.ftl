@@ -53,7 +53,6 @@ artist-monthly-listeners = { $count ->
    *[other] { $value } 位每月听众
 }
 artist-popular = 热门
-artist-popular-eyebrow = 探索这位歌手
 artist-popular-empty = 这位歌手暂无可播放内容
 artist-releases = 发行作品
 artist-filter-all = 全部

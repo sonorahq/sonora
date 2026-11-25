@@ -10,7 +10,6 @@ menu-remove-tracks-from-history = { $count }曲を履歴から削除
 menu-download = ダウンロード
 menu-remove-download = ダウンロードを削除
 menu-downloading = ダウンロード中。クリックで停止
-menu-song-radio = 曲のラジオを開く
 menu-go-to-album = アルバムを表示
 menu-go-to-artist = アーティストを表示
 menu-view-details = 詳細を表示

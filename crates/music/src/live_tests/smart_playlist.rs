@@ -170,6 +170,9 @@ async fn exercise(client: &SubsonicClient) -> Result<()> {
 }
 
 fn connect(server: &str, username: &str, password: &str) -> Result<SubsonicClient> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
     let signature = auth::sign(username, password);
     SubsonicClient::new(
         server.to_owned(),

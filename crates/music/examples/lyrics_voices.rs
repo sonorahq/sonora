@@ -5,6 +5,10 @@ use music::{Lyrics, LyricsProvider, LyricsQuery, Voice, binimum, musixmatch};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+
     let wanted = [
         (
             "Shallow",
@@ -31,9 +35,10 @@ async fn main() {
         ("Clair de Lune", "Claude Debussy", "", 300),
         ("Zxqvortle Plimbath", "Nobody Realish", "", 123),
     ];
+    let http = reqwest::Client::new();
     let providers: Vec<Arc<dyn LyricsProvider>> = vec![
-        Arc::new(binimum::Binimum::new()),
-        Arc::new(musixmatch::Musixmatch::new()),
+        Arc::new(binimum::Binimum::new(http.clone())),
+        Arc::new(musixmatch::Musixmatch::new(http)),
     ];
 
     for (title, artist, album, seconds) in wanted {

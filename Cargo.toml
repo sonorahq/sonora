@@ -52,8 +52,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "2e1404bd64f42483ecd553c361a1a4fcd4cab089" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "2e1404bd64f42483ecd553c361a1a4fcd4cab089", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "258ab88a374db13604b8f8c6d875405cd53c8e24" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "258ab88a374db13604b8f8c6d875405cd53c8e24", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -217,7 +217,9 @@ librespot-protocol = "0.8.0"
 percent-encoding = "2.3"
 protobuf = "3"
 pulseaudio = "0.3.2"
-opensubsonic = "0.7"
+# Without a provider of its own, so reqwest stops compiling aws-lc-rs beside the ring every client
+# uses. The fork adds the feature (sonorahq/opensubsonic-rs, branch tls-features).
+opensubsonic = { version = "0.7", default-features = false, features = ["rustls-no-provider"] }
 tokio = { version = "1.54", features = [
     "rt-multi-thread",
     "net",
@@ -240,6 +242,7 @@ librespot-oauth = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf
 librespot-playback = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
 librespot-protocol = { git = "https://github.com/sonorahq/librespot", rev = "c3bbdf7faca8b6e36a9fdc6ba3e8b8923e89b893" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "880aaba54b00aead53651ed1ccbdb672d1375a95" }
+opensubsonic = { git = "https://github.com/sonorahq/opensubsonic-rs", rev = "486fe6bec8eb7464e084c21e251d776d6ee48db0" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     AccountChoice, Album, ArtistRef, Genre, GenreItem, GenreSection, Playlist, ReleaseType,
-    SavedArtist, Track, UserProfile, calendar,
+    SavedArtist, Track, UserProfile, calendar, escape,
 };
 
 /// Sets a smart tracklist's id apart from a playlist's, so a later lookup knows to ask for
@@ -36,6 +36,12 @@ pub fn id(value: &Value) -> Option<String> {
 /// The first non-empty string under any of `keys`.
 pub fn text<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter().find_map(|key| value.get(key))?.as_str()
+}
+
+/// The first string under any of `keys` as text to show, with the HTML references some catalog
+/// entries are stored with, such as `J&#039;ai`, decoded.
+pub fn plain(value: &Value, keys: &[&str]) -> Option<String> {
+    text(value, keys).map(|text| escape::unescape(text).into_owned())
 }
 
 /// The first fractional number under any of `keys`, spelled as a number or as a string.
@@ -86,7 +92,7 @@ fn when(value: &Value, keys: &[&str]) -> Option<i64> {
 pub fn profile(user: &Value) -> UserProfile {
     UserProfile {
         id: id(&user["USER_ID"]).unwrap_or_default(),
-        display_name: text(user, &["BLOG_NAME"]).unwrap_or("Deezer").to_owned(),
+        display_name: plain(user, &["BLOG_NAME"]).unwrap_or_else(|| "Deezer".to_owned()),
         avatar: image("user", text(user, &["USER_PICTURE"]), 300),
     }
 }
@@ -96,10 +102,9 @@ pub fn profile(user: &Value) -> UserProfile {
 pub fn family_profile(member: &Value) -> Option<AccountChoice> {
     Some(AccountChoice {
         id: id(&member["USER_ID"])?,
-        name: text(member, &["BLOG_NAME"]).unwrap_or("Deezer").to_owned(),
-        detail: text(&member["EXTRA_FAMILY"], &["CAPTION"])
-            .filter(|caption| !caption.trim().is_empty())
-            .map(str::to_owned),
+        name: plain(member, &["BLOG_NAME"]).unwrap_or_else(|| "Deezer".to_owned()),
+        detail: plain(&member["EXTRA_FAMILY"], &["CAPTION"])
+            .filter(|caption| !caption.trim().is_empty()),
     })
 }
 
@@ -149,7 +154,7 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
         let names: Vec<String> = list
             .iter()
             .filter_map(Value::as_str)
-            .map(str::to_owned)
+            .map(|name| escape::unescape(name).into_owned())
             .collect();
         let single = value
             .get("ART_ID")
@@ -173,27 +178,27 @@ fn artists_of(value: &Value) -> (String, Vec<ArtistRef>) {
         return (names.join(", "), refs);
     }
     if let Some(artist) = value.get("artist")
-        && let Some(name) = artist.get("name").and_then(Value::as_str)
+        && let Some(name) = plain(artist, &["name"])
     {
         return (
-            name.to_owned(),
+            name.clone(),
             vec![ArtistRef {
-                name: name.to_owned(),
+                name,
                 id: artist.get("id").and_then(id),
                 channel: false,
             }],
         );
     }
-    let name = text(value, &["ART_NAME", "artist_name"]).unwrap_or_default();
+    let name = plain(value, &["ART_NAME", "artist_name"]).unwrap_or_default();
     let refs = match name.is_empty() {
         true => Vec::new(),
         false => vec![ArtistRef {
-            name: name.to_owned(),
+            name: name.clone(),
             id: value.get("ART_ID").and_then(id),
             channel: false,
         }],
     };
-    (name.to_owned(), refs)
+    (name, refs)
 }
 
 /// Whether the first field under any of `keys` is set, spelled as a bool, a number or a string.
@@ -228,8 +233,8 @@ pub fn track(value: &Value) -> Option<Track> {
         .or_else(|| value.get("id"))
         .and_then(id)?;
     let name = versioned(
-        text(value, &["SNG_TITLE", "title", "TITLE"]).unwrap_or_default(),
-        text(value, &["VERSION"]),
+        &plain(value, &["SNG_TITLE", "title", "TITLE"]).unwrap_or_default(),
+        plain(value, &["VERSION"]).as_deref(),
     );
     let (artists, artist_refs) = artists_of(value);
     let album = value.get("album").cloned().unwrap_or(Value::Null);
@@ -243,10 +248,9 @@ pub fn track(value: &Value) -> Option<Track> {
                 .unwrap_or(false),
         artists,
         artist_refs,
-        album: text(&album, &["title"])
-            .or_else(|| text(value, &["ALB_TITLE"]))
-            .unwrap_or_default()
-            .to_owned(),
+        album: plain(&album, &["title"])
+            .or_else(|| plain(value, &["ALB_TITLE"]))
+            .unwrap_or_default(),
         // a Deezer track names its own artists, never the album's
         album_artist: String::new(),
         album_id: album
@@ -318,9 +322,7 @@ pub fn album(value: &Value) -> Option<Album> {
         .unwrap_or(0);
     Some(Album {
         id: album_id,
-        name: text(value, &["ALB_TITLE", "title"])
-            .unwrap_or_default()
-            .to_owned(),
+        name: plain(value, &["ALB_TITLE", "title"]).unwrap_or_default(),
         artists,
         artist_refs,
         cover: cover(value, 300),
@@ -334,9 +336,7 @@ pub fn album(value: &Value) -> Option<Album> {
         year,
         track_count: number(value, &["NB_TRAK", "nb_tracks"]).unwrap_or(0) as u32,
         release_date: release.to_owned(),
-        label: text(value, &["label", "LABEL"])
-            .unwrap_or_default()
-            .to_owned(),
+        label: plain(value, &["label", "LABEL"]).unwrap_or_default(),
         copyrights: Vec::new(),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
     })
@@ -367,10 +367,8 @@ pub fn playlist(value: &Value, user_id: &str) -> Option<Playlist> {
     let kind = text(value, &["PICTURE_TYPE"]).unwrap_or("playlist");
     Some(Playlist {
         id: playlist_id,
-        name: text(value, &["TITLE", "title"])
-            .unwrap_or_default()
-            .to_owned(),
-        owner: owner.to_owned(),
+        name: plain(value, &["TITLE", "title"]).unwrap_or_default(),
+        owner: escape::unescape(owner).into_owned(),
         owner_id: owner_id.clone(),
         owned: !owner_id.is_empty() && owner_id == user_id,
         collaborative: false,
@@ -394,9 +392,7 @@ pub fn saved_artist(value: &Value) -> Option<SavedArtist> {
         .and_then(id)?;
     Some(SavedArtist {
         id: artist_id,
-        name: text(value, &["ART_NAME", "name"])
-            .unwrap_or_default()
-            .to_owned(),
+        name: plain(value, &["ART_NAME", "name"]).unwrap_or_default(),
         cover: artist_picture(value, 300),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
     })
@@ -417,10 +413,9 @@ pub fn sections(page: &Value, user_id: &str, fallback: &str) -> Vec<GenreSection
                 .iter()
                 .filter_map(|item| card(item, user_id))
                 .collect();
-            let title = text(section, &["title"])
+            let title = plain(section, &["title"])
                 .filter(|title| !title.is_empty())
-                .unwrap_or(fallback)
-                .to_owned();
+                .unwrap_or_else(|| fallback.to_owned());
             (!items.is_empty()).then_some(GenreSection { title, items })
         })
         .collect()
@@ -500,7 +495,7 @@ fn channel(item: &Value) -> Option<Genre> {
     });
     Some(Genre {
         id: path.to_owned(),
-        name: name.to_owned(),
+        name: escape::unescape(name).into_owned(),
         cover,
     })
 }
@@ -519,7 +514,7 @@ fn picture(item: &Value, size: u32) -> Option<String> {
 fn made(id: String, name: &str, cover: Option<String>, track_count: u32) -> Playlist {
     Playlist {
         id,
-        name: name.to_owned(),
+        name: escape::unescape(name).into_owned(),
         owner: MAKER.to_owned(),
         owner_id: String::new(),
         owned: false,

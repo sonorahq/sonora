@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
+- Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
 - The Player Bar settings can hide or show audio-quality badges.
 - The player shows a track's format and bitrate, or lossless bit depth and sample rate when available.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
@@ -16,9 +18,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
+- `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
+- Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
+- The fullscreen player has the Sessions button at the left of its controls on wide windows too, across from the volume.
 
 ### Changed
 
+- Word-synced lyrics move like Apple Music: each word lifts gently as it is sung, and long held syllables glow and swell a little before settling back.
 - Seeking far ahead in a song that is still downloading plays from there in a second or two on Deezer, YouTube Music, Subsonic, Navidrome and Jellyfin, as it already did on Tidal.
 - Home on Subsonic and Navidrome servers labels the albums added to the server most recently as Recently added and adds a Newest releases shelf ordered by release year.
 - The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
@@ -30,11 +36,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
+- Last.fm scrobbling warns you when Last.fm refuses your API key, which from 1 December 2026 happens to every key whose account has no Last.fm Pro, and Settings says so before you connect.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
 - The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
+- Korean text is drawn in Pretendard, which ships with Sonora, instead of whichever Korean font the system picks, such as Malgun Gothic on Windows.
+- The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
+- The sidebar fades out under the title bar as you scroll it, and above the player bar when the player bar is not transparent.
+- The volume icon switches at once as you change the volume, instead of popping on every step.
+- Scrollbars fade in as you scroll and fade out once you stop, instead of popping in and out.
+- The settings search suggests matching settings in a panel under the field as you type, like the Search page does. Pick one with the arrow keys or a click to jump to it and light it up for a moment, or press Enter to list every match.
+- Settings name each group of options in a column beside it, with a thin line between groups instead of headings and wide gaps.
+- Window frame, animation and sidebar options moved from General to Appearance, and Page width left settings while settings.json keeps it.
+- Font and text size share one row, and blur, the ambient background and its motion are toggles in one row each.
+- Streaming services are cards in two columns, and the row that opens them shows the logo of every service, the one in use in colour.
+- Now playing settings stand beside their live preview, with the visualizer style in a short menu instead of picture cards.
+- The Discord status is changed right on its preview: click the name, the badge or a button, and the other options are toggles under it.
+- A setting's description waits behind an info mark next to its name and shows the moment you point at it, and settings Soloist keeps to local files carry a red mark instead.
+- Scrobbling services are cards with each service's logo, like the streaming services.
+- Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
+- Toasts move on springs: they settle into the pile with a little bounce, a toast you let go of after a short swipe springs back, and a flicked one flies off at the speed you threw it.
 
 ### Fixed
 
+- The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
+- Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
+- On Windows, changing the output device's format in the system sound settings moves Sonora to the new sample rate within a second, even while nothing plays, instead of only after a restart.
 - The playback buttons in the Windows taskbar preview are sharper, with bolder skip icons that follow the display scale.
 - Removing a single track from history or a playlist shows a translated menu label again.
 - Once the fullscreen player hides the cursor, nothing under it stays highlighted, and a click brings the cursor and controls back instead of jumping to the lyric line or link beneath it.
@@ -53,12 +79,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 - Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
 - TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
+- TIDAL genres such as Pop or R&B / Soul show once in Browse instead of twice.
 - Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
 - Escape closes the search suggestions and leaves the search field in one press.
+- Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
+- Highlighted menu entries round their corners in step with the menu's own, instead of half a pixel sharper.
 
 ### Fixed
 
 - The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
+
+### Fixed
+
+- On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
+- The left sidebar's scrollbar can be dragged and clicked again.
 
 ## [0.50.3] - 2026-11-20
 
@@ -73,6 +107,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A queue that mixes your own files with streaming songs plays the song it moves on to, instead of carrying on with an earlier local file while the player sits still.
 - Apple Music songs matched from your own files show up in Library and play again after Apple pulls or stops streaming the catalog version they matched.
 - Two copies of one Apple Music song in your library stay separate songs instead of merging into one.
+- The heart in the player favorites the song playing on another Spotify Connect device, so it no longer saves a song this computer played earlier.
 - When songs of one Navidrome or Subsonic album carry their own covers, the fullscreen player and the system media controls show each song's own cover.
 - The nightly update channel finds new nightly builds again. A nightly installed before November 19 does not see them, so install the latest nightly by hand once.
 

@@ -207,7 +207,7 @@ impl EqualizerView {
         for (input, text) in texts {
             input.update(cx, |input, cx| input.set_text(text, cx));
         }
-        window.blur(cx);
+        ui::release_focus(window, cx);
     }
 
     /// The playing curve with filter `index` changed by `change`, or unchanged when the filter

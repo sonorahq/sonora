@@ -817,7 +817,7 @@ impl Output {
         let (sink, source) = rodio::Player::new();
         let format = audio::PublishedFormat::default();
         let integer = matches!(device.info.format.sample, Sample::Integer(_));
-        device.add(chain.apply(source, format.clone(), integer));
+        device.add(chain.apply(source, format.clone(), device.info.format.rate, integer));
         Ok(Self {
             chain,
             sink: Arc::new(sink),

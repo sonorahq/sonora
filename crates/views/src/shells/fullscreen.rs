@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, Render, ScrollWheelEvent, SharedString, SpringConfig, SpringState, Stateful,
-    Task, TextShadow,
+    Task, TextRun, TextShadow,
 };
 use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px, rems};
 use i18n::t;
@@ -288,6 +288,10 @@ impl FullscreenView {
         window.focus(&self.focus, cx);
     }
 
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     /// Starts the idle clock as the view opens and stops it as the view closes, so it never
     /// hides the cursor over the workspace. Either way the view next shows with its controls up.
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
@@ -410,9 +414,9 @@ impl FullscreenView {
 
     /// Whether anything under the pointer should hold the chrome awake. A hover flag only counts
     /// while the pointer is over the window: one set when it left stays set, and a stale flag
-    /// would keep the controls up for good. A Jam invite or a panel's track menu drawn over the
-    /// view holds it too, since the pointer over either never reaches the view and the cursor
-    /// would hide under it.
+    /// would keep the controls up for good. A Jam invite, a panel's track menu or the Sessions
+    /// menu drawn over the view holds it too, since the pointer over any of them never reaches
+    /// the view and the cursor would hide under it.
     fn busy(&self, cx: &App) -> bool {
         let parked = self.volume.parked()
             || self.over_pill
@@ -426,6 +430,7 @@ impl FullscreenView {
             || self.volume.held
             || self.pending.is_some()
             || self.context_menu.is_some()
+            || self.sessions.read(cx).open()
             || (self.panel.is_some() && self.aside.read(cx).menu_open())
             || Sonora::global(cx).devices.read(cx).invite().is_some()
     }
@@ -1129,10 +1134,30 @@ impl FullscreenView {
             )
     }
 
-    /// The seek bar over the transport, with the volume at the transport row's right end. They
-    /// stand centred under the cover from `Room::Wide` up, at most `deck` wide, so they keep one
-    /// width whether they sit in the column or at the bottom.
-    fn controls(&self, deck: Pixels, hide: f32, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The seek bar over the transport, with the Sessions button under the elapsed clock and the
+    /// volume under the end clock, each centred on its clock's text. They stand centred under the
+    /// cover from `Room::Wide` up, at most `deck` wide, so they keep one width whether they sit
+    /// in the column or at the bottom.
+    fn controls(
+        &self,
+        deck: Pixels,
+        hide: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = *cx.theme();
+        let size = theme.text(Text::Tiny);
+        let (elapsed, total) = self.playback.read(cx).shown_time(cx);
+        let time_left = self.settings.read(cx).player_bar_time_left();
+        // Each clock sits at the deck's edge in a box this wide, its text pressed to the seek bar.
+        // A button centres in a slot from that edge to twice its clock's middle.
+        let label = size * clock_ems(total, time_left);
+        let slot = |text: SharedString| {
+            snapped((label - clock_width(text, size, window) / 2.) * 2., window)
+        };
+        let start = slot(clock(elapsed));
+        let end = slot(end_clock(elapsed, total, time_left).text);
+
         let stack = div()
             .flex()
             .flex_col()
@@ -1148,11 +1173,25 @@ impl FullscreenView {
                     .child(
                         div()
                             .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(start)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(PlayerBar::tools_like(self.sessions.clone(), cx)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
                             .right_0()
                             .top_0()
                             .bottom_0()
+                            .w(end)
                             .flex()
                             .items_center()
+                            .justify_center()
                             .child(self.sound(cx)),
                     ),
             );
@@ -1190,6 +1229,7 @@ impl FullscreenView {
         hide: f32,
         collapses: bool,
         deck: Pixels,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // The clamp runs from the controls' own height once it is known. From a taller cap the
@@ -1232,7 +1272,7 @@ impl FullscreenView {
                             .absolute()
                             .size_full(),
                         )
-                        .child(self.controls(deck, hide, cx)),
+                        .child(self.controls(deck, hide, window, cx)),
                 )
             })
     }
@@ -1512,6 +1552,7 @@ impl Shell for FullscreenView {
             sidebar_open: false,
             sidebar_right: None,
             border: false,
+            sheet: false,
             content: None,
             transparent: ambient::shown(cx),
         }
@@ -1874,6 +1915,7 @@ impl Render for FullscreenView {
                                 hide,
                                 false,
                                 deck,
+                                window,
                                 cx,
                             ))
                         })
@@ -1988,6 +2030,7 @@ impl Render for FullscreenView {
                             hide,
                             !staged,
                             deck,
+                            window,
                             cx,
                         ))
                     })
@@ -2087,6 +2130,24 @@ fn presentation_scale(presented: Pixels, layout: Pixels) -> f32 {
 /// event alone tells.
 fn hovered(window: &Window) -> bool {
     cfg!(target_os = "macos") || window.is_window_hovered()
+}
+
+/// How wide `text` sets at `size` in the tabular figures the seek bar's clocks use.
+fn clock_width(text: SharedString, size: Pixels, window: &Window) -> Pixels {
+    let mut font = window.text_style().font();
+    font.features = ui::tabular();
+    let run = TextRun {
+        len: text.len(),
+        font,
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(text, size, &[run], None)
+        .width
 }
 
 #[cfg(test)]

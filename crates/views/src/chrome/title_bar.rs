@@ -49,6 +49,8 @@ pub(crate) struct TitleBarOptions {
     pub sidebar_open: bool,
     pub sidebar_right: Option<bool>,
     pub border: bool,
+    /// Gives the bar the chrome's colour, for a shell whose page lies on it as a sheet.
+    pub sheet: bool,
     pub content: Option<AnyView>,
     /// Lets the fullscreen ambient background show through behind the controls.
     pub transparent: bool,
@@ -61,6 +63,7 @@ impl Default for TitleBarOptions {
             sidebar_open: false,
             sidebar_right: None,
             border: true,
+            sheet: false,
             content: None,
             transparent: false,
         }
@@ -393,7 +396,10 @@ impl Render for TitleBar {
             .flex_none()
             .when_some(radius, |this, radius| this.rounded_t(radius))
             .when(!self.options.transparent && !theme.transparent, |this| {
-                this.bg(theme.background)
+                this.bg(match self.options.sheet {
+                    true => theme.sidebar,
+                    false => theme.background,
+                })
             })
             // The height is a border box, so a bar that drops its border centres its controls
             // one pixel lower than one that keeps it. The edge is always an edge; only its

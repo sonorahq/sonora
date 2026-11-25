@@ -98,7 +98,8 @@ pub use input::{
     Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd, DeleteWord,
     Dismiss, End, Home, INPUT_CONTEXT, Input, Left, Paste, Right, SelectAll, SelectEnd, SelectHome,
     SelectLeft, SelectRight, SelectWordLeft, SelectWordRight, ShowCharacterPalette, Space,
-    WordLeft, WordRight, refresh_primary_paste, single_line,
+    WordLeft, WordRight, focus_fallback, refresh_primary_paste, release_focus, set_focus_fallback,
+    single_line,
 };
 pub use kbd::Kbd;
 pub use label::{
@@ -111,7 +112,7 @@ pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
 pub use linger::{Linger, lingers};
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
-pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, tucked};
+pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, text_width, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{
     Entrance, Fading, Glow, Glowed, Glowing, HoverFade, Motion, Motioned, PRESS_SCALE,
@@ -136,8 +137,7 @@ pub use response_graph::{
 };
 pub use response_sketch::ResponseSketch;
 pub use scrollbar::{
-    Scrollbar, cancel_middle_scroll, quantize, release_middle_scroll, scrolled,
-    update_middle_scroll,
+    Scrollbar, cancel_middle_scroll, release_middle_scroll, scrolled, update_middle_scroll,
 };
 pub use scroller::{Scroller, middle_scroll, perch_room, perched, return_to, return_top};
 pub use scrubber::{Scrubber, ScrubberState};

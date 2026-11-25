@@ -3,11 +3,11 @@
 //! with ardftsrc, so nothing between Sonora and the hardware converts it again. On Linux a rate
 //! picked in settings is asked for instead, where the stream's rate reaches the hardware.
 //!
-//! On Windows the default config is the shared-mode engine's mix format, and the engine
-//! invalidates a stream whose format changes, which fails it, so it is not watched. On macOS the
-//! default config's rate is the hardware's nominal rate. cpal reports a change of it as an error
-//! on a stream opened on a named device, but not on one that follows the system default, so the
-//! rate is watched there.
+//! On Windows the default config is the shared-mode engine's mix format. The engine invalidates a
+//! stream whose format changes, but cpal only hears of it while the stream runs, and Sonora pauses
+//! a stream nothing plays on, so the rate is watched there. On macOS the default config's rate is
+//! the hardware's nominal rate. cpal reports a change of it as an error on a stream opened on a
+//! named device, but not on one that follows the system default, so the rate is watched there too.
 //!
 //! On Linux a sound server's default config is the rate it runs the device at. A picked rate
 //! opens the stream at that rate, on PulseAudio, `pipewire-pulse` included, and on ALSA alike, and
@@ -19,7 +19,6 @@
 //! itself: WASAPI and CoreAudio convert the stream, and a sound server mixes it.
 
 use cpal::SupportedStreamConfig;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 use cpal::traits::DeviceTrait as _;
 
 #[cfg(target_os = "linux")]
@@ -104,19 +103,13 @@ pub(crate) fn moved(device: &cpal::Device, rate: u32, wanted: Option<u32>) -> bo
 }
 
 /// Whether `device` now runs at another rate than `rate`, the one its stream runs at. CoreAudio
-/// converts a stream that follows the system default rather than fail it.
-#[cfg(target_os = "macos")]
+/// converts a stream that follows the system default rather than fail it, and a paused WASAPI
+/// stream never reports that the mix format changed under it.
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn moved(device: &cpal::Device, rate: u32, _wanted: Option<u32>) -> bool {
     device
         .default_output_config()
         .is_ok_and(|default| default.sample_rate() != rate)
-}
-
-/// Whether `device` would now open at another rate than `rate`, where the platform would convert
-/// the stream rather than fail it. WASAPI fails it instead.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn moved(_device: &cpal::Device, _rate: u32, _wanted: Option<u32>) -> bool {
-    false
 }
 
 /// `config` in stereo, or mono for a mono sink, and in 32-bit float.

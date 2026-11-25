@@ -30,6 +30,34 @@ pub fn services() -> Vec<Arc<dyn Service>> {
     ]
 }
 
+/// The service refused the API key itself rather than the request it signed. Last.fm answers
+/// this way for an invalid or suspended key, which since 1 December 2026 includes every key whose
+/// owner has no Last.fm Pro.
+#[derive(Debug)]
+pub struct KeyRefused {
+    code: u32,
+    message: String,
+}
+
+impl KeyRefused {
+    /// Whether `error`, or the error it wraps under its context, is a refused key.
+    pub fn in_error(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<Self>().is_some()
+    }
+}
+
+impl std::fmt::Display for KeyRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the scrobbling service refused the api key ({}): {}",
+            self.code, self.message
+        )
+    }
+}
+
+impl std::error::Error for KeyRefused {}
+
 /// One listen: what played and when it started.
 #[derive(Clone, Debug)]
 pub struct Play {

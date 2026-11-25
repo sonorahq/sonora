@@ -365,7 +365,7 @@ impl MusicPlayer for Official {
         let uri = collection.and_then(|collection| match collection {
             Collection::Album(id) => Some(format!("spotify:album:{id}")),
             Collection::Playlist(id) => Some(format!("spotify:playlist:{id}")),
-            Collection::Saved | Collection::Radio(_) => None,
+            Collection::Saved | Collection::Radio(_) | Collection::CollectionRadio(..) => None,
         });
         self.engine.within(uri);
     }

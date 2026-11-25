@@ -14,8 +14,8 @@ use crate::spotify::{
 };
 use crate::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, CoverSize, Genre,
-    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, SUGGESTIONS,
-    SavedArtist, Track, UserDetail, UserProfile,
+    GenreDetail, GenreItem, GenreSection, HomeFeed, Playlist, PlaylistDetail, RadioSeed,
+    SUGGESTIONS, SavedArtist, Track, UserDetail, UserProfile,
 };
 
 const MADE_FOR_YOU: &str = "0JQ5DAt0tbjZptfcdMSKl3";
@@ -180,6 +180,18 @@ impl MusicApi for LibrespotClient {
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
         Ok((radio::track_radio(&self.session, track_id).await?, None))
+    }
+
+    async fn collection_radio(
+        &self,
+        seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        Ok((
+            radio::collection_radio(&self.session, seed, id).await?,
+            None,
+        ))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

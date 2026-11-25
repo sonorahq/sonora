@@ -34,10 +34,9 @@ pub struct Kugou {
 }
 
 impl Kugou {
-    pub fn new() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-        }
+    /// Sends every request through `http`, which the app shares between its lyrics sources.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self { http }
     }
 
     async fn songs(&self, wanted: &str) -> Result<Vec<Song>> {
@@ -117,12 +116,6 @@ impl Kugou {
             .filter(|content| !content.is_empty())
             .context("kugou handed over an empty sheet")?;
         decode(&content)
-    }
-}
-
-impl Default for Kugou {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

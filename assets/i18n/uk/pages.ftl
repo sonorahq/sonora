@@ -54,7 +54,6 @@ artist-monthly-listeners = { $count ->
    *[other] { $value } слухачів на місяць
 }
 artist-popular = Популярне
-artist-popular-eyebrow = Знайомство з виконавцем
 artist-popular-empty = Поки немає чого слухати в цього виконавця
 artist-releases = Релізи
 artist-filter-all = Усі

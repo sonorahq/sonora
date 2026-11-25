@@ -67,6 +67,12 @@ pub(crate) trait Tracks: 'static {
     fn arrival(&self, _cx: &App) -> Option<Arrival> {
         None
     }
+
+    /// When a row was added, as the Date added column shows and sorts it. A list may leave out
+    /// a date the track carries when its neighbours from the same provider have none.
+    fn added_at(&self, track: &Track, _cx: &App) -> Option<i64> {
+        track.added_at
+    }
 }
 
 pub(crate) fn first_playable(table: &Entity<TableState<TrackSource>>, cx: &App) -> Option<usize> {
@@ -619,9 +625,10 @@ impl TableSource for TrackSource {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
             TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
-            TrackField::AddedAt | TrackField::PlayedAt => {
-                tracks.iter().any(|track| track.added_at.is_some())
-            }
+            TrackField::AddedAt => tracks
+                .iter()
+                .any(|track| self.provider.added_at(track, cx).is_some()),
+            TrackField::PlayedAt => tracks.iter().any(|track| track.added_at.is_some()),
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
@@ -808,7 +815,7 @@ impl TableSource for TrackSource {
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),
-                cells::stamp(track.added_at),
+                cells::stamp(self.provider.added_at(track, cx)),
                 detail,
             ),
             TrackField::LikedAt => {
@@ -887,6 +894,14 @@ impl TableSource for TrackSource {
         let tracks = self.provider.tracks(cx);
         match (field, self.provider.arrival(cx)) {
             (TrackField::AddedAt, Some(arrival)) => sort::by_arrival(arrival, a, b),
+            (TrackField::AddedAt, None) => {
+                let at = |row| {
+                    tracks
+                        .get(row)
+                        .and_then(|track| self.provider.added_at(track, cx))
+                };
+                at(a).cmp(&at(b))
+            }
             (TrackField::LikedAt, _) => {
                 let at = |row| tracks.get(row).and_then(|track| self.liked_at(track, cx));
                 at(a).cmp(&at(b))

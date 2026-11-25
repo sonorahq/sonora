@@ -31,9 +31,10 @@ struct Gate {
 }
 
 impl Musixmatch {
-    pub fn new() -> Self {
+    /// Sends every request through `http`, which the app shares between its lyrics sources.
+    pub fn new(http: reqwest::Client) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http,
             gate: Mutex::new(Gate::default()),
         }
     }
@@ -162,12 +163,6 @@ impl Musixmatch {
             }
         }
         anyhow::bail!("musixmatch keeps rejecting the token")
-    }
-}
-
-impl Default for Musixmatch {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

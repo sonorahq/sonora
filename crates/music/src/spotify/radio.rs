@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use librespot_core::{Session, SpotifyUri};
 use serde::Deserialize;
 
-use crate::Track;
 use crate::spotify::pace::paced;
 use crate::spotify::playlists;
+use crate::{RadioSeed, Track};
 
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
@@ -21,15 +21,30 @@ struct MediaItem {
 }
 
 pub async fn track_radio(session: &Session, track_id: &str) -> Result<Vec<Track>> {
-    let uri =
-        SpotifyUri::from_uri(&format!("{TRACK_PREFIX}{track_id}")).context("invalid track ID")?;
+    seeded(session, &format!("{TRACK_PREFIX}{track_id}")).await
+}
+
+/// The radio of a whole album, playlist or artist. Spotify builds it through the same endpoint
+/// as a track's, seeded by the collection's uri.
+pub async fn collection_radio(session: &Session, seed: RadioSeed, id: &str) -> Result<Vec<Track>> {
+    let kind = match seed {
+        RadioSeed::Album => "album",
+        RadioSeed::Playlist => "playlist",
+        RadioSeed::Artist => "artist",
+    };
+    seeded(session, &format!("spotify:{kind}:{id}")).await
+}
+
+/// The tracks of the radio playlist Spotify builds from the item at `uri`.
+async fn seeded(session: &Session, uri: &str) -> Result<Vec<Track>> {
+    let uri = SpotifyUri::from_uri(uri).context("invalid radio seed")?;
     let body = paced(|| session.spclient().get_radio_for_track(&uri))
         .await
-        .context("cannot build track radio")?;
+        .context("cannot build radio")?;
     let response: RadioResponse =
-        serde_json::from_slice(&body).context("cannot decode track radio response")?;
+        serde_json::from_slice(&body).context("cannot decode radio response")?;
     let playlist_id =
-        radio_playlist_id(&response).context("track radio response did not contain a playlist")?;
+        radio_playlist_id(&response).context("radio response did not contain a playlist")?;
 
     playlists::playlist_tracks(session, playlist_id).await
 }

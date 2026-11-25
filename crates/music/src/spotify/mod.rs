@@ -27,7 +27,7 @@ use async_trait::async_trait;
 
 use crate::spotify::playback::Factory;
 use crate::{
-    Capabilities, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, Shape,
+    Capabilities, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, RadioSeed, Shape,
     SignInFailure, SignInProblem,
 };
 
@@ -68,6 +68,7 @@ impl SpotifyProvider {
             shape: Shape::Saved,
             authenticated: true,
             capabilities: Capabilities {
+                collection_radio: &[RadioSeed::Album, RadioSeed::Playlist, RadioSeed::Artist],
                 pins: true,
                 playlist_covers: true,
                 playlist_order: true,

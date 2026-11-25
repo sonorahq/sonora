@@ -16,8 +16,8 @@ use async_trait::async_trait;
 use crate::deezer::playback::Factory;
 use crate::{
     AccountChoice, AccountChoices, AccountKind, Capabilities, InputSource, MusicApi as _,
-    MusicProvider, PlaybackFactory, PromptSink, ProviderSession, Shape, SignIn, SignInPrompt,
-    WebSignIn,
+    MusicProvider, PlaybackFactory, PromptSink, ProviderSession, RadioSeed, Shape, SignIn,
+    SignInPrompt, WebSignIn,
 };
 
 pub use auth::arl;
@@ -98,6 +98,7 @@ fn session(client: DeezerClient, profile: crate::UserProfile) -> ProviderSession
         shape: Shape::Saved,
         authenticated: true,
         capabilities: Capabilities {
+            collection_radio: &[RadioSeed::Artist],
             playcounts: false,
             playlist_covers: true,
             qualities: client::QUALITIES,

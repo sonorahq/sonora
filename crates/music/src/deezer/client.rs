@@ -20,7 +20,8 @@ use crate::engine::Loudness;
 use crate::{
     AccountChoice, Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, Encoding,
     Genre, GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Offer, Playlist,
-    PlaylistDetail, Quality, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers, escape,
+    PlaylistDetail, Quality, RadioSeed, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -804,7 +805,7 @@ impl DeezerClient {
             .filter_map(|artist| {
                 Some(SavedArtist {
                     id: artist.get("id").and_then(wire::id)?,
-                    name: artist.get("name").and_then(Value::as_str)?.to_owned(),
+                    name: wire::plain(artist, &["name"])?,
                     cover: artist
                         .get("picture_big")
                         .or_else(|| artist.get("picture_medium"))
@@ -840,9 +841,7 @@ impl DeezerClient {
     /// Flow's own page can name it.
     async fn shelves(&self, page: &str) -> Result<(String, Vec<GenreSection>)> {
         let results = self.page(page).await?;
-        let title = wire::text(&results, &["title"])
-            .unwrap_or_default()
-            .to_owned();
+        let title = wire::plain(&results, &["title"]).unwrap_or_default();
         let user_id = self.user_id().await;
         let sections = wire::sections(&results, &user_id, &title);
         let mut flows = lock(&self.inner.flows);
@@ -1090,9 +1089,7 @@ impl MusicApi for DeezerClient {
         );
         let detail = detail.context("cannot load the artist")?;
         let own = ArtistRef {
-            name: wire::text(&detail, &["name"])
-                .unwrap_or_default()
-                .to_owned(),
+            name: wire::plain(&detail, &["name"]).unwrap_or_default(),
             id: Some(artist_id.to_owned()),
             channel: false,
         };
@@ -1225,9 +1222,7 @@ impl MusicApi for DeezerClient {
             .await
             .context("cannot load the artist")?;
         Ok(ArtistProfile {
-            name: wire::text(&detail, &["name"])
-                .unwrap_or_default()
-                .to_owned(),
+            name: wire::plain(&detail, &["name"]).unwrap_or_default(),
             cover_large: detail
                 .get("picture_xl")
                 .or_else(|| detail.get("picture_big"))
@@ -1492,7 +1487,7 @@ impl MusicApi for DeezerClient {
         let own = ArtistRef {
             name: detail
                 .ok()
-                .and_then(|detail| wire::text(&detail, &["name"]).map(str::to_owned))
+                .and_then(|detail| wire::plain(&detail, &["name"]))
                 .unwrap_or_default(),
             id: Some(artist_id.to_owned()),
             channel: false,
@@ -1626,6 +1621,20 @@ impl MusicApi for DeezerClient {
                 Ok((Vec::new(), None))
             }
         }
+    }
+
+    /// The artist's radio. Deezer keeps none for an album or a playlist, so theirs is blended.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        let page = self
+            .public(&format!("/artist/{}/radio?limit=50", escape::component(id)))
+            .await
+            .context("cannot load the artist radio")?;
+        Ok((wire::track_list(&page), None))
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>> {

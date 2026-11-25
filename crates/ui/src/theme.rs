@@ -477,7 +477,7 @@ impl Global for Transition {}
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            background: rgb(0x0a0a0a).into(),
+            background: rgb(0x0b0b0b).into(),
             foreground: rgb(0xfafafa).into(),
             border: rgba(0x50505066).into(),
             muted: rgb(0x262626).into(),
@@ -497,9 +497,9 @@ impl Theme {
             popover_foreground: rgb(0xfafafa).into(),
             progress_bar: rgb(0xf5f5f5).into(),
             selection: rgb(0x1d4ed8).into(),
-            sidebar: rgb(0x0a0a0a).into(),
+            sidebar: rgb(0x070707).into(),
             sidebar_accent: rgba(0x50505066).into(),
-            sidebar_border: rgb(0x262626).into(),
+            sidebar_border: rgb(0x181818).into(),
             title_bar_border: rgb(0x262626).into(),
             table_head: rgba(0x171717cc).into(),
             table_head_foreground: rgb(0x8a8a8a).into(),
@@ -544,9 +544,9 @@ impl Theme {
             popover_foreground: rgb(0x171717).into(),
             progress_bar: rgb(0x262626).into(),
             selection: rgb(0x2563eb).into(),
-            sidebar: rgb(0xf5f5f5).into(),
+            sidebar: rgb(0xededed).into(),
             sidebar_accent: rgba(0xcdcdcd66).into(),
-            sidebar_border: rgb(0xd4d4d4).into(),
+            sidebar_border: rgb(0xe4e4e4).into(),
             title_bar_border: rgb(0xd4d4d4).into(),
             table_head: rgba(0xf5f5f5e6).into(),
             table_head_foreground: rgb(0x666666).into(),
