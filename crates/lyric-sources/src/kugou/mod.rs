@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use music::lyrics::sheet;
+use lyrics::sheet;
 use music::{
     Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice, escape,
 };
@@ -259,7 +259,7 @@ fn hit(song: &Song, krc: &str, title: &str) -> Option<LyricsHit> {
         return None;
     }
     let quiet = sheet::instrumental(&lines);
-    music::lyrics::lrc::normalize(&mut lines);
+    lyrics::lrc::normalize(&mut lines);
     if lines.is_empty() && !quiet {
         return None;
     }
@@ -268,7 +268,7 @@ fn hit(song: &Song, krc: &str, title: &str) -> Option<LyricsHit> {
         source: SOURCE,
         trust: 0,
         lyrics: match quiet {
-            true => Lyrics::plain(""),
+            true => lyrics::plain(""),
             false => Lyrics::Synced {
                 lines: lines.into(),
             },

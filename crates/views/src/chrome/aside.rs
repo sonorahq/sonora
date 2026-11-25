@@ -3406,7 +3406,7 @@ fn selected_romanization(
 
 /// Which source a sheet came from and, when it names them, who wrote the song.
 fn credit_lines(source: &str, writers: &[String]) -> (SharedString, Option<SharedString>) {
-    let from = match source == music::lyrics::LOCAL {
+    let from = match source == lyrics::LOCAL {
         true => t!("lyrics-source-local"),
         false => t!("lyrics-source", source = source),
     };
@@ -3976,7 +3976,7 @@ fn active_lyrics_row(lines: &[music::LyricsLine], position: std::time::Duration)
 fn sung_line(lines: &[music::LyricsLine], position: std::time::Duration) -> Option<usize> {
     match active_instrumental(lines, position) {
         Some(_) => None,
-        None => music::lyrics::active(lines, position),
+        None => lyrics::active(lines, position),
     }
 }
 

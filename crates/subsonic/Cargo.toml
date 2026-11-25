@@ -12,6 +12,7 @@ fastrand.workspace = true
 futures.workspace = true
 jiff.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 opensubsonic.workspace = true
 reqwest.workspace = true

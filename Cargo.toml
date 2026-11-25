@@ -11,6 +11,7 @@ repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
 apple = { path = "crates/apple" }
+artwork = { path = "crates/artwork" }
 cli = { path = "crates/cli" }
 deezer = { path = "crates/deezer" }
 embed = { path = "crates/embed" }
@@ -21,6 +22,7 @@ input = { path = "crates/input" }
 jellyfin = { path = "crates/jellyfin" }
 local = { path = "crates/local" }
 logic = { path = "crates/logic" }
+lyric-sources = { path = "crates/lyric-sources" }
 lyrics = { path = "crates/lyrics" }
 music = { path = "crates/music" }
 plex = { path = "crates/plex" }

@@ -25,7 +25,8 @@ player:
       - any-glob-to-any-file:
           - crates/state/src/queue.rs
           - crates/state/src/remote.rs
-          - crates/state/src/discord.rs
+          - crates/artwork/**
+          - crates/state/src/discord/**
           - crates/views/src/chrome/player_bar.rs
           - crates/views/src/chrome/sidebar_right.rs
           - crates/views/src/shared/transport.rs
@@ -34,8 +35,8 @@ player:
 lyrics:
   - changed-files:
       - any-glob-to-any-file:
-          - crates/music/src/lyrics/**
           - crates/lyrics/**
+          - crates/lyric-sources/**
           - crates/state/src/lyrics.rs
           - crates/views/src/shells/fullscreen.rs
 

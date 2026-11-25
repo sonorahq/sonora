@@ -13,7 +13,7 @@ use lofty::prelude::{Accessor, ItemKey};
 use lofty::probe::Probe;
 use lofty::tag::items::Timestamp;
 use lofty::tag::{ItemValue, Tag, TagItem};
-use music::lyrics::{lrc, ttml};
+use lyrics::{lrc, ttml};
 use music::{Encoding, Lyrics, LyricsLine, LyricsWord, TrackTags, Voice};
 
 use super::wire;
@@ -122,7 +122,7 @@ pub fn lyrics(path: &Path) -> Result<Option<Lyrics>> {
     }
     let lines = lrc::parse(text);
     Ok(Some(match lines.is_empty() {
-        true => Lyrics::plain(text),
+        true => lyrics::plain(text),
         false => Lyrics::Synced {
             lines: lines.into(),
         },

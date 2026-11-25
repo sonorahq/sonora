@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::time::Duration;
 
-use crate::{LyricsLane, LyricsLine, LyricsWord, Voice};
+use music::{LyricsLane, LyricsLine, LyricsWord, Voice};
 
 use super::romanize;
 const HOMOGLYPHS: &[(char, char)] = &[

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use music::lyrics::ttml;
+use lyrics::ttml;
 use music::{LyricsHit, LyricsProvider, LyricsQuery};
 use serde::Deserialize;
 

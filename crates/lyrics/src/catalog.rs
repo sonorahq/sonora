@@ -1,4 +1,4 @@
-use crate::{Lyrics, LyricsHit, LyricsQuery, Track};
+use music::{Lyrics, LyricsHit, LyricsQuery, Track};
 
 const TRUST: u32 = 25;
 const CANDIDATES: usize = 3;
@@ -35,7 +35,7 @@ pub fn candidates(
                 duration: track.duration,
                 track: None,
             };
-            let hit = hit(source, &candidate, Lyrics::plain(String::new()));
+            let hit = hit(source, &candidate, crate::plain(String::new()));
             super::matched(query, &hit).then_some((id, hit))
         })
         .collect();

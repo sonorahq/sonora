@@ -13,6 +13,7 @@ fastrand.workspace = true
 futures.workspace = true
 gethostname.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 open.workspace = true
 percent-encoding.workspace = true

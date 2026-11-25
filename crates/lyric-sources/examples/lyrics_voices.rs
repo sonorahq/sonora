@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lyrics::{binimum, musixmatch};
+use lyric_sources::{binimum, musixmatch};
 use music::{Lyrics, LyricsProvider, LyricsQuery, Voice};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -70,8 +70,8 @@ async fn main() {
                 Err(error) => println!("   {:<12} failed: {error:#}", provider.name()),
             }
         }
-        let mut ranked = music::lyrics::rank(&query, gathered);
-        music::lyrics::reshape(&mut ranked);
+        let mut ranked = lyrics::rank(&query, gathered);
+        lyrics::reshape(&mut ranked);
         match ranked.first() {
             Some(best) => println!(
                 "   -> winner {} ({} kept, {} counter lines, {} lanes)",

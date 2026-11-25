@@ -1,4 +1,4 @@
-use crate::LyricsLine;
+use music::LyricsLine;
 
 const LABELS: &[&str] = &[
     "artist:",

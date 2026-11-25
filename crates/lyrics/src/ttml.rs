@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use roxmltree::{Document, Node};
 
-use crate::{Lyrics, LyricsLane, LyricsLine, LyricsWord, Voice};
+use music::{Lyrics, LyricsLane, LyricsLine, LyricsWord, Voice};
 
 const META: &str = "http://www.w3.org/ns/ttml#metadata";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
@@ -34,7 +34,7 @@ pub fn parse(xml: &str) -> Result<Sheet> {
                 lines: lines.into(),
             }
         }
-        false => Lyrics::plain(
+        false => crate::plain(
             lines
                 .iter()
                 .map(|line| line.text.as_str())

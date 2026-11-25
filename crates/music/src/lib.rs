@@ -1,9 +1,8 @@
 //! What every provider implements and the app reads: the `MusicApi`, `MusicProvider` and
 //! `Player` contracts, the models they hand over, and what more than one provider needs, such
-//! as lyrics ranking, kept tracks and links. Each provider is a crate of its own on top of this
+//! as kept tracks, covers and links. Each provider is a crate of its own on top of this
 //! one, so `state` and `views` depend on the contract and never on a provider.
 
-pub mod artwork;
 pub mod calendar;
 pub mod connect;
 pub mod cover;
@@ -11,14 +10,12 @@ pub mod credentials;
 pub mod drm;
 pub mod escape;
 pub mod link;
-pub mod lyrics;
 mod models;
 pub mod order;
 pub mod potoken;
 pub mod progress;
 mod redact;
 pub mod smart;
-mod sponsorblock;
 pub mod trouble;
 pub mod vault;
 
@@ -47,7 +44,6 @@ pub use sound::audio::Meter;
 pub use sound::equalizer::{self, Equalizer};
 pub use sound::output::{self, Server as SoundServer, missing_bridge};
 pub use sound::spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
-pub use sponsorblock::{SkipSegment, SponsorBlock};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";

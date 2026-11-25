@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use music::lyrics::catalog;
+use lyrics::catalog;
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 use serde_json::{Value, json};
 use ytmusic::{Client, YtMusic, nav::Nav as _, parse::find_renderers};
@@ -43,7 +43,7 @@ impl YouTubeLyrics {
             .into_iter()
             .filter_map(|shelf| shelf.run_text(&["description"]))
             .find(|text| !text.trim().is_empty())
-            .map(Lyrics::plain))
+            .map(lyrics::plain))
     }
 }
 

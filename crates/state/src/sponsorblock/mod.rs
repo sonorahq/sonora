@@ -1,11 +1,13 @@
+mod client;
+
 use std::time::Duration;
 
 use gpui::{App, Context, Entity, Task};
 use moka::sync::Cache;
-use music::{SkipSegment, SponsorBlock as Client};
 
 use crate::playback::PlaybackEvent;
 use crate::{AppSettings, Io, Network, Playback, PlaybackState, Session, SessionEvent, join};
+use client::{Client, SkipSegment};
 
 const CACHE_CAPACITY: u64 = 32;
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);

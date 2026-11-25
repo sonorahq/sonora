@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use crate::auth::{self, Credentials};
@@ -108,6 +108,6 @@ fn sheet(text: &str) -> Option<Lyrics> {
         false => Some(Lyrics::Synced {
             lines: lines.into(),
         }),
-        true => (!text.trim().is_empty()).then(|| Lyrics::plain(text)),
+        true => (!text.trim().is_empty()).then(|| lyrics::plain(text)),
     }
 }

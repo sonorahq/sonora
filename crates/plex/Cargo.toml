@@ -11,6 +11,7 @@ engine.workspace = true
 fastrand.workspace = true
 gethostname.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 reqwest.workspace = true
 rodio.workspace = true

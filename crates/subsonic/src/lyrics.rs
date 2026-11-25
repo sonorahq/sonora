@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{
     Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice,
 };
@@ -213,7 +213,7 @@ fn sheet(entry: StructuredLyrics) -> Option<Lyrics> {
         .map(|line| line.value.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    Some(Lyrics::plain(text))
+    Some(lyrics::plain(text))
 }
 
 /// A line's start in the player's time. A positive offset shows the lyrics sooner.
@@ -227,7 +227,7 @@ fn legacy_sheet(text: &str) -> Option<Lyrics> {
         false => Some(Lyrics::Synced {
             lines: lines.into(),
         }),
-        true => (!text.trim().is_empty()).then(|| Lyrics::plain(text)),
+        true => (!text.trim().is_empty()).then(|| lyrics::plain(text)),
     }
 }
 

@@ -11,6 +11,7 @@ bytes.workspace = true
 engine.workspace = true
 futures.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 reqwest.workspace = true
 serde.workspace = true

@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use crate::auth::{self, Credentials};
@@ -76,7 +76,7 @@ impl LyricsProvider for JellyfinLyrics {
                     lines: lines.into(),
                 }
             }
-            None => Lyrics::plain(
+            None => lyrics::plain(
                 answer
                     .lyrics
                     .iter()

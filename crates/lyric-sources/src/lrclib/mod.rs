@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
 use serde::Deserialize;
 
@@ -116,11 +116,11 @@ fn hit(found: Found) -> Option<LyricsHit> {
                 .as_deref()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
-                .map(Lyrics::plain)
+                .map(lyrics::plain)
         });
     let lyrics = match (sheet, found.instrumental) {
         (Some(lyrics), _) => lyrics,
-        (None, true) => Lyrics::plain(""),
+        (None, true) => lyrics::plain(""),
         (None, false) => return None,
     };
 

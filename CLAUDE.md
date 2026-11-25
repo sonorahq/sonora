@@ -13,8 +13,8 @@ crates/
   views/      screens, shells (Workspace, FullscreenView) and app chrome
   state/      GPUI entities holding app state, and all async orchestration
   logic/      what the app decides about listening: play order, station rules, lyrics lookup (no GPUI)
-  music/      provider traits and models, the lyrics logic, kept tracks and the helpers every
-              provider shares (no GPUI)
+  music/      provider traits and models, kept tracks and the helpers every provider shares
+              (no GPUI)
   sound/      the real-time sound path: decoders, progressive download, equalizer, analysers,
               paced output queue, output devices (no models, no GPUI)
   engine/     the one playback engine every provider but Spotify plays through
@@ -22,7 +22,10 @@ crates/
               one crate per provider
   soloist/    Spotify's headless player: its download, pairing and the engine that drives it
   scrobble/   scrobbling to Last.fm, Libre.fm, ListenBrainz, Maloja and teal.fm
-  lyrics/     the standalone lyrics sources: LRCLIB, Musixmatch, NetEase, Kugou and Binimum
+  lyrics/     LRC and TTML parsing, romanisation and the ranking of what every source found
+  lyric-sources/
+              the standalone lyrics sources: LRCLIB, Musixmatch, NetEase, Kugou and Binimum
+  artwork/    public cover lookup and upload for a track whose own art cannot be shared
   probe/      ignored live tests against real accounts, and the lyrics probing examples
   storage/    the state.sqlite and cache.sqlite paths, schema and connection setup
   ui/         design system: theme, metrics, layout ladder and reusable elements
@@ -38,8 +41,11 @@ crates/
 Dependency direction is strict. Do not create a back edge:
 
 ```
-sonora → views → state → logic → music → sound
-         sonora → providers, lyrics → engine → music, sound
+sonora → views → state → logic → lyrics → music → sound
+         sonora → providers → engine → music, sound
+         sonora → lyric-sources → lyrics
+         providers, state, views → lyrics
+         state → artwork → music
          spotify → soloist → music
          state, views → soloist, scrobble → music
          state, local → storage
@@ -51,10 +57,10 @@ sonora → views → state → logic → music → sound
 
 - `state` and `views` see only the traits and models of `music`, never a provider crate, so a
   change to a provider rebuilds that provider and `sonora` alone. Only `sonora/src/main.rs` names
-  a concrete provider. Soloist and scrobbling are not providers, so `state` and `views` reach them
-  as the `soloist` and `scrobble` crates.
-- A provider never depends on another provider. What two of them share goes into `music`, or
-  into `sound` when it touches the sound path.
+  a concrete provider. Soloist, scrobbling, lyrics and cover lookup are not providers, so `state`
+  and `views` reach them as the `soloist`, `scrobble`, `lyrics` and `artwork` crates.
+- A provider never depends on another provider. What two of them share goes into `music`, into
+  `lyrics` when it reads or ranks lyrics, or into `sound` when it touches the sound path.
 - `music` never depends on `gpui`. `ui` never knows about `music`, `state` or playback. Widgets
   that need app state live in `views/src/chrome/`.
 - `logic` never depends on `gpui` or a UI crate either. The Android app

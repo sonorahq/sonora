@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use music::lyrics::{LOCAL, lrc};
+use lyrics::{LOCAL, lrc};
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use super::{tags, wire};
@@ -94,7 +94,7 @@ fn lrc_lyrics(text: &str) -> Option<Lyrics> {
         });
     }
     let plain = text.trim();
-    (!plain.is_empty()).then(|| Lyrics::plain(plain))
+    (!plain.is_empty()).then(|| lyrics::plain(plain))
 }
 
 #[cfg(test)]

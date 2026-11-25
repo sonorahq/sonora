@@ -26,7 +26,7 @@ use gpui::{
     App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
     WindowBounds, point, px, size,
 };
-use music::lyrics::LOCAL;
+use lyrics::LOCAL;
 use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};

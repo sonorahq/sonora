@@ -153,11 +153,13 @@ fn main() -> ExitCode {
             Arc::new(plex::PlexLyrics::new()),
             Arc::new(spotify::SpotifyLyrics::from_env()),
             Arc::new(youtube::YouTubeLyrics::new()),
-            Arc::new(lyrics::binimum::Binimum::new(lyrics_http.clone())),
-            Arc::new(lyrics::musixmatch::Musixmatch::new(lyrics_http.clone())),
-            Arc::new(lyrics::lrclib::LrcLib::new(lyrics_http.clone())),
-            Arc::new(lyrics::kugou::Kugou::new(lyrics_http.clone())),
-            Arc::new(lyrics::netease::NetEase::new(lyrics_http)),
+            Arc::new(lyric_sources::binimum::Binimum::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::musixmatch::Musixmatch::new(
+                lyrics_http.clone(),
+            )),
+            Arc::new(lyric_sources::lrclib::LrcLib::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::kugou::Kugou::new(lyrics_http.clone())),
+            Arc::new(lyric_sources::netease::NetEase::new(lyrics_http)),
         ];
         state::init(cx, io, database, providers, local_provider, lyrics);
         #[cfg(target_os = "windows")]

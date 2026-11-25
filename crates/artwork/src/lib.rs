@@ -1,11 +1,15 @@
+//! Cover art for a track whose own art cannot be handed to someone else, such as a local file:
+//! a lookup in public catalogues by name, or an upload to a temporary public host. Discord's
+//! rich presence is what asks for it.
+
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::Track;
-use crate::cover::{CoverLimits, square_jpeg};
+use music::Track;
+use music::cover::{CoverLimits, square_jpeg};
 
 const ALBUMS: &str = "https://api.deezer.com/search/album";
 const TRACKS: &str = "https://api.deezer.com/search/track";

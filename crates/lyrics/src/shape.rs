@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Lyrics, LyricsLine, LyricsWord, Voice};
+use music::{Lyrics, LyricsLine, LyricsWord, Voice};
 
 const LEAST: usize = 6;
 const MATCHED: f64 = 0.7;

@@ -331,6 +331,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "artwork"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "fastrand",
+ "log",
+ "music",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "as-raw-xcb-connection"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3824,6 +3838,7 @@ dependencies = [
  "futures",
  "gethostname",
  "log",
+ "lyrics",
  "music",
  "open",
  "percent-encoding",
@@ -4340,6 +4355,7 @@ dependencies = [
  "fastrand",
  "lofty",
  "log",
+ "lyrics",
  "music",
  "percent-encoding",
  "rodio",
@@ -4405,6 +4421,7 @@ dependencies = [
  "fastrand",
  "futures",
  "log",
+ "lyrics",
  "music",
  "serde",
  "serde_json",
@@ -4485,7 +4502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lyrics"
+name = "lyric-sources"
 version = "0.50.3"
 dependencies = [
  "anyhow",
@@ -4494,6 +4511,7 @@ dependencies = [
  "dirs 7.0.0",
  "flate2",
  "log",
+ "lyrics",
  "music",
  "reqwest 0.13.5",
  "rustls",
@@ -4501,6 +4519,17 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "lyrics"
+version = "0.50.3"
+dependencies = [
+ "anyhow",
+ "deunicode",
+ "kakasi",
+ "music",
+ "roxmltree 0.21.2",
 ]
 
 [[package]]
@@ -4747,18 +4776,14 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "deunicode",
  "dirs 7.0.0",
- "fastrand",
  "futures",
  "image",
  "jiff",
- "kakasi",
  "log",
  "percent-encoding",
  "reqwest 0.13.5",
  "ring",
- "roxmltree 0.21.2",
  "serde",
  "serde_json",
  "sound",
@@ -5856,6 +5881,7 @@ dependencies = [
  "fastrand",
  "gethostname",
  "log",
+ "lyrics",
  "music",
  "reqwest 0.13.5",
  "rodio",
@@ -6015,6 +6041,7 @@ dependencies = [
  "deezer",
  "image",
  "local",
+ "lyric-sources",
  "lyrics",
  "music",
  "reqwest 0.13.5",
@@ -7721,7 +7748,7 @@ dependencies = [
  "libc",
  "local",
  "log",
- "lyrics",
+ "lyric-sources",
  "music",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -7862,6 +7889,7 @@ dependencies = [
  "librespot-playback",
  "librespot-protocol",
  "log",
+ "lyrics",
  "music",
  "oauth2",
  "open",
@@ -7897,6 +7925,7 @@ name = "state"
 version = "0.50.3"
 dependencies = [
  "anyhow",
+ "artwork",
  "ashpd 0.14.0",
  "async-trait",
  "base64 0.23.1",
@@ -7913,6 +7942,7 @@ dependencies = [
  "libc",
  "log",
  "logic",
+ "lyrics",
  "moka",
  "mpris-server",
  "music",
@@ -8033,6 +8063,7 @@ dependencies = [
  "futures",
  "jiff",
  "log",
+ "lyrics",
  "music",
  "opensubsonic",
  "reqwest 0.13.5",
@@ -9348,6 +9379,7 @@ dependencies = [
  "input",
  "jiff",
  "log",
+ "lyrics",
  "music",
  "open",
  "router",
@@ -10584,6 +10616,7 @@ dependencies = [
  "engine",
  "futures",
  "log",
+ "lyrics",
  "music",
  "reqwest 0.13.5",
  "serde",

@@ -1,6 +1,6 @@
 use deunicode::deunicode_char;
 
-use crate::{LyricsLine, RomanizedText, WritingSystem};
+use music::{LyricsLine, RomanizedText, WritingSystem};
 
 pub(super) fn apply(lines: &mut [LyricsLine]) {
     let system = detect(lines.iter().flat_map(|line| {
@@ -137,7 +137,7 @@ fn tidy(text: &str) -> String {
 mod tests {
     use std::time::Duration;
 
-    use crate::{LyricsLane, Voice};
+    use music::{LyricsLane, Voice};
 
     use super::*;
 

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
 use serde::Deserialize;
 use tokio::task::JoinSet;
@@ -175,19 +175,16 @@ fn hit(song: &Song, sheet: &Sheet) -> Option<LyricsHit> {
                 .map(|text| lrc::parse(&text))
                 .filter(|lines| !lines.is_empty())
         });
-    let quiet = sheet.pure_music
-        || lines
-            .as_deref()
-            .is_some_and(music::lyrics::sheet::instrumental);
+    let quiet = sheet.pure_music || lines.as_deref().is_some_and(lyrics::sheet::instrumental);
     let lyrics = match (lines, quiet) {
-        (_, true) => Lyrics::plain(""),
+        (_, true) => lyrics::plain(""),
         (Some(mut lines), false) => {
             let artists: Vec<String> = song
                 .artists
                 .iter()
                 .filter_map(|artist| artist.name.clone())
                 .collect();
-            if !music::lyrics::sheet::headed(&mut lines, &song.name, &artists) {
+            if !lyrics::sheet::headed(&mut lines, &song.name, &artists) {
                 return None;
             }
             Lyrics::Synced {

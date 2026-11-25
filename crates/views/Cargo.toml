@@ -9,6 +9,7 @@ gpui.workspace = true
 i18n.workspace = true
 icons.workspace = true
 jiff.workspace = true
+lyrics.workspace = true
 music.workspace = true
 input.workspace = true
 router.workspace = true

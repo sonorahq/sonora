@@ -1,8 +1,10 @@
+//! The SponsorBlock lookup itself: the sections the community marked in a YouTube video.
+
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use ring::digest::{SHA256, digest};
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 
 const ENDPOINT: &str = "https://sponsor.ajay.app/api/skipSegments";
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -20,7 +22,7 @@ pub struct SkipSegment {
 
 /// Reads sponsors, self-promotion and non-music sections without changing the audio stream.
 #[derive(Clone, Default)]
-pub struct SponsorBlock {
+pub struct Client {
     http: reqwest::Client,
 }
 
@@ -48,12 +50,12 @@ impl SkipSegment {
     }
 }
 
-impl SponsorBlock {
+impl Client {
     pub async fn segments(&self, video: &str) -> Result<Vec<SkipSegment>> {
         let categories = serde_json::to_string(&CATEGORIES)?;
-        let hash = digest(&SHA256, video.as_bytes());
+        let hash = Sha256::digest(video.as_bytes());
         // Only the first four hex digits leave the app; select the exact video locally.
-        let prefix = format!("{:02x}{:02x}", hash.as_ref()[0], hash.as_ref()[1]);
+        let prefix = format!("{:02x}{:02x}", hash[0], hash[1]);
         let response = self
             .http
             .get(format!("{ENDPOINT}/{prefix}"))

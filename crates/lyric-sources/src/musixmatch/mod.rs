@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use music::lyrics::lrc;
+use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsLine, LyricsProvider, LyricsQuery, LyricsWord, Voice};
 use serde::{Deserialize, Deserializer};
 use tokio::sync::Mutex;
@@ -200,7 +200,7 @@ fn hit(calls: &Calls) -> Option<LyricsHit> {
         source: SOURCE,
         trust: TRUST,
         lyrics: match quiet {
-            true => Lyrics::plain(""),
+            true => lyrics::plain(""),
             false => Lyrics::Synced {
                 lines: lines.into(),
             },

@@ -12,6 +12,7 @@ engine.workspace = true
 fastrand.workspace = true
 lofty.workspace = true
 log.workspace = true
+lyrics.workspace = true
 music.workspace = true
 percent-encoding.workspace = true
 rodio.workspace = true
