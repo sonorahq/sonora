@@ -14,7 +14,9 @@ use cli::wire::{
 use futures::future;
 use gpui::{App, Context, Entity, Subscription, Task};
 use music::link::Linked;
-use music::{Found, Lyrics as Sheet, LyricsHit, MediaKind, MusicApi, MusicProvider, Track};
+use music::{
+    Found, Lyrics as Sheet, LyricsHit, MediaKind, MusicApi, MusicProvider, RadioSeed, Track,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
@@ -1018,7 +1020,7 @@ fn lyrics_snapshot(
             snapshot.bounded(false, lines, None)
         }
         Sheet::Synced { lines } => {
-            let active = music::lyrics::active(lines, at);
+            let active = lyrics::active(lines, at);
             let lines = lines
                 .iter()
                 .map(|line| wire::LyricsLine {
@@ -1055,6 +1057,9 @@ fn wire_origin(origin: &Origin) -> wire::Origin {
         Whence::Playlist => wire::OriginKind::Playlist,
         Whence::Artist => wire::OriginKind::Artist,
         Whence::Radio => wire::OriginKind::Radio,
+        Whence::CollectionRadio(RadioSeed::Album) => wire::OriginKind::AlbumRadio,
+        Whence::CollectionRadio(RadioSeed::Playlist) => wire::OriginKind::PlaylistRadio,
+        Whence::CollectionRadio(RadioSeed::Artist) => wire::OriginKind::ArtistRadio,
         Whence::Saved => wire::OriginKind::Liked,
         Whence::Local => wire::OriginKind::Local,
     };

@@ -34,8 +34,8 @@ impl SettingsView {
         }
         downloads.push(Slot::DownloadsUsage);
         vec![
-            Group::new("settings-group-cache", "icons/rotate-ccw-clock.svg").rows(cache),
-            Group::new("settings-group-downloads", "icons/download.svg").rows(downloads),
+            Group::new("settings-group-cache").rows(cache),
+            Group::new("settings-group-downloads").rows(downloads),
         ]
     }
 

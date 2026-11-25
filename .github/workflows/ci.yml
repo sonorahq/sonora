@@ -98,8 +98,8 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # The dev profile optimises ui, views and music for a usable debug build, which makes
-      # compiling them for the tests take three times as long. The tests do not need it.
+      # The dev profile optimises ui, views and the sound path for a usable debug build, which
+      # makes compiling them for the tests take three times as long. The tests do not need it.
       - name: tests
         if: matrix.task == 'test'
         run: >-
@@ -107,51 +107,92 @@ jobs:
           --config 'profile.dev.debug="line-tables-only"'
           --config 'profile.dev.package.ui.opt-level=0'
           --config 'profile.dev.package.views.opt-level=0'
-          --config 'profile.dev.package.music.opt-level=0'
+          --config 'profile.dev.package.engine.opt-level=0'
+          --config 'profile.dev.package.sound.opt-level=0'
 
-  # The check job only ever sees the Linux side of a cfg. These two lint the other two
+  # The check job only ever sees the Linux side of a cfg. The next jobs lint the other two
   # platforms' code without paying for codegen, linking or an installer, which is the whole
   # cost of a release build. A tag still builds every target for real through release.yml.
   # A push to main runs them too, only to save the cache every pull request starts from.
-  platforms:
-    name: clippy on ${{ matrix.target }}
+  windows:
+    name: clippy on x86_64-pc-windows-msvc
     if: >-
       !startsWith(github.head_ref, 'release/') &&
       !contains(github.event.head_commit.message, 'from sonorahq/release/')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: macos-15
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
 
       # Cargo on the runner's NTFS drive spends much of its time in the filesystem and Defender,
       # so Windows lints a copy of the checkout on a ReFS Dev Drive. The cache follows it there.
       - uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
-        if: runner.os == 'Windows'
         with:
           drive-size: 20GB
           workspace-copy: true
 
       - name: rust toolchain
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE }}
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: lint-${{ matrix.target }}
-          workspaces: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+          key: lint-x86_64-pc-windows-msvc
+          workspaces: ${{ env.DEV_DRIVE_WORKSPACE }}
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: clippy
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo clippy --workspace --all-targets --locked --target ${{ matrix.target }} -- -D warnings
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE }}
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+  # GitHub's macOS arm64 runners are often short of machines: a job waits five or ten minutes for
+  # one, or is cancelled after fifteen without running a step. Only the code that compiles for
+  # macOS alone needs a Mac to lint, so a pull request asks for one only when touches-macos.py
+  # finds the change reaches that code. A push to main always lints macOS, which catches what
+  # the guess lets through.
+  touches-macos:
+    name: touches macos
+    if: >-
+      !startsWith(github.head_ref, 'release/') &&
+      !contains(github.event.head_commit.message, 'from sonorahq/release/')
+    runs-on: ubuntu-latest
+    outputs:
+      macos: ${{ steps.decide.outputs.macos }}
+    steps:
+      # A pull request checks out its merge into the base branch, whose first parent is the base.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+
+      - name: decide
+        id: decide
+        run: |
+          macos=true
+          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+            macos=$(python3 .github/ci/touches-macos.py HEAD^1 HEAD)
+          fi
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: clippy on aarch64-apple-darwin
+    needs: touches-macos
+    if: needs.touches-macos.outputs.macos == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: lint-aarch64-apple-darwin
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked --target aarch64-apple-darwin -- -D warnings
 
   build:
     name: ${{ matrix.target }}
@@ -162,6 +203,9 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      # librespot-core's build script stamps a random build id and the date into the crate unless
+      # this is set, so sccache missed it and every crate above it, music to views, on every run.
+      SOURCE_DATE_EPOCH: "315532800"
     strategy:
       fail-fast: false
       matrix:

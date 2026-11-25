@@ -22,6 +22,12 @@ use state::{AppSettings, Sonora};
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
 /// The rule between the current screen's controls and the account and sidebar segment.
 const SEGMENT_RULE: Pixels = px(1.);
+/// The branch a debug build was compiled from, as `build.rs` found it, or `None` when it found none.
+/// An empty `SONORA_BRANCH` set for the build reaches rustc as it is, so it counts as none.
+const BRANCH: Option<&str> = match option_env!("SONORA_BRANCH") {
+    Some(branch) if !branch.is_empty() => Some(branch),
+    _ => None,
+};
 
 /// Tells whether the page a refresh reloaded is still waiting for its data.
 pub(crate) type Busy = Box<dyn Fn(&App) -> bool>;
@@ -395,12 +401,17 @@ impl Render for TitleBar {
             .h(height)
             .flex_none()
             .when_some(radius, |this, radius| this.rounded_t(radius))
-            .when(!self.options.transparent && !theme.transparent, |this| {
-                this.bg(match self.options.sheet {
-                    true => theme.sidebar,
-                    false => theme.background,
-                })
-            })
+            // A sheet's bar is chrome, which paints its own part of any window. The page colour
+            // a see-through window gets from the root, under every shell without a sheet.
+            .when(
+                !self.options.transparent && (self.options.sheet || !theme.transparent),
+                |this| {
+                    this.bg(match self.options.sheet {
+                        true => theme.sidebar,
+                        false => theme.background,
+                    })
+                },
+            )
             // The height is a border box, so a bar that drops its border centres its controls
             // one pixel lower than one that keeps it. The edge is always an edge; only its
             // colour goes, and fullscreen's controls land where the workspace's do.
@@ -551,15 +562,24 @@ fn traffic_lights_inset(settings: &AppSettings, height: Pixels) -> Option<Pixels
     None
 }
 
-/// The tag a debug build carries in its title bar, so it is never mistaken for a release.
+/// The tag a debug build carries in its title bar, so it is never mistaken for a release. It names
+/// the branch the build came from, or says "dev" when the build saw no branch. A long branch is cut
+/// off at the badge's edge, which gives way before the bar's other controls do.
 fn dev_badge() -> impl IntoElement {
+    let (label, text) = match BRANCH {
+        Some(branch) => (
+            t!("app-dev-build-branch", branch = branch),
+            SharedString::new_static(branch),
+        ),
+        None => (t!("app-dev-build"), t!("app-dev-badge")),
+    };
     div()
         .id("dev-badge")
         .role(Role::Label)
-        .aria_label(t!("app-dev-build"))
-        .flex_none()
+        .aria_value(label)
+        .min_w_0()
         .ml_1()
-        .child(Badge::text(t!("app-dev-badge")))
+        .child(Badge::text(text).justify_start().overflow_hidden())
 }
 
 /// Opens the screen chosen as the startup page in Settings, where a newly switched provider lands.

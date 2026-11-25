@@ -1,49 +1,23 @@
-mod aac;
-pub mod apple;
-pub mod artwork;
-mod audio;
-pub mod binimum;
-mod calendar;
+//! What every provider implements and the app reads: the `MusicApi`, `MusicProvider` and
+//! `Player` contracts, the models they hand over, and what more than one provider needs, such
+//! as kept tracks, covers and links. Each provider is a crate of its own on top of this
+//! one, so `state` and `views` depend on the contract and never on a provider.
+
+pub mod calendar;
 pub mod connect;
 pub mod cover;
 pub mod credentials;
-pub mod deezer;
 pub mod drm;
-pub mod engine;
-pub mod equalizer;
 pub mod escape;
-pub mod jellyfin;
-pub mod kugou;
 pub mod link;
-#[cfg(test)]
-mod live_tests;
-pub mod local;
-pub mod lrclib;
-pub mod lyrics;
 mod models;
-mod mp4;
-pub mod musixmatch;
-pub mod netease;
 pub mod order;
-pub mod output;
 pub mod potoken;
 pub mod progress;
-pub mod ranged;
 mod redact;
-pub mod scrobble;
-mod sink;
 pub mod smart;
-pub mod soloist;
-mod spectrum;
-mod sponsorblock;
-pub mod spotify;
-mod stream;
-pub mod subsonic;
-pub mod tidal;
-mod trim;
 pub mod trouble;
 pub mod vault;
-pub mod youtube;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -54,8 +28,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
 
-pub use audio::Meter;
-pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
@@ -63,14 +35,15 @@ pub use models::{
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
     SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
 };
-pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use smart::{
     Condition, FieldKind, Operand, OperandShape, Operator, Problem, Rule, RuleGroup, RuleProblem,
     SmartPlaylist, SmartPlaylistUpdate, SmartRules, field_kind, parse_number,
 };
-pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
-pub use sponsorblock::{SkipSegment, SponsorBlock};
+pub use sound::audio::Meter;
+pub use sound::equalizer::{self, Equalizer};
+pub use sound::output::{self, Server as SoundServer, missing_bridge};
+pub use sound::spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -407,6 +380,18 @@ pub trait MusicApi: Send + Sync {
         track_id: &str,
         from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)>;
+
+    /// The radio the provider builds from the whole `seed` collection `id`, paged the way
+    /// `track_radio` is. Only a provider that lists `seed` in [`Capabilities::collection_radio`]
+    /// is asked, and the app blends track radios of the collection's songs for any other.
+    async fn collection_radio(
+        &self,
+        _seed: RadioSeed,
+        _id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        anyhow::bail!("this provider builds no radio from a collection")
+    }
 
     async fn search(&self, query: &str) -> Result<Vec<Track>>;
 
@@ -895,6 +880,15 @@ impl Shape {
     }
 }
 
+/// A collection a radio can be started from, the way a track seeds one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RadioSeed {
+    Album,
+    Playlist,
+    Artist,
+}
+
 /// Whether the listener can change what a catalog holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Catalog {
@@ -920,6 +914,10 @@ pub struct Capabilities {
     pub follow_artists: bool,
     /// A track can seed a station, which is what fills the queue behind it.
     pub radio: bool,
+    /// The collections the provider builds a radio from itself, through
+    /// `MusicApi::collection_radio`. Any other collection's radio is blended from the track
+    /// radios of a few of its songs, so this only picks the better source where `radio` is on.
+    pub collection_radio: &'static [RadioSeed],
     /// Tracks carry a play count worth a column of its own.
     pub playcounts: bool,
     /// The provider keeps sidebar pins of its own, listed by `pin_targets` and changed
@@ -960,6 +958,9 @@ pub struct Capabilities {
     /// The same, for the songs of a playlist the listener owns. Anyone else's playlist keeps
     /// the order its curator gave it.
     pub playlist_arrival: Option<Arrival>,
+    /// A playlist can be made public or private. A service whose playlists have no such setting
+    /// leaves this off, and the menu item that changes it is never shown.
+    pub playlist_visibility: bool,
 }
 
 impl Capabilities {
@@ -970,6 +971,7 @@ impl Capabilities {
     pub const ALL: Self = Self {
         follow_artists: true,
         radio: true,
+        collection_radio: &[],
         playcounts: true,
         pins: false,
         transcode: false,
@@ -983,12 +985,14 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: true,
     };
 
     /// Nothing beyond listing and playing.
     pub const NONE: Self = Self {
         follow_artists: false,
         radio: false,
+        collection_radio: &[],
         playcounts: false,
         pins: false,
         transcode: false,
@@ -1002,6 +1006,7 @@ impl Capabilities {
         download_gap: Duration::ZERO,
         song_arrival: None,
         playlist_arrival: None,
+        playlist_visibility: false,
     };
 }
 
@@ -1095,6 +1100,10 @@ pub enum AccountKind {
     Session,
     /// Profiles inside one account, such as the members of a family plan.
     Profile,
+    /// Servers one account can use.
+    Server,
+    /// Libraries one server has.
+    Library,
 }
 
 /// The accounts a sign-in asks the user to pick from.
@@ -1107,8 +1116,14 @@ pub struct AccountChoices {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignInPrompt {
     Accounts(AccountChoices),
-    Code { code: String, url: String },
+    Code {
+        code: String,
+        url: String,
+    },
     Url(String),
+    /// A page the provider's sign-in finishes on, which the app shows in a browser window. The
+    /// provider notices the end of the sign-in itself, so nothing is handed back.
+    Window(String),
     Secret,
 }
 
@@ -1309,7 +1324,7 @@ pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
 /// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
 /// ids and matching titles of similar duration across releases. Remaster labels do not
 /// distinguish songs.
-fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
+pub fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
     let mut kept: HashMap<String, Vec<Duration>> = HashMap::new();
     let mut ids = HashSet::new();
     tracks

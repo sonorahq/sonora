@@ -6,10 +6,10 @@ use crate::snapped;
 /// How many strips the blur fades in through. They cost nothing beyond a quad each, so more of
 /// them only make the crossfade smoother.
 const STRIPS: usize = 64;
-/// The curve of the crossfade: the exponent on a strip's distance from the solid edge. One is
-/// linear, above one starts slower, below one starts faster. Kept well below one so the haze
-/// reaches working strength quickly and only the far edge reads as clear.
-const HAZE: f32 = 0.4;
+/// How steeply the haze rises from the clear edge, as the exponent in `1 - (1 - t)^RISE`. The
+/// first strip starts near zero, so no line shows where the blur begins, and the haze still
+/// reaches working strength within the first half of the band.
+const RISE: f32 = 2.5;
 
 /// Which side of a veil holds the full blur. The other one is clear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +89,7 @@ pub fn veil(
                     .w_full()
                     .h(cut)
                     .when_some(corner.filter(|_| slice == rounded), round)
-                    .opacity(held.powf(HAZE))
+                    .opacity(1. - (1. - held).powf(RISE))
                     .backdrop_blur(blur)
             })
         })

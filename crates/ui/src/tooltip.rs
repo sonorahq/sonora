@@ -18,6 +18,9 @@ const OFFSET: Pixels = px(6.);
 /// How long the pointer rests on an element before a perched tooltip shows. Long enough that
 /// a pointer pausing on its way to a click raises none.
 const DELAY: Duration = Duration::from_millis(800);
+/// How wide a tooltip grows before its words wrap onto another line, so a long description
+/// reads as a short paragraph rather than a strip across the window.
+const MAX_WIDTH: Pixels = px(280.);
 
 /// Where a tooltip sits relative to the element that owns it.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -88,6 +91,7 @@ impl Render for Tooltip {
         let theme = *cx.theme();
         let follow = self.perch == Perch::Follow;
         let bubble = div()
+            .max_w(MAX_WIDTH)
             .px_2()
             .py_1()
             .rounded(theme.radius)

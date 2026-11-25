@@ -7,12 +7,13 @@ set -euo pipefail
 if [[ ${1:-} != --as-builder ]]; then
   pacman -Syu --noconfirm --needed $(grep -v '^#' /checkout/.github/buildbox-cache/packages)
   useradd -m -s /bin/bash builder
-  mkdir -p /work/snap /work/out /home/.cargo
-  chown builder: /work/snap /work/out /home/.cargo
-  # Cargo fingerprints third-party crates by their absolute source path, so a machine reuses this
-  # snapshot only when it builds with the same CARGO_HOME.
+  mkdir -p /work/snap /work/out /home/.cargo /home/.rustup
+  chown builder: /work/snap /work/out /home/.cargo /home/.rustup
+  # Cargo fingerprints third-party crates by their absolute source path and clippy's units by the
+  # path of clippy-driver, so a machine reuses this snapshot only when it builds with the same
+  # CARGO_HOME and RUSTUP_HOME.
   exec runuser -u builder -- env -i HOME=/home/builder USER=builder LOGNAME=builder SHELL=/bin/bash \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/bin CARGO_HOME=/home/.cargo \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/bin CARGO_HOME=/home/.cargo RUSTUP_HOME=/home/.rustup \
     CARGO_TARGET_DIR=/work/snap/target CARGO_BUILD_JOBS="$(nproc)" \
     CMAKE_BUILD_PARALLEL_LEVEL=12 MAKEFLAGS=-j12 \
     bash "$0" --as-builder </dev/null
@@ -32,9 +33,10 @@ rsync -rlpc --delete --exclude=/.git /checkout/ "$snap/src/"
 cd "$snap/src"
 rustup toolchain install
 touch /tmp/build-start
-# The JSON messages name every unit the build used, which the pruning below keeps.
-for build in "build --locked -p sonora" "clippy --locked --workspace --all-targets" \
-  "test --locked --workspace --no-run"; do
+# The JSON messages name every unit the build used, which the pruning below keeps. A plain check
+# resolves other features than the --all-targets runs, so its units are built too.
+for build in "build --locked -p sonora" "check --locked --workspace" \
+  "clippy --locked --workspace --all-targets" "test --locked --workspace --no-run"; do
   cargo $build --message-format=json-render-diagnostics >> /tmp/units.jsonl
 done
 
@@ -76,7 +78,9 @@ for folder in ("deps", "examples"):
 if len(used) < 100:
     sys.exit(f"snapshot: cargo named only {len(used)} units, refusing to prune")
 pruned = 0
-for folder in ("deps", ".fingerprint", "build"):
+for folder in ("deps", ".fingerprint", "build", "examples"):
+    if not os.path.isdir(os.path.join(debug, folder)):
+        continue
     for name in os.listdir(os.path.join(debug, folder)):
         found = unit_hash.search(name)
         if not found or found.group(1) in used:
@@ -116,7 +120,7 @@ workspace_unit = re.compile(
 layers = {"deps": [], "ws": []}
 for root, dirs, files in os.walk(snap):
     rel_root = os.path.relpath(root, snap)
-    if rel_root in ("target/debug/incremental", "target/debug/examples", "target/tmp"):
+    if rel_root in ("target/debug/incremental", "target/tmp"):
         dirs[:] = []
         continue
     # Source folders keep their mtimes, or build scripts that watch asset folders run again.
@@ -127,7 +131,9 @@ for root, dirs, files in os.walk(snap):
         if rel.endswith(".dwo"):
             continue
         top_level = os.path.dirname(rel) in ("target", "target/debug")
-        if rel.startswith("src/") or top_level or workspace_unit.match(rel):
+        # Only workspace crates have examples, and `cargo test` relinks every one that is missing.
+        example = rel.startswith("target/debug/examples/")
+        if rel.startswith("src/") or top_level or example or workspace_unit.match(rel):
             layers["ws"].append(rel)
         else:
             layers["deps"].append(rel)
@@ -154,10 +160,11 @@ else
   layers="deps ws"
 fi
 # Deterministic archives, so an unchanged layer keeps its digest and is neither pushed nor pulled.
+# Level 9 packs the 3.3 GB workspace layer in 60% of the time level 12 takes, for 3% more bytes.
 for layer in $layers; do
   tar -C "$snap" -c --format=posix --no-recursion --null -T "/tmp/$layer.list" \
     --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
     --owner=0 --group=0 --numeric-owner \
-    | zstd -q -T4 -12 --long=27 -o "/work/out/$layer.tar.zst"
+    | zstd -q -T4 -9 --long=27 -o "/work/out/$layer.tar.zst"
 done
 ls -la /work/out

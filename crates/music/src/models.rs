@@ -473,12 +473,6 @@ impl Default for Lyrics {
 }
 
 impl Lyrics {
-    pub fn plain(text: impl Into<String>) -> Self {
-        let text = text.into();
-        let romanized = crate::lyrics::romanize::plain(&text);
-        Self::Plain { text, romanized }
-    }
-
     pub fn synced(&self) -> bool {
         matches!(self, Self::Synced { .. })
     }
