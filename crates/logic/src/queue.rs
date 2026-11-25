@@ -819,7 +819,12 @@ impl<O: Clone + PartialEq> Order<O> {
         removed
     }
 
+    /// Whether the play order differs from the collection's, which is what Reset undoes. A
+    /// finished queue answers false, since nothing is playing that Reset could keep.
     pub fn reordered(&self) -> bool {
+        if self.current.is_none() {
+            return false;
+        }
         let sequence = self
             .past
             .iter()

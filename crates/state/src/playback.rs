@@ -2054,7 +2054,7 @@ impl Playback {
                         this.queue.update(cx, |queue, cx| {
                             queue.extend_context(tracks, station.origin.clone(), cx)
                         });
-                        if idle {
+                        if idle && this.queue.read(cx).has_next() {
                             this.follow_queue(Start::Segue, cx);
                         }
                     }
@@ -2250,10 +2250,13 @@ impl Playback {
         }
     }
 
+    /// Ends a queue that has run out with repeat off, moving its last song to history so Play
+    /// can start it over. Does nothing while a track is loaded or more is queued.
     fn finish_queue(&mut self, cx: &mut Context<Self>) {
         if self.repeat == Repeat::Off && self.track.is_none() && !self.queue.read(cx).has_next() {
             self.fetch = None;
             self.queue.update(cx, |queue, cx| queue.finish(cx));
+            cx.notify();
         }
     }
 
