@@ -543,6 +543,8 @@ impl Root {
         (view, detail)
     }
 
+    /// Opens the search page with the keyboard in its field. The shortcut and the sidebar's
+    /// Search entry come here, and nothing else focuses the field on its own.
     fn open_search(&mut self, cx: &mut Context<Self>) {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
@@ -1009,8 +1011,10 @@ impl Root {
         }
         self.announce_fullscreen(false, cx);
         self.view = RootView::Workspace;
-        self.pending = Some(match destination {
-            Destination::Search => Focus::Search,
+        // Only `open_search` hands the search field the keyboard, so coming back to the page from
+        // fullscreen or through history leaves the field alone.
+        self.pending = Some(match (&destination, self.pending.take()) {
+            (Destination::Search, Some(Focus::Search)) => Focus::Search,
             _ => Focus::Workspace,
         });
 

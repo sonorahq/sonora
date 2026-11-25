@@ -13,6 +13,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, svg,
 };
 use gpui::{Window, div, px};
+use input::OpenSearch;
 use music::Shape;
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsPage, navigate,
@@ -749,10 +750,13 @@ impl SidebarLeft {
 
         row.lit(active, accent)
             .when(active, |button| button.aria_selected(true))
-            .on_click(move |_, _, cx| match destination.in_settings() {
-                true => open_settings(cx),
-                false => navigate(destination.clone(), cx),
-            })
+            .on_click(
+                move |_, window, cx| match (entry, destination.in_settings()) {
+                    (NavEntry::Search, _) => window.dispatch_action(Box::new(OpenSearch), cx),
+                    (_, true) => open_settings(cx),
+                    (_, false) => navigate(destination.clone(), cx),
+                },
+            )
             .into_any_element()
     }
 
