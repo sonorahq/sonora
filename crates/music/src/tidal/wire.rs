@@ -358,8 +358,23 @@ pub fn explore_links(page: &Value) -> Vec<Genre> {
 }
 
 /// The genres Browse lists: the `/genres` entries first, then the Explore page links after them,
-/// with each id kept once.
+/// with each id kept once. Explore also links most `/genres` entries to a page of their own, under
+/// the same name ("R&B / Soul") or the same path ("Hiphop" and `pages/genre_hip_hop`); that link is
+/// left out, so each genre is listed once, with its picture.
 pub fn with_explore(listed: Vec<Genre>, links: Vec<Genre>) -> Vec<Genre> {
+    let keys = |key: fn(&Genre) -> &str| -> HashSet<String> {
+        listed
+            .iter()
+            .map(|genre| folded(key(genre)))
+            .filter(|key| !key.is_empty())
+            .collect()
+    };
+    let (names, paths) = (keys(|genre| &genre.name), keys(|genre| &genre.id));
+    let links = links.into_iter().filter(|link| {
+        let path = link.id.strip_prefix(PAGE).unwrap_or(&link.id);
+        let path = path.strip_prefix("genre_").unwrap_or(path);
+        !names.contains(&folded(&link.name)) && !paths.contains(&folded(path))
+    });
     let mut seen = HashSet::new();
     listed
         .into_iter()
@@ -581,6 +596,14 @@ fn normalized(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+/// Text lowercased with only its letters and digits, so "Hip-Hop" and `hip_hop` compare equal.
+fn folded(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Whether a track is a Dolby Atmos copy with no stereo version behind it. Only a Widevine
