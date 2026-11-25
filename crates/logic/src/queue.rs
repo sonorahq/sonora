@@ -469,12 +469,16 @@ impl<O: Clone + PartialEq> Order<O> {
         self.shuffle
     }
 
+    /// Turns shuffle on or off and reorders what is ahead. A finished queue keeps its history as
+    /// it is, since starting it over applies the new order.
     pub fn set_shuffle(&mut self, on: bool) {
         if self.shuffle == on {
             return;
         }
         self.shuffle = on;
-        self.reorder();
+        if self.current.is_some() || self.past.is_empty() {
+            self.reorder();
+        }
         self.changed();
     }
 
