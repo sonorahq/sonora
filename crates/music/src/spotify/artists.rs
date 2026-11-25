@@ -10,7 +10,9 @@ use protobuf::{EnumOrUnknown, Message as _};
 use crate::spotify::collection2::SavedItem;
 use crate::spotify::pace::paced;
 use crate::spotify::{albums, collection, collection2, pathfinder, wire};
-use crate::{Album, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SavedArtist, Track};
+use crate::{
+    Album, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SavedArtist, Track, escape,
+};
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
@@ -396,16 +398,10 @@ fn plain_text(html: &str) -> String {
         }
     }
 
-    let decoded = text
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
-
-    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+    escape::unescape(&text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn top_track_uris(artist: &ArtistMessage, country: &str) -> Vec<String> {
