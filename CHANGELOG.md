@@ -76,6 +76,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a Sonora Session, songs you queue by hand stay in the queue as yours when others skip or change the queue, instead of turning into part of the playlist.
 - Moving the pointer over the fullscreen player brings its controls back even when the window is not focused.
 - TIDAL artist pages show a release once when TIDAL lists a clean and an explicit version of it, as TIDAL's own app does.
+- TIDAL genres such as Pop or R&B / Soul show once in Browse instead of twice.
 - Space pauses and resumes right after you click to play something on the search page, instead of typing a space into the search field.
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
@@ -89,10 +90,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
 - The left sidebar's scrollbar can be dragged and clicked again.
-
-### Fixed
-
-- TIDAL genres such as Pop or R&B / Soul show once in Browse instead of twice.
 
 ## [0.50.3] - 2026-11-20
 
