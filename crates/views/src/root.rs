@@ -1383,8 +1383,10 @@ impl Render for Root {
         }
         // A player opening on its artwork tab below `Room::Wide` tucks the bar's cover away as
         // it fades in, and one closing from there brings it back as it fades out, so the player
-        // bar under the fade moves along with the player's.
-        let room = match self.shells.fullscreen.read(cx).tucks_cover(window) {
+        // bar under the fade moves along with the player's. The player is read only while it is
+        // drawn, so a closed one redraws nothing when it changes.
+        let drawn = matches!(self.view, RootView::Fullscreen) || left.is_some();
+        let room = match drawn && self.shells.fullscreen.read(cx).tucks_cover(window) {
             false => 1.,
             true => match self.view {
                 RootView::Fullscreen => zooming,
@@ -1428,8 +1430,18 @@ impl Render for Root {
         {
             cx.set_global(Backdrops(backdrops));
         }
+        // A settled player replays while the ambient field under it drifts. Every move between
+        // the shells renders it whole, since a cached view would replay the opacity and zoom it
+        // was cached under.
+        let settled = zooming == 0. && hidden == 0. && left.is_none();
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
+            RootView::Fullscreen if settled => self
+                .shells
+                .fullscreen
+                .clone()
+                .cached(StyleRefinement::default().flex_1().min_h_0().w_full())
+                .into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
         };
         // How far above the bottom of the window the toasts hang.
