@@ -110,6 +110,19 @@
             ]
           );
 
+          # WebKit reads its font settings from org.gnome.desktop.interface, and a session without
+          # GNOME lists no schema for it. The defaults it falls back on mismeasure text, which on
+          # Google's sign-in page collapsed the whole layout into one narrow column.
+          gsettingsSchemas = lib.concatMapStringsSep ":" (
+            package: "${package}/share/gsettings-schemas/${package.name}"
+          ) (
+            with pkgs;
+            [
+              gsettings-desktop-schemas
+              gtk3
+            ]
+          );
+
           alsaPluginDirectory = pkgs.symlinkJoin {
             name = "sonora-alsa-plugins";
             paths = [
@@ -144,7 +157,8 @@
             wrapProgram "$out/bin/sonora" \
               --set ALSA_PLUGIN_DIR ${alsaPluginDirectory} \
               --prefix GIO_EXTRA_MODULES : ${pkgs.glib-networking}/lib/gio/modules \
-              --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath}
+              --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath} \
+              --prefix XDG_DATA_DIRS : ${gsettingsSchemas}
           '';
 
           src = cargoSource ./.;

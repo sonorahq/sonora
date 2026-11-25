@@ -53,6 +53,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
 - Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
 - On Windows, changing the output device's format in the system sound settings moves Sonora to the new sample rate within a second, even while nothing plays, instead of only after a restart.
 - The playback buttons in the Windows taskbar preview are sharper, with bolder skip icons that follow the display scale.
