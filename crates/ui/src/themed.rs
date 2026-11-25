@@ -78,14 +78,6 @@ impl Element for Themed {
     }
 }
 
-impl IntoElement for Themed {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Runs `f` with `theme` as the global theme and puts the window's own back afterwards.
 fn wearing<R>(theme: &Theme, cx: &mut App, f: impl FnOnce(&mut App) -> R) -> R {
     let worn = mem::replace(cx.global_mut::<Theme>(), *theme);

@@ -123,14 +123,6 @@ impl Render for Tooltip {
     }
 }
 
-impl IntoElement for Beside {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Beside {
     type RequestLayoutState = LayoutId;
     type PrepaintState = ();

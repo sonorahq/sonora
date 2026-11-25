@@ -153,14 +153,6 @@ impl Element for Linger {
     }
 }
 
-impl IntoElement for Linger {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// Paints the surfaces of this window that are on their way out, over everything else. The
 /// root view draws one, anywhere in its tree. It takes no room and answers no input.
 pub fn lingers() -> Deferred {
@@ -266,13 +258,5 @@ impl Element for Host {
             true
         });
         cx.default_global::<Lingers>().watched = watched;
-    }
-}
-
-impl IntoElement for Host {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }

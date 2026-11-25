@@ -1350,7 +1350,7 @@ impl Render for Root {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        window.set_window_corner_radius(radius.unwrap_or_default());
+        window.set_client_corner_radii(gpui::Corners::all(radius.unwrap_or_default()));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 

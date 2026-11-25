@@ -360,14 +360,6 @@ impl Element for Fitted {
     }
 }
 
-impl IntoElement for Fitted {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// One link of the line, a link when it has a value and a click handler, a label otherwise.
 fn link(
     id: &SharedString,
