@@ -210,7 +210,7 @@ Discord is the primary one, but we do have a Matrix bridge.
 | Italiano (`it`) | 1019/1383 | 74% |
 | Bahasa Indonesia (`id`) | 1322/1383 | 96% |
 | 日本語 (`ja`) | 1019/1383 | 74% |
-| 한국어 (`ko`) | 1381/1383 | 100% |
+| 한국어 (`ko`) | 1383/1383 | 100% |
 | Русский (`ru`) | 1138/1383 | 82% |
 | Українська (`uk`) | 1022/1383 | 74% |
 | Polski (`pl`) | 1022/1383 | 74% |
