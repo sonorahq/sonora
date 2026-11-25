@@ -23,10 +23,9 @@ pub struct NetEase {
 }
 
 impl NetEase {
-    pub fn new() -> Self {
-        Self {
-            http: reqwest::Client::new(),
-        }
+    /// Sends every request through `http`, which the app shares between its lyrics sources.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self { http }
     }
 
     async fn lyric(&self, id: u64) -> Result<Sheet> {
@@ -56,12 +55,6 @@ impl NetEase {
             .json()
             .await
             .context("cannot read the netease lyric response")
-    }
-}
-
-impl Default for NetEase {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

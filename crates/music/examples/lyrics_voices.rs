@@ -35,9 +35,10 @@ async fn main() {
         ("Clair de Lune", "Claude Debussy", "", 300),
         ("Zxqvortle Plimbath", "Nobody Realish", "", 123),
     ];
+    let http = reqwest::Client::new();
     let providers: Vec<Arc<dyn LyricsProvider>> = vec![
-        Arc::new(binimum::Binimum::new()),
-        Arc::new(musixmatch::Musixmatch::new()),
+        Arc::new(binimum::Binimum::new(http.clone())),
+        Arc::new(musixmatch::Musixmatch::new(http)),
     ];
 
     for (title, artist, album, seconds) in wanted {
