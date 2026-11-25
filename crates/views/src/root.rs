@@ -1121,7 +1121,8 @@ impl Root {
 
 const UI_FONT: &str = "Inter";
 
-const SCRIPTS: [&str; 18] = [
+const SCRIPTS: [&str; 19] = [
+    "Sonora Hangul",
     "Source Han Sans",
     "Noto Sans CJK JP",
     "Noto Sans CJK SC",

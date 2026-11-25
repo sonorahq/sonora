@@ -36,6 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Last.fm scrobbling warns you when Last.fm refuses your API key, which from 1 December 2026 happens to every key whose account has no Last.fm Pro, and Settings says so before you connect.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
 - The Play button on artist, album and playlist pages has a filled icon and the same space on both sides.
+- Korean text is drawn in Pretendard, which ships with Sonora, instead of whichever Korean font the system picks, such as Malgun Gothic on Windows.
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it, and above the player bar when the player bar is not transparent.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
