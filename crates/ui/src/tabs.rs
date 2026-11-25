@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Background, Div, ElementId, Hsla, Pixels, ScrollHandle, ScrollWheelEvent,
+    AnyElement, App, Background, Div, ElementId, Hsla, Pixels, ScrollEvent, ScrollHandle,
     SharedString, Stateful, StyleRefinement, Window, div, ease_in_out, linear_color_stop,
     linear_gradient, px,
 };
@@ -273,7 +273,7 @@ impl RenderOnce for TabBar {
                 // wheel whichever way it was turned, which is what a row of tabs wants.
                 row.overflow_x_scroll()
                     .track_scroll(&rails.scroll)
-                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                    .on_scroll(move |event: &ScrollEvent, window, cx| {
                         // gpui has already moved the row by the time this runs, so a row with
                         // nowhere to go is the one case where the page behind still gets the
                         // wheel. Anywhere else the bar keeps it.

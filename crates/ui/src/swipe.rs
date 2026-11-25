@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Global, NavigationDirection, Pixels, Point, ScrollHandle, ScrollWheelEvent, TouchPhase, px,
+    App, Global, NavigationDirection, Pixels, Point, ScrollEvent, ScrollHandle, TouchPhase, px,
 };
 
 /// How far two fingers travel sideways before the swipe turns the page.
@@ -31,7 +31,7 @@ impl Global for Swipe {}
 /// Claims the touchpad gesture under way for a sideways scroller with somewhere to go, so moving
 /// a rail never turns the page as well. Call it from the scroller's own wheel listener, which
 /// runs before the page's.
-pub fn hold_swipe(event: &ScrollWheelEvent, scroll: &ScrollHandle, cx: &mut App) {
+pub fn hold_swipe(event: &ScrollEvent, scroll: &ScrollHandle, cx: &mut App) {
     if event.delta.precise()
         && event.delta.pixel_delta(px(1.)).x != Pixels::ZERO
         && scroll.max_offset().x > Pixels::ZERO
@@ -44,7 +44,7 @@ pub fn hold_swipe(event: &ScrollWheelEvent, scroll: &ScrollHandle, cx: &mut App)
 /// per gesture. Swiping right goes back, as in a browser. Where the platform reports the fingers
 /// lifting, the page turns then, and only if they are still far enough out, so pulling back
 /// cancels it. Elsewhere it turns the moment the fingers have gone far enough.
-pub fn swiped(event: &ScrollWheelEvent, cx: &mut App) -> Option<NavigationDirection> {
+pub fn swiped(event: &ScrollEvent, cx: &mut App) -> Option<NavigationDirection> {
     let swipe = cx.default_global::<Swipe>();
     let held = std::mem::take(&mut swipe.held);
     if !event.delta.precise() {

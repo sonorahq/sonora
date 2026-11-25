@@ -440,7 +440,7 @@ impl Render for Workspace {
                             .when(covered, |this| this.hidden())
                             // A two-finger swipe across the page steps through its history,
                             // as in a browser.
-                            .on_scroll_wheel({
+                            .on_scroll({
                                 let cue = self.swipe_cue.clone();
                                 move |event, window, cx| {
                                     cue.update(cx, |cue, cx| cue.follow(event, window, cx));

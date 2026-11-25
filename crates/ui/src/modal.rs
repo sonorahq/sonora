@@ -6,8 +6,8 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FontWeight, Global, MouseButton, Pixels,
-    Point, ScrollWheelEvent, SharedString, StyleRefinement, Subscription, Window, WindowId,
-    anchored, deferred, div, point, px,
+    Point, ScrollEvent, SharedString, StyleRefinement, Subscription, Window, WindowId, anchored,
+    deferred, div, point, px,
 };
 
 use crate::button::Button;
@@ -365,9 +365,9 @@ impl RenderOnce for Modal {
                                         .pb(tail)
                                         .overflow_y_scroll()
                                         .track_scroll(scroller.read(cx).scroll())
-                                        .on_scroll_wheel({
+                                        .on_scroll({
                                             let gliding = scroller.clone();
-                                            move |event: &ScrollWheelEvent, window, cx| {
+                                            move |event: &ScrollEvent, window, cx| {
                                                 if event.delta.precise() {
                                                     return;
                                                 }
