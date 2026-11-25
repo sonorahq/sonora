@@ -2129,6 +2129,13 @@ mod tests {
         assert_eq!(cover_url_at(COVERS, &empty_id, CoverSize::Full), None);
     }
 
+    /// reqwest wants a rustls provider chosen before it builds a client.
+    pub(super) fn crypto() {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+    }
+
     fn seen(ids: &[&str]) -> Vec<String> {
         ids.iter().map(|id| (*id).to_owned()).collect()
     }
@@ -2189,6 +2196,7 @@ mod tests {
         }
 
         fn client(&self, library: Option<i64>) -> SubsonicClient {
+            crypto();
             SubsonicClient::new(
                 self.server.clone(),
                 "ada".to_owned(),
@@ -2751,6 +2759,7 @@ mod smart_tests {
         }
 
         fn client(&self) -> SubsonicClient {
+            super::tests::crypto();
             let signature = crate::subsonic::auth::sign("judith", "secret");
             SubsonicClient::new(
                 self.url.clone(),
@@ -3106,6 +3115,7 @@ mod smart_tests {
     async fn a_refused_sign_in_reads_as_credentials() {
         let server = Server::start(Vec::new());
         let signature = crate::subsonic::auth::sign("judith", "wrong");
+        super::tests::crypto();
         let client = SubsonicClient::new(
             server.url.clone(),
             "judith".into(),
