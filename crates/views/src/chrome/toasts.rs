@@ -640,9 +640,16 @@ impl Spring {
 
     /// Puts the value at `at` easing back to where it was aimed, moving `speed` units a second
     /// faster than that, as a toast let go of after a swipe. A hand that stopped before letting go
-    /// leaves it easing straight back.
+    /// leaves it easing straight back, and one thrown back towards the target carries at most as
+    /// much speed as still lands there without passing it.
     fn launch(&mut self, at: f32, speed: f32) {
         self.sprung.jump(at);
+        let gap = self.target - at;
+        let most = (1. - ONSET) * self.config.canonical().0 * gap.abs();
+        let speed = match speed * gap > 0. {
+            true => speed.clamp(-most, most),
+            false => speed,
+        };
         self.sprung.set_velocity(speed + self.ease());
     }
 
