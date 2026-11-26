@@ -380,18 +380,14 @@ impl Control {
                     .as_deref()
                     .is_some_and(|id| library.playlist(id).is_some_and(|item| item.read_only))
         };
+        let client = self.session.read(cx).client_of(shelf);
         let answer = if blocked {
             Reply::Failed(Failure::Busy)
-        } else if self.session.read(cx).client_of(shelf).is_none() {
-            Reply::Failed(Failure::SignedOut)
-        } else {
+        } else if let Some(client) = client {
             match command {
                 // The library counts one row per copy of a track, so read the playlist to keep
                 // the count and Undo right when the same id appears more than once.
                 PlaylistCommand::RemoveTracks { id, tracks } => {
-                    let Some(client) = self.session.read(cx).client_of(shelf) else {
-                        unreachable!()
-                    };
                     let epoch = self.library.read(cx).shelf_epoch(shelf);
                     let fetch_id = id.clone();
                     // `playlist_tracks` walks every page; `playlist` only returns the first one
@@ -411,7 +407,7 @@ impl Control {
                                         .into_iter()
                                         .filter_map(|track| track.id)
                                         .filter(|track_id| wanted.contains(track_id.as_str()))
-                                        .collect(),
+                                        .collect::<Vec<_>>(),
                                 ),
                                 Err(error) => {
                                     log::warn!(
@@ -430,6 +426,9 @@ impl Control {
                                 Reply::Failed(Failure::AccountChanged)
                             } else {
                                 match rows {
+                                    Some(rows) if rows.is_empty() => {
+                                        Reply::Failed(Failure::NothingFound(tracks.join(" ")))
+                                    }
                                     Some(rows) => {
                                         let started = this.library.update(cx, |library, cx| {
                                             library
@@ -473,6 +472,8 @@ impl Control {
                     Reply::Done
                 }
             }
+        } else {
+            Reply::Failed(Failure::SignedOut)
         };
         reply.send(answer).ok();
     }

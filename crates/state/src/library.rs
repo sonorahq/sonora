@@ -2795,10 +2795,9 @@ impl Library {
     }
 
     /// Takes tracks out of a playlist and reports it once the provider agrees, with an Undo that
-    /// adds them back at the end, the way every provider adds. Says whether the change started.
-    /// Every copy of a named track goes,
+    /// adds them back at the end, the way every provider adds. Every copy of a named track goes,
     /// the way the page drops every row of it, so `rows` names a track once for each copy the
-    /// playlist holds and the count and the Undo follow it.
+    /// playlist holds and the count and the Undo follow it. Says whether the change started.
     pub fn remove_tracks_from_playlist(
         &mut self,
         playlist_id: String,

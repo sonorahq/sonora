@@ -194,9 +194,17 @@ enum PlaylistArg {
         public: bool,
     },
     /// Add track ids to a playlist.
-    Add { id: String, tracks: Vec<String> },
-    /// Drop track ids from a playlist.
-    Remove { id: String, tracks: Vec<String> },
+    Add {
+        id: String,
+        #[arg(required = true)]
+        tracks: Vec<String>,
+    },
+    /// Drop every copy of the track ids from a playlist.
+    Remove {
+        id: String,
+        #[arg(required = true)]
+        tracks: Vec<String>,
+    },
     /// Delete a playlist.
     Delete { id: String },
 }
