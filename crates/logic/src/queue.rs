@@ -487,12 +487,16 @@ impl<O: Clone + PartialEq> Order<O> {
         self.shuffle
     }
 
+    /// Turns shuffle on or off and reorders what is ahead. A finished queue keeps its history as
+    /// it is, since starting it over applies the new order.
     pub fn set_shuffle(&mut self, on: bool) {
         if self.shuffle == on {
             return;
         }
         self.shuffle = on;
-        self.reorder();
+        if self.current.is_some() || self.past.is_empty() {
+            self.reorder();
+        }
         self.changed();
     }
 
@@ -844,7 +848,12 @@ impl<O: Clone + PartialEq> Order<O> {
         removed
     }
 
+    /// Whether the play order differs from the collection's, which is what Reset undoes. A
+    /// finished queue answers false, since nothing is playing that Reset could keep.
     pub fn reordered(&self) -> bool {
+        if self.current.is_none() {
+            return false;
+        }
         let sequence = self
             .past
             .iter()
@@ -1223,6 +1232,15 @@ impl<O: Clone + PartialEq> Order<O> {
         }
         self.changed();
         self.current().cloned()
+    }
+
+    /// Ends a queue that has run out. Its last song moves to the queue history.
+    pub fn finish(&mut self) {
+        let Some(last) = self.current.take() else {
+            return;
+        };
+        self.past.push(last);
+        self.changed();
     }
 
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins

@@ -1395,6 +1395,62 @@ impl Playback {
         }
     }
 
+    /// The occurrence id of a queue row, for callers that address edits by id. A queue shown by
+    /// another device has no local ids to give out.
+    pub fn queue_uid(&self, position: QueuePosition, cx: &App) -> Option<String> {
+        if self.steered(cx).is_some() {
+            return None;
+        }
+        self.queue.read(cx).uid(position).map(str::to_owned)
+    }
+
+    /// Removes the upcoming queue row with `uid`, saying whether it was there. The current and
+    /// past rows cannot be removed.
+    pub fn remove_queued(&mut self, uid: &str, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(index) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
+            return false;
+        };
+        self.queue.update(cx, |queue, cx| {
+            queue.remove(QueuePosition::Upcoming(index), cx)
+        });
+        true
+    }
+
+    /// Moves the upcoming row with `uid` to `gap`, saying whether it could be moved.
+    pub fn move_queued(&mut self, uid: &str, gap: usize, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(from) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
+            return false;
+        };
+        self.queue
+            .update(cx, |queue, cx| queue.move_upcoming_to_gap(from, gap, cx));
+        true
+    }
+
+    /// Drops everything queued after the current track, the same as the queue's Clear button.
+    /// Does nothing while another device has playback.
+    pub fn clear_queued(&mut self, cx: &mut Context<Self>) {
+        if self.steered(cx).is_some() {
+            return;
+        }
+        self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
+    }
+
     /// Puts tracks into the queue at `placement` without a word, or starts playing them when
     /// nothing is queued. While another device has playback they go to the end of its queue
     /// instead. Returns where they went, for the toast, or `None` when they started playback or
@@ -2054,7 +2110,7 @@ impl Playback {
                         this.queue.update(cx, |queue, cx| {
                             queue.extend_context(tracks, station.origin.clone(), cx)
                         });
-                        if idle {
+                        if idle && this.queue.read(cx).has_next() {
                             this.follow_queue(Start::Segue, cx);
                         }
                     }
@@ -2250,6 +2306,16 @@ impl Playback {
         }
     }
 
+    /// Ends a queue that has run out with repeat off, moving its last song to history so Play
+    /// can start it over. Does nothing while a track is loaded or more is queued.
+    fn finish_queue(&mut self, cx: &mut Context<Self>) {
+        if self.repeat == Repeat::Off && self.track.is_none() && !self.queue.read(cx).has_next() {
+            self.fetch = None;
+            self.queue.update(cx, |queue, cx| queue.finish(cx));
+            cx.notify();
+        }
+    }
+
     fn segue_queue(&mut self, cx: &mut Context<Self>) {
         self.fetch = None;
         self.follow_queue(Start::Segue, cx);
@@ -2281,8 +2347,14 @@ impl Playback {
                     this.leave_station();
                     this.follow_queue(Start::Segue, cx);
                 }
-                Ok(_) => log::warn!("playback: radio returned no tracks"),
-                Err(error) => log::warn!("playback: cannot extend radio: {error:#}"),
+                Ok(_) => {
+                    log::warn!("playback: radio returned no tracks");
+                    this.finish_queue(cx);
+                }
+                Err(error) => {
+                    log::warn!("playback: cannot extend radio: {error:#}");
+                    this.finish_queue(cx);
+                }
             },
             cx,
         ));
@@ -2290,7 +2362,7 @@ impl Playback {
 
     fn follow_queue(&mut self, start: Start, cx: &mut Context<Self>) {
         let Some(track) = self.playable_next(cx) else {
-            return;
+            return self.finish_queue(cx);
         };
         self.load_after(&track, start, cx);
     }
@@ -2409,6 +2481,12 @@ impl Playback {
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
         if self.steer(|_| Command::Play, cx) {
+            return;
+        }
+        if self.can_restart_queue(cx) {
+            if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
+                self.follow_after(track, Start::Pick, cx);
+            }
             return;
         }
         self.intent = Intent::Play;
@@ -2583,7 +2661,7 @@ impl Playback {
         self.sleep_task = None;
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
-            return;
+            return self.finish_queue(cx);
         };
         self.track = Some(track);
         self.resume_at = Some(Duration::ZERO);
@@ -2633,6 +2711,15 @@ impl Playback {
     /// press could resume, so the button starts its tracks instead.
     pub fn control(&self) -> Option<bool> {
         self.has_active_playback().then(|| self.wants_playing())
+    }
+
+    /// Whether a play press with no track loaded starts the finished queue over instead of
+    /// doing nothing.
+    pub fn can_restart_queue(&self, cx: &App) -> bool {
+        self.fetch.is_none()
+            && self.track.is_none()
+            && self.queue.read(cx).current().is_none()
+            && self.queue.read(cx).has_previous()
     }
 
     /// Starts `origin` once its tracks are loaded. Local files are left to the library table.

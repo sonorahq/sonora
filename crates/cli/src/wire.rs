@@ -195,6 +195,9 @@ impl QueueSnapshot {
 pub struct QueueEntry {
     pub track: Track,
     pub kind: QueueEntryKind,
+    /// The occurrence id used to edit this row. Absent for a queue shown by another device.
+    #[serde(default)]
+    pub uid: Option<String>,
 }
 
 /// Why a track is in the queue, as far as the snapshot knows.
@@ -359,8 +362,10 @@ pub enum Failure {
     FavoriteUpdateFailed,
     /// A search to queue the best hit of found nothing.
     NothingFound(String),
-    /// Another device has playback, and its queue cannot be edited at a position.
+    /// Another device has playback, and its queue is read-only here.
     SteeredReadOnly,
+    /// No upcoming row in the queue carries this id.
+    UnknownQueueEntry(String),
 }
 
 /// Why a line could not be read off the socket.
@@ -440,6 +445,7 @@ mod tests {
                 duration: 60,
             },
             kind,
+            uid: None,
         }
     }
 

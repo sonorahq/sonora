@@ -297,6 +297,11 @@ impl Queue {
         self.edit(cx, Order::advance)
     }
 
+    /// Puts the last song in history when the queue runs out, leaving nothing as now playing.
+    pub fn finish(&mut self, cx: &mut Context<Self>) {
+        self.edit(cx, Order::finish);
+    }
+
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins
     /// the collection it played in, so the next loop has no stale hand-queued run.
     pub fn rewind(&mut self, cx: &mut Context<Self>) -> Option<Track> {

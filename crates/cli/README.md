@@ -22,6 +22,9 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
+| `sonora queue remove <uid>` | Remove the upcoming queue row with that id |
+| `sonora queue move <uid> <gap>` | Move an upcoming row to a gap, counting from 0 |
+| `sonora queue clear` | Drop everything queued after the current track |
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |
 | `sonora like [on\|off\|toggle]` | Print or change whether the current track is a favorite |
 | `sonora watch [--position]` | Print what plays again on every change, one line of JSON each, until stopped |
@@ -71,6 +74,11 @@ given. `play` puts them right after the current track and skips to them, as `pla
   `play-next`, `2` leaves one upcoming track ahead, and a position past the end appends. Suggested
   tracks do not count, so a position never lands among them. It works with `-s` too, as in
   `sonora add -s "one more time" --at 2`.
+
+`sonora queue --json` gives every row a `uid`, the id `queue remove` and `queue move` take. Keep
+the `uid` instead of a row number: positions change as tracks play. A gap counts from the current
+track, so `0` puts the row next and a gap past the end appends. While another device has playback
+its queue is the one on show, with no `uid`, and queue edits are refused.
 
 ### Seeking
 
@@ -153,7 +161,7 @@ sonora queue --json | jq '.upcoming[].track.title'
 ```
 
 ```json
-{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context"},"upcoming":[],"truncated":false}
+{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context","uid":"sonora-4514d84b51f6a941"},"upcoming":[],"truncated":false}
 ```
 
 An empty queue prints `Queue is empty.` as text, and the same shape with empty lists and a
