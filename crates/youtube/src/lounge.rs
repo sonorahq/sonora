@@ -444,11 +444,21 @@ impl Lounge {
                 "c" => self.bound().sid = argument.as_str().unwrap_or("").to_owned(),
                 "S" => self.bound().gsession = argument.as_str().unwrap_or("").to_owned(),
                 "nowPlaying" => {
-                    reported.video = argument["videoId"]
+                    let video = argument["videoId"]
                         .as_str()
                         .filter(|video| !video.is_empty())
                         .map(str::to_owned);
-                    reported.index = number(&argument["currentIndex"]).map(|index| index as usize);
+                    // the clock and a refusal belong to the video the screen had before
+                    if video != reported.video {
+                        reported.position = Duration::ZERO;
+                        reported.duration = Duration::ZERO;
+                        reported.stamp = None;
+                        reported.refused = None;
+                    }
+                    reported.video = video;
+                    reported.index = number(&argument["currentIndex"])
+                        .filter(|index| *index >= 0.)
+                        .map(|index| index as usize);
                     clock(reported, argument);
                     if reported.video.is_none() {
                         reported.playing = false;
