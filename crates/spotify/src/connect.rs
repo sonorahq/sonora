@@ -6,13 +6,15 @@
 //! protocol straight through the session's dealer and spclient and leaves the queue to Sonora.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use futures::{StreamExt as _, stream::SelectAll};
+use futures::StreamExt as _;
+use futures::stream::{self, SelectAll};
 use http::{HeaderMap, HeaderValue, Method, header::CONTENT_TYPE};
 use librespot_core::dealer::manager::{BoxedStreamResult, Reply, RequestReply};
 use librespot_core::dealer::protocol::{
@@ -26,6 +28,8 @@ use librespot_protocol::connect::{
     Capabilities, Cluster, ClusterUpdate, Device as WireDevice, DeviceInfo, MemberType,
     PutStateReason, PutStateRequest, SetVolumeCommand,
 };
+use librespot_protocol::context::Context;
+use librespot_protocol::context_page::ContextPage;
 use librespot_protocol::context_track::ContextTrack;
 use librespot_protocol::devices::DeviceType;
 use librespot_protocol::media::AudioQuality;
@@ -48,6 +52,7 @@ use tokio::time::Instant;
 
 const DEVICE_NAME: &str = "Sonora";
 const TRACK_PREFIX: &str = "spotify:track:";
+const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 /// The context a state names when it has none, which Spotify needs to see to keep the device
 /// active.
 const UNKNOWN_CONTEXT: &str = "spotify:unknown";
@@ -61,7 +66,7 @@ const CLAIM_GRACE: Duration = Duration::from_secs(3);
 const WELCOME: Duration = Duration::from_secs(5);
 /// How long a skip made for the Jam while paused may show as playing before its pause lands.
 const ADVANCING: Duration = Duration::from_secs(3);
-/// The most pages of a collection that are read for the uids of its tracks.
+/// The most pages a collection only links to that are read for its songs.
 const UID_PAGES: usize = 40;
 /// How many characters of the digest make the uid Spotify's apps give a track they find listed
 /// without one.
@@ -73,6 +78,17 @@ const JAM_SLACK: Duration = Duration::from_millis(1500);
 const CARRIED: usize = 80;
 /// The recent history window Spotify includes in its player state.
 const PREVIOUS: usize = 10;
+/// The lens that asks Spotify for a playlist with smart shuffle's recommendations mixed in.
+const LENS: &str = "?spotify-apply-lenses=enhance";
+/// The player mode that says whether smart shuffle is on.
+const ENHANCEMENT: &str = "context_enhancement";
+/// The value of `ENHANCEMENT` when smart shuffle is on.
+const RECOMMENDATION: &str = "RECOMMENDATION";
+/// The provider Spotify gives a song that smart shuffle mixed into a playlist.
+const RECOMMENDED: &str = "enhanced_recommendation";
+/// `Capabilities.supports_smart_shuffle_mode`, newer than librespot's protocol files. Spotify
+/// moves playback away from a device without it when smart shuffle is switched on.
+const SMART_SHUFFLE_CAPABILITY: u32 = 33;
 /// A fresh cluster snapshot carries the exact shuffled queue and previous-track order.
 const QUEUE_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
 /// How many tracks of a queue a log line spells out.
@@ -126,10 +142,31 @@ enum Incoming {
     Command(Box<RequestReply>),
     Changes(Vec<Event>),
     Jam(Message),
+    Enhanced(Box<EnhancedRead>),
 }
 
-/// Dealer subscriptions share dispatch, errors and automatic removal of closed streams.
+/// Dealer subscriptions and one-shot reads share dispatch, errors and automatic removal of closed
+/// streams.
 type Subscriptions = SelectAll<BoxedStreamResult<Incoming>>;
+
+/// The collection smart shuffle is on for, and the songs it mixed into it.
+struct Enhanced {
+    context: String,
+    recommended: HashSet<String>,
+    /// Where each song sits in the enhanced collection, and its uid there. A device taking over
+    /// loads that collection and finds the track by these, not by its place in the plain one.
+    places: HashMap<String, (u32, String)>,
+}
+
+/// A smart shuffle collection read for a command, handed back to the worker so that it applies
+/// to what plays when the read lands. `play` is the play command it was read for, or `None` when
+/// smart shuffle was switched on during playback.
+struct EnhancedRead {
+    ticket: u64,
+    uri: String,
+    play: Option<PlayCommand>,
+    read: Result<(Context, HashSet<String>), Error>,
+}
 
 /// Subscribes to everything the device listens to. This has to happen before the dealer
 /// starts, because starting it closes the list.
@@ -240,6 +277,15 @@ struct Worker {
     active_device: String,
     /// Last queue published by another active device, retained across a transfer here.
     remote_queue: Option<(Arc<Snapshot>, Instant)>,
+    smart: Option<Enhanced>,
+    /// Whether the listener switched smart shuffle on for this device. A phone sets it once and
+    /// then sends plain play commands, which this mode turns into smart shuffle ones.
+    smart_mode: bool,
+    /// Counts the commands that change what plays, so a read made for an older one is dropped.
+    ticket: u64,
+    /// Whether a play command waits for its smart shuffle read. A switch of the mode meanwhile
+    /// leaves the read alone, and the play follows the mode when the read lands.
+    awaiting: bool,
     /// The reason of a put that is due but held back, and when it may go out.
     pending: Option<PutStateReason>,
     flush_at: Option<Instant>,
@@ -284,6 +330,10 @@ impl Worker {
             rename_at: None,
             active_device: String::new(),
             remote_queue: None,
+            smart: None,
+            smart_mode: false,
+            ticket: 0,
+            awaiting: false,
             pending: None,
             flush_at: None,
             last_put: None,
@@ -305,6 +355,7 @@ impl Worker {
                     Some(Ok(Incoming::Volume(volume))) => self.volume(volume),
                     Some(Ok(Incoming::Command(request))) => self.request(*request),
                     Some(Ok(Incoming::Jam(update))) => self.jam_update(update),
+                    Some(Ok(Incoming::Enhanced(read))) => self.enhanced_read(*read),
                     Some(Ok(Incoming::Changes(changes))) => {
                         for event in changes { self.out.send(event).ok(); }
                     }
@@ -781,6 +832,15 @@ impl Worker {
             return;
         };
         let before = std::mem::replace(&mut self.now, now);
+        let moved = match (before.as_deref(), self.now.as_deref()) {
+            (Some(before), Some(now)) => before.context != now.context,
+            _ => false,
+        };
+        // a collection started here while a smart shuffle read waits overrides the command
+        if self.awaiting && moved {
+            self.ticket += 1;
+            self.awaiting = false;
+        }
         self.identify(before.as_deref());
         self.read_uids();
         self.sync(before).await;
@@ -1110,15 +1170,39 @@ impl Worker {
             .iter()
             .map(|track| provided(track, &uri, known.at(track, None)))
             .collect();
-        state.context_url = format!("context://{uri}");
+        let smart = self.smart.as_ref().filter(|smart| smart.context == uri);
+        if let Some(smart) = smart {
+            let tracks = state.prev_tracks.iter_mut().chain(state.track.as_mut());
+            for track in tracks.chain(&mut state.next_tracks) {
+                let Some(id) = track_id(&track.uri) else {
+                    continue;
+                };
+                if smart.recommended.contains(&id) && track.provider == "context" {
+                    track.provider = RECOMMENDED.to_owned();
+                }
+                // a hand-queued song keeps its own uid, so two entries never share one
+                let uid = smart.places.get(&id).map(|(_, uid)| uid);
+                if let Some(uid) = uid.filter(|uid| !uid.is_empty() && track.provider != "queue") {
+                    track.uid = uid.clone();
+                }
+            }
+        }
+        state.context_url = match smart {
+            Some(_) => format!("context://{uri}{LENS}"),
+            None => format!("context://{uri}"),
+        };
         state.context_uri = uri;
         if !self.run.is_empty() {
             state.session_id = self.run.clone();
         }
         state.playback_id = self.play.clone();
         // a device taking over finds the track by where it sits as well as by its uri
-        state.index = MessageField::from_option(now.index.map(|track| ContextIndex {
-            track: track as u32,
+        let index = match smart {
+            Some(smart) => smart.places.get(&track.id).map(|(at, _)| *at),
+            None => now.index.map(|at| at as u32),
+        };
+        state.index = MessageField::from_option(index.map(|track| ContextIndex {
+            track,
             ..Default::default()
         }));
         state.timestamp =
@@ -1129,6 +1213,11 @@ impl Worker {
             shuffling_context: now.shuffle.unwrap_or_default(),
             repeating_context: now.repeat == Some(Repeat::All),
             repeating_track: now.repeat == Some(Repeat::One),
+            modes: self
+                .smart_mode
+                .then(|| (ENHANCEMENT.to_owned(), RECOMMENDATION.to_owned()))
+                .into_iter()
+                .collect(),
             ..Default::default()
         });
         let mut hasher = DefaultHasher::new();
@@ -1173,6 +1262,11 @@ impl Worker {
         self.active_device = cluster.active_device_id.clone();
         if self.active_since.is_some() && elsewhere && fresh {
             self.active_since = None;
+            // a smart shuffle read still pending for a play here would claim playback back
+            if self.awaiting {
+                self.ticket += 1;
+                self.awaiting = false;
+            }
             self.out.send(Event::Command(Command::Released)).ok();
         }
         let roster = self.roster(cluster);
@@ -1180,10 +1274,14 @@ impl Worker {
     }
 
     /// Uses a matching fresh player report to preserve queue order that transfer contexts can omit.
-    fn transferred(&self, state: TransferState) -> Start {
+    fn transferred(&mut self, state: TransferState) -> Start {
+        self.ticket += 1;
+        self.awaiting = false;
+        self.smart_mode = recommends(&state.options.modes);
+        self.smart = transferred_smart(&state);
         let now =
             (unix_millis() as i64).saturating_add(self.session.time_delta().saturating_mul(1000));
-        let start = started_by_transfer(state, now);
+        let start = marked(started_by_transfer(state, now), self.smart.as_ref());
         if let Some((queue, stamp)) = &self.remote_queue {
             let matching_context = start
                 .state
@@ -1288,10 +1386,28 @@ impl Worker {
         self.ack_at = Some(Instant::now() + ACK_DELAY);
     }
 
-    /// Starts what another device asked to play. A phone names the song by its uid alone, and a
-    /// jam names a context Sonora cannot read itself. Both send no tracks along, so the context
-    /// is read back first to find the song and what follows it.
-    fn play(&self, mut play: PlayCommand) {
+    /// Starts what another device asked to play, through smart shuffle when the command or this
+    /// device's mode asks for it. A command that names the mode sets it for this device.
+    fn play(&mut self, play: PlayCommand) {
+        self.ticket += 1;
+        if let Some(on) = asked_mode(&play) {
+            self.smart_mode = on;
+        }
+        let uri = smart_shuffled(&play, self.smart_mode);
+        self.awaiting = uri.is_some();
+        match uri {
+            Some(uri) => self.read_enhanced(uri, Some(play)),
+            None => {
+                self.smart = None;
+                self.play_plain(play);
+            }
+        }
+    }
+
+    /// Starts a play command from the pages it carries. A phone names the song by its uid alone,
+    /// and a jam names a context Sonora cannot read itself. Both send no tracks along, so the
+    /// context is read back first to find the song and what follows it.
+    fn play_plain(&self, mut play: PlayCommand) {
         let uri = play.context.uri.clone();
         let out = self.out.clone();
         let session = self.session.clone();
@@ -1301,7 +1417,7 @@ impl Worker {
                 && skip.track_uid.as_deref().is_some_and(|uid| !uid.is_empty())
         });
         let (Some(uri), true) = (uri, blind && (by_uid || collection_is_unread(&play))) else {
-            out.send(Event::Command(Command::Start(started_by_play(&play))))
+            out.send(Event::Command(Command::Start(started_by_play(&play, None))))
                 .ok();
             return;
         };
@@ -1310,9 +1426,165 @@ impl Worker {
                 Ok(context) => play.context.pages = context.pages,
                 Err(error) => log::warn!("connect: cannot read {uri} back: {error}"),
             }
-            out.send(Event::Command(Command::Start(started_by_play(&play))))
+            out.send(Event::Command(Command::Start(started_by_play(&play, None))))
                 .ok();
         });
+    }
+
+    /// Switches smart shuffle for what plays now. The controller names the collection with the
+    /// lens to switch it on, and without it to switch it off.
+    fn update_context(&mut self, context: Context) {
+        let Some(now) = &self.now else {
+            return;
+        };
+        if context.uri != self.playing(now) {
+            return log::debug!("connect: a context update names another collection");
+        }
+        self.switch_smart(context.url.is_some_and(|url| url.ends_with(LENS)));
+    }
+
+    /// Switches smart shuffle for this device, and for the playlist that plays now.
+    fn switch_smart(&mut self, on: bool) {
+        self.smart_mode = on;
+        if self.awaiting {
+            return;
+        }
+        let Some(now) = self.now.clone() else {
+            return;
+        };
+        let Some(uri) = self
+            .playing(&now)
+            .filter(|uri| uri.starts_with(PLAYLIST_PREFIX))
+        else {
+            return;
+        };
+        if on
+            && self
+                .smart
+                .as_ref()
+                .is_some_and(|smart| smart.context == uri)
+        {
+            return;
+        }
+        self.ticket += 1;
+        if on {
+            return self.read_enhanced(uri, None);
+        }
+        let Some(smart) = self.smart.take() else {
+            return;
+        };
+        log::debug!("connect: smart shuffle off");
+        let upcoming = now
+            .upcoming
+            .iter()
+            .filter(|track| track.queued || !smart.recommended.contains(&track.id))
+            .cloned()
+            .collect();
+        self.out
+            .send(Event::Command(Command::SetQueue { upcoming }))
+            .ok();
+    }
+
+    /// Reads the smart shuffle collection off the worker and hands it back through the
+    /// subscriptions, tagged with the ticket of the command it serves.
+    fn read_enhanced(&mut self, uri: String, play: Option<PlayCommand>) {
+        let ticket = self.ticket;
+        let session = self.session.clone();
+        let read = async move {
+            let read = enhanced(&session, &uri).await;
+            Ok::<_, Error>(Incoming::Enhanced(Box::new(EnhancedRead {
+                ticket,
+                uri,
+                play,
+                read,
+            })))
+        };
+        self.streams.push(stream::once(read).boxed());
+    }
+
+    /// Applies a smart shuffle read, unless a newer command replaced the one it was made for.
+    fn enhanced_read(&mut self, read: EnhancedRead) {
+        let EnhancedRead {
+            ticket,
+            uri,
+            play,
+            read,
+        } = read;
+        if ticket != self.ticket {
+            return log::debug!("connect: dropping a smart shuffle read a newer command replaced");
+        }
+        self.awaiting = false;
+        let play = match (play, self.smart_mode) {
+            (Some(play), false) => {
+                self.smart = None;
+                return self.play_plain(play);
+            }
+            (play, _) => play,
+        };
+        let (context, recommended) = match read {
+            Ok(read) => read,
+            Err(error) => {
+                log::warn!(
+                    "connect: cannot read {} enhanced: {error}",
+                    music::redact(&uri)
+                );
+                self.smart = None;
+                if let Some(play) = play {
+                    self.play_plain(play);
+                }
+                return;
+            }
+        };
+        let enhanced = Enhanced {
+            context: uri.clone(),
+            places: places(&context),
+            recommended,
+        };
+        if let Some(play) = play {
+            let play = enhanced_play(play, context.pages);
+            let start = started_by_play(&play, Some(&enhanced.recommended));
+            self.smart = Some(enhanced);
+            self.out.send(Event::Command(Command::Start(start))).ok();
+            return;
+        }
+        let Some(now) = self.now.clone() else {
+            self.smart = Some(enhanced);
+            return;
+        };
+        if self.playing(&now).as_ref() != Some(&uri) {
+            self.smart = None;
+            return;
+        }
+        let current = now.track.as_ref().map(|track| &track.id);
+        let mut following: Vec<_> = ids(&context).filter(|id| Some(id) != current).collect();
+        fastrand::shuffle(&mut following);
+        let upcoming = now
+            .upcoming
+            .iter()
+            .filter(|track| track.queued)
+            .cloned()
+            .chain(picks(following, &enhanced.recommended))
+            .collect();
+        self.smart = Some(enhanced);
+        // a handover replaces the whole queue, where a queue edit keeps the old order past its
+        // window and plays songs from the window a second time
+        let start = Start {
+            state: Arc::new(Snapshot {
+                upcoming,
+                shuffle: Some(true),
+                ..(*now).clone()
+            }),
+            preserve_queue: true,
+            restart: true,
+        };
+        self.out.send(Event::Command(Command::Start(start))).ok();
+    }
+
+    /// The uri of the collection that plays now, as Spotify names it.
+    fn playing(&self, now: &Snapshot) -> Option<String> {
+        now.context
+            .as_ref()
+            .map(|context| collection_uri(context, &self.session.username()))
     }
 
     /// What a command from Spotify asks of the app, or `None` for one this device does not
@@ -1320,13 +1592,19 @@ impl Worker {
     fn translate(&mut self, command: Wire) -> Option<Vec<Command>> {
         Some(match command {
             Wire::Transfer(transfer) => vec![Command::Start(self.transferred(transfer.data?))],
-            Wire::Play(play) => vec![Command::Start(started_by_play(&play))],
+            Wire::Play(play) => vec![Command::Start(started_by_play(&play, None))],
             Wire::Pause(_) => vec![Command::Pause],
             Wire::Resume(_) => vec![Command::Play],
             Wire::SkipNext(_) => vec![Command::Next],
             Wire::SkipPrev(_) => vec![Command::Previous],
             Wire::SeekTo(seek) => vec![Command::Seek(Duration::from_millis(seek.value.into()))],
-            Wire::SetShufflingContext(set) => vec![Command::Shuffle(set.value)],
+            Wire::SetShufflingContext(set) => {
+                // smart shuffle is a kind of shuffle, so shuffle off switches it off too
+                if !set.value {
+                    self.switch_smart(false);
+                }
+                vec![Command::Shuffle(set.value)]
+            }
             Wire::SetRepeatingContext(set) => {
                 vec![Command::Repeat(self.repeat(Some(set.value), None))]
             }
@@ -1334,6 +1612,15 @@ impl Worker {
                 vec![Command::Repeat(self.repeat(None, Some(set.value)))]
             }
             Wire::SetOptions(options) => {
+                let mode = options.modes.as_ref().map(recommends);
+                // smart shuffle is a kind of shuffle, so shuffle off switches it off too
+                let unshuffled = options.shuffling_context == Some(false);
+                if let Some(on) = mode
+                    .map(|on| on && !unshuffled)
+                    .or_else(|| unshuffled.then_some(false))
+                {
+                    self.switch_smart(on);
+                }
                 let mut commands = Vec::new();
                 if let Some(on) = options.shuffling_context {
                     commands.push(Command::Shuffle(on));
@@ -1377,11 +1664,15 @@ impl Worker {
                 }
                 vec![Command::SetQueue { upcoming }]
             }
-            Wire::UpdateContext(_) => Vec::new(),
+            Wire::UpdateContext(update) => {
+                self.update_context(update.context);
+                Vec::new()
+            }
             Wire::Unknown(value) => {
                 if let Some(state) = jam_transfer(&value) {
                     log::debug!("connect: a jam brings this device back in step");
-                    return Some(self.in_step(self.transferred(state)));
+                    let start = self.transferred(state);
+                    return Some(self.in_step(start));
                 }
                 // the field names only, since a transfer carries the listener's whole state
                 let fields = value
@@ -1710,7 +2001,7 @@ fn device_name(naming: &Naming) -> String {
 }
 
 fn device_info(session: &Session, naming: &Naming) -> DeviceInfo {
-    DeviceInfo {
+    let mut info = DeviceInfo {
         can_play: true,
         volume: u16::MAX as u32 / 2,
         name: device_name(naming),
@@ -1741,7 +2032,13 @@ fn device_info(session: &Session, naming: &Naming) -> DeviceInfo {
             ..Default::default()
         }),
         ..Default::default()
-    }
+    };
+    info.capabilities
+        .mut_or_insert_default()
+        .special_fields
+        .mut_unknown_fields()
+        .add_varint(SMART_SHUFFLE_CAPABILITY, 1);
+    info
 }
 
 /// A command for another device in the JSON the player command endpoint takes.
@@ -1939,53 +2236,94 @@ fn derived_uid(uri: &str) -> String {
     uid
 }
 
-/// The uri and uid of every track `uri` lists that has a uid, in the order it lists them. A long
-/// collection comes in pages, each naming the next, and they are read one after another up to
-/// `UID_PAGES` of them.
+/// The uri and uid of every track `uri` lists that has a uid, in the order it lists them.
 async fn listed_uids(session: &Session, uri: &str) -> Result<Listed, Error> {
-    let context = session.spclient().get_context(uri).await?;
-    let mut tracks = Vec::new();
-    let mut next = None;
-    for page in &context.pages {
-        tracks.extend(
-            page.tracks
-                .iter()
-                .filter_map(|track| Some((track.uri.clone()?, track.uid.clone()?))),
-        );
-        // a page with no tracks of its own only says where they are
-        next = match page.tracks.is_empty() {
-            true => page.page_url.clone().or_else(|| page.next_page_url.clone()),
-            false => page.next_page_url.clone(),
-        };
-    }
-    let mut pages = context.pages.len();
-    while let Some(url) = next
-        .take()
-        .filter(|url| !url.is_empty() && pages < UID_PAGES)
-    {
-        pages += 1;
-        let page = session.spclient().get_next_page(&url).await?;
-        let Ok(page) = serde_json::from_slice::<serde_json::Value>(&page) else {
-            break;
-        };
-        let text = |value: &serde_json::Value, key: &str| {
-            Some(value.get(key)?.as_str()?.to_owned()).filter(|text| !text.is_empty())
-        };
-        let listed = page.get("tracks").and_then(|tracks| tracks.as_array());
-        tracks.extend(
-            listed
-                .into_iter()
-                .flatten()
-                .filter_map(|track| Some((text(track, "uri")?, text(track, "uid")?))),
-        );
-        next = text(&page, "next_page_url").or_else(|| text(&page, "nextPageUrl"));
-    }
+    let mut context = session.spclient().get_context(uri).await?;
+    read_pages(session, &mut context).await?;
+    let mut tracks: Listed = context
+        .pages
+        .iter()
+        .flat_map(|page| &page.tracks)
+        .filter_map(|track| Some((track.uri.clone()?, track.uid.clone()?)))
+        .collect();
     tracks.retain(|(_, uid)| !uid.is_empty());
     log::debug!(
-        "connect: {uri} lists {} uids over {pages} pages",
-        tracks.len()
+        "connect: {uri} lists {} uids over {} pages",
+        tracks.len(),
+        context.pages.len()
     );
     Ok(tracks)
+}
+
+/// Reads the songs of a collection that its pages only link to, up to `UID_PAGES` reads. A page
+/// with no songs of its own says where they are, and a long collection names its next page.
+async fn read_pages(session: &Session, context: &mut Context) -> Result<(), Error> {
+    let mut reads = 0;
+    for page in &mut context.pages {
+        let Some(url) = page
+            .page_url
+            .clone()
+            .filter(|url| !url.is_empty() && page.tracks.is_empty())
+        else {
+            continue;
+        };
+        if reads == UID_PAGES {
+            return Ok(());
+        }
+        reads += 1;
+        let (tracks, next) = linked_page(&session.spclient().get_next_page(&url).await?);
+        page.tracks = tracks;
+        page.next_page_url = page
+            .next_page_url
+            .take()
+            .filter(|url| !url.is_empty())
+            .or(next);
+    }
+    let mut next = context
+        .pages
+        .last()
+        .and_then(|page| page.next_page_url.clone());
+    while let Some(url) = next
+        .take()
+        .filter(|url| !url.is_empty() && reads < UID_PAGES)
+    {
+        reads += 1;
+        let (tracks, more) = linked_page(&session.spclient().get_next_page(&url).await?);
+        context.pages.push(ContextPage {
+            tracks,
+            ..Default::default()
+        });
+        next = more;
+    }
+    Ok(())
+}
+
+/// The songs of a page read from its link, and the link to the page after it.
+fn linked_page(body: &[u8]) -> (Vec<ContextTrack>, Option<String>) {
+    let page: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let text = |value: &serde_json::Value, key: &str| {
+        Some(value.get(key)?.as_str()?.to_owned()).filter(|text| !text.is_empty())
+    };
+    let tracks = page
+        .get("tracks")
+        .and_then(|tracks| tracks.as_array())
+        .into_iter()
+        .flatten()
+        .map(|track| ContextTrack {
+            uri: text(track, "uri"),
+            uid: text(track, "uid"),
+            metadata: track
+                .get("metadata")
+                .and_then(|metadata| metadata.as_object())
+                .into_iter()
+                .flatten()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                .collect(),
+            ..Default::default()
+        })
+        .collect();
+    let next = text(&page, "next_page_url").or_else(|| text(&page, "nextPageUrl"));
+    (tracks, next)
 }
 
 /// When the song `told` to the Jam plays out, when its length is known.
@@ -2020,6 +2358,7 @@ fn keep_kinds(upcoming: &mut [QueuedTrack], before: &[QueuedTrack]) {
             let known = pool.remove(index);
             track.queued = known.queued;
             track.suggested = known.suggested;
+            track.recommended = known.recommended;
         }
     }
 }
@@ -2085,6 +2424,7 @@ fn listed_track(track: &ProvidedTrack) -> Option<QueuedTrack> {
         // what Spotify plays on by itself when a collection runs out
         suggested: track.provider == "autoplay",
         added_by: adder(track),
+        recommended: track.provider == RECOMMENDED,
     })
 }
 
@@ -2151,6 +2491,33 @@ fn collection(uri: &str) -> Option<Collection> {
         ["spotify", "user", _, "collection"] => Some(Collection::Saved),
         _ => None,
     }
+}
+
+/// Marks the songs of a transferred start that smart shuffle recommended, since a transfer lists
+/// its songs without the provider that says so.
+fn marked(start: Start, smart: Option<&Enhanced>) -> Start {
+    let Some(smart) = smart else {
+        return start;
+    };
+    let mut state = (*start.state).clone();
+    let tracks = state.previous.iter_mut().chain(state.track.as_mut());
+    for track in tracks.chain(&mut state.upcoming) {
+        track.recommended |= !track.queued && smart.recommended.contains(&track.id);
+    }
+    Start {
+        state: Arc::new(state),
+        ..start
+    }
+}
+
+/// The smart shuffle collection as queue occurrences, each marked when Spotify recommended it.
+fn picks(ids: Vec<String>, recommended: &HashSet<String>) -> Vec<QueuedTrack> {
+    ids.into_iter()
+        .map(|id| QueuedTrack {
+            recommended: recommended.contains(&id),
+            ..QueuedTrack::new(id, false)
+        })
+        .collect()
 }
 
 /// The occurrences a list of provider ids names, all with the same provenance.
@@ -2254,7 +2621,40 @@ fn collection_is_unread(play: &PlayCommand) -> bool {
 }
 
 /// What a play command from another device asks for.
-fn started_by_play(play: &PlayCommand) -> Start {
+/// The song a play command names, resolved in the same order librespot resolves a skip in: uri,
+/// then uid, then place in the pages it carries.
+fn chosen(play: &PlayCommand) -> Option<String> {
+    let skip = play.options.skip_to.as_ref();
+    let mut tracks = play.context.pages.iter().flat_map(|page| &page.tracks);
+    skip.and_then(|skip| skip.track_uri.as_deref())
+        .and_then(track_id)
+        .or_else(|| {
+            let uid = skip?.track_uid.as_deref().filter(|uid| !uid.is_empty())?;
+            tracks
+                .clone()
+                .find(|track| track.uid.as_deref() == Some(uid))
+                .and_then(listed_id)
+        })
+        .or_else(|| {
+            let index = skip.and_then(|skip| skip.track_index)? as usize;
+            // the place counts every entry of the page, including ones that name no track
+            tracks.nth(index).and_then(listed_id)
+        })
+}
+
+/// `play` over the smart shuffle collection's `pages`. The song it names is pinned by uri first,
+/// since a place counts in the plain pages, which the smart shuffle ones reorder.
+fn enhanced_play(mut play: PlayCommand, pages: Vec<ContextPage>) -> PlayCommand {
+    if let (Some(id), Some(skip)) = (chosen(&play), play.options.skip_to.as_mut()) {
+        skip.track_uri = Some(format!("{TRACK_PREFIX}{id}"));
+    }
+    play.context.pages = pages;
+    play
+}
+
+/// `enhanced` holds the recommendations when the pages are the smart shuffle collection, which this
+/// app shuffles itself and hands over as the queue.
+fn started_by_play(play: &PlayCommand, enhanced: Option<&HashSet<String>>) -> Start {
     let tracks: Vec<_> = play
         .context
         .pages
@@ -2263,7 +2663,6 @@ fn started_by_play(play: &PlayCommand) -> Start {
         .collect();
     let listed: Vec<_> = tracks.iter().filter_map(|track| listed_id(track)).collect();
 
-    // the same order librespot resolves a skip in: uri, then uid, then place
     let skip = play.options.skip_to.as_ref();
     log::debug!(
         "connect: play in {:?}, skip to {skip:?}, {} pages with {} tracks",
@@ -2271,49 +2670,57 @@ fn started_by_play(play: &PlayCommand) -> Start {
         play.context.pages.len(),
         listed.len(),
     );
-    let track = skip
-        .and_then(|skip| skip.track_uri.as_deref())
-        .and_then(track_id)
-        .or_else(|| {
-            let uid = skip?.track_uid.as_deref().filter(|uid| !uid.is_empty())?;
-            tracks
-                .iter()
-                .find(|track| track.uid.as_deref() == Some(uid))
-                .and_then(|track| listed_id(track))
-        })
-        .or_else(|| {
-            let index = skip.and_then(|skip| skip.track_index)? as usize;
-            // the place counts every entry of the page, including ones that name no track
-            tracks.get(index).and_then(|track| listed_id(track))
-        });
+    let track = chosen(play);
     let index = skip
         .and_then(|skip| skip.track_index)
         .map(|index| index as usize);
-    let upcoming = occurrences(
-        listed
-            .into_iter()
-            .skip_while(|id| Some(id) != track.as_ref())
-            .skip(1)
-            .take(CARRIED),
-        false,
-    );
+    let (track, upcoming) = match enhanced {
+        Some(recommended) => {
+            let mut rest: Vec<_> = listed
+                .into_iter()
+                .filter(|id| Some(id) != track.as_ref())
+                .collect();
+            fastrand::shuffle(&mut rest);
+            // with no song named, a shuffle starts anywhere rather than on the first song
+            let track = track.or_else(|| rest.pop());
+            // the whole collection, uncapped, so the recommendations reach past the first songs
+            (track, picks(rest, recommended))
+        }
+        None => {
+            let upcoming = occurrences(
+                listed
+                    .into_iter()
+                    .skip_while(|id| Some(id) != track.as_ref())
+                    .skip(1)
+                    .take(CARRIED),
+                false,
+            );
+            (track, upcoming)
+        }
+    };
 
     Start {
         state: Arc::new(Snapshot {
             context: play.context.uri.as_deref().and_then(collection),
-            track: track.map(|id| QueuedTrack::new(id, false)),
+            track: track.map(|id| QueuedTrack {
+                recommended: enhanced.is_some_and(|recommended| recommended.contains(&id)),
+                ..QueuedTrack::new(id, false)
+            }),
             index,
             upcoming,
             position: Duration::from_millis(play.options.seek_to.unwrap_or_default().into()),
             playing: !play.options.initially_paused.unwrap_or_default(),
-            shuffle: play
-                .options
-                .player_options_override
-                .as_ref()
-                .and_then(|options| options.shuffling_context),
+            shuffle: match enhanced {
+                Some(_) => Some(true),
+                None => play
+                    .options
+                    .player_options_override
+                    .as_ref()
+                    .and_then(|options| options.shuffling_context),
+            },
             ..Default::default()
         }),
-        preserve_queue: false,
+        preserve_queue: enhanced.is_some(),
         restart: true,
     }
 }
@@ -2378,4 +2785,174 @@ fn collection_item(bytes: &[u8]) -> protobuf::Result<Option<Event>> {
         }),
         _ => Some(Event::LibraryChanged),
     })
+}
+
+/// The playlist a play command starts with smart shuffle, when `mode`, this device's mode once
+/// the command set it, is on.
+fn smart_shuffled(play: &PlayCommand, mode: bool) -> Option<String> {
+    // shortcut: playlists only, as smart shuffle is offered there; extend once albums show it
+    play.context
+        .uri
+        .clone()
+        .filter(|uri| mode && uri.starts_with(PLAYLIST_PREFIX))
+}
+
+/// The smart shuffle mode a play command names: on through the lens or its options, off through
+/// options that ask for no shuffle or name other modes, or `None` when it says nothing.
+fn asked_mode(play: &PlayCommand) -> Option<bool> {
+    let lens = play
+        .context
+        .url
+        .as_deref()
+        .is_some_and(|url| url.ends_with(LENS));
+    let options = play.options.player_options_override.as_ref();
+    let modes = options
+        .map(|options| &options.modes)
+        .filter(|modes| !modes.is_empty());
+    // smart shuffle is a kind of shuffle, so a play asked unshuffled leaves it off
+    let unshuffled = options.and_then(|options| options.shuffling_context) == Some(false);
+    match (lens, modes) {
+        _ if unshuffled => Some(false),
+        (true, _) => Some(true),
+        (false, modes) => modes.map(recommends),
+    }
+}
+
+/// Whether player modes say smart shuffle is on.
+fn recommends(modes: &HashMap<String, String>) -> bool {
+    modes.get(ENHANCEMENT).map(String::as_str) == Some(RECOMMENDATION)
+}
+
+/// Smart shuffle as a transfer hands it over, with the songs it already mixed in.
+fn transferred_smart(state: &TransferState) -> Option<Enhanced> {
+    let on = recommends(&state.options.modes);
+    let context = state.current_session.context.uri.clone().filter(|_| on)?;
+    let recommended = recommended(&state.current_session.context).collect();
+    Some(Enhanced {
+        context,
+        recommended,
+        places: places(&state.current_session.context),
+    })
+}
+
+/// Reads a playlist with smart shuffle's recommendations mixed in, and which songs those are.
+async fn enhanced(session: &Session, uri: &str) -> Result<(Context, HashSet<String>), Error> {
+    let spclient = session.spclient();
+    let mut context = spclient.get_context(&format!("{uri}{LENS}")).await?;
+    read_pages(session, &mut context).await?;
+    let mut recommended: HashSet<String> = recommended(&context).collect();
+    // without a provider on the songs, the recommendations are what the plain playlist lacks
+    let plain = match recommended.is_empty() {
+        true => {
+            let mut plain = spclient.get_context(uri).await?;
+            read_pages(session, &mut plain).await?;
+            Some(plain)
+        }
+        false => None,
+    };
+    // a page that only links to its songs would make its songs look recommended
+    if let Some(plain) =
+        plain.filter(|plain| plain.pages.iter().all(|page| !page.tracks.is_empty()))
+    {
+        let plain: HashSet<String> = ids(&plain).collect();
+        recommended = ids(&context).filter(|id| !plain.contains(id)).collect();
+    }
+    log::debug!(
+        "connect: smart shuffle on, {} recommended in {}",
+        recommended.len(),
+        music::redact(uri)
+    );
+    Ok((context, recommended))
+}
+
+/// The songs of a collection's loaded pages, in order. A page that only links to its songs is
+/// left out.
+fn ids(context: &Context) -> impl Iterator<Item = String> + '_ {
+    context
+        .pages
+        .iter()
+        .flat_map(|page| &page.tracks)
+        .filter_map(listed_id)
+}
+
+/// Where each song first sits in a collection, counting every entry, and its uid there.
+fn places(context: &Context) -> HashMap<String, (u32, String)> {
+    let mut places = HashMap::new();
+    let tracks = context.pages.iter().flat_map(|page| &page.tracks);
+    for (at, track) in tracks.enumerate() {
+        if let Some(id) = listed_id(track) {
+            let uid = track.uid.clone().unwrap_or_default();
+            places.entry(id).or_insert((at as u32, uid));
+        }
+    }
+    places
+}
+
+fn recommended(context: &Context) -> impl Iterator<Item = String> + '_ {
+    context
+        .pages
+        .iter()
+        .flat_map(|page| &page.tracks)
+        .filter(|track| track.metadata.get("provider").map(String::as_str) == Some(RECOMMENDED))
+        .filter_map(listed_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(ids: &[&str]) -> ContextPage {
+        ContextPage {
+            tracks: ids
+                .iter()
+                .map(|id| ContextTrack {
+                    uri: Some(format!("{TRACK_PREFIX}{id}")),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_place_keeps_its_song_over_the_smart_shuffle_pages() {
+        let play = PlayCommand {
+            context: Context {
+                uri: Some("spotify:playlist:p".to_owned()),
+                pages: vec![page(&["a", "b"])],
+                ..Default::default()
+            },
+            play_origin: PlayOrigin::default(),
+            options: serde_json::from_value(serde_json::json!({ "skip_to": { "track_index": 1 } }))
+                .unwrap(),
+            logging_params: serde_json::from_value(serde_json::json!({})).unwrap(),
+        };
+        let recommended = HashSet::from(["r".to_owned()]);
+        let play = enhanced_play(play, vec![page(&["a", "r", "b"])]);
+        let start = started_by_play(&play, Some(&recommended));
+        let track = start.state.track.as_ref().map(|track| track.id.as_str());
+        assert_eq!(track, Some("b"));
+    }
+
+    #[test]
+    fn a_linked_page_keeps_who_provided_each_song() {
+        let body = serde_json::json!({
+            "tracks": [
+                { "uri": "spotify:track:a", "uid": "u1" },
+                { "uri": "spotify:track:r", "metadata": { "provider": RECOMMENDED } },
+            ],
+            "next_page_url": "hm://next",
+        });
+        let (tracks, next) = linked_page(body.to_string().as_bytes());
+        let context = Context {
+            pages: vec![ContextPage {
+                tracks,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(ids(&context).collect::<Vec<_>>(), ["a", "r"]);
+        assert_eq!(recommended(&context).collect::<Vec<_>>(), ["r"]);
+        assert_eq!(next.as_deref(), Some("hm://next"));
+    }
 }

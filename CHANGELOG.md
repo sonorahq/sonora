@@ -22,6 +22,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fullscreen player has the Sessions button at the left of its controls on wide windows too, across from the volume.
 - Cast YouTube Music to a TV or speaker with YouTube on your network from the devices menu. It keeps playing after you close Sonora or your laptop, and you can still pause, skip and seek from Sonora. A speaker plays only while you are signed in.
 - `sonora playlist list`, `create`, `rename`, `public`, `add`, `remove` and `delete` manage playlists from the command line and the control socket.
+- Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 
 ### Changed
 
@@ -62,6 +63,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Playback handed to Sonora through Spotify Connect starts at once, and the rest of its queue fills in as it loads.
 - Opening a menu no longer thickens the haze under the Settings header, so the page scrolling beneath it looks the same with the menu open as without.
 - A dropdown in Settings resizes to a newly picked option without shaking: its arrow and edge stay in place, and its text no longer jumps up and down.
 - The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.

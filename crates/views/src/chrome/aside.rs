@@ -247,6 +247,8 @@ struct RowLook {
     queued: bool,
     /// Whether the row is on another device's queue, which this app shows but cannot change.
     remote: bool,
+    /// Whether the provider mixed the song in as a recommendation.
+    recommended: bool,
 }
 
 /// What a drop onto the queue carried: drag within the app, or files from another program.
@@ -878,6 +880,7 @@ impl Aside {
             drop_line,
             queued,
             remote,
+            recommended,
         } = look;
         let theme = *cx.theme();
         let queue_index = position.upcoming().filter(|_| !remote);
@@ -907,14 +910,18 @@ impl Aside {
             .added_by
             .as_deref()
             .filter(|added| queued && !added.name.is_empty() && added.name != added.id);
-        let about = match added {
-            Some(added) => SharedString::from(format!(
+        let mut about = match added {
+            Some(added) => format!(
                 "{}, {}",
                 track.artists,
                 t!("queue-added-by", name = added.name.as_str())
-            )),
-            None => SharedString::from(track.artists.clone()),
+            ),
+            None => track.artists.to_string(),
         };
+        if recommended {
+            about = format!("{about}, {}", t!("queue-recommended"));
+        }
+        let about = SharedString::from(about);
 
         let card = Card::new(
             SharedString::from(format!("queue-track-{key}")),
@@ -942,6 +949,7 @@ impl Aside {
         )
         .tint(title)
         .when(track.explicit, Card::explicit)
+        .when(recommended, Card::recommended)
         .when(!remote || current, |card| {
             card.play(
                 playing,
@@ -2307,6 +2315,7 @@ impl Aside {
                             drop_line,
                             queued: sections.kind(position) == Some(state::QueueKind::Queued),
                             remote,
+                            recommended: listing.recommended(position, cx),
                         };
                         let place = track_place(&sections, position);
                         Self::row(track, index, position, revision, look, place, cx)
