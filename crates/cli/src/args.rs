@@ -11,8 +11,9 @@ use clap::{
 use clap_complete::Shell;
 
 use crate::commands::{
-    CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, ProviderCommand, QueueCommand,
-    Repeat, Request, SearchQuery, SessionCommand, Switch, Time, Watch,
+    CommandType, Format, Item, Kind, Level, Local, PlaybackCommand, PlaylistCommand,
+    ProviderCommand, QueueCommand, Repeat, Request, SearchQuery, SessionCommand, Switch, Time,
+    Watch,
 };
 use crate::item;
 
@@ -119,6 +120,11 @@ enum Sub {
     Shuffle { switch: Option<SwitchArg> },
     /// Print the current track's favorite state, or change it.
     Like { switch: Option<SwitchArg> },
+    /// List or change the listener's playlists.
+    Playlist {
+        #[command(subcommand)]
+        action: PlaylistArg,
+    },
     /// Print repeat, or set it.
     Repeat { repeat: Option<RepeatArg> },
     /// Queue files or links after the tracks queued by hand.
@@ -176,6 +182,45 @@ enum Sub {
     },
     /// Print the completion script for a shell.
     Completions { shell: Shell },
+}
+
+/// Edits of the listener's playlists, available under `sonora playlist`.
+#[derive(Subcommand)]
+enum PlaylistArg {
+    /// List the playlists in the library.
+    List,
+    /// Create a playlist, optionally filled with track ids.
+    Create {
+        name: String,
+        /// Track ids to put in the new playlist.
+        #[arg(long, num_args = 1..)]
+        tracks: Vec<String>,
+        /// Create in the local library instead of on the current provider.
+        #[arg(long)]
+        local: bool,
+    },
+    /// Rename a playlist.
+    Rename { id: String, name: String },
+    /// Set whether a playlist is public.
+    Public {
+        id: String,
+        #[arg(action = ArgAction::Set, value_parser = visibility)]
+        public: bool,
+    },
+    /// Add track ids to a playlist.
+    Add {
+        id: String,
+        #[arg(required = true)]
+        tracks: Vec<String>,
+    },
+    /// Drop every copy of the track ids from a playlist.
+    Remove {
+        id: String,
+        #[arg(required = true)]
+        tracks: Vec<String>,
+    },
+    /// Delete a playlist.
+    Delete { id: String },
 }
 
 /// What `sonora session` does with a Sonora Session.
@@ -336,6 +381,23 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Mute { switch } => play(PlaybackCommand::Mute(switch.map(Switch::from))),
         Sub::Shuffle { switch } => play(PlaybackCommand::Shuffle(switch.map(Switch::from))),
         Sub::Like { switch } => Request::Like(switch.map(Switch::from)),
+        Sub::Playlist { action } => Request::Playlists(match action {
+            PlaylistArg::List => PlaylistCommand::List,
+            PlaylistArg::Create {
+                name,
+                tracks,
+                local,
+            } => PlaylistCommand::Create {
+                name,
+                tracks,
+                local,
+            },
+            PlaylistArg::Rename { id, name } => PlaylistCommand::Rename { id, name },
+            PlaylistArg::Public { id, public } => PlaylistCommand::Visibility { id, public },
+            PlaylistArg::Add { id, tracks } => PlaylistCommand::AddTracks { id, tracks },
+            PlaylistArg::Remove { id, tracks } => PlaylistCommand::RemoveTracks { id, tracks },
+            PlaylistArg::Delete { id } => PlaylistCommand::Delete { id },
+        }),
         Sub::Repeat { repeat } => play(PlaybackCommand::Repeat(repeat.map(Repeat::from))),
         Sub::Add {
             items,
@@ -477,6 +539,15 @@ fn clock(text: &str) -> Option<u64> {
         seconds = seconds.checked_mul(60)?.checked_add(value)?;
     }
     (count <= 3).then_some(seconds)
+}
+
+/// Playlist visibility as `on` or `off`.
+fn visibility(text: &str) -> Result<bool, String> {
+    match text {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err("visibility must be on or off".to_owned()),
+    }
 }
 
 /// A 1-based position in the upcoming queue: 1 puts the item right after the playing track.
@@ -663,6 +734,76 @@ mod tests {
             let args = ["sonora", "add", "--at", at, "-s", "queen"].map(OsString::from);
             assert!(parse(args.to_vec(), "0.0.0").is_err(), "position: {at}");
         }
+    }
+
+    #[test]
+    fn playlist_actions_map_to_control_requests() {
+        for (args, command) in [
+            (&["playlist", "list"][..], PlaylistCommand::List),
+            (
+                &["playlist", "create", "Road trip"][..],
+                PlaylistCommand::Create {
+                    name: "Road trip".to_owned(),
+                    tracks: Vec::new(),
+                    local: false,
+                },
+            ),
+            (
+                &[
+                    "playlist", "create", "Local", "--local", "--tracks", "a", "b",
+                ][..],
+                PlaylistCommand::Create {
+                    name: "Local".to_owned(),
+                    tracks: vec!["a".to_owned(), "b".to_owned()],
+                    local: true,
+                },
+            ),
+            (
+                &["playlist", "rename", "p1", "New name"][..],
+                PlaylistCommand::Rename {
+                    id: "p1".to_owned(),
+                    name: "New name".to_owned(),
+                },
+            ),
+            (
+                &["playlist", "public", "p1", "on"][..],
+                PlaylistCommand::Visibility {
+                    id: "p1".to_owned(),
+                    public: true,
+                },
+            ),
+            (
+                &["playlist", "add", "p1", "t1", "t2"][..],
+                PlaylistCommand::AddTracks {
+                    id: "p1".to_owned(),
+                    tracks: vec!["t1".to_owned(), "t2".to_owned()],
+                },
+            ),
+            (
+                &["playlist", "remove", "p1", "t1"][..],
+                PlaylistCommand::RemoveTracks {
+                    id: "p1".to_owned(),
+                    tracks: vec!["t1".to_owned()],
+                },
+            ),
+            (
+                &["playlist", "delete", "p1"][..],
+                PlaylistCommand::Delete {
+                    id: "p1".to_owned(),
+                },
+            ),
+        ] {
+            let CommandType::Remote(request, _) = parsed(args) else {
+                panic!("a playlist action should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Playlists(command));
+        }
+    }
+
+    #[test]
+    fn playlist_public_refuses_other_words() {
+        let args = ["sonora", "playlist", "public", "p1", "perhaps"].map(OsString::from);
+        assert!(parse(args.to_vec(), "0.0.0").is_err());
     }
 
     #[test]

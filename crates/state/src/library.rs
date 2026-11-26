@@ -2839,15 +2839,15 @@ impl Library {
     /// Takes tracks out of a playlist and reports it once the provider agrees, with an Undo that
     /// adds them back at the end, the way every provider adds. Every copy of a named track goes,
     /// the way the page drops every row of it, so `rows` names a track once for each copy the
-    /// playlist holds and the count and the Undo follow it.
+    /// playlist holds and the count and the Undo follow it. Says whether the change started.
     pub fn remove_tracks_from_playlist(
         &mut self,
         playlist_id: String,
         rows: Vec<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if rows.is_empty() {
-            return;
+            return true;
         }
         let mut seen = HashSet::new();
         let track_ids: Vec<String> = rows
@@ -2884,7 +2884,7 @@ impl Library {
                 this.note_removed(&emptied, gone, dropped_count, cx);
             },
             cx,
-        );
+        )
     }
 
     /// Takes the order the listener left a playlist's page in. `seen` is the order the page
@@ -2904,6 +2904,16 @@ impl Library {
             .and_modify(|pending| pending.wanted.clone_from(&wanted))
             .or_insert(PendingOrder { base: seen, wanted });
         self.arm_reorders(REORDER_PAUSE, cx);
+    }
+
+    /// Whether a playlist change is running, so another one cannot start yet.
+    pub fn playlist_busy(&self) -> bool {
+        self.playlist_task.is_some()
+    }
+
+    /// The account generation of `shelf`, so a delayed edit can refuse to run after a switch.
+    pub fn shelf_epoch(&self, shelf: Shelf) -> u64 {
+        self.epochs[shelf.slot()]
     }
 
     /// Whether the playlist has a new order that is not written yet, or is being written.
