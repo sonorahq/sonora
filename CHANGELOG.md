@@ -57,6 +57,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
 - Toasts move on springs: they glide into the pile, a toast you let go of after a short swipe slides back, and a flicked one flies off at the speed you threw it.
 - Apple Music lyrics credit lrc.red, the service they come from, with a link to its site under the lyrics.
+- The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
 
 ### Fixed
 
