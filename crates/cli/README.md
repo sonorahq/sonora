@@ -161,7 +161,7 @@ sonora queue --json | jq '.upcoming[].track.title'
 ```
 
 ```json
-{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context"},"upcoming":[],"truncated":false}
+{"previous":[],"current":{"track":{"id":"…","title":"One More Time","artists":["Daft Punk"],"album":"Discovery","cover":"https://…","duration":320},"kind":"context","uid":"sonora-4514d84b51f6a941"},"upcoming":[],"truncated":false}
 ```
 
 An empty queue prints `Queue is empty.` as text, and the same shape with empty lists and a

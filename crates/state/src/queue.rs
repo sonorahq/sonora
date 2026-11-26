@@ -227,14 +227,12 @@ impl Queue {
         self.edit(cx, |order| order.move_upcoming_to_gap(from, gap));
     }
 
-    /// Removes an upcoming song or suggestion, retaining its position for Undo. Says whether a
-    /// row was actually removed: a current or past position has nothing to take.
-    pub fn remove(&mut self, position: QueuePosition, cx: &mut Context<Self>) -> bool {
+    /// Removes an upcoming song or suggestion, retaining its position for Undo.
+    pub fn remove(&mut self, position: QueuePosition, cx: &mut Context<Self>) {
         let Some(taken) = self.edit(cx, |order| order.remove(position)) else {
-            return false;
+            return;
         };
         self.report_removal(taken, cx);
-        true
     }
 
     /// Adds a removed track to the toast that reports removals, or posts a new one once the
@@ -296,6 +294,11 @@ impl Queue {
 
     pub fn next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         self.edit(cx, Order::advance)
+    }
+
+    /// Puts the last song in history when the queue runs out, leaving nothing as now playing.
+    pub fn finish(&mut self, cx: &mut Context<Self>) {
+        self.edit(cx, Order::finish);
     }
 
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins

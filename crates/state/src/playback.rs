@@ -1410,11 +1410,18 @@ impl Playback {
         if self.steered(cx).is_some() {
             return false;
         }
-        let Some(position) = self.queue.read(cx).position(uid) else {
+        let Some(index) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
             return false;
         };
-        self.queue
-            .update(cx, |queue, cx| queue.remove(position, cx))
+        self.queue.update(cx, |queue, cx| {
+            queue.remove(QueuePosition::Upcoming(index), cx)
+        });
+        true
     }
 
     /// Moves the upcoming row with `uid` to `gap`, saying whether it could be moved.
@@ -1435,16 +1442,13 @@ impl Playback {
         true
     }
 
-    /// Drops everything queued after the current track, saying whether the queue was editable.
-    pub fn clear_queued(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Drops everything queued after the current track, the same as the queue's Clear button.
+    /// Does nothing while another device has playback.
+    pub fn clear_queued(&mut self, cx: &mut Context<Self>) {
         if self.steered(cx).is_some() {
-            return false;
+            return;
         }
-        // Dropping a station top-up in flight keeps it from refilling the emptied queue. The
-        // station stays active and fetches again once the queue runs low.
-        self.topping = None;
         self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
-        true
     }
 
     /// Puts tracks into the queue at `placement` without a word, or starts playing them when
