@@ -81,11 +81,11 @@ impl UserView {
             .meta(strip)
     }
 
-    fn playlists(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn playlists(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let profile = self.profile.read(cx);
         let loading = profile.is_loading();
         let listed = profile.playlists();
-        let layout = CardGrid::layout(self.width);
+        let layout = CardGrid::layout(self.width, window);
 
         let total = listed.len();
         let cards = match loading {
@@ -213,7 +213,7 @@ impl Render for UserView {
                             .flex_col()
                             .gap_8()
                             .child(self.header(cx))
-                            .child(self.playlists(cx)),
+                            .child(self.playlists(window, cx)),
                     ),
             )
             .into_any_element()

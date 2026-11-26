@@ -627,7 +627,7 @@ impl ArtistView {
             return Pixels::ZERO;
         }
 
-        let grid = CardGrid::layout(self.width);
+        let grid = CardGrid::layout(self.width, window);
         let card = Card::tile_height(grid.card, window, cx);
         card * rows as f32 + release_gap(window) * rows.saturating_sub(1) as f32
     }
@@ -698,7 +698,7 @@ impl ArtistView {
     /// so the same releases stay where they were. The row heights are uniform here, so the
     /// anchor is the first card of that row and nothing but the packing has to be remembered.
     fn hold_releases(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let grid = CardGrid::layout(self.width);
+        let grid = CardGrid::layout(self.width, window);
         let columns = grid.columns.max(1);
         let tile = Card::tile_height(grid.card, window, cx);
         let (was_columns, was_tile) = (self.release_columns, self.release_tile);
@@ -758,7 +758,7 @@ impl ArtistView {
             false => cards::release_filters(local, albums.iter().map(|album| album.release_type)),
         };
 
-        let grid = CardGrid::layout(self.width);
+        let grid = CardGrid::layout(self.width, window);
         let gap = release_gap(window);
         let releases = match loading {
             true => div()
@@ -766,7 +766,7 @@ impl ArtistView {
                 .flex_col()
                 .gap(gap)
                 .children((0..RELEASE_ROWS).map(|row| {
-                    CardGrid::new(self.width).children((0..grid.columns).map(move |column| {
+                    CardGrid::new(grid).children((0..grid.columns).map(move |column| {
                         let index = row * grid.columns + column;
                         Card::skeleton(("artist-release-skeleton", index))
                             .tile(grid.card)
@@ -789,7 +789,6 @@ impl ArtistView {
                 let rows = shown.len().div_ceil(columns);
                 let total = shown.len();
                 let height = Card::tile_height(grid.card, window, cx);
-                let width = self.width;
                 let card = grid.card;
                 let opened = cx.entity().downgrade();
                 let lead = self.release_lead.clone();
@@ -824,7 +823,7 @@ impl ArtistView {
                             )
                         });
 
-                        CardGrid::new(width).children(cards).into_any_element()
+                        CardGrid::new(grid).children(cards).into_any_element()
                     })
                     .into_any_element()
             }
@@ -920,7 +919,7 @@ impl ArtistView {
         notify: &Rc<dyn Fn(&mut App)>,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        let grid = CardGrid::layout(self.width);
+        let grid = CardGrid::layout(self.width, window);
         let card = grid.card;
         let columns = grid.columns.max(1);
         let detail = self.detail.read(cx);
