@@ -227,8 +227,9 @@ pub struct Capabilities {
     // pub supports_dj: bool,
     #[prost(int32, tag = "30")]
     pub supported_audio_quality: i32,
-    // #[prost(bool, tag = "33")]
-    // pub supports_smart_shuffle_mode: bool,
+    /// Without it Spotify moves playback away from the device when smart shuffle is turned on.
+    #[prost(bool, tag = "33")]
+    pub supports_smart_shuffle_mode: bool,
     // #[prost(bool, tag = "34")]
     // pub supports_remote_sleep_timer: bool,
     // #[prost(bool, tag = "35")]
@@ -439,8 +440,9 @@ pub struct ContextPlayerOptions {
     pub repeating_track: bool,
     #[prost(float, optional, tag = "4")]
     pub playback_speed: Option<f32>,
-    // #[prost(map = "string, string", tag = "5")]
-    // pub modes: std::collections::HashMap<String, String>,
+    /// Named player modes, such as smart shuffle's `context_enhancement`.
+    #[prost(map = "string, string", tag = "5")]
+    pub modes: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, prost::Enumeration)]
@@ -490,7 +492,6 @@ pub struct Context {
     #[prost(string, optional, tag = "1")]
     pub uri: Option<String>,
     #[prost(string, optional, tag = "2")]
-    #[serde(skip)]
     pub url: Option<String>,
     #[prost(map = "string, string", tag = "3")]
     #[serde(skip)]
@@ -660,8 +661,10 @@ pub struct TransferOptions {
     pub repeating_track: Option<bool>,
     #[prost(float, optional, tag = "4")]
     pub playback_speed: Option<f32>,
-    // #[prost(map = "string, string", tag = "5")]
-    // pub modes: std::collections::HashMap<String, String>,
+    /// Named player modes, such as smart shuffle's `context_enhancement`.
+    #[prost(map = "string, string", tag = "5")]
+    #[serde(default)]
+    pub modes: std::collections::HashMap<String, String>,
 }
 
 fn track_gid<'de, D: Deserializer<'de>>(input: D) -> Result<Option<Bytes>, D::Error> {

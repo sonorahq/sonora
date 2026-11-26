@@ -419,6 +419,8 @@ pub enum Command {
         shuffling_context: Option<bool>,
         repeating_context: Option<bool>,
         repeating_track: Option<bool>,
+        /// Named player modes the command sets, such as smart shuffle's.
+        modes: Option<std::collections::HashMap<String, String>>,
     },
     AddToQueue {
         track: Box<ProvidedTrack>,
@@ -426,9 +428,20 @@ pub enum Command {
     SetQueue {
         next_tracks: Vec<ProvidedTrack>,
     },
-    UpdateContext,
+    /// Names the collection that plays now again, with the smart shuffle lens on its url to
+    /// switch smart shuffle on and without it to switch it off.
+    UpdateContext {
+        context: Option<ContextRef>,
+    },
     #[serde(other)]
     Unknown,
+}
+
+/// The collection an `update_context` command names, and the url that carries its lens.
+#[derive(Deserialize)]
+pub struct ContextRef {
+    pub uri: Option<String>,
+    pub url: Option<String>,
 }
 
 /// The context and start position requested by another device.
