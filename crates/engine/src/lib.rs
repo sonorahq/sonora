@@ -787,7 +787,10 @@ async fn engine_loop<F: Fetch>(
                     break;
                 };
                 let before = current.clone();
-                settle(&mut current, join);
+                // A join heard while a load is fetching comes from the decoder that load stopped.
+                if inflight.is_none() {
+                    settle(&mut current, join);
+                }
                 if current != before {
                     watch_ahead(&fetch, &current, &ahead, &downloads, &mut watching);
                 }
