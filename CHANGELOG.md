@@ -94,6 +94,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Play, pause and volume on another device show at once, and the volume slider no longer jumps back and replays your drag while the device catches up. A drag sets the device's volume once you let go.
 - Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
 - Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
+- When a queue ends without repeat, its last song moves to history instead of staying as now playing. Play button starts the queue over and Previous button brings that song back.
 
 ### Fixed
 
