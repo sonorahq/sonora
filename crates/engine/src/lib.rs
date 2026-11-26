@@ -559,11 +559,14 @@ async fn engine_loop<F: Fetch>(
                         let joined = segued.as_deref() == Some(id.as_str());
                         // Only an engine that is still sounding can be carried on from. A
                         // silenced one holds a track paused where it stopped, and resuming it
-                        // would play that track instead of this one.
+                        // would play that track instead of this one. A join lined up while the
+                        // current track is still being fetched never happened, since nothing
+                        // is decoding yet, so that load starts the joined track afresh.
                         if seamless
                             && wanted
                             && at.is_none()
-                            && (current.as_deref() == Some(id.as_str()) || joined)
+                            && (current.as_deref() == Some(id.as_str())
+                                || (joined && inflight.is_none()))
                         {
                             // already decoding, either still or through a gapless join
                             if joined {
