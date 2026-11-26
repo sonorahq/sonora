@@ -786,7 +786,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bench_metrics"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1246,7 +1246,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1512,8 +1512,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73"
 dependencies = [
  "bitflags 2.13.2",
- "fontdb",
- "harfrust",
+ "fontdb 0.23.0",
+ "harfrust 0.5.2",
  "linebender_resource_handle",
  "log",
  "rangemap",
@@ -1882,7 +1882,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2505,6 +2505,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontdb"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2660c5e9157bf76d2db1294e4a9feba604ef610819a3b591088d0d8392a3290f"
+dependencies = [
+ "fontconfig-parser",
+ "log",
+ "memmap2",
+ "slotmap",
+ "tinyvec",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2826,7 +2839,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2874,7 +2887,7 @@ dependencies = [
  "raw-window-handle",
  "refineable",
  "regex",
- "resvg 0.46.0",
+ "resvg",
  "scheduler",
  "schemars",
  "seahash",
@@ -2889,11 +2902,11 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.21",
- "tiny-skia-path 0.11.4",
+ "tiny-skia-path",
  "ttf-parser",
  "unicode-segmentation",
  "url",
- "usvg 0.46.0",
+ "usvg",
  "uuid 1.29.1",
  "waker-fn",
  "web-time",
@@ -2904,7 +2917,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2944,7 +2957,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2988,7 +3001,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3029,7 +3042,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3040,7 +3053,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "gpui",
@@ -3052,7 +3065,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "schemars",
  "serde",
@@ -3062,7 +3075,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "log",
@@ -3072,7 +3085,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3100,7 +3113,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3178,6 +3191,18 @@ dependencies = [
  "bytemuck",
  "core_maths",
  "read-fonts 0.37.0",
+ "smallvec",
+]
+
+[[package]]
+name = "harfrust"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c03d949a14aa089bbb282f7dd76a498a7f684428e4257202efc119ec010376f9"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytemuck",
+ "read-fonts 0.41.0",
  "smallvec",
 ]
 
@@ -3358,7 +3383,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3703,7 +3728,7 @@ dependencies = [
  "image-webp",
  "moxcms",
  "num-traits",
- "png 0.18.1",
+ "png",
  "qoi",
  "ravif",
  "rayon",
@@ -3721,12 +3746,6 @@ dependencies = [
  "byteorder-lite",
  "quick-error 2.0.1",
 ]
-
-[[package]]
-name = "imagesize"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "imagesize"
@@ -4810,7 +4829,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
- "png 0.18.1",
+ "png",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
 ]
@@ -6006,19 +6025,6 @@ dependencies = [
 
 [[package]]
 name = "png"
-version = "0.17.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
-dependencies = [
- "bitflags 1.3.2",
- "crc32fast",
- "fdeflate",
- "flate2",
- "miniz_oxide 0.8.9",
-]
-
-[[package]]
-name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
@@ -6792,7 +6798,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "derive_refineable",
 ]
@@ -6945,34 +6951,20 @@ dependencies = [
 
 [[package]]
 name = "resvg"
-version = "0.46.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b563218631706d614e23059436526d005b50ab5f2d506b55a17eb65c5eb83419"
+checksum = "1572844b6727a1bf842190e9947641a68ac44bed83f50afb4bd1407a2564bee8"
 dependencies = [
+ "bytemuck",
  "gif",
  "image-webp",
  "log",
  "pico-args",
  "rgb",
  "svgtypes",
- "tiny-skia 0.11.4",
- "usvg 0.46.0",
+ "tiny-skia",
+ "usvg",
  "zune-jpeg",
-]
-
-[[package]]
-name = "resvg"
-version = "0.49.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1572844b6727a1bf842190e9947641a68ac44bed83f50afb4bd1407a2564bee8"
-dependencies = [
- "bytemuck",
- "log",
- "pico-args",
- "rgb",
- "svgtypes",
- "tiny-skia 0.12.0",
- "usvg 0.49.0",
 ]
 
 [[package]]
@@ -7294,24 +7286,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e04c29725b2f5c77bdd84f4f2ef65e902714d1b15ffe8afc8e02c3cecb2b680"
 
 [[package]]
-name = "rustybuzz"
-version = "0.20.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd3c7c96f8a08ee34eff8857b11b49b07d71d1c3f4e88f8a88d4c9e9f90b1702"
-dependencies = [
- "bitflags 2.13.2",
- "bytemuck",
- "core_maths",
- "log",
- "smallvec",
- "ttf-parser",
- "unicode-bidi-mirroring",
- "unicode-ccc",
- "unicode-properties",
- "unicode-script",
-]
-
-[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7338,7 +7312,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "async-task",
  "backtrace",
@@ -7863,7 +7837,7 @@ dependencies = [
  "plex",
  "raw-window-handle",
  "reqwest 0.13.5",
- "resvg 0.49.0",
+ "resvg",
  "router",
  "rustls",
  "sha2 0.11.1",
@@ -8191,7 +8165,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "heapless",
  "rayon",
@@ -8688,21 +8662,6 @@ dependencies = [
 
 [[package]]
 name = "tiny-skia"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83d13394d44dae3207b52a326c0c85a8bf87f1541f23b0d143811088497b09ab"
-dependencies = [
- "arrayref",
- "arrayvec",
- "bytemuck",
- "cfg-if",
- "log",
- "png 0.17.16",
- "tiny-skia-path 0.11.4",
-]
-
-[[package]]
-name = "tiny-skia"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
@@ -8712,19 +8671,8 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
- "png 0.18.1",
- "tiny-skia-path 0.12.0",
-]
-
-[[package]]
-name = "tiny-skia-path"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9e7fc0c2e86a30b117d0462aa261b72b7a99b7ebd7deb3a14ceda95c5bdc93"
-dependencies = [
- "arrayref",
- "bytemuck",
- "strict-num",
+ "png",
+ "tiny-skia-path",
 ]
 
 [[package]]
@@ -9069,7 +9017,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "once_cell",
- "png 0.18.1",
+ "png",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
 ]
@@ -9228,18 +9176,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
-name = "unicode-bidi-mirroring"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dfa6e8c60bb66d49db113e0125ee8711b7647b5579dc7f5f19c42357ed039fe"
-
-[[package]]
-name = "unicode-ccc"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce61d488bcdc9bc8b5d1772c404828b17fc481c0a582b5581e95fb233aef503e"
-
-[[package]]
 name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9259,12 +9195,6 @@ checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
 dependencies = [
  "tinyvec",
 ]
-
-[[package]]
-name = "unicode-properties"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993ad287eb20e8ba755312801cfe1413e0f25d604075863acaddca10b04c1833"
 
 [[package]]
 name = "unicode-script"
@@ -9317,48 +9247,30 @@ dependencies = [
 
 [[package]]
 name = "usvg"
-version = "0.46.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e419dff010bb12512b0ae9e3d2f318dfbdf0167fde7eb05465134d4e8756076f"
-dependencies = [
- "base64 0.22.1",
- "data-url",
- "flate2",
- "fontdb",
- "imagesize 0.14.0",
- "kurbo",
- "log",
- "pico-args",
- "roxmltree 0.21.2",
- "rustybuzz",
- "simplecss",
- "siphasher",
- "strict-num",
- "svgtypes",
- "tiny-skia-path 0.11.4",
- "unicode-bidi",
- "unicode-script",
- "unicode-vo",
- "xmlwriter",
-]
-
-[[package]]
-name = "usvg"
 version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d09b73ee83641d390ad7ffd9000f347b16eb128e437675b6ff277ea5c7fcf22c"
 dependencies = [
+ "base64 0.23.1",
  "data-url",
- "imagesize 0.15.0",
+ "flate2",
+ "fontdb 0.24.0",
+ "harfrust 0.12.0",
+ "imagesize",
  "kurbo",
  "log",
  "pico-args",
  "roxmltree 0.21.2",
  "simplecss",
  "siphasher",
+ "skrifa 0.44.0",
  "strict-num",
  "svgtypes",
- "tiny-skia-path 0.12.0",
+ "tiny-skia-path",
+ "unicode-bidi",
+ "unicode-script",
+ "unicode-vo",
+ "xmlwriter",
 ]
 
 [[package]]
@@ -11103,7 +11015,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 dependencies = [
  "tracing",
  "ztracing_macro",
@@ -11112,7 +11024,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/gpui?rev=7fb317f29614f9c67b806f8be50f1a0c1ce20d89#7fb317f29614f9c67b806f8be50f1a0c1ce20d89"
+source = "git+https://github.com/sonorahq/gpui?rev=9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb#9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb"
 
 [[package]]
 name = "zune-core"
