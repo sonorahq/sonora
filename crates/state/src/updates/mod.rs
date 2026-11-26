@@ -3,7 +3,6 @@ mod install;
 mod staged;
 
 use std::io::Write as _;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -405,7 +404,7 @@ impl Updates {
             let applied = join(io.spawn(async move {
                 let _staging = STAGING.lock().await;
                 let path = download(&http, &package, &sums, &version, &progress).await?;
-                tokio::task::spawn_blocking(move || Install::current().apply(&path)).await?
+                tokio::task::spawn_blocking(move || Install::current().apply(path)).await?
             }))
             .await;
             this.update(cx, |this, cx| this.finish(applied, cx)).ok();
@@ -677,7 +676,7 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
         .as_deref()
         .context("the release has no checksums")?;
     let path = download(http, package, sums, &release.version, &AtomicU32::new(0)).await?;
-    let prepared = tokio::task::spawn_blocking(move || Install::current().prepare(&path)).await??;
+    let prepared = tokio::task::spawn_blocking(move || Install::current().prepare(path)).await??;
     Ok(Staged {
         version: release.version.clone(),
         channel,
@@ -687,7 +686,7 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
 }
 
 /// Streams the asset into the update folder while hashing it, and keeps it only when the hash
-/// matches the one the release lists. How far it has got goes into `progress` in
+/// matches the one the release lists. The file is deleted when the returned path is dropped. How far it has got goes into `progress` in
 /// [`PROGRESS_STEPS`] whenever the server says how large the asset is.
 async fn download(
     http: &reqwest::Client,
@@ -695,7 +694,7 @@ async fn download(
     sums: &str,
     version: &str,
     progress: &AtomicU32,
-) -> Result<PathBuf> {
+) -> Result<tempfile::TempPath> {
     let listed = http
         .get(sums)
         .header("User-Agent", AGENT)
@@ -750,11 +749,7 @@ async fn download(
     if checksum != expected {
         anyhow::bail!("the update does not match its checksum");
     }
-    let (_, path) = file
-        .keep()
-        .map_err(std::io::Error::from)
-        .context("cannot keep the verified update")?;
-    Ok(path)
+    Ok(file.into_temp_path())
 }
 
 /// Whether `offered` on `channel` should replace the running build. Within the running build's

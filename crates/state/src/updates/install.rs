@@ -68,16 +68,20 @@ impl Install {
     }
 
     /// Readies a downloaded asset beside what it replaces, so that [`Self::swap`] only has to
-    /// move it into place. Returns the path `swap` takes. Blocks on disk work and, on macOS, on
+    /// move it into place. Returns the path `swap` takes. The download is deleted once it is
+    /// no longer needed or the preparation fails. Blocks on disk work and, on macOS, on
     /// `hdiutil`.
-    pub(super) fn prepare(&self, download: &Path) -> Result<PathBuf> {
+    pub(super) fn prepare(&self, download: tempfile::TempPath) -> Result<PathBuf> {
         match self {
             #[cfg(target_os = "windows")]
-            Self::Setup => Ok(download.to_path_buf()),
+            Self::Setup => download
+                .keep()
+                .map_err(std::io::Error::from)
+                .context("cannot keep the installer"),
             #[cfg(target_os = "macos")]
-            Self::Bundle(_) => unpack_bundle(download, &self.beside().context("no bundle")?),
+            Self::Bundle(_) => unpack_bundle(&download, &self.beside().context("no bundle")?),
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            Self::AppImage(_) => stage_image(download, &self.beside().context("no image")?),
+            Self::AppImage(_) => stage_image(&download, &self.beside().context("no image")?),
             Self::Managed => anyhow::bail!("a package manager updates this copy of sonora"),
         }
     }
@@ -111,7 +115,7 @@ impl Install {
     }
 
     /// Prepares the downloaded asset and puts it in place at once.
-    pub(super) fn apply(&self, download: &Path) -> Result<()> {
+    pub(super) fn apply(&self, download: tempfile::TempPath) -> Result<()> {
         let prepared = self.prepare(download)?;
         self.swap(&prepared)
     }
@@ -316,8 +320,8 @@ fn writable(folder: &Path) -> bool {
     }
 }
 
-/// Copies Sonora.app off the disk image into `staged`, a hidden bundle beside the running one,
-/// and deletes the image. Returns the hidden bundle.
+/// Copies Sonora.app off the disk image into `staged`, a hidden bundle beside the running one.
+/// Returns the hidden bundle.
 #[cfg(target_os = "macos")]
 fn unpack_bundle(image: &Path, staged: &Path) -> Result<PathBuf> {
     let mount = tempfile::tempdir().context("cannot make a mount point")?;
@@ -352,8 +356,6 @@ fn unpack_bundle(image: &Path, staged: &Path) -> Result<PathBuf> {
         .arg(*staged))
     .context("cannot copy the new version off the disk image")?;
     let staged = DropGuard::dismiss(staged);
-    drop(mount);
-    std::fs::remove_file(image).ok();
     Ok(staged.to_path_buf())
 }
 
@@ -395,7 +397,6 @@ fn stage_image(download: &Path, staged: &Path) -> Result<PathBuf> {
     std::fs::copy(download, *staged).context("cannot copy the new AppImage beside the old")?;
     std::fs::set_permissions(*staged, std::fs::Permissions::from_mode(0o755))
         .context("cannot make the new AppImage executable")?;
-    std::fs::remove_file(download).ok();
     Ok(DropGuard::dismiss(staged).to_path_buf())
 }
 
