@@ -2793,21 +2793,22 @@ fn smart_shuffled(play: &PlayCommand, mode: bool) -> Option<String> {
 }
 
 /// The smart shuffle mode a play command names: on through the lens or its options, off through
-/// options that name other modes, or `None` when it says nothing.
+/// options that ask for no shuffle or name other modes, or `None` when it says nothing.
 fn asked_mode(play: &PlayCommand) -> Option<bool> {
     let lens = play
         .context
         .url
         .as_deref()
         .is_some_and(|url| url.ends_with(LENS));
-    let modes = play
-        .options
-        .player_options_override
-        .as_ref()
+    let options = play.options.player_options_override.as_ref();
+    let modes = options
         .map(|options| &options.modes)
         .filter(|modes| !modes.is_empty());
+    // smart shuffle is a kind of shuffle, so a play asked unshuffled leaves it off
+    let unshuffled = options.and_then(|options| options.shuffling_context) == Some(false);
     match (lens, modes) {
         (true, _) => Some(true),
+        (false, _) if unshuffled => Some(false),
         (false, modes) => modes.map(recommends),
     }
 }
