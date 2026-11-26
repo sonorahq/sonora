@@ -454,6 +454,7 @@ settings-accounts-detail = The services this device can play from
 settings-provider-current = In use
 settings-provider-signed-in = Signed in
 settings-provider-sign-in = Sign in
+settings-provider-guest-sign-in = Guest / Sign in
 settings-profile-account = { $provider } · { $account }
 settings-sign-out = Sign out
 settings-lastfm = Last.fm

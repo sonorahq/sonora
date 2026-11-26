@@ -337,7 +337,7 @@ impl LoginView {
                 .group_hover(group.clone(), move |style| style.text_color(brand));
             let detail = match busy {
                 true => t!("common-cancel"),
-                false => t!("settings-provider-sign-in"),
+                false => sign_in_offer(&info.options),
             };
             Button::new(SharedString::from(format!("login-{slug}")))
                 .ghost()
@@ -778,4 +778,13 @@ fn offered_methods(options: Vec<SignIn>) -> Vec<SignIn> {
 fn method_count(method: &SignIn, web_sign_in: bool) -> usize {
     let manual = matches!(method, SignIn::Secret);
     usize::from(!manual || web_sign_in) + usize::from(manual)
+}
+
+/// The word on a provider's row that has no account: one that offers guest mode says so too, so
+/// the way in without an account shows before the row is opened.
+pub(crate) fn sign_in_offer(options: &[SignIn]) -> SharedString {
+    match options.contains(&SignIn::Anonymous) {
+        true => t!("settings-provider-guest-sign-in"),
+        false => t!("settings-provider-sign-in"),
+    }
 }

@@ -129,9 +129,9 @@ fn main() -> ExitCode {
 
         let database = storage::Database::standard();
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
+            Arc::new(youtube::YouTubeProvider::new()),
             Arc::new(spotify::SpotifyProvider::from_env()),
             Arc::new(apple::AppleProvider::new()),
-            Arc::new(youtube::YouTubeProvider::new()),
             Arc::new(subsonic::SubsonicProvider::new()),
             Arc::new(jellyfin::JellyfinProvider::new()),
             Arc::new(plex::PlexProvider::new()),

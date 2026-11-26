@@ -777,7 +777,7 @@ impl SettingsView {
             (false, true) => Offer::Choice {
                 leave: Some(self.sign_out_button(slug, slug, pending, cx)),
             },
-            (false, false) => Offer::SignIn(t!("settings-provider-sign-in")),
+            (false, false) => Offer::SignIn(crate::screens::login::sign_in_offer(&options)),
         };
         // a guest already in use signs in to an account from its own card
         let press: Option<Press> = match (cancel, stored, active) {

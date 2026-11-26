@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.
 - Settings use much less CPU while the Now playing or Lyrics preview is on screen.
 - The fullscreen player uses less CPU while it is open, most of all while paused.
 - Sonora uses less CPU while music plays in the background.
