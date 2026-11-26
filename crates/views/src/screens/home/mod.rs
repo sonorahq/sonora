@@ -220,7 +220,7 @@ impl Render for HomeView {
         let shelves = self
             .shelves
             .update(cx, |shelves, cx| match sections.is_empty() && feeding {
-                true => shelves.pending(width, cx),
+                true => shelves.pending(width, window, cx),
                 false => vec![shelves.render(sections, Mode::Grid, width, window, cx)],
             });
 

@@ -15,33 +15,57 @@ pub(crate) const CARD_MAX: Pixels = px(190.);
 /// The least room between two cards in a row. The gap grows past it to spread the room a row
 /// of cards leaves.
 const CARD_GAP: Pixels = px(16.);
-/// How finely a card and its gap are cut, as a fraction of a pixel. Neither rounds to a whole
-/// pixel, since a card that grows a pixel at a time moves the columns back and forth while the
-/// width changes every frame, as it does while a sidebar slides.
-const STEP: f32 = 64.;
 
+/// How a row of cards fills its width. Every length is a whole number of device pixels, since
+/// gpui rounds authored lengths to them before layout and a row cut finer would round past its
+/// width.
 #[derive(Clone, Copy)]
 pub(crate) struct CardLayout {
     pub(crate) columns: usize,
     pub(crate) card: Pixels,
+    /// The room between two cards. The first `wide` gaps of a row are one device pixel wider,
+    /// so a full row ends on the right edge.
     pub(crate) gap: Pixels,
+    wide: usize,
+    /// One device pixel.
+    pixel: Pixels,
 }
 
 impl CardLayout {
-    fn new(available: Pixels) -> Self {
-        let available = available.max(CARD_MIN);
-        let columns = (((available + CARD_GAP) / (CARD_MIN + CARD_GAP))
-            .floor()
-            .max(1.)) as usize;
+    fn new(available: Pixels, scale: f32) -> Self {
+        let room = (available.max(CARD_MIN) / px(1.) * scale).floor();
+        let least = (CARD_GAP / px(1.) * scale).ceil();
+        let narrowest = (CARD_MIN / px(1.) * scale).ceil();
+        let widest = (CARD_MAX / px(1.) * scale).floor();
+
+        let columns = ((room + least) / (narrowest + least)).floor().max(1.) as usize;
         let count = columns as f32;
-        let spread = available - CARD_GAP * (count - 1.);
-        let card = fine((spread / count).min(CARD_MAX));
-        let gap = match columns > 1 {
-            true => fine((available - card * count) / (count - 1.)),
-            false => Pixels::ZERO,
+        let card = ((room - least * (count - 1.)) / count).floor().min(widest);
+        let (gap, wide) = match columns > 1 {
+            true => {
+                let slack = room - card * count;
+                let gap = (slack / (count - 1.)).floor();
+                (gap, (slack - gap * (count - 1.)) as usize)
+            }
+            false => (0., 0),
         };
 
-        Self { columns, card, gap }
+        Self {
+            columns,
+            card: px(card / scale),
+            gap: px(gap / scale),
+            wide,
+            pixel: px(1. / scale),
+        }
+    }
+
+    /// The room left of the card in `column`, which is nothing for the first one.
+    pub(crate) fn lead(&self, column: usize) -> Pixels {
+        match column {
+            0 => Pixels::ZERO,
+            column if column <= self.wide => self.gap + self.pixel,
+            _ => self.gap,
+        }
     }
 }
 
@@ -52,15 +76,16 @@ pub(crate) struct CardGrid {
 }
 
 impl CardGrid {
-    pub(crate) fn new(available: Pixels) -> Self {
+    pub(crate) fn new(layout: CardLayout) -> Self {
         Self {
-            layout: CardLayout::new(available),
+            layout,
             cards: Vec::new(),
         }
     }
 
-    pub(crate) fn layout(available: Pixels) -> CardLayout {
-        CardLayout::new(available)
+    /// How cards fill `available` on the window's device pixels.
+    pub(crate) fn layout(available: Pixels, window: &Window) -> CardLayout {
+        CardLayout::new(available, window.scale_factor())
     }
 
     pub(crate) fn children(mut self, cards: impl IntoIterator<Item = AnyElement>) -> Self {
@@ -71,11 +96,13 @@ impl CardGrid {
 
 impl RenderOnce for CardGrid {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        div()
-            .flex()
-            .w_full()
-            .gap_x(self.layout.gap)
-            .children(self.cards)
+        let layout = self.layout;
+        div().flex().w_full().children(
+            self.cards
+                .into_iter()
+                .enumerate()
+                .map(move |(column, card)| div().flex_none().ml(layout.lead(column)).child(card)),
+        )
     }
 }
 
@@ -164,11 +191,11 @@ impl AlbumTiles {
         self.turn += 1;
     }
 
-    /// A row of cards showing `looks` in a grid across `available`, each one `height` tall,
-    /// from the tiles kept for those albums or new ones for the albums without.
+    /// A row of cards showing `looks` laid out by `layout`, each one `height` tall, from the
+    /// tiles kept for those albums or new ones for the albums without.
     pub(crate) fn row(
         &mut self,
-        available: Pixels,
+        layout: CardLayout,
         height: Pixels,
         looks: Vec<TileLook>,
         playback: &Entity<Playback>,
@@ -212,7 +239,7 @@ impl AlbumTiles {
             .collect();
 
         AlbumGrid {
-            layout: CardLayout::new(available),
+            layout,
             height,
             tiles,
         }
@@ -240,9 +267,11 @@ impl RenderOnce for AlbumGrid {
         let plain = ui::prefetching();
         let cards = tiles
             .into_iter()
-            .map(|(tile, changed)| match plain || changed {
+            .enumerate()
+            .map(|(column, (tile, changed))| match plain || changed {
                 true => div()
                     .flex_none()
+                    .ml(layout.lead(column))
                     .w(layout.card)
                     .h(height)
                     .child(tile)
@@ -251,65 +280,88 @@ impl RenderOnce for AlbumGrid {
                     .cached(
                         StyleRefinement::default()
                             .flex_none()
+                            .ml(layout.lead(column))
                             .w(layout.card)
                             .h(height),
                     )
                     .into_any_element(),
             });
 
-        div()
-            .flex()
-            .flex_wrap()
-            .w_full()
-            .gap_x(layout.gap)
-            .gap_y_6()
-            .children(cards)
+        div().flex().w_full().children(cards)
     }
-}
-
-/// Cuts `length` down to the next `STEP`th of a pixel, so the cards and gaps of a row never add
-/// up to more than the row.
-fn fine(length: Pixels) -> Pixels {
-    px((length / px(1.) * STEP).floor() / STEP)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_card_stays_within_its_bounds() {
-        for width in (160..2400).step_by(3) {
-            let layout = CardLayout::new(px(width as f32));
-            assert!(layout.card <= CARD_MAX, "{width} yielded {:?}", layout.card);
-            assert!(layout.card >= CARD_MIN, "{width} yielded {:?}", layout.card);
+    const SCALES: [f32; 4] = [1., 1.25, 1.5, 2.];
+
+    /// Every layout from 160 to 2400 pixels wide, in tenths of a pixel, at each scale.
+    fn layouts() -> impl Iterator<Item = (Pixels, f32, CardLayout)> {
+        SCALES.into_iter().flat_map(|scale| {
+            (1600..24000).step_by(7).map(move |tenths| {
+                let available = px(tenths as f32 / 10.);
+                (available, scale, CardLayout::new(available, scale))
+            })
+        })
+    }
+
+    /// `length` in device pixels, rounded the way gpui rounds an authored length.
+    fn device(length: Pixels, scale: f32) -> f32 {
+        let scaled = length / px(1.) * scale;
+        match scaled - scaled.floor() > 0.5 {
+            true => scaled.ceil(),
+            false => scaled.floor(),
         }
     }
 
     #[test]
-    fn a_row_never_outgrows_the_space_it_was_given() {
-        for width in (160..2400).step_by(3) {
-            let available = px(width as f32);
-            let layout = CardLayout::new(available);
-            let count = layout.columns as f32;
-            let used = layout.card * count + layout.gap * (count - 1.);
-            assert!(used <= available, "{width} packed {used:?}");
+    fn a_card_stays_within_its_bounds() {
+        for (available, scale, layout) in layouts() {
+            assert!(
+                layout.card <= CARD_MAX,
+                "{available:?} at {scale} yielded {:?}",
+                layout.card
+            );
+            assert!(
+                layout.card >= CARD_MIN,
+                "{available:?} at {scale} yielded {:?}",
+                layout.card
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_row_ends_on_the_right_edge_once_rounded() {
+        for (available, scale, layout) in layouts() {
+            let used: f32 = (0..layout.columns)
+                .map(|column| device(layout.lead(column), scale) + device(layout.card, scale))
+                .sum();
+            let room = (available / px(1.) * scale).floor();
+            match layout.columns > 1 {
+                true => assert_eq!(used, room, "{available:?} at {scale} packed {used}"),
+                false => assert!(used <= room, "{available:?} at {scale} packed {used}"),
+            }
         }
     }
 
     #[test]
     fn cards_never_touch() {
-        for width in (160..2400).step_by(3) {
-            let layout = CardLayout::new(px(width as f32));
+        for (available, scale, layout) in layouts() {
             if layout.columns > 1 {
-                assert!(layout.gap >= CARD_GAP, "{width} yielded {:?}", layout.gap);
+                assert!(
+                    layout.gap >= CARD_GAP,
+                    "{available:?} at {scale} yielded {:?}",
+                    layout.gap
+                );
             }
         }
     }
 
     #[test]
     fn slack_goes_to_the_gaps_once_the_cards_are_capped() {
-        let layout = CardLayout::new(CARD_MAX * 2. + CARD_GAP * 2.);
+        let layout = CardLayout::new(CARD_MAX * 2. + CARD_GAP * 2., 1.);
 
         assert_eq!(layout.card, CARD_MAX);
         assert!(layout.gap > CARD_GAP);
@@ -317,7 +369,7 @@ mod tests {
 
     #[test]
     fn a_single_column_has_no_gap() {
-        let layout = CardLayout::new(CARD_MIN);
+        let layout = CardLayout::new(CARD_MIN, 1.);
         assert_eq!(layout.gap, Pixels::ZERO);
     }
 }
