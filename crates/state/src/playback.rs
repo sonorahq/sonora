@@ -1015,8 +1015,9 @@ impl Playback {
 
     /// Has the other device that has playback start the track at `index` of `tracks`, from the
     /// collection `origin` names, and says whether it did. A local file has no place there and
-    /// plays here. The tracks after it go along, shuffled while the queue shuffles, for a device
-    /// that cannot read the collection itself, such as a cast screen.
+    /// plays here. The tracks after it go along for a device that cannot read the collection
+    /// itself, such as a cast screen. While the queue shuffles, every other track goes in a
+    /// shuffled order, since a shuffled start may pick any track to begin with.
     fn hand_over(&self, tracks: &[Track], index: usize, origin: Option<&Origin>, cx: &App) -> bool {
         let Some(id) = tracks
             .get(index)
@@ -1025,15 +1026,18 @@ impl Playback {
         else {
             return false;
         };
-        let mut upcoming: Vec<_> = tracks[index + 1..]
+        let shuffled = self.queue.read(cx).shuffle();
+        let mut upcoming: Vec<_> = tracks
             .iter()
-            .filter_map(|track| track.id.clone())
+            .enumerate()
+            .filter(|(at, _)| *at > index || shuffled && *at != index)
+            .filter_map(|(_, track)| track.id.clone())
             .filter(|id| !music::is_local_id(id))
             .map(|id| connect::QueuedTrack::new(id, false))
             .collect();
         // a device that plays these as given would otherwise play them in order while this app
         // shuffles
-        if self.queue.read(cx).shuffle() {
+        if shuffled {
             fastrand::shuffle(&mut upcoming);
         }
         self.steer(
