@@ -226,6 +226,21 @@ impl FullscreenView {
             .detach();
         // Shuffle, repeat and who queued the playing song.
         cx.observe(&queue, |this, _, cx| this.redraw(cx)).detach();
+        // The track menu over the title shows download progress and pins.
+        let downloads = Sonora::global(cx).downloads.clone();
+        cx.observe(&downloads, |this, _, cx| {
+            if this.context_menu.is_some() {
+                this.redraw(cx);
+            }
+        })
+        .detach();
+        let pins = Sonora::global(cx).pins.clone();
+        cx.observe(&pins, |this, _, cx| {
+            if this.context_menu.is_some() {
+                this.redraw(cx);
+            }
+        })
+        .detach();
         // The meta drops its text shadows while the player opens or closes.
         cx.observe_global::<ShellSwap>(|this, cx| this.redraw(cx))
             .detach();
@@ -358,6 +373,7 @@ impl FullscreenView {
         if let Some(tab) = panel {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
+        cx.notify();
     }
 
     /// Flips the fullscreen panel to `tab` from a key press. The cover comes back when `tab`
@@ -588,6 +604,7 @@ impl FullscreenView {
         };
         self.playback
             .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
+        cx.notify();
     }
 
     fn artwork(
