@@ -561,6 +561,7 @@ impl Devices {
         self.sent = None;
         self.events = None;
         self.changing = None;
+        self.filling = None;
         self.queuing.clear();
         self.liking.clear();
         self.ticking = None;
@@ -910,6 +911,7 @@ impl Devices {
             Command::Released => {
                 // another device took over, so this one stops without calling playback back
                 self.changing = None;
+                self.filling = None;
                 self.claimed = false;
                 self.here(cx, |playback, cx| playback.pause(cx));
                 self.publish(cx);
@@ -1100,7 +1102,7 @@ impl Devices {
             return;
         };
         let capabilities = self.session.read(cx).capabilities();
-        let revision = self.queue.read(cx).revision();
+        let held = chosen(self.queue.read(cx));
         let start = Start {
             state,
             preserve_queue: true,
@@ -1111,7 +1113,7 @@ impl Devices {
             load(client, capabilities, start, known),
             move |this, loaded, cx| {
                 this.filling = None;
-                if this.queue.read(cx).revision() != revision {
+                if chosen(this.queue.read(cx)) != held {
                     return log::debug!(
                         "connect: the queue changed while its missing songs loaded"
                     );
@@ -1438,6 +1440,18 @@ async fn resolve_queue(
         }
     }
     ids.iter().map(|id| known.get(id).cloned()).collect()
+}
+
+/// The occurrences the queue holds besides the autoplay suggestions, which arrive on their own
+/// while a handover's songs load and change nothing the listener or playback did.
+fn chosen(queue: &Queue) -> Vec<String> {
+    queue
+        .connect_previous()
+        .chain(queue.connect_current())
+        .chain(queue.connect_upcoming())
+        .filter(|row| !row.suggested)
+        .map(|row| row.uid)
+        .collect()
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.
