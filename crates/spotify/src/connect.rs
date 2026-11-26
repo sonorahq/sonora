@@ -1262,6 +1262,11 @@ impl Worker {
         self.active_device = cluster.active_device_id.clone();
         if self.active_since.is_some() && elsewhere && fresh {
             self.active_since = None;
+            // a smart shuffle read still pending for a play here would claim playback back
+            if self.awaiting {
+                self.ticket += 1;
+                self.awaiting = false;
+            }
             self.out.send(Event::Command(Command::Released)).ok();
         }
         let roster = self.roster(cluster);
@@ -2497,7 +2502,7 @@ fn marked(start: Start, smart: Option<&Enhanced>) -> Start {
     let mut state = (*start.state).clone();
     let tracks = state.previous.iter_mut().chain(state.track.as_mut());
     for track in tracks.chain(&mut state.upcoming) {
-        track.recommended |= smart.recommended.contains(&track.id);
+        track.recommended |= !track.queued && smart.recommended.contains(&track.id);
     }
     Start {
         state: Arc::new(state),
@@ -2807,8 +2812,8 @@ fn asked_mode(play: &PlayCommand) -> Option<bool> {
     // smart shuffle is a kind of shuffle, so a play asked unshuffled leaves it off
     let unshuffled = options.and_then(|options| options.shuffling_context) == Some(false);
     match (lens, modes) {
+        _ if unshuffled => Some(false),
         (true, _) => Some(true),
-        (false, _) if unshuffled => Some(false),
         (false, modes) => modes.map(recommends),
     }
 }
