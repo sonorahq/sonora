@@ -12,6 +12,7 @@ queue-added-by = { $name }님이 추가함
 queue-empty = 재생 목록이 비어 있습니다.
 queue-similar = 비슷한 트랙
 queue-radio = 비슷한 트랙 자동 재생
+queue-recommended = 스마트 셔플 추천 곡
 queue-return-playing = 지금 재생 중인 곡으로 돌아가기
 
 # player bar
@@ -29,6 +30,7 @@ player-fullscreen-leave = 전체 화면 플레이어 나가기
 player-time-left = -{ $time }
 player-time-left-spoken = { $time } 남음
 devices-this-computer = 이 컴퓨터
+devices-connecting = 연결 중…
 devices-jam-join = Jam 참여…
 devices-jam-join-title = Jam 참여
 devices-jam-join-detail = 친구가 공유한 링크를 붙여넣으세요.
