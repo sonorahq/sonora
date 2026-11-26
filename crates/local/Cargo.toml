@@ -15,6 +15,7 @@ log.workspace = true
 lyrics.workspace = true
 music.workspace = true
 percent-encoding.workspace = true
+ring.workspace = true
 rodio.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

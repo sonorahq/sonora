@@ -65,6 +65,8 @@ login-providers = Music services
 login-welcome-title = Welcome to Sonora
 login-welcome-detail = You can add more services later in Settings.
 login-or = or
+login-offline-title = Offline
+login-offline-use = Continue offline
 
 # album and playlist pages
 

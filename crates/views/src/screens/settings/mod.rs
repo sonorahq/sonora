@@ -326,7 +326,7 @@ pub struct SettingsView {
     /// sign-in it started is over, so the veil never blinks away between it and the prompt
     /// that follows.
     sign_in_running: bool,
-    /// The card the user just switched to, by slug or `guest`. Its radio fills while the
+    /// The card the user just switched to, by slug or `offline`. Its radio fills while the
     /// session tears the old provider down and brings the new one up, which reports nothing
     /// active in between.
     chosen: Option<&'static str>,

@@ -8,7 +8,7 @@ use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
 use serde::{Deserialize, Serialize};
 use tokio::task::AbortHandle;
 
-use crate::{Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -234,6 +234,11 @@ impl Search {
                 this.query.clear();
                 this.ask(&pending, cx);
             }
+            SessionEvent::LocalChanged if this.session.read(cx).local_only() => {
+                let pending = this.query.clone();
+                this.forget_results();
+                this.ask(&pending, cx);
+            }
             SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
@@ -333,11 +338,13 @@ impl Search {
 
         self.rank(cx);
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             self.loading = false;
             cx.notify();
             return;
         };
+        // an offline run searches the local files, which say nothing about the network
+        let local = self.session.read(cx).local_only();
 
         if let Some((slug, _)) = &linked
             && self.session.read(cx).provider_slug() != Some(*slug)
@@ -427,9 +434,12 @@ impl Search {
                     artists: salvaged(found.artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
-                    Some(reason) => Network::failed(reason, cx),
+                    Some(reason) if !local => Network::failed(reason, cx),
+                    Some(_) => {}
                     None => {
-                        Network::reached(cx);
+                        if !local {
+                            Network::reached(cx);
+                        }
                         this.served = Some(query);
                     }
                 }
@@ -458,7 +468,7 @@ impl Search {
             return;
         }
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             return;
         };
 
@@ -491,7 +501,7 @@ impl Search {
 
         self.hits = {
             let held = self.library.read(cx);
-            let state = held.state(Shelf::Streaming);
+            let state = held.state(self.session.read(cx).primary_shelf());
             rank(
                 state.tracks(),
                 state.albums(),
