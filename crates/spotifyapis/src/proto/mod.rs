@@ -15,6 +15,7 @@ pub mod color_lyrics;
 pub mod connect_state;
 pub mod extended_metadata;
 pub mod list_read_service;
+pub(crate) mod login5;
 pub mod playlist_v2;
 pub mod searchview;
 pub mod sequence_proxy;

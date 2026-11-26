@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex as SyncMutex;
 
 use anyhow::{Context as _, Result, anyhow};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use ring::rand::{SecureRandom as _, SystemRandom};
+use serde::Deserialize;
 use spotifyapis::access_point::AudioKeyError;
 use spotifyapis::auth::{AuthError, OAuth};
 use tokio::sync::Mutex;
@@ -13,6 +16,8 @@ use super::session::Session;
 
 pub const DEFAULT_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:8989/login";
+/// librespot's `AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS`, the kind of credential it saved.
+const STORED_CREDENTIALS: i32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
@@ -117,9 +122,15 @@ impl AuthConfig {
         }
     }
 
-    /// Whether a Spotify OAuth sign-in has been saved.
+    /// Whether a Spotify sign-in has been saved, counting one an older Sonora left for
+    /// [`restore`] to carry over.
     pub fn stored(&self) -> bool {
-        OAuth::stored(&self.oauth_file())
+        OAuth::stored(&self.oauth_file()) || self.legacy_file().is_file()
+    }
+
+    /// The reusable credential librespot saved, which [`restore`] carries over once.
+    fn legacy_file(&self) -> PathBuf {
+        self.cache_dir.join(credentials::FILE)
     }
 
     fn oauth_file(&self) -> PathBuf {
@@ -141,15 +152,79 @@ impl AuthConfig {
 
 pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
     if !config.oauth_file().try_exists()? {
-        return Ok(None);
+        return carry_over(config).await;
     }
-    let Some(oauth) =
-        OAuth::restore(config.credential_path()?, &config.client_id).map_err(sign_in_error)?
-    else {
-        return Ok(None);
+    let restored = match OAuth::restore(config.credential_path()?, &config.client_id) {
+        Ok(Some(oauth)) => oauth.validate().await.map(|()| oauth),
+        Ok(None) => return Ok(None),
+        Err(error) => Err(error),
     };
-    oauth.validate().await.map_err(sign_in_error)?;
-    Ok(Some(Session::new(oauth, device_id(&config.cache_dir)?)))
+    match restored {
+        Ok(oauth) => Ok(Some(Session::new(oauth, device_id(&config.cache_dir)?))),
+        // A grant Spotify rejects gives way to an older credential still on disk.
+        Err(error)
+            if matches!(error.downcast_ref(), Some(AuthError::Credentials))
+                && config.legacy_file().is_file() =>
+        {
+            OAuth::forget(&config.oauth_file());
+            carry_over(config).await
+        }
+        Err(error) => Err(sign_in_error(error)),
+    }
+}
+
+/// The reusable credential librespot kept in `credentials.json`.
+#[derive(Deserialize)]
+struct Legacy {
+    username: String,
+    auth_type: i32,
+    auth_data: String,
+}
+
+/// Signs in with the credential an older Sonora saved through librespot, so updating keeps the
+/// account signed in. The credential is removed once it is carried over or once Spotify
+/// rejects it. A network failure leaves it for the next launch.
+async fn carry_over(config: &AuthConfig) -> Result<Option<Session>> {
+    let legacy_path = config.legacy_file();
+    let body = match std::fs::read(&legacy_path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("cannot read the previous Spotify sign-in"),
+    };
+    let legacy = match serde_json::from_slice::<Legacy>(&body) {
+        Ok(legacy) if legacy.auth_type == STORED_CREDENTIALS && !legacy.username.is_empty() => {
+            legacy
+        }
+        Ok(_) => return Ok(None),
+        Err(error) => {
+            log::warn!("spotify: cannot read the previous sign-in: {error}");
+            return Ok(None);
+        }
+    };
+    let credential = STANDARD
+        .decode(&legacy.auth_data)
+        .context("the previous Spotify sign-in is damaged")?;
+    let device = device_id(&config.cache_dir)?;
+    let adopted = OAuth::adopt(
+        config.credential_path()?,
+        &config.client_id,
+        &device,
+        &legacy.username,
+        &credential,
+    )
+    .await;
+    let oauth = match adopted {
+        Ok(oauth) => oauth,
+        Err(error) => {
+            if matches!(error.downcast_ref(), Some(AuthError::Credentials)) {
+                credentials::remove(&legacy_path);
+            }
+            return Err(sign_in_error(error));
+        }
+    };
+    credentials::remove(&legacy_path);
+    log::info!("spotify: carried the sign-in over from the previous version");
+    Ok(Some(Session::new(oauth, device)))
 }
 
 /// Maps Spotify OAuth failures to the app's existing sign-in outcomes.

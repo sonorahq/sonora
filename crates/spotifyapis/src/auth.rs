@@ -7,13 +7,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow};
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::Engine as _;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use reqwest::{StatusCode, Url};
 use ring::digest::{SHA256, digest};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 
 use crate::http;
+use crate::proto::login5;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -220,12 +222,35 @@ struct TokenResponse {
     username: Option<String>,
 }
 
-/// A refresh grant belongs to the OAuth client that originally obtained it.
+/// A refresh grant belongs to the OAuth client that originally obtained it. A grant carried over
+/// from librespot holds its reusable credential, base64 encoded, where the refresh token goes.
 #[derive(Deserialize, Serialize)]
 struct Stored {
     client_id: String,
     username: String,
     refresh_token: String,
+    #[serde(default, skip_serializing_if = "Renewal::is_refresh")]
+    renewal: Renewal,
+    /// The device a login5 grant logs in as. Empty for a refresh grant.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    device_id: String,
+}
+
+/// How a saved grant is turned into a fresh access token.
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Renewal {
+    /// Spotify Accounts' refresh-token exchange, for a browser sign-in.
+    #[default]
+    Refresh,
+    /// A login5 login with a reusable credential, for a sign-in carried over from librespot.
+    Login5,
+}
+
+impl Renewal {
+    fn is_refresh(&self) -> bool {
+        *self == Self::Refresh
+    }
 }
 
 /// An access token and the point at which requests should start using a fresh one.
@@ -239,6 +264,8 @@ pub struct OAuth {
     path: PathBuf,
     client_id: String,
     username: String,
+    renewal: Renewal,
+    device_id: String,
     token: Arc<Mutex<Option<Token>>>,
     grant: SyncMutex<Grant>,
 }
@@ -266,6 +293,37 @@ impl OAuth {
             return Err(AuthError::Credentials.into());
         }
         Ok(Some(Self::new(path, stored, None)))
+    }
+
+    /// Signs `username` in with the reusable `credential` librespot saved, and saves it at `path`
+    /// as a login5 grant so later renewals go the same way. It refuses when a sign-in was saved
+    /// there meanwhile, and fails with [`AuthError::Credentials`] once Spotify stops accepting the
+    /// credential.
+    pub async fn adopt(
+        path: PathBuf,
+        client_id: &str,
+        device_id: &str,
+        username: &str,
+        credential: &[u8],
+    ) -> Result<Arc<Self>> {
+        anyhow::ensure!(!username.is_empty(), AuthError::Credentials);
+        let granted = login5::login(client_id, device_id, username, credential).await?;
+        let kept = match granted.credential.is_empty() {
+            true => credential,
+            false => &granted.credential,
+        };
+        let stored = Stored {
+            client_id: client_id.to_owned(),
+            username: username.to_owned(),
+            refresh_token: STANDARD.encode(kept),
+            renewal: Renewal::Login5,
+            device_id: device_id.to_owned(),
+        };
+        let _file = lock_file()?;
+        anyhow::ensure!(saved(&path)?.is_none(), AuthError::Cancelled);
+        write(&path, &stored)?;
+        let token = Token::lasting(granted.access_token, granted.lifetime);
+        Ok(Self::new(path, stored, Some(token)))
     }
 
     /// Authorizes in a browser and saves the refresh grant at the caller's credential path.
@@ -325,6 +383,8 @@ impl OAuth {
             client_id: client_id.to_owned(),
             username,
             refresh_token,
+            renewal: Renewal::Refresh,
+            device_id: String::new(),
         };
         let mut file = lock_file()?;
         let ticket = Arc::downgrade(login);
@@ -346,6 +406,8 @@ impl OAuth {
             path,
             client_id: grant.client_id,
             username: grant.username,
+            renewal: grant.renewal,
+            device_id: grant.device_id,
             token: Arc::new(Mutex::new(token)),
         })
     }
@@ -457,6 +519,22 @@ impl OAuth {
                 .unwrap_or(&grant.refresh_token)
                 .clone())
         })?;
+        if self.renewal == Renewal::Login5 {
+            let credential = STANDARD
+                .decode(&refresh_token)
+                .context(AuthError::Credentials)?;
+            let granted = login5::login(
+                &self.client_id,
+                &self.device_id,
+                &self.username,
+                &credential,
+            )
+            .await?;
+            let next =
+                (!granted.credential.is_empty()).then(|| STANDARD.encode(&granted.credential));
+            self.keep_grant(next.as_deref())?;
+            return Ok(Token::lasting(granted.access_token, granted.lifetime));
+        }
         let response = exchange([
             ("grant_type", "refresh_token"),
             ("client_id", &self.client_id),
@@ -511,14 +589,24 @@ impl OAuth {
     }
 }
 
-impl From<TokenResponse> for Token {
-    fn from(response: TokenResponse) -> Self {
-        let lifetime = Duration::from_secs(response.expires_in).saturating_sub(EXPIRY_MARGIN);
+impl Token {
+    /// A token Spotify says lasts `lifetime`, renewed a little before it runs out.
+    fn lasting(access_token: String, lifetime: Duration) -> Self {
+        let lifetime = lifetime.saturating_sub(EXPIRY_MARGIN);
         let now = Instant::now();
         Self {
-            access_token: response.access_token,
+            access_token,
             expires_at: now.checked_add(lifetime).unwrap_or(now),
         }
+    }
+}
+
+impl From<TokenResponse> for Token {
+    fn from(response: TokenResponse) -> Self {
+        Self::lasting(
+            response.access_token,
+            Duration::from_secs(response.expires_in),
+        )
     }
 }
 
@@ -621,6 +709,8 @@ mod tests {
             client_id: "client".into(),
             username: "listener".into(),
             refresh_token: "old".into(),
+            renewal: Renewal::Refresh,
+            device_id: String::new(),
         };
         write(&path, &grant)?;
         let auth = OAuth::restore(path.clone(), "client")?.unwrap();
