@@ -39,12 +39,6 @@ const LINES_PER_NOTCH: f32 = 1.;
 const LINES_PER_NOTCH: f32 = 3.;
 /// How far a held node must travel before it moves, so a click that selects it edits nothing.
 const DEADZONE: f32 = 3.;
-/// The curve coordinates that mark a path's triangle as wholly inside its shape.
-const INSIDE: (Point<f32>, Point<f32>, Point<f32>) = (
-    Point { x: 0., y: 1. },
-    Point { x: 0., y: 1. },
-    Point { x: 0., y: 1. },
-);
 const FREQUENCIES: [f32; 10] = [
     20., 50., 100., 200., 500., 1000., 2000., 5000., 10000., 20000.,
 ];
@@ -1061,36 +1055,57 @@ fn shape(label: SharedString, color: Hsla, window: &mut Window, cx: &App) -> Sha
     window.text_system().shape_line(label, size, &[run], None)
 }
 
-/// The area between `points`, which run left to right, and the level `floor` below them, as two
-/// triangles a span. That is all such a shape needs, so it is built directly rather than
-/// tessellated, which the spectrum would pay for every frame.
-fn area_under(points: &[Point<Pixels>], floor: Pixels) -> Option<Path<Pixels>> {
-    let first = points.first()?;
-    let mut path = Path::new(point(first.x, floor));
-    for pair in points.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        path.push_triangle((point(a.x, floor), a, b), INSIDE);
-        path.push_triangle((point(a.x, floor), b, point(b.x, floor)), INSIDE);
+/// The area between `points`, which run left to right, and the level `floor` below them.
+fn area_under(points: &[Point<Pixels>], floor: Pixels) -> Option<Path> {
+    let (first, last) = (points.first()?, points.last()?);
+    let mut path = PathBuilder::fill();
+    path.move_to(point(first.x, floor));
+    for sample in points {
+        path.line_to(*sample);
     }
-    Some(path)
+    path.line_to(point(last.x, floor));
+    path.close();
+    path.build().ok()
 }
 
-/// The polyline through `points` as a band `width` wide, two triangles a segment with no joins,
-/// which a hairline has no use for. It is built directly for the same reason as `area_under`.
-fn band(points: &[Point<Pixels>], width: Pixels) -> Option<Path<Pixels>> {
-    let first = points.first()?;
-    let mut path = Path::new(*first);
-    for pair in points.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        let (dx, dy) = ((b.x - a.x) / px(1.), (b.y - a.y) / px(1.));
-        let length = dx.hypot(dy);
-        if length == 0. {
-            continue;
-        }
-        let half = width / 2. / length;
-        let normal = point(half * -dy, half * dx);
-        path.push_triangle((a + normal, a - normal, b + normal), INSIDE);
-        path.push_triangle((b + normal, a - normal, b - normal), INSIDE);
+/// Fills one outline around the polyline, offset by half the width on either side. The mean of the
+/// adjoining segment normals keeps the band even at bends.
+fn band(points: &[Point<Pixels>], width: Pixels) -> Option<Path> {
+    if points.len() < 2 {
+        return None;
     }
-    Some(path)
+    let normals: Vec<_> = points
+        .windows(2)
+        .map(|pair| unit_normal(pair[0], pair[1]))
+        .collect();
+    let half = width / 2.;
+    let edge = |index: usize, side: f32| {
+        let before = index.checked_sub(1).and_then(|before| normals[before]);
+        let after = normals.get(index).copied().flatten();
+        let (x, y) = match (before, after) {
+            (Some(a), Some(b)) => (a.0 + b.0, a.1 + b.1),
+            (Some(normal), None) | (None, Some(normal)) => normal,
+            (None, None) => (0., 0.),
+        };
+        let length = x.hypot(y).max(f32::EPSILON);
+        let reach = half * side / length;
+        point(points[index].x + reach * x, points[index].y + reach * y)
+    };
+    let mut path = PathBuilder::fill();
+    path.move_to(edge(0, 1.));
+    for index in 1..points.len() {
+        path.line_to(edge(index, 1.));
+    }
+    for index in (0..points.len()).rev() {
+        path.line_to(edge(index, -1.));
+    }
+    path.close();
+    path.build().ok()
+}
+
+/// The unit normal of the segment from `a` to `b`, or none when the two coincide.
+fn unit_normal(a: Point<Pixels>, b: Point<Pixels>) -> Option<(f32, f32)> {
+    let (dx, dy) = ((b.x - a.x) / px(1.), (b.y - a.y) / px(1.));
+    let length = dx.hypot(dy);
+    (length > 0.).then(|| (-dy / length, dx / length))
 }
