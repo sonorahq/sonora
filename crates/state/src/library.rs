@@ -2129,18 +2129,54 @@ impl Library {
                 let tracks = addition.resolve(&client).await?;
                 let id = client.create_playlist(&name).await?;
                 client.add_tracks_to_playlist(&id, &tracks).await?;
-                let fetched = client.playlist(&id).await.map(|detail| detail.playlist);
-                Ok(fetched.unwrap_or_else(|error| {
-                    log::warn!("library: a new playlist is not readable yet: {error:#}");
-                    Playlist {
-                        id,
-                        name,
-                        owned: true,
-                        ..Default::default()
+                let (playlist, contents) = match client.playlist(&id).await {
+                    Ok(detail) => {
+                        let contents = if tracks.is_empty() {
+                            Some(HashSet::new())
+                        } else if detail.continuation.is_none()
+                            && detail.tracks.len() >= tracks.len()
+                        {
+                            Some(
+                                detail
+                                    .tracks
+                                    .into_iter()
+                                    .filter_map(|track| track.id)
+                                    .collect(),
+                            )
+                        } else {
+                            client.playlist_tracks(&id).await.ok().and_then(|listed| {
+                                (listed.len() >= tracks.len()).then(|| {
+                                    listed.into_iter().filter_map(|track| track.id).collect()
+                                })
+                            })
+                        };
+                        (detail.playlist, contents)
                     }
-                }))
+                    Err(error) => {
+                        log::warn!("library: a new playlist is not readable yet: {error:#}");
+                        let playlist = Playlist {
+                            id,
+                            name,
+                            owned: true,
+                            track_count: tracks.len() as u32,
+                            ..Default::default()
+                        };
+                        let contents = tracks.is_empty().then(HashSet::new);
+                        (playlist, contents)
+                    }
+                };
+                Ok((playlist, contents))
             },
-            Self::insert_playlist,
+            move |this, (playlist, contents), cx| {
+                let unread = contents.is_none();
+                if let Some(ids) = contents {
+                    this.contents.insert(playlist.id.clone(), ids);
+                }
+                this.insert_playlist(playlist, cx);
+                if unread {
+                    this.read_playlists(shelf, cx);
+                }
+            },
             cx,
         );
     }
@@ -2751,8 +2787,11 @@ impl Library {
             |playlist| playlist.track_count += added_count,
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             ids.extend(track_ids);
+        } else {
+            self.read_playlists(Shelf::of(playlist_id), cx);
         }
         cx.emit(LibraryEvent::TrackAdded {
             playlist: playlist_id.to_owned(),
@@ -2772,10 +2811,13 @@ impl Library {
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             for track in &track_ids {
                 ids.remove(track);
             }
+        } else {
+            self.read_playlists(Shelf::of(playlist_id), cx);
         }
         for track in track_ids {
             cx.emit(LibraryEvent::TrackDropped {
