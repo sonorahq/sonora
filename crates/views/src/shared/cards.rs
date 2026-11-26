@@ -3,7 +3,7 @@ use gpui::{App, ElementId, Entity, FontWeight, SharedString, div};
 use i18n::t;
 use music::{Album, ArtistRef, Genre, GenreItem, Playlist, ReleaseType, SavedArtist, Track};
 use router::{Destination, navigate};
-use state::{Origin, Playback};
+use state::{Origin, Playback, Sonora};
 use ui::{ActiveTheme as _, Card, InlineLinks, Pinnable, Text, Theme};
 
 use crate::shared::cells;
@@ -94,7 +94,12 @@ pub(crate) fn playlist_card(
 
     Card::new(id, SharedString::from(playlist.name.clone()))
         .aria_description(SharedString::from(playlist.owner.clone()))
-        .cover(playlist.cover.clone())
+        .cover(
+            playlist
+                .cover
+                .clone()
+                .or_else(|| library_cover(&playlist.id, cx)),
+        )
         .weight(FontWeight::SEMIBOLD)
         .underline()
         .meta(SharedString::from(playlist.owner.clone()))
@@ -111,6 +116,17 @@ pub(crate) fn playlist_card(
             playback.clone(),
         ))
         .when_some(pin, Pinnable::pin)
+}
+
+/// The cover the library has for one of the listener's playlists, such as the mosaic it painted
+/// for one with no picture of its own, which a shelf on Home lists without any.
+fn library_cover(id: &str, cx: &App) -> Option<String> {
+    Sonora::global(cx)
+        .library
+        .read(cx)
+        .playlist(id)?
+        .cover
+        .clone()
 }
 
 /// The card of a track with nothing wired to play it: name, cover, explicit mark, pin and the
