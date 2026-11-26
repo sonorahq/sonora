@@ -293,6 +293,12 @@ impl Control {
                 (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
+            edit @ (QueueCommand::Remove { .. }
+            | QueueCommand::Move { .. }
+            | QueueCommand::ClearUpcoming) => {
+                reply.send(self.edit_queue(edit, cx)).ok();
+                return;
+            }
         };
         if let [Item::Local { text, kind }] = items.as_slice() {
             let (text, kind) = (text.clone(), *kind);
@@ -321,6 +327,29 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Applies a remove, move or clear to the local queue and says how it went. While another
+    /// device has playback the queue on show is its own and read-only, so every edit is refused.
+    fn edit_queue(&mut self, edit: QueueCommand, cx: &mut Context<Self>) -> Reply {
+        if self.playback.read(cx).steered(cx).is_some() {
+            return Reply::Failed(Failure::SteeredReadOnly);
+        }
+        self.playback.update(cx, |playback, cx| {
+            let (done, uid) = match edit {
+                QueueCommand::Remove { uid } => (playback.remove_queued(&uid, cx), uid),
+                QueueCommand::Move { uid, gap } => (playback.move_queued(&uid, gap, cx), uid),
+                QueueCommand::ClearUpcoming => {
+                    playback.clear_queued(cx);
+                    return Reply::Done;
+                }
+                _ => return Reply::Failed(Failure::Unsupported),
+            };
+            match done {
+                true => Reply::Done,
+                false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
+            }
+        })
     }
 
     /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same
@@ -896,6 +925,7 @@ fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
         view.track(position, cx).map(|track| QueueEntry {
             track: wire_track(&track),
             kind: wire_kind(view.kind(position, cx)),
+            uid: playback.queue_uid(position, cx),
         })
     };
     let previous = (0..view.sections.past)

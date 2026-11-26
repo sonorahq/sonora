@@ -53,6 +53,17 @@ impl Refusal {
     }
 }
 
+/// Edits of the play order, available under `sonora queue`.
+#[derive(Subcommand)]
+enum QueueEdit {
+    /// Remove an upcoming row by the `uid` printed in `sonora queue --json`.
+    Remove { uid: String },
+    /// Move an upcoming row to a gap in the upcoming queue.
+    Move { uid: String, gap: usize },
+    /// Drop everything queued after the current track.
+    Clear,
+}
+
 #[derive(Subcommand)]
 enum Sub {
     /// Resume playback, or play files, links or the best hit of a search now.
@@ -89,8 +100,11 @@ enum Sub {
         #[arg(long)]
         position: bool,
     },
-    /// Print the queue: what played, what plays and what follows, without changing it.
-    Queue,
+    /// Print or edit the queue: what played, what plays and what follows.
+    Queue {
+        #[command(subcommand)]
+        edit: Option<QueueEdit>,
+    },
     /// Print the lyrics of the current track, without looking any up.
     Lyrics,
     /// Print the volume, or set it: `50`, `+5`, `-5`.
@@ -310,7 +324,12 @@ fn into_command(args: Args, line: &mut Command) -> Result<CommandType, clap::Err
         Sub::Prev => play(PlaybackCommand::Previous),
         Sub::Seek { point } => play(point),
         Sub::Current => play(PlaybackCommand::CurrentTrack),
-        Sub::Queue => Request::Queue(QueueCommand::Snapshot),
+        Sub::Queue { edit } => match edit {
+            None => Request::Queue(QueueCommand::Snapshot),
+            Some(QueueEdit::Remove { uid }) => Request::Queue(QueueCommand::Remove { uid }),
+            Some(QueueEdit::Move { uid, gap }) => Request::Queue(QueueCommand::Move { uid, gap }),
+            Some(QueueEdit::Clear) => Request::Queue(QueueCommand::ClearUpcoming),
+        },
         Sub::Lyrics => Request::Lyrics,
         Sub::Watch { position } => Request::Watch(Watch { position }),
         Sub::Volume { level } => play(PlaybackCommand::Volume(level)),
@@ -520,6 +539,31 @@ mod tests {
         };
         assert_eq!(request, Request::Queue(QueueCommand::Snapshot));
         assert_eq!(format, Format::Json);
+    }
+
+    #[test]
+    fn queue_edits_map_to_control_requests() {
+        for (args, command) in [
+            (
+                &["queue", "remove", "row-3"][..],
+                QueueCommand::Remove {
+                    uid: "row-3".to_owned(),
+                },
+            ),
+            (
+                &["queue", "move", "row-3", "2"][..],
+                QueueCommand::Move {
+                    uid: "row-3".to_owned(),
+                    gap: 2,
+                },
+            ),
+            (&["queue", "clear"][..], QueueCommand::ClearUpcoming),
+        ] {
+            let CommandType::Remote(request, _) = parsed(args) else {
+                panic!("a queue edit should ask the running Sonora");
+            };
+            assert_eq!(request, Request::Queue(command));
+        }
     }
 
     #[test]
