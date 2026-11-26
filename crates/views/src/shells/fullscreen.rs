@@ -28,7 +28,6 @@ use crate::chrome::{
 };
 use crate::shared::menus::ItemMenu;
 use crate::shared::now_playing::track_details;
-use crate::shared::rooted::Rooted;
 use crate::shared::transport::{
     Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like,
     moved, transport,
@@ -2055,22 +2054,14 @@ impl Render for FullscreenView {
             })
             .map(|this| match narrow {
                 // The bar along the bottom spans the window edge to edge the way the player
-                // bar does, over the page's side padding. It lays out on its own like the
-                // player bar's cached view, so the two round to the same pixels.
+                // bar does, over the page's side padding.
                 true => this
                     .child(
-                        Rooted::new(self.bar(
-                            hide,
-                            idle,
-                            self.cover_room(switching, cx),
-                            window,
-                            cx,
-                        ))
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .h(PlayerBar::height(window, cx)),
+                        self.bar(hide, idle, self.cover_room(switching, cx), window, cx)
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0(),
                     )
                     .when(hide < 1., |this| {
                         this.child(self.floating(hide, window, cx))
