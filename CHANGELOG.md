@@ -73,6 +73,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
+
 - Liking, saving or creating a playlist as a YouTube Music guest now asks you to sign in, with a button that takes you there, instead of saying the change could not be saved.
 - Playback handed to Sonora through Spotify Connect starts at once, and the rest of its queue fills in as it loads.
 - Opening a menu no longer thickens the haze under the Settings header, so the page scrolling beneath it looks the same with the menu open as without.
