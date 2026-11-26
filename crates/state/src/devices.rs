@@ -25,6 +25,13 @@ const PREVIOUS: usize = 10;
 /// Resolving a queue should not fan out into a request for every track at once.
 const QUEUE_READS: usize = 8;
 const REMOTE_TRACKS: usize = 25;
+/// How long a volume or a play state asked of another device is shown before the device has
+/// reported it. Reports still on their way when it was asked would otherwise undo it.
+const HOLD: Duration = Duration::from_secs(5);
+/// How close a reported volume has to come to the one asked for to count as it.
+const VOLUME_MATCH: f32 = 0.015;
+/// How long a handoff to another device may take before the app stops showing it under way.
+const CONNECT_LIMIT: Duration = Duration::from_secs(20);
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
 /// What a start loads: the collection to play, where in it, its origin, the queue window to
@@ -38,13 +45,45 @@ type Loaded = (
 );
 /// A queue's past and current occurrences, its upcoming ones with their kinds, and its shuffle,
 /// compared to learn whether the listener or playback changed it.
-type Held = (Vec<String>, Option<String>, Vec<(String, QueueKind)>, bool);
+type Chosen = (Vec<String>, Option<String>, Vec<(String, QueueKind)>, bool);
 /// The actual history and upcoming order supplied by another device.
 type RemoteWindow = (
     Vec<(Track, QueuedTrack)>,
     Option<QueuedTrack>,
     Vec<(Track, QueuedTrack)>,
 );
+
+/// A value asked of another device, shown in place of what it reports until it reports it.
+struct Held<T> {
+    device: String,
+    value: T,
+    asked: Instant,
+}
+
+impl<T> Held<T> {
+    fn new(device: &str, value: T) -> Self {
+        Self {
+            device: device.to_owned(),
+            value,
+            asked: Instant::now(),
+        }
+    }
+
+    /// Whether it still stands for `device`.
+    fn holds(&self, device: &str) -> bool {
+        self.device == device && self.asked.elapsed() < HOLD
+    }
+}
+
+/// A handoff to another device that the device has not taken up yet.
+struct Connecting {
+    device: String,
+    /// Whether the device has to report playing to have taken it, which it only does for
+    /// playback that played when it was handed.
+    playing: bool,
+    /// Gives up on the handoff after `CONNECT_LIMIT`.
+    _limit: Task<()>,
+}
 
 /// A seek another device asked for while a song was loading, kept until that song plays.
 struct LateSeek {
@@ -100,6 +139,11 @@ pub struct Devices {
     claimed: bool,
     sent: Option<Arc<Snapshot>>,
     events: Option<Task<()>>,
+    /// The handoff to another device under way, if any.
+    connecting: Option<Connecting>,
+    /// The volume and play state last asked of another device, until it reports them.
+    held_volume: Option<Held<f32>>,
+    held_playing: Option<Held<bool>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
     /// Reads the songs a handover named that were not known yet, after playback started.
@@ -170,6 +214,9 @@ impl Devices {
             claimed: false,
             sent: None,
             events: None,
+            connecting: None,
+            held_volume: None,
+            held_playing: None,
             changing: None,
             filling: None,
             seek_due: None,
@@ -411,17 +458,49 @@ impl Devices {
     }
 
     /// Moves playback onto this app from whichever device has it.
-    pub fn transfer_here(&self) {
+    pub fn transfer_here(&mut self, cx: &mut Context<Self>) {
         if let Some(link) = &self.link {
             link.send(Request::Transfer(link.device().to_owned()));
         }
+        if self.connecting.take().is_some() {
+            cx.notify();
+        }
     }
 
-    /// Moves playback onto another device.
-    pub fn transfer(&self, device: &str) {
-        if let Some(link) = &self.link {
-            link.send(Request::Transfer(device.to_owned()));
+    /// Moves playback onto another device, which shows as connecting until it has taken it.
+    pub fn transfer(&mut self, device: &str, cx: &mut Context<Self>) {
+        let Some(link) = self.link.clone() else {
+            return;
+        };
+        // a song that was loaded and never played is not reported, so picking a device counts as
+        // taking it, which reports it ahead of the transfer that carries it there. With nothing
+        // loaded there is nothing to take, and the device picked is where what comes next plays.
+        if self.elsewhere().is_none() && !self.claimed && self.queue.read(cx).current().is_some() {
+            self.claimed = true;
+            self.publish(cx);
         }
+        link.send(Request::Transfer(device.to_owned()));
+        let limit = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CONNECT_LIMIT).await;
+            this.update(cx, |this, cx| {
+                this.connecting = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.connecting = Some(Connecting {
+            device: device.to_owned(),
+            playing: self.sent.as_ref().is_some_and(|sent| sent.playing),
+            _limit: limit,
+        });
+        cx.notify();
+    }
+
+    /// The device a handoff is under way to, until it has taken playback.
+    pub fn connecting(&self) -> Option<&str> {
+        self.connecting
+            .as_ref()
+            .map(|connecting| connecting.device.as_str())
     }
 
     /// Sends a command to another device.
@@ -435,6 +514,7 @@ impl Devices {
     /// The caller notifies playback, since playback may already be updating when this runs.
     pub(crate) fn set_volume(&mut self, device: &str, level: f32, cx: &mut Context<Self>) {
         self.control(device, Command::Volume(level));
+        self.held_volume = Some(Held::new(device, level));
         if let Some(listed) = self
             .roster
             .devices
@@ -452,6 +532,83 @@ impl Devices {
             elsewhere.device.volume = level;
         }
         cx.notify();
+    }
+
+    /// Plays or pauses another device and shows it so until its next report says otherwise.
+    /// The caller notifies playback, since playback may already be updating when this runs.
+    pub(crate) fn set_playing(&mut self, device: &str, playing: bool, cx: &mut Context<Self>) {
+        self.control(
+            device,
+            match playing {
+                true => Command::Play,
+                false => Command::Pause,
+            },
+        );
+        self.held_playing = Some(Held::new(device, playing));
+        if let Some(elsewhere) = self
+            .roster
+            .elsewhere
+            .as_mut()
+            .filter(|elsewhere| elsewhere.device.id == device)
+        {
+            hold_playing(&mut elsewhere.state, playing);
+        }
+        self.tick(cx);
+        cx.notify();
+    }
+
+    /// Shows what was last asked of another device over what it reports, until it reports it
+    /// or the hold runs out.
+    fn apply_held(&mut self, roster: &mut Roster) {
+        if self
+            .held_volume
+            .as_ref()
+            .is_some_and(|held| held.asked.elapsed() >= HOLD)
+        {
+            self.held_volume = None;
+        }
+        if let Some(held) = &self.held_volume {
+            let reported = roster
+                .devices
+                .iter()
+                .chain(roster.elsewhere.as_ref().map(|elsewhere| &elsewhere.device))
+                .find(|device| device.id == held.device)
+                .map(|device| device.volume);
+            match reported {
+                Some(level) if (level - held.value).abs() < VOLUME_MATCH => {
+                    self.held_volume = None;
+                }
+                _ => {
+                    let level = held.value;
+                    let device = held.device.clone();
+                    for listed in roster
+                        .devices
+                        .iter_mut()
+                        .chain(
+                            roster
+                                .elsewhere
+                                .as_mut()
+                                .map(|elsewhere| &mut elsewhere.device),
+                        )
+                        .filter(|listed| listed.id == device)
+                    {
+                        listed.volume = level;
+                    }
+                }
+            }
+        }
+        let playing = self.held_playing.as_ref().and_then(|held| {
+            let elsewhere = roster.elsewhere.as_mut()?;
+            held.holds(&elsewhere.device.id)
+                .then_some((held.value, elsewhere))
+        });
+        match playing {
+            Some((playing, elsewhere)) if elsewhere.state.playing == playing => {
+                self.held_playing = None;
+            }
+            Some((playing, elsewhere)) => hold_playing(&mut elsewhere.state, playing),
+            None => self.held_playing = None,
+        }
     }
 
     /// Seeks here as another device asked. A seek into a song that is still loading leaves
@@ -568,6 +725,9 @@ impl Devices {
         self.queuing.clear();
         self.liking.clear();
         self.ticking = None;
+        self.connecting = None;
+        self.held_volume = None;
+        self.held_playing = None;
     }
 
     /// Lists the app on the device network, or takes it off, as the setting says. It stays off
@@ -682,6 +842,13 @@ impl Devices {
                     self.leaving = false;
                     Toasts::show(Outcome::Failed, "toast-jam-leave-failed", cx);
                 }
+                Event::TransferFailed(device) => {
+                    if self.connecting() == Some(device.as_str()) {
+                        self.connecting = None;
+                        cx.notify();
+                    }
+                    Toasts::show(Outcome::Failed, "toast-transfer-failed", cx);
+                }
                 Event::JamFailed => {
                     self.awaiting_code = false;
                     Toasts::show(Outcome::Failed, "toast-jam-failed", cx);
@@ -695,7 +862,8 @@ impl Devices {
         }
     }
 
-    fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+    fn set_roster(&mut self, mut roster: Roster, cx: &mut Context<Self>) {
+        self.apply_held(&mut roster);
         let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
             (Some(had), Some(wanted))
                 if had.device.id == wanted.device.id
@@ -724,6 +892,16 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        let taken = match (&self.connecting, &self.roster.elsewhere) {
+            (Some(connecting), Some(elsewhere)) => {
+                elsewhere.device.id == connecting.device
+                    && (elsewhere.state.playing || !connecting.playing)
+            }
+            _ => false,
+        };
+        if taken {
+            self.connecting = None;
+        }
         if let Some((device, level)) = reported_volume {
             self.playback.update(cx, |playback, _| {
                 playback.reported_steered_volume(&device, level)
@@ -1449,7 +1627,7 @@ async fn resolve_queue(
 /// leaving out the autoplay suggestions, which arrive on their own while a handover's songs load
 /// and change nothing the listener or playback did. A skip shows as the current occurrence
 /// changing.
-fn chosen(queue: &Queue) -> Held {
+fn chosen(queue: &Queue) -> Chosen {
     let uid = |at| queue.uid(at).map(str::to_owned);
     let past = (0..queue.past().len())
         .filter_map(|at| uid(QueuePosition::Past(at)))
@@ -1465,4 +1643,13 @@ fn chosen(queue: &Queue) -> Held {
 /// Whether two reports show the same queue around the same song, whatever their clocks say.
 fn same_queue(a: &Snapshot, b: &Snapshot) -> bool {
     a.track == b.track && a.previous == b.previous && a.upcoming == b.upcoming
+}
+
+/// Shows `state` as playing or paused from where it is now.
+fn hold_playing(state: &mut Arc<Snapshot>, playing: bool) {
+    let position = state.live_position();
+    let state = Arc::make_mut(state);
+    state.position = position;
+    state.stamp = Some(SystemTime::now());
+    state.playing = playing;
 }

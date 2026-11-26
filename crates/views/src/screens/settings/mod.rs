@@ -1209,12 +1209,16 @@ impl SettingsView {
                 t!("settings-lyrics-for-local-files"),
                 t!("settings-lyrics-for-local-files-detail"),
             ),
-            Slot::SpotifyConnect => match connect::jellyfin(cx) {
-                true => (
+            Slot::SpotifyConnect => match () {
+                () if connect::jellyfin(cx) => (
                     t!("settings-jellyfin-remote"),
                     t!("settings-jellyfin-remote-detail"),
                 ),
-                false => (
+                () if connect::youtube(cx) => (
+                    t!("settings-youtube-cast"),
+                    t!("settings-youtube-cast-detail"),
+                ),
+                () => (
                     t!("settings-spotify-connect"),
                     t!("settings-spotify-connect-detail"),
                 ),

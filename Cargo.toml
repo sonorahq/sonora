@@ -124,6 +124,7 @@ libc = "0.2"
 lofty = "0.25"
 log = "0.4"
 md-5 = "0.11"
+mdns-sd = "0.22"
 moka = { version = "0.12", features = ["future", "sync"] }
 mpris-server = "0.11"
 notify = "8.2"
@@ -244,6 +245,10 @@ tokio = { version = "1.54", features = [
     "process",
     "sync",
     "time",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+    "tls12",
 ] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
     "connect",

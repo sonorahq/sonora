@@ -412,9 +412,14 @@ impl Aside {
         })
         .detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
-        // the lyrics follow the position as it moves
+        // only the lyrics follow the position as it moves
         let ticks = playback.read(cx).ticks().clone();
-        cx.observe(&ticks, |_, _, cx| cx.notify()).detach();
+        cx.observe(&ticks, |this, _, cx| {
+            if this.tab == SideTab::Lyrics {
+                cx.notify();
+            }
+        })
+        .detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
 

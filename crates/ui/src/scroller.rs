@@ -6,6 +6,7 @@ use gpui::{
 
 use crate::button::Button;
 use crate::glass::{blurring, glass};
+use crate::glide::mark_scrolling;
 use crate::hold::{Hold, held};
 use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
 use crate::theme::ActiveTheme as _;
@@ -261,6 +262,7 @@ impl RenderOnce for Scroller {
                     .track_scroll(&scroll)
             })
             .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                mark_scrolling(cx);
                 match event.delta.precise() {
                     true => gliding.update(cx, |bar, _| bar.stirred()),
                     false => gliding.update(cx, |bar, _| bar.nudge(window)),
