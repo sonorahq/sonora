@@ -576,21 +576,33 @@ impl Worker {
     async fn publish(&mut self, now: Option<Arc<Snapshot>>) {
         self.confirmed_transfer_state = None;
         let before = std::mem::replace(&mut self.now, now);
-        if let Some(now) = self.now.clone() {
-            // smart shuffle is a kind of shuffle, and it holds for its own playlist alone
-            if now.shuffle == Some(false) {
-                self.smart_mode = false;
-                self.smart = None;
-                self.smart_read = None;
-            } else if self.smart.is_some() && self.playing(&now) != self.smart {
-                self.smart = None;
-            }
-        }
+        self.follow_smart(before.as_deref());
         self.identify(before.as_deref());
         if self.mode == Mode::Publish {
             self.read_uids();
         }
         self.sync(before).await;
+    }
+
+    /// Lets a change made in the app end smart shuffle: switching shuffle off ends it, and another
+    /// collection or stopped playback ends it for the playlist it was on. Only a change since the
+    /// last report counts, so a report sent while a smart shuffle start is on its way leaves it.
+    fn follow_smart(&mut self, before: Option<&Snapshot>) {
+        let Some(now) = self.now.clone() else {
+            self.smart = None;
+            return;
+        };
+        let shuffle_was = before.map(|before| before.shuffle);
+        if now.shuffle == Some(false) && shuffle_was.is_some_and(|was| was != Some(false)) {
+            self.smart_mode = false;
+            self.smart = None;
+            self.smart_read = None;
+            return;
+        }
+        let moved = before.is_some_and(|before| self.playing(before) != self.playing(&now));
+        if moved && self.smart.is_some() && self.playing(&now) != self.smart {
+            self.smart = None;
+        }
     }
 
     /// Fetches occurrence IDs once per playback context.
@@ -1162,7 +1174,11 @@ impl Worker {
             let session = self.session.clone();
             let read = async move {
                 match sequence::resolve(&session, &format!("{uri}{LENS}")).await {
-                    Ok(rows) => (started_smart(&play, &rows), Some(uri)),
+                    Ok(rows) => {
+                        let start = started_smart(&play, &rows);
+                        let smart = start.is_some().then_some(uri);
+                        (start, smart)
+                    }
                     Err(error) => {
                         log::warn!("connect: cannot read {uri} for smart shuffle: {error:#}");
                         (supplied, None)
@@ -2202,8 +2218,21 @@ fn started_smart(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start> {
             }
             track
         }
-        None if rest.is_empty() => return None,
-        None => rest.remove(0),
+        None => {
+            // a tap on a song of the plain playlist names it by a place the lens rows shift
+            let tapped = play
+                .options
+                .skip_to
+                .as_ref()
+                .and_then(|skip| skip.track_uri.as_deref())
+                .and_then(uri_id)
+                .and_then(|id| rest.iter().position(|row| row.id == id));
+            match tapped {
+                Some(at) => rest.remove(at),
+                None if rest.is_empty() => return None,
+                None => rest.remove(0),
+            }
+        }
     };
     Some(Start {
         state: Arc::new(Snapshot {
