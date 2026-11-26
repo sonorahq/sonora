@@ -269,4 +269,4 @@ Open Font License 1.1) and four interchangeable icon sets:
 [Remix Icon](https://remixicon.com) 4.8.0 (Apache 2.0) and the
 [Solar](https://www.figma.com/community/file/1166831539721848736) Linear set
 (CC BY 4.0, by 480 Design). Each pack keeps its licence beside its files in
-`assets/icons`. `THIRD-PARTY.md` lists every bundled dependency.
+`assets/icons`. [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md) lists every bundled dependency.

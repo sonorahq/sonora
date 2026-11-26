@@ -15,7 +15,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 cd "$ROOT"
 cp COPYING "$STAGE/LICENSE"
-cp THIRD-PARTY.md "$STAGE/THIRD-PARTY.md"
+cp docs/THIRD-PARTY.md "$STAGE/THIRD-PARTY.md"
 cp assets/fonts/LICENSE.txt "$STAGE/LICENSE.Inter"
 mkdir -p "$STAGE/icons"
 cp assets/icons/LICENSE "$STAGE/icons/LICENSE"

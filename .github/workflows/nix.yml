@@ -15,7 +15,7 @@ on:
       - crates/**
       - assets/**
       - COPYING
-      - THIRD-PARTY.md
+      - docs/THIRD-PARTY.md
       - flake.nix
       - flake.lock
       - rust-toolchain.toml

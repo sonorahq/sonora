@@ -58,7 +58,7 @@ modules:
 
       # Use source from this machine:
       - type: dir
-        path: ..
+        path: ../..
         skip:
         - .git
         - .direnv
@@ -67,8 +67,8 @@ modules:
         - dist
         - result
         - vendor
-        - flatpak/flatpak
-        - flatpak/flatpak-repo
+        - packaging/flatpak/flatpak
+        - packaging/flatpak/flatpak-repo
 
       # Sources to build with Cargo:
       - cargo-sources.json
@@ -90,11 +90,11 @@ modules:
       # Install Desktop File and AppData Metainfo
       - install -d /app/share/applications /app/share/metainfo
       - sed -e 's/^Icon=sonora$/Icon=io.github.nolight132.sonora/' -e 's/^StartupWMClass=sonora$/StartupWMClass=io.github.nolight132.sonora/' assets/linux/sonora.desktop > /app/share/applications/io.github.nolight132.sonora.desktop
-      - sed -e "s/@VERSION@/$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)/" -e "s/@DATE@/$(date -I)/" flatpak/io.github.nolight132.sonora.metainfo.xml > /app/share/metainfo/io.github.nolight132.sonora.metainfo.xml
+      - sed -e "s/@VERSION@/$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)/" -e "s/@DATE@/$(date -I)/" packaging/flatpak/io.github.nolight132.sonora.metainfo.xml > /app/share/metainfo/io.github.nolight132.sonora.metainfo.xml
 
       # Install licenses
       - install -Dm644 COPYING /app/share/licenses/io.github.nolight132.sonora/LICENSE
-      - install -Dm644 THIRD-PARTY.md /app/share/licenses/io.github.nolight132.sonora/THIRD-PARTY.md
+      - install -Dm644 docs/THIRD-PARTY.md /app/share/licenses/io.github.nolight132.sonora/THIRD-PARTY.md
       - install -Dm644 assets/fonts/LICENSE.txt /app/share/licenses/io.github.nolight132.sonora/LICENSE.Inter
       - install -Dm644 assets/icons/LICENSE /app/share/licenses/io.github.nolight132.sonora/icons/LICENSE
       - for licence in assets/icons/*/LICENSE; do install -Dm644 "$licence" "/app/share/licenses/io.github.nolight132.sonora/icons/LICENSE.$(basename "$(dirname "$licence")")"; done

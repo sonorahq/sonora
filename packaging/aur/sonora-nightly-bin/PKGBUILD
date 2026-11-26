@@ -1,6 +1,6 @@
 # Maintainer: Pavel Olizko <contact@nolight.dev>
 
-# Rendered every night from aur/sonora-nightly-bin/PKGBUILD in github.com/sonorahq/sonora by its
+# Rendered every night from packaging/aur/sonora-nightly-bin/PKGBUILD in github.com/sonorahq/sonora by its
 # nightly workflow, which overwrites any change made in the AUR repository.
 
 pkgname=sonora-nightly-bin
@@ -62,7 +62,7 @@ package() {
   done
 
   install -Dm644 COPYING "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-  install -Dm644 THIRD-PARTY.md "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY.md"
+  install -Dm644 docs/THIRD-PARTY.md "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY.md"
   install -Dm644 assets/fonts/LICENSE.txt \
     "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.Inter"
   install -Dm644 assets/icons/LICENSE \

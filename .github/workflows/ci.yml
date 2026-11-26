@@ -10,14 +10,12 @@ on:
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   pull_request:
     paths-ignore:
       - "**/*.md"
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   workflow_dispatch:
 
 # A pull request event handled after the merge resolves github.ref to the base branch, so
@@ -333,7 +331,7 @@ jobs:
           $env:SONORA_VERSION = "0.0.0"
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging/windows/sonora.iss"
 
       # A convenience binary, not a release artefact: GitHub's artifact service times out often
       # enough that it must not be what turns a green build red.

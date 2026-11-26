@@ -5,8 +5,8 @@
 /vendor
 __pycache__/
 /.idea
-/flatpak/flatpak-repo
-/flatpak/cargo-sources.json
-/flatpak/*.flatpak
-/flatpak/flatpak
+/packaging/flatpak/flatpak-repo
+/packaging/flatpak/cargo-sources.json
+/packaging/flatpak/*.flatpak
+/packaging/flatpak/flatpak
 /.flatpak-builder
