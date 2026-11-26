@@ -36,6 +36,9 @@ type Loaded = (
     Option<RemoteWindow>,
     bool,
 );
+/// A queue's past and current occurrences, its upcoming ones with their kinds, and its shuffle,
+/// compared to learn whether the listener or playback changed it.
+type Held = (Vec<String>, Option<String>, Vec<(String, QueueKind)>, bool);
 /// The actual history and upcoming order supplied by another device.
 type RemoteWindow = (
     Vec<(Track, QueuedTrack)>,
@@ -1442,18 +1445,19 @@ async fn resolve_queue(
     ids.iter().map(|id| known.get(id).cloned()).collect()
 }
 
-/// The queue's occurrences by section and its shuffle, leaving out the autoplay suggestions,
-/// which arrive on their own while a handover's songs load and change nothing the listener or
-/// playback did. A skip shows as the current occurrence changing.
-fn chosen(queue: &Queue) -> (Vec<String>, Option<String>, Vec<String>, bool) {
+/// The queue's occurrences by section and its shuffle, with why each upcoming one is there,
+/// leaving out the autoplay suggestions, which arrive on their own while a handover's songs load
+/// and change nothing the listener or playback did. A skip shows as the current occurrence
+/// changing.
+fn chosen(queue: &Queue) -> Held {
     let uid = |at| queue.uid(at).map(str::to_owned);
     let past = (0..queue.past().len())
         .filter_map(|at| uid(QueuePosition::Past(at)))
         .collect();
     let upcoming = (0..queue.upcoming().len())
         .map(QueuePosition::Upcoming)
-        .filter(|at| queue.kind(*at) != Some(QueueKind::Suggested))
-        .filter_map(uid)
+        .filter_map(|at| Some((uid(at)?, queue.kind(at)?)))
+        .filter(|(_, kind)| *kind != QueueKind::Suggested)
         .collect();
     (past, uid(QueuePosition::Current), upcoming, queue.shuffle())
 }
