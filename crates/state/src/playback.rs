@@ -1404,7 +1404,8 @@ impl Playback {
         self.queue.read(cx).uid(position).map(str::to_owned)
     }
 
-    /// Removes the queue row with `uid`, saying whether it was there.
+    /// Removes the upcoming queue row with `uid`, saying whether it was there. The current and
+    /// past rows cannot be removed.
     pub fn remove_queued(&mut self, uid: &str, cx: &mut Context<Self>) -> bool {
         if self.steered(cx).is_some() {
             return false;
@@ -1439,9 +1440,8 @@ impl Playback {
         if self.steered(cx).is_some() {
             return false;
         }
-        // A station top-up already in flight would otherwise append its tracks to the queue we
-        // just emptied, and could even start playback again. Cancel it; the station stays active
-        // and may fetch again once the queue runs low.
+        // Dropping a station top-up in flight keeps it from refilling the emptied queue. The
+        // station stays active and fetches again once the queue runs low.
         self.topping = None;
         self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
         true

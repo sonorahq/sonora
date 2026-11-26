@@ -56,7 +56,7 @@ impl Refusal {
 /// Edits of the play order, available under `sonora queue`.
 #[derive(Subcommand)]
 enum QueueEdit {
-    /// Remove a row by the `uid` printed in `sonora queue --json`.
+    /// Remove an upcoming row by the `uid` printed in `sonora queue --json`.
     Remove { uid: String },
     /// Move an upcoming row to a gap in the upcoming queue.
     Move { uid: String, gap: usize },

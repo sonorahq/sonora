@@ -22,7 +22,7 @@ sonora search crescent shaped depression | fzf | awk '{print $NF}' | xargs sonor
 | `sonora seek <0-100\|TIME\|±STEP>` | Jump to a percent of the current track, a time such as `1:30`, or a step such as `+10` |
 | `sonora current` | Print what plays now as JSON, or `null` when nothing is loaded |
 | `sonora queue` | Print the queue: what played, what plays and what follows, without changing it |
-| `sonora queue remove <uid>` | Remove the queue row with that id |
+| `sonora queue remove <uid>` | Remove the upcoming queue row with that id |
 | `sonora queue move <uid> <gap>` | Move an upcoming row to a gap, counting from 0 |
 | `sonora queue clear` | Drop everything queued after the current track |
 | `sonora lyrics` | Print the lyrics of the current track, without looking any up |

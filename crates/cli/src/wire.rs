@@ -364,7 +364,7 @@ pub enum Failure {
     NothingFound(String),
     /// Another device has playback, and its queue is read-only here.
     SteeredReadOnly,
-    /// No row in the queue carries this id.
+    /// No upcoming row in the queue carries this id.
     UnknownQueueEntry(String),
 }
 

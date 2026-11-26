@@ -328,7 +328,7 @@ fn describe(failure: &Failure) -> String {
         Failure::SteeredReadOnly => {
             "another device has playback; its queue cannot be edited here".to_owned()
         }
-        Failure::UnknownQueueEntry(uid) => format!("no queue row with id '{uid}'"),
+        Failure::UnknownQueueEntry(uid) => format!("no upcoming queue row with id '{uid}'"),
     }
 }
 
