@@ -14,17 +14,28 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use bytes::Bytes;
 use engine::{self, Fetch, Loudness};
 use music::vault::{Recording, Shelf};
-use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
+use music::{Codec, Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 use serde::{Deserialize, Serialize};
 use sound::aac::Aac;
 use sound::decode::{Decoded, Media};
 use sound::mp4::{Input, Prepared, Remote};
 use sound::ranged;
-use sound::stream::{Plain, Stream};
+use sound::stream::{Plain, Source, Stream};
+use symphonia::core::{
+    codecs::{
+        CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS,
+        CODEC_TYPE_VORBIS,
+    },
+    formats::FormatOptions,
+    io::{MediaSource, MediaSourceStream},
+    meta::MetadataOptions,
+    probe::Hint,
+};
 
-use crate::client::{Details, SubsonicClient};
+use crate::client::{Details, SubsonicClient, subsonic_encoding};
 
 /// A track downloading, and what the server says about its length and loudness.
 #[derive(Clone)]
@@ -119,6 +130,39 @@ fn encoding_from_params(params: &symphonia::core::codecs::CodecParameters) -> Op
         CODEC_TYPE_VORBIS => Some(Encoding::Vorbis { kbps: 0 }),
         _ => None,
     }
+}
+
+/// Completes missing resolution fields from the track catalog only for an original download.
+/// Transcoded streams must never inherit the original track's depth or sample rate.
+fn catalog_resolution(
+    served: Option<Encoding>,
+    catalog: Option<Encoding>,
+    original: bool,
+) -> Option<Encoding> {
+    let served = served?;
+    if !original {
+        return Some(served);
+    }
+    let catalog = catalog?;
+    Some(match (served, catalog) {
+        (
+            Encoding::Flac { depth, rate },
+            Encoding::Flac {
+                depth: known_depth,
+                rate: known_rate,
+            },
+        ) => Encoding::Flac {
+            depth: if depth == 0 { known_depth } else { depth },
+            rate: if rate == 0 { known_rate } else { rate },
+        },
+        (Encoding::Alac { depth }, Encoding::Alac { depth: known_depth }) => Encoding::Alac {
+            depth: if depth == 0 { known_depth } else { depth },
+        },
+        (Encoding::Pcm { depth }, Encoding::Pcm { depth: known_depth }) => Encoding::Pcm {
+            depth: if depth == 0 { known_depth } else { depth },
+        },
+        (served, _) => served,
+    })
 }
 
 /// Observes a bounded prefix so a short download's encoding is known before its cache facts
@@ -318,6 +362,12 @@ impl Fetch for Subsonic {
         );
         let (stream, prepared, file, encoding) = stream?;
         let mut details = details;
+        let catalog_encoding = details.encoding;
+        let encoding = catalog_resolution(
+            encoding,
+            catalog_encoding,
+            self.transcode == Transcode::default(),
+        );
         details.encoding = encoding;
         Ok(Loaded {
             stream,
@@ -476,6 +526,44 @@ mod tests {
                 None,
             ),
             Some(Encoding::Aac { kbps: 0 })
+        );
+    }
+
+    #[test]
+    fn catalog_resolution_recovers_missing_16_bit_depth_for_original_flac() {
+        assert_eq!(
+            catalog_resolution(
+                Some(Encoding::Flac {
+                    depth: 0,
+                    rate: 44_100
+                }),
+                Some(Encoding::Flac {
+                    depth: 16,
+                    rate: 44_100,
+                }),
+                true,
+            ),
+            Some(Encoding::Flac {
+                depth: 16,
+                rate: 44_100,
+            })
+        );
+        assert_eq!(
+            catalog_resolution(
+                Some(Encoding::Flac {
+                    depth: 0,
+                    rate: 44_100
+                }),
+                Some(Encoding::Flac {
+                    depth: 16,
+                    rate: 44_100,
+                }),
+                false,
+            ),
+            Some(Encoding::Flac {
+                depth: 0,
+                rate: 44_100
+            })
         );
     }
 

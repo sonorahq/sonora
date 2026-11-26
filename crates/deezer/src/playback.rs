@@ -16,7 +16,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use engine::{self, Fetch, Loudness};
 use music::vault::{Recording, Shelf};
-use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
+use music::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 use reqwest::header::HeaderMap;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};

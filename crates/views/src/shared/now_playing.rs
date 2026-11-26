@@ -7,10 +7,10 @@ use gpui::{
 use i18n::t;
 use music::{Encoding, TrackSignal};
 use router::{Destination, Link, navigate};
-use state::{Playback, QueuePosition};
+use state::{Playback, PlayerBarLayout, QueuePosition, Sonora};
 use ui::{
-    ActiveTheme as _, Badge, InlineLink, InlineLinks, Perch, Pinnable, Sparkle, Tails as _,
-    Tipped as _,
+    ActiveTheme as _, AudioQualityBadge, Badge, InlineLink, InlineLinks, Perch, Pinnable, Sparkle,
+    Tails as _, Tipped as _,
 };
 
 use crate::shared::pins::Pinned as _;
@@ -261,6 +261,7 @@ pub(crate) fn track_details<V: 'static>(
             .gap_1()
             .when(recommended, |this| this.child(Sparkle::new()))
             .child(title)
+            .when_some(quality_badge, |this, badge| this.child(badge))
             .child(actions),
     };
     div()

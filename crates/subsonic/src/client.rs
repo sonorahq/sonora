@@ -12,7 +12,7 @@ use music::escape;
 use music::order;
 use music::smart::SmartPlaylistUpdate;
 use music::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Encoding, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
     RadioSeed, Report, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode,
     UserProfile, distinct_covers, iso_8601_to_epoch,

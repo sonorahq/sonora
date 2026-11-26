@@ -19,14 +19,10 @@ impl SettingsView {
     /// material and its clock, all in one group.
     pub(super) fn player_bar_groups(&self) -> Vec<Group> {
         vec![
-            Group::new("settings-player-bar-layout", "icons/layout-grid.svg")
-                .cards(Slot::PlayerBarLayout),
-            Group::new("settings-player-bar-surface", "icons/blend.svg")
-                .rows([Slot::PlayerBarTransparent]),
-            Group::new("settings-player-bar-details", "icons/disc-3.svg")
-                .rows([Slot::PlayerBarBadge]),
-            Group::new("settings-player-bar-time", "icons/rotate-ccw-clock.svg")
-                .rows([Slot::PlayerBarTimeLeft]),
+            Group::new("settings-player-bar-layout").cards(Slot::PlayerBarLayout),
+            Group::new("settings-player-bar-surface").rows([Slot::PlayerBarTransparent]),
+            Group::new("settings-player-bar-details").rows([Slot::PlayerBarBadge]),
+            Group::new("settings-player-bar-time").rows([Slot::PlayerBarTimeLeft]),
         ]
     }
 

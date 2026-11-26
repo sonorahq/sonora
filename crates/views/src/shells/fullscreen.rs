@@ -27,7 +27,7 @@ use crate::chrome::{
     Aside, BarParts, COVER_GAP, PlayerBar, SessionsButton, TitleBarOptions, Volume, jam, members,
 };
 use crate::shared::menus::ItemMenu;
-use crate::shared::now_playing::track_details;
+use crate::shared::now_playing::{audio_quality_badge, track_details};
 use crate::shared::transport::{
     Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like,
     moved, transport,
