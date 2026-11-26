@@ -12,7 +12,7 @@ mod sidebar_left;
 mod sidebar_right;
 mod swipe_cue;
 mod theme_invite;
-pub(crate) mod timeline;
+mod timeline;
 mod title_bar;
 mod toasts;
 mod toolbar;
@@ -31,7 +31,7 @@ pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
 pub(crate) use swipe_cue::SwipeCue;
 pub(crate) use theme_invite::ThemeInvite;
-pub(crate) use timeline::Timeline;
+pub(crate) use timeline::{Released, Timeline};
 #[cfg(target_os = "macos")]
 pub use title_bar::traffic_lights;
 pub(crate) use title_bar::{Busy, TitleBar, TitleBarEvent, TitleBarOptions};

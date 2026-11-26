@@ -439,7 +439,7 @@ fn open_mini_player(cx: &mut App) {
         })
         .or_else(|| cx.primary_display());
     let theme = *cx.theme();
-    let size = size(theme.metrics.cover * 2.6, theme.metrics.cover * 3.);
+    let size = size(theme.metrics.cover * 2.2, theme.metrics.cover * 2.3);
     let bounds = display.as_ref().map_or_else(
         || Bounds::centered(None, size, cx),
         |display| {
@@ -479,13 +479,12 @@ fn open_mini_player(cx: &mut App) {
             app_owns_titlebar_drag: true,
             window_min_size: Some(least),
             inactive_frame_interval: Sonora::global(cx).settings.read(cx).saver().interval(),
-            app_id: Some("sonora".into()),
+            app_id: Some(assets::app_id().into()),
             ..Default::default()
         },
         |window, cx| {
             #[cfg(target_os = "windows")]
             {
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                 use windows_sys::Win32::UI::WindowsAndMessaging::{
                     HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
                 };
@@ -493,13 +492,11 @@ fn open_mini_player(cx: &mut App) {
                     window,
                     Sonora::global(cx).settings.read(cx).window_rounding(),
                 );
-                if let Ok(RawWindowHandle::Win32(handle)) =
-                    HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
-                {
+                if let Some(handle) = platform_handle(window) {
                     // GPUI's floating kind does not set the Windows topmost style.
                     let pinned = unsafe {
                         SetWindowPos(
-                            handle.hwnd.get() as _,
+                            handle,
                             HWND_TOPMOST,
                             0,
                             0,

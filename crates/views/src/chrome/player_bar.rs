@@ -460,9 +460,9 @@ impl PlayerBar {
         let button = px(ICON_BUTTON);
         let row = window.viewport_size().width - rem * (BAR_PAD + COLUMN_GAP) * 2.;
         let tools = button * tools as f32 + rem * TOOL_GAP * tools.saturating_sub(1) as f32;
-        // The right side without its slider: the buttons, the mute and fullscreen buttons and
+        // The right side without its slider: the tools, mute, mini player and fullscreen buttons and
         // the gaps between them.
-        let rising = tools + button * 2. + rem * SIDE_GAP * 2.;
+        let rising = tools + button * 3. + rem * SIDE_GAP * 2. + rem * TOOL_GAP;
         let around = rising + rem * VOLUME_GAP;
         let keep = (row / 3.).max(px(SEEK_KEEP)).min(px(SEEK_MAX));
         let slider = (row - keep) / 2. - around;
@@ -499,7 +499,7 @@ impl PlayerBar {
         let button = px(ICON_BUTTON);
         let row = |count: f32, gap: f32| button * count + rem * gap * (count - 1.).max(0.);
         let tools = Self::tool_count(window, cx) as f32;
-        let right = row(tools, TOOL_GAP) + button * 2. + rem * SIDE_GAP * 2.;
+        let right = row(tools, TOOL_GAP) + button * 3. + rem * SIDE_GAP * 2. + rem * TOOL_GAP;
         Self::island_pad(pill, cx) * 2.
             + row(5., SIDE_GAP)
             + rem * ISLAND_GAP * 2.
@@ -861,7 +861,7 @@ impl Render for PlayerBar {
         let layout = self.settings.read(cx).player_bar_layout();
         let stacked = Self::stacked(window, layout);
         // Equal wings keep the title centered while reserving the original volume slider width.
-        let centered_wing = theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.;
+        let centered_wing = theme.metrics.control * 5. + px(VOLUME_WIDTH) + theme.metrics.pad * 4.;
         let sides = match SidebarRight::available(window) {
             true => Some(self.side_buttons(cx)),
             false => None,

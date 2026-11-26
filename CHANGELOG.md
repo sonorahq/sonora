@@ -11,8 +11,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Control music in an always-on-top mini player with artwork, lyrics, queue and a remembered window position.
 
-### Added
-
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
 - Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     App, AvailableSpace, Context, Div, Entity, FocusHandle, MouseButton, MouseMoveEvent, Pixels,
@@ -10,8 +11,7 @@ use input::{CloseWindow, ShowMainWindow, WORKSPACE_CONTEXT};
 use state::{Cover, Playback, SideTab, Sonora};
 use ui::{ActiveTheme as _, Artwork, Button, TabBar, Text};
 
-use crate::chrome::Aside;
-use crate::chrome::timeline::{Released, Timeline};
+use crate::chrome::{Aside, Released, Timeline};
 use crate::root::ui_font;
 use crate::shared::transport::{next, previous, toggle};
 use crate::shared::volume::{RisingVolume, VolumeHost, rising_volume};
@@ -56,7 +56,7 @@ impl MiniPlayer {
         cx.observe(&cover, |_, _, cx| cx.notify()).detach();
         let aside = cx.new(|cx| {
             let mut lyrics = Aside::new(queue.clone(), playback.clone(), SideTab::Lyrics, cx);
-            lyrics.strip();
+            lyrics.compact();
             lyrics
         });
         let timeline = cx.new(|cx| Timeline::new(playback.clone(), cx));
@@ -138,6 +138,8 @@ impl MiniPlayer {
             .child(
                 div()
                     .id("mini-drag")
+                    .role(Role::Group)
+                    .aria_label(t!("mini-player-title"))
                     .flex()
                     .flex_1()
                     .min_w_0()
@@ -312,6 +314,8 @@ impl Render for MiniPlayer {
         let artwork_only = self.panel.is_none() && self.settled;
         let root = div()
             .id("mini-player")
+            .role(Role::Window)
+            .aria_label(t!("mini-player-title"))
             .relative()
             .size_full()
             .overflow_hidden()
@@ -324,7 +328,12 @@ impl Render for MiniPlayer {
             .key_context(WORKSPACE_CONTEXT)
             .track_focus(&self.focus)
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
-            .on_hover(cx.listener(|this, _: &bool, _, cx| this.wake(cx)))
+            .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
+                if !hovering {
+                    this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
+                }
+                this.wake(cx);
+            }))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 this.timeline
                     .update(cx, |timeline, cx| timeline.hover(event.position, cx));

@@ -343,6 +343,7 @@ pub(crate) struct Aside {
     /// The last pin while it has not landed yet, cleared once it does.
     queue_pin: Option<Pinned>,
     titled: bool,
+    compact: bool,
     aiming: bool,
     rested: Option<Pixels>,
     since: std::time::Instant,
@@ -471,6 +472,7 @@ impl Aside {
             anchor: true,
             queue_pin: None,
             titled: true,
+            compact: false,
             aiming: false,
             rested: None,
             since: std::time::Instant::now(),
@@ -514,6 +516,12 @@ impl Aside {
 
     pub(crate) fn strip(&mut self) {
         self.titled = false;
+    }
+
+    /// Fits an independent small window without fullscreen queue fades or editing tools.
+    pub(crate) fn compact(&mut self) {
+        self.strip();
+        self.compact = true;
     }
 
     /// Whether a track menu is open over the panel, which keeps the fullscreen chrome awake.
@@ -2401,9 +2409,10 @@ impl Render for Aside {
                     }
                 }),
             )
-            .when(self.titled || self.tab == SideTab::Queue, |this| {
-                this.child(self.header(&sections, remote, window, cx))
-            })
+            .when(
+                self.titled || (self.tab == SideTab::Queue && !self.compact),
+                |this| this.child(self.header(&sections, remote, window, cx)),
+            )
             .child(
                 div()
                     .id("queue-drop")
@@ -2439,7 +2448,7 @@ impl Render for Aside {
                             div().flex_1().min_h_0().child(
                                 Scroller::listing("queue-rows", &self.scrollbar)
                                     .bottom_inset(self.bottom(cx))
-                                    .when(effects(), |this| {
+                                    .when(effects() && !self.compact, |this| {
                                         let under = match self.titled {
                                             true => Pixels::ZERO,
                                             false => px(FADE * 0.5),
