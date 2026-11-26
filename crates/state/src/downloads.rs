@@ -20,7 +20,8 @@ const AT_ONCE: usize = 2;
 /// refusal in a row doubles it, up to `LONGEST_REST`.
 const FIRST_REST: Duration = Duration::from_secs(15);
 const LONGEST_REST: Duration = Duration::from_secs(60);
-/// Successful downloads before trying a shorter interval.
+/// Downloads in a row that work before a gap a refusal widened narrows again, never below the
+/// provider's own.
 const SPEED_UP_AFTER: u8 = 8;
 /// How many finished downloads the pace is read from.
 const PACE_WINDOW: usize = 12;
@@ -79,6 +80,8 @@ pub struct Remaining {
     pub share: f32,
     /// How long the rest should take at the pace of the latest downloads.
     pub eta: Option<Duration>,
+    /// How long the queue still waits because the provider asked it to slow down, while it does.
+    pub paused: Option<Duration>,
 }
 
 /// Raised when what a Downloaded filter shows may have changed, which is when a track finished
@@ -443,7 +446,19 @@ impl Downloads {
             eta: self
                 .pace()
                 .map(|rate| Duration::from_secs_f32(songs as f32 / rate * 60.)),
+            paused: self.paused(),
         })
+    }
+
+    /// How much is left of a rest the provider asked for by refusing a download. The short gap
+    /// a paced provider keeps between downloads does not count.
+    fn paused(&self) -> Option<Duration> {
+        if self.refusals == 0 || !self.running.is_empty() {
+            return None;
+        }
+        self.resting
+            .map(|until| until.saturating_duration_since(Instant::now()))
+            .filter(|left| !left.is_zero())
     }
 
     /// The ids of the tracks of `set` its progress counts: the ones that can be downloaded,
@@ -943,7 +958,7 @@ impl Downloads {
                 let going = this
                     .update(cx, |this, cx| {
                         cx.notify();
-                        let going = !this.running.is_empty();
+                        let going = !this.running.is_empty() || this.paused().is_some();
                         if !going {
                             this.ticker = None;
                         }
@@ -979,7 +994,7 @@ impl Downloads {
                     self.successes += 1;
                     if self.successes == SPEED_UP_AFTER {
                         let gap = self.pace.unwrap_or(initial_gap);
-                        self.pace = Some((gap * 3 / 4).max(initial_gap / 2));
+                        self.pace = Some((gap * 3 / 4).max(initial_gap));
                         self.successes = 0;
                     }
                 }
@@ -1009,6 +1024,7 @@ impl Downloads {
                     wait.as_secs()
                 );
                 self.resting = Some(Instant::now() + wait);
+                self.tick(cx);
                 // The track goes to the back of the line, so one the provider keeps refusing
                 // cannot hold up every other download behind it.
                 if self.tracks.contains_key(&id) {

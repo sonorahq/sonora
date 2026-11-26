@@ -262,9 +262,16 @@ impl Render for DownloadsButton {
             .text_size(theme.text(Text::Small))
             .text_color(theme.muted_foreground)
             .child(format!("{}%", (remaining.share * 100.).floor() as usize))
-            .when_some(remaining.eta, |this, eta| {
-                let minutes = eta.as_secs().div_ceil(60).max(1) as usize;
-                this.child(t!("downloads-eta", minutes = minutes))
+            .map(|this| match (remaining.paused, remaining.eta) {
+                (Some(paused), _) => {
+                    let seconds = paused.as_secs().max(1) as usize;
+                    this.child(t!("downloads-paused", seconds = seconds))
+                }
+                (None, Some(eta)) => {
+                    let minutes = eta.as_secs().div_ceil(60).max(1) as usize;
+                    this.child(t!("downloads-eta", minutes = minutes))
+                }
+                (None, None) => this,
             });
         let menu = Menu::new("downloads-menu").w(WIDTH).header(
             div()
