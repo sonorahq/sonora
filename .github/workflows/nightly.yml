@@ -88,8 +88,9 @@ jobs:
     with:
       nightly: ${{ needs.gate.outputs.number }}
       reuse: ${{ needs.gate.outputs.reuse }}
-    # Only nix.yml reads a secret when release.yml runs for a nightly. The other secrets it names
-    # belong to jobs that run for tags alone.
+    # Only nix.yml and the Apple signing and notarization of the macOS bundle read a secret when
+    # release.yml runs for a nightly. The other secrets it names belong to jobs that run for tags
+    # alone.
     secrets: inherit
 
   # sonora-nightly-bin is rendered from packaging/aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
