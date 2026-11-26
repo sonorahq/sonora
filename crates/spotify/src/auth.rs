@@ -182,8 +182,8 @@ struct Legacy {
 }
 
 /// Signs in with the credential an older Sonora saved through librespot, so updating keeps the
-/// account signed in. The credential is removed once it is carried over or once Spotify
-/// rejects it. A network failure leaves it for the next launch.
+/// account signed in. The credential stays for an older build to use until signing out removes
+/// it, unless Spotify rejects it, which removes it at once.
 async fn carry_over(config: &AuthConfig) -> Result<Option<Session>> {
     let legacy_path = config.legacy_file();
     let body = match std::fs::read(&legacy_path) {
@@ -222,7 +222,6 @@ async fn carry_over(config: &AuthConfig) -> Result<Option<Session>> {
             return Err(sign_in_error(error));
         }
     };
-    credentials::remove(&legacy_path);
     log::info!("spotify: carried the sign-in over from the previous version");
     Ok(Some(Session::new(oauth, device)))
 }
