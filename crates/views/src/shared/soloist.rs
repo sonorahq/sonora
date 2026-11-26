@@ -6,7 +6,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
 use i18n::t;
-use music::soloist::{DASHBOARD, DEVICE, TERMS};
+use soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Input, Modal, Notice, Spinner,

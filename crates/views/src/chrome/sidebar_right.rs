@@ -1,7 +1,7 @@
 use gpui::prelude::*;
-use gpui::{Context, Entity, Pixels, Render, StyleRefinement, Window, div, px};
+use gpui::{App, Context, Entity, Pixels, Render, StyleRefinement, Window, div, px};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
-use ui::{ActiveTheme as _, MIN_CONTENT, Panel, Room, Side};
+use ui::{ActiveTheme as _, Entrance, MIN_CONTENT, Panel, Room, Side, entering, veiled};
 
 use crate::chrome::{Aside, Members};
 
@@ -26,6 +26,9 @@ pub(crate) struct SidebarRight {
     /// How many times the listener has opened or closed the sidebar. The page springs aside only
     /// when this moves, so an edge drag or a window resize never sets the sidebar sliding.
     slides: usize,
+    /// The entrance of the tab the open sidebar just switched to, the one a page makes as the
+    /// listener moves to it, while it plays.
+    entrance: Option<Entrance>,
 }
 
 impl SidebarRight {
@@ -50,6 +53,9 @@ impl SidebarRight {
                 return;
             }
             this.tab = SideTab::Queue;
+            if this.open {
+                this.enter(cx);
+            }
             this.aside
                 .update(cx, |aside, cx| aside.show(SideTab::Queue, cx));
             settings.update(cx, |settings, cx| {
@@ -68,6 +74,7 @@ impl SidebarRight {
             tab,
             lingering: false,
             slides: 0,
+            entrance: None,
         }
     }
 
@@ -143,6 +150,10 @@ impl SidebarRight {
         if tab != SideTab::Members {
             self.aside.update(cx, |aside, cx| aside.show(tab, cx));
         }
+        // A sidebar that opens on the tab slides out with it instead.
+        if self.open && self.tab != tab {
+            self.enter(cx);
+        }
         self.tab = tab;
         if !self.open {
             self.slides += 1;
@@ -171,6 +182,25 @@ impl SidebarRight {
         cx.notify();
     }
 
+    /// Starts the entrance over the tab just switched to, unless the listener reduces motion.
+    fn enter(&mut self, cx: &App) {
+        self.entrance = (!cx.reduce_motion()).then(Entrance::start);
+    }
+
+    /// How much of the tab just switched to is still hidden, from 1 as the switch starts to 0
+    /// once its entrance ends. It asks for another frame while the entrance runs.
+    fn hidden(&mut self, window: &mut Window, cx: &App) -> f32 {
+        let Some(entrance) = self.entrance else {
+            return 0.;
+        };
+        if cx.reduce_motion() || !entrance.running() {
+            self.entrance = None;
+            return 0.;
+        }
+        window.request_animation_frame();
+        entrance.hidden()
+    }
+
     fn remember(&self, cx: &mut Context<Self>) {
         let open = self.open;
         self.settings
@@ -192,6 +222,21 @@ impl Render for SidebarRight {
         }
 
         let theme = *cx.theme();
+        // The tab switched to enters the way a page does: a scrim of the sidebar's own colour
+        // fades off it, so the queue and lyrics stay cached. A see-through window has no such
+        // colour, so there the tab carries the fade itself and is drawn uncached while it runs,
+        // since a cached view replays the opacity it was first painted with.
+        let hidden = self.hidden(window, cx);
+        let dissolving = theme.transparent && hidden > 0.;
+        let tab = match self.tab {
+            SideTab::Members => self.members.clone().into_any_element(),
+            _ if dissolving => self.aside.clone().into_any_element(),
+            _ => self
+                .aside
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+        };
 
         Panel::new("sidebar-right", Side::Right, self.width)
             .limits(MIN_WIDTH, MAX_WIDTH)
@@ -204,16 +249,29 @@ impl Render for SidebarRight {
             }))
             // It lies on the chrome beside the page's sheet, which draws the only edge between
             // them.
-            .when(!theme.transparent, |this| this.bg(theme.sidebar))
+            .bg(theme.sidebar)
             .border_color(gpui::transparent_black())
-            .child(match self.tab {
-                SideTab::Members => self.members.clone().into_any_element(),
-                _ => self
-                    .aside
-                    .clone()
-                    .cached(StyleRefinement::default().size_full())
-                    .into_any_element(),
-            })
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .min_h_0()
+                    .when(hidden > 0., |this| this.overflow_hidden())
+                    .child(
+                        div()
+                            .size_full()
+                            // At rest the tab is drawn bare, outside any layer, so whatever
+                            // frosts in it keeps its backdrop.
+                            .when(hidden > 0., |this| match theme.transparent {
+                                true => entering(this, hidden),
+                                false => veiled(this, hidden),
+                            })
+                            .child(tab),
+                    )
+                    .when(hidden > 0. && !theme.transparent, |this| {
+                        this.child(div().absolute().inset_0().bg(theme.sidebar).opacity(hidden))
+                    }),
+            )
             .into_any_element()
     }
 }

@@ -3,8 +3,8 @@ use std::time::Duration;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Context, Div, Entity, FocusHandle, Pixels, Render, SpringConfig, StyleRefinement,
-    px,
+    AnyView, App, Context, Corners, Div, Entity, FocusHandle, Pixels, Render, SpringConfig,
+    StyleRefinement, px,
 };
 use gpui::{Window, deferred, div, linear_color_stop, linear_gradient};
 use input::WORKSPACE_CONTEXT;
@@ -249,18 +249,16 @@ impl Render for Workspace {
             true => shown / breadth,
             false => 0.,
         };
-        let left_beside = |shown: Pixels| match overlay_width > Pixels::ZERO {
-            true => 1.,
-            false => beside(shown, left_breadth),
-        };
+        // An overlaid sidebar floats over the page with an edge of its own and takes no room
+        // beside it, so the sheet stays square under it.
         Chrome::set_sheet(
-            left_beside(left_target),
+            beside(left_target, left_breadth),
             beside(right_target, right_breadth),
             underlap,
             cx,
         );
         let (corners, edges) = Chrome::sheet_shape(
-            left_beside(left),
+            beside(left, left_breadth),
             beside(right, right_breadth),
             underlap,
             cx,
@@ -414,6 +412,9 @@ impl Render for Workspace {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    // Under an opaque window the chrome backs the whole row. A see-through one
+                    // stacks the alpha of every fill laid over another, so there each sidebar and
+                    // the sheet paint only their own part of it.
                     .when(!theme.transparent, |this| this.bg(theme.sidebar))
                     .when(!overlay, |this| this.child(sidebar))
                     .child(
@@ -425,13 +426,19 @@ impl Render for Workspace {
                             .min_w_0()
                             .min_h_0()
                             .ml(overlay_width)
-                            // The page lies on the chrome as a sheet.
-                            .when(!theme.transparent, |this| this.bg(theme.background))
+                            // The page lies on the chrome as a sheet. Its fill stops at the
+                            // curve of each rounded corner, where the sheet's frame lays the
+                            // chrome's colour instead.
+                            .bg(theme.background)
+                            .rounded_tl(corners.top_left)
+                            .rounded_tr(corners.top_right)
+                            .rounded_bl(corners.bottom_left)
+                            .rounded_br(corners.bottom_right)
                             .when(overlay, |this| this.overflow_hidden())
                             .when(covered, |this| this.hidden())
                             // A two-finger swipe across the page steps through its history,
                             // as in a browser.
-                            .on_scroll_wheel({
+                            .on_scroll({
                                 let cue = self.swipe_cue.clone();
                                 move |event, window, cx| {
                                     cue.update(cx, |cue, cx| cue.follow(event, window, cx));
@@ -561,7 +568,7 @@ fn island_fade(bar: Pixels, window: &Window, cx: &App) -> Div {
             band,
             ISLAND_BLUR,
             background,
-            None,
+            Corners::default(),
             window,
         ))
         .child(div().absolute().inset_0().bg(linear_gradient(

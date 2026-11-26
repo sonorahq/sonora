@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{Div, Hsla, Pixels, Window, div};
+use gpui::{Corners, Div, Hsla, Pixels, Window, div};
 
 use crate::snapped;
 
@@ -37,25 +37,31 @@ pub fn effects() -> bool {
 /// setting never reaches it: a band is there to keep what floats over it readable, not for the
 /// look of it.
 ///
-/// `corner` rounds the two corners along `edge`, for a band flush with a rounded window.
+/// The two of `corners` along `edge` round the band, so one lying under a rounded window or sheet
+/// stops at its curve rather than blurring what a see-through corner lets show.
 pub fn veil(
     edge: VeilEdge,
     height: Pixels,
     blur: Pixels,
     background: Hsla,
-    corner: Option<Pixels>,
+    corners: Corners<Pixels>,
     window: &Window,
 ) -> Div {
-    let round = move |strip: Div, radius: Pixels| match edge {
-        VeilEdge::Top => strip.rounded_t(radius),
-        VeilEdge::Bottom => strip.rounded_b(radius),
+    let (lead, trail) = match edge {
+        VeilEdge::Top => (corners.top_left, corners.top_right),
+        VeilEdge::Bottom => (corners.bottom_left, corners.bottom_right),
     };
+    let round = move |strip: Div| match edge {
+        VeilEdge::Top => strip.rounded_tl(lead).rounded_tr(trail),
+        VeilEdge::Bottom => strip.rounded_bl(lead).rounded_br(trail),
+    };
+    let radius = lead.max(trail);
     let mut edges: Vec<Pixels> = (0..=STRIPS)
         .map(|slice| snapped(height * (slice as f32 / STRIPS as f32), window))
         .collect();
     // A strip clamps its radius to half its own height, so the strips along the edge merge
     // into one tall enough to carry the corner.
-    if let Some(radius) = corner {
+    if radius > Pixels::ZERO {
         let end = edges[STRIPS];
         let merged = snapped(radius * 2., window).min(end);
         match edge {
@@ -88,7 +94,7 @@ pub fn veil(
                     .flex_none()
                     .w_full()
                     .h(cut)
-                    .when_some(corner.filter(|_| slice == rounded), round)
+                    .when(slice == rounded, round)
                     .opacity(1. - (1. - held).powf(RISE))
                     .backdrop_blur(blur)
             })
@@ -102,10 +108,6 @@ pub fn veil(
             .flex()
             .flex_col()
             .children(strips),
-        false => div()
-            .absolute()
-            .inset_0()
-            .when_some(corner, round)
-            .bg(background),
+        false => div().absolute().inset_0().map(round).bg(background),
     }
 }

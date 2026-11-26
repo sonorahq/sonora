@@ -72,6 +72,14 @@ impl QueueView {
         }
     }
 
+    /// Whether the provider mixed the song at `position` in as a recommendation.
+    pub fn recommended(&self, position: QueuePosition, cx: &App) -> bool {
+        match &self.source {
+            Source::Local(queue) => queue.read(cx).recommended(position),
+            Source::Remote(devices) => devices.read(cx).queue_recommended(position),
+        }
+    }
+
     pub fn track(&self, position: QueuePosition, cx: &App) -> Option<Track> {
         match &self.source {
             Source::Local(queue) => {

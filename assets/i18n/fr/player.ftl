@@ -12,6 +12,7 @@ queue-added-by = Ajouté par { $name }
 queue-empty = Votre file d'attente est vide
 queue-similar = Titres similaires
 queue-radio = Lire automatiquement des titres similaires
+queue-recommended = Recommandé par la lecture aléatoire intelligente
 queue-return-playing = Revenir à la lecture en cours
 
 # player bar

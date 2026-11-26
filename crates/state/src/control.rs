@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use cli::commands::{
-    self, Item, Kind, Level, PlaybackCommand, ProviderCommand, QueueCommand, Request, SearchQuery,
-    SessionCommand, Switch, Time, Watch,
+    self, Item, Kind, Level, PlaybackCommand, PlaylistCommand, ProviderCommand, QueueCommand,
+    Request, SearchQuery, SessionCommand, Switch, Time, Watch,
 };
 use cli::wire::{
     self, Current, Failure, LyricsStatus, QueueEntry, QueueEntryKind, QueueSnapshot, Reply,
@@ -21,9 +21,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::search::{self, Catalog};
 use crate::{
-    Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState, QueueKind,
-    QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence, join,
-    noted,
+    Addition, Hit, Io, Library, LibraryPart, LyricsState, Origin, Playback, PlaybackState,
+    QueueKind, QueuePlacement, QueuePosition, Repeat, Session, SessionState, Shelf, Sonora, Whence,
+    join, noted,
 };
 
 /// What `sonora current` calls the provider of a local file, the slug `sonora providers` gives it.
@@ -191,6 +191,7 @@ impl Control {
                 .playback
                 .update(cx, |playback, cx| play(playback, command, cx)),
             Request::Queue(command) => return self.queue(command, reply, cx),
+            Request::Playlists(command) => return self.playlists(command, reply, cx),
             Request::Provider(command) => return self.provider(command, reply, cx),
             Request::Search(query) => return self.search(query, reply, cx),
             Request::Session(command) => session(command, cx),
@@ -293,6 +294,12 @@ impl Control {
                 (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
+            edit @ (QueueCommand::Remove { .. }
+            | QueueCommand::Move { .. }
+            | QueueCommand::ClearUpcoming) => {
+                reply.send(self.edit_queue(edit, cx)).ok();
+                return;
+            }
         };
         if let [Item::Local { text, kind }] = items.as_slice() {
             let (text, kind) = (text.clone(), *kind);
@@ -321,6 +328,188 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Lists or changes the listener's playlists. A change answers once Sonora has accepted it;
+    /// the app posts its own result when the provider finishes, as it does for edits in the UI.
+    fn playlists(
+        &mut self,
+        command: PlaylistCommand,
+        reply: oneshot::Sender<Reply>,
+        cx: &mut Context<Self>,
+    ) {
+        if let PlaylistCommand::List = command {
+            let library = self.library.read(cx);
+            let items = [Shelf::Streaming, Shelf::Local]
+                .into_iter()
+                .flat_map(|shelf| library.state(shelf).playlists())
+                .map(|playlist| wire::PlaylistSummary {
+                    id: playlist.id.clone(),
+                    name: playlist.name.clone(),
+                    public: playlist.public,
+                    owned: playlist.owned,
+                })
+                .collect();
+            reply.send(Reply::Value(Value::Playlists(items))).ok();
+            return;
+        }
+
+        let (shelf, id) = match &command {
+            PlaylistCommand::Create { local, .. } => (
+                match local {
+                    true => Shelf::Local,
+                    false => Shelf::Streaming,
+                },
+                None,
+            ),
+            PlaylistCommand::Rename { id, .. }
+            | PlaylistCommand::Visibility { id, .. }
+            | PlaylistCommand::Delete { id } => (Shelf::of(id), Some(id.clone())),
+            PlaylistCommand::AddTracks { id, tracks }
+            | PlaylistCommand::RemoveTracks { id, tracks } => {
+                if tracks.is_empty() {
+                    reply.send(Reply::Failed(Failure::Malformed)).ok();
+                    return;
+                }
+                if self
+                    .library
+                    .read(cx)
+                    .playlist(id)
+                    .is_some_and(|playlist| playlist.read_only)
+                {
+                    reply.send(Reply::Failed(Failure::ReadOnlyPlaylist)).ok();
+                    return;
+                }
+                (Shelf::of(id), Some(id.clone()))
+            }
+            PlaylistCommand::List => unreachable!(),
+        };
+
+        // These are the same conditions the library refuses a change under, so the reply says
+        // busy rather than claiming an edit that never started.
+        let blocked = {
+            let library = self.library.read(cx);
+            library.playlist_busy() || id.as_deref().is_some_and(|id| library.reordering(id))
+        };
+        let client = self.session.read(cx).client_of(shelf);
+        let answer = if blocked {
+            Reply::Failed(Failure::Busy)
+        } else if let Some(client) = client {
+            match command {
+                // The library counts one row per copy of a track, so read the playlist to keep
+                // the count and Undo right when the same id appears more than once.
+                PlaylistCommand::RemoveTracks { id, tracks } => {
+                    let epoch = self.library.read(cx).shelf_epoch(shelf);
+                    let fetch_id = id.clone();
+                    // `playlist_tracks` walks every page; `playlist` only returns the first one
+                    // on providers that paginate, which would leave later copies behind.
+                    let fetch = Io::global(cx)
+                        .spawn(async move { client.playlist_tracks(&fetch_id).await });
+                    let key = self.issued;
+                    self.issued += 1;
+                    let task = cx.spawn(async move |this, cx| {
+                        let fetched = join(fetch).await;
+                        this.update(cx, |this, cx| {
+                            let wanted: HashSet<&str> =
+                                tracks.iter().map(String::as_str).collect();
+                            let rows = match fetched {
+                                Ok(tracks) => Some(
+                                    tracks
+                                        .into_iter()
+                                        .filter_map(|track| track.id)
+                                        .filter(|track_id| wanted.contains(track_id.as_str()))
+                                        .collect::<Vec<_>>(),
+                                ),
+                                Err(error) => {
+                                    log::warn!(
+                                        "control: cannot read a playlist before removing tracks: {error:#}"
+                                    );
+                                    None
+                                }
+                            };
+                            // The provider that answered the fetch may not be the one on duty
+                            // now, and the library writes with the account active at write time.
+                            let changed_account =
+                                this.library.read(cx).shelf_epoch(shelf) != epoch;
+                            // Without the exact rows the library would miscount repeated tracks
+                            // and undo only one copy, so refuse the edit instead.
+                            let answer = if changed_account {
+                                Reply::Failed(Failure::AccountChanged)
+                            } else {
+                                match rows {
+                                    Some(rows) if rows.is_empty() => {
+                                        Reply::Failed(Failure::NothingFound(tracks.join(" ")))
+                                    }
+                                    Some(rows) => {
+                                        let started = this.library.update(cx, |library, cx| {
+                                            library
+                                                .remove_tracks_from_playlist(id.clone(), rows, cx)
+                                        });
+                                        match started {
+                                            true => Reply::Done,
+                                            false => Reply::Failed(Failure::Busy),
+                                        }
+                                    }
+                                    None => Reply::Failed(Failure::Unfetched(id)),
+                                }
+                            };
+                            reply.send(answer).ok();
+                            this.pending.remove(&key);
+                        })
+                        .ok();
+                    });
+                    self.pending.insert(key, task);
+                    return;
+                }
+                change => {
+                    self.library.update(cx, |library, cx| match change {
+                        PlaylistCommand::Create { name, tracks, .. } => {
+                            library.create_playlist(name, Addition::Tracks(tracks), shelf, cx)
+                        }
+                        PlaylistCommand::Rename { id, name } => {
+                            library.rename_playlist(id, name, cx)
+                        }
+                        PlaylistCommand::Visibility { id, public } => {
+                            library.set_playlist_public(id, public, cx)
+                        }
+                        PlaylistCommand::AddTracks { id, tracks } => {
+                            library.add_tracks_to_playlist(id, Addition::Tracks(tracks), cx)
+                        }
+                        PlaylistCommand::Delete { id } => library.delete_playlist(id, cx),
+                        PlaylistCommand::RemoveTracks { .. } | PlaylistCommand::List => {
+                            unreachable!()
+                        }
+                    });
+                    Reply::Done
+                }
+            }
+        } else {
+            Reply::Failed(Failure::SignedOut)
+        };
+        reply.send(answer).ok();
+    }
+
+    /// Applies a remove, move or clear to the local queue and says how it went. While another
+    /// device has playback the queue on show is its own and read-only, so every edit is refused.
+    fn edit_queue(&mut self, edit: QueueCommand, cx: &mut Context<Self>) -> Reply {
+        if self.playback.read(cx).steered(cx).is_some() {
+            return Reply::Failed(Failure::SteeredReadOnly);
+        }
+        self.playback.update(cx, |playback, cx| {
+            let (done, uid) = match edit {
+                QueueCommand::Remove { uid } => (playback.remove_queued(&uid, cx), uid),
+                QueueCommand::Move { uid, gap } => (playback.move_queued(&uid, gap, cx), uid),
+                QueueCommand::ClearUpcoming => {
+                    playback.clear_queued(cx);
+                    return Reply::Done;
+                }
+                _ => return Reply::Failed(Failure::Unsupported),
+            };
+            match done {
+                true => Reply::Done,
+                false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
+            }
+        })
     }
 
     /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same
@@ -805,6 +994,7 @@ fn wire_hit(hit: Hit, client: &dyn MusicApi) -> Option<wire::Hit> {
     let link = client.share_url(media, &id)?;
     Some(wire::Hit {
         kind,
+        id,
         title,
         by,
         duration,
@@ -896,6 +1086,7 @@ fn queue_snapshot(playback: &Playback, cx: &App) -> QueueSnapshot {
         view.track(position, cx).map(|track| QueueEntry {
             track: wire_track(&track),
             kind: wire_kind(view.kind(position, cx)),
+            uid: playback.queue_uid(position, cx),
         })
     };
     let previous = (0..view.sections.past)
@@ -974,7 +1165,7 @@ fn lyrics_snapshot(
             snapshot.bounded(false, lines, None)
         }
         Sheet::Synced { lines } => {
-            let active = music::lyrics::active(lines, at);
+            let active = lyrics::active(lines, at);
             let lines = lines
                 .iter()
                 .map(|line| wire::LyricsLine {

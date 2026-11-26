@@ -57,6 +57,13 @@ impl Genres {
                 this.error = None;
                 cx.notify();
             }
+            SessionEvent::LocalChanged if this.session.read(cx).local_only() && this.wanted => {
+                this.task = None;
+                this.dressing = None;
+                this.genres = Rc::new(Vec::new());
+                this.loading = false;
+                this.load(cx);
+            }
             SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
@@ -116,7 +123,7 @@ impl Genres {
         if self.loading || !self.genres.is_empty() {
             return;
         }
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             return;
         };
 
@@ -256,6 +263,12 @@ impl GenreDetails {
             SessionEvent::SignedOut => {
                 this.clear();
                 cx.notify();
+            }
+            SessionEvent::LocalChanged if this.session.read(cx).local_only() => {
+                if let Some(id) = this.id.clone() {
+                    this.clear();
+                    this.open(&id, cx);
+                }
             }
             SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })

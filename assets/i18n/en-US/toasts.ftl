@@ -18,6 +18,7 @@ toast-track-removed-unnamed = Removed from the playlist
 toast-playlist-failed = That change could not be saved
 toast-playlist-busy = Another change is still running
 toast-playlist-signed-out = Sign in to change playlists
+toast-guest-refused = Sign in to your { $name } account to do that
 toast-playlist-imported = Imported { $name }
 toast-playlist-imported-partly = Imported { $name }, leaving out { $count ->
         [one] one song
@@ -39,6 +40,7 @@ toast-queued-artist = Artist added to the queue
 toast-next-artist = Artist plays next
 toast-last-artist = Artist plays last
 toast-queue-failed = That could not be added to the queue
+toast-transfer-failed = Could not play on that device
 toast-queue-local-elsewhere = Local files cannot be queued on another device
 toast-queued-tracks = { $count ->
     [one] { $count } track added to the queue
@@ -202,6 +204,10 @@ toast-library-scanned = { $count ->
    *[other] Library scanned, { $count } songs found
 }
 toast-scan-failed = Your music folders could not be scanned
+toast-scan-issues = { $count ->
+    [one] One music file or folder could not be read
+   *[other] { $count } music files or folders could not be read
+}
 toast-folder-removed = Removed { $name }
 toast-folder-missing = { $name } is no longer on disk
 toast-history-removed = { $count ->

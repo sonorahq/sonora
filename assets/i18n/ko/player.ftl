@@ -97,4 +97,5 @@ lyrics-follow = 곡 진행에 맞춰 가사 따라가기
 lyrics-source = 가사 제공: { $source }
 lyrics-source-local = 로컬 파일의 가사
 lyrics-writers = 작사: { $writers }
+lyrics-via = { $service } 경유
 lyrics-instrumental-break = 간주 중

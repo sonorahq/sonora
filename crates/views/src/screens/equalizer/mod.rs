@@ -1,8 +1,8 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, FocusHandle, Focusable as _, Pixels, Render,
-    ScrollHandle, SharedString, StyleRefinement, Task, WeakEntity, Window, div,
+    AnyElement, App, Context, Div, Entity, FocusHandle, Focusable as _, Render, ScrollHandle,
+    SharedString, StyleRefinement, Task, Window, div,
 };
 use i18n::t;
 use music::equalizer::{Curve, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset, TONE_RANGE, Tone};
@@ -21,6 +21,7 @@ use crate::screens::settings::{self, Row};
 use crate::shared::confirm::{self, Confirm};
 use crate::shared::device_menu::DeviceMenu;
 use crate::shared::equalizer::{preset_key, sound_picker};
+use crate::shared::part::Part;
 
 use graph::{EqualizerGraph, EqualizerSpectrum};
 use meter::OutputMeter;
@@ -149,59 +150,9 @@ impl Shelf {
 /// The parts of the page that are views of their own.
 #[derive(Clone)]
 struct Parts {
-    controls: Entity<Part>,
-    below: Entity<Part>,
-    advanced: Entity<Part>,
-}
-
-/// What a part draws, from the page's own state.
-type Build = fn(&mut EqualizerView, &mut Window, &mut Context<EqualizerView>) -> AnyElement;
-
-/// A part of the page drawn as a view of its own and laid out cached. The spectrum and the meter
-/// redraw the page every frame, and a cached part is not built again then. It redraws when the
-/// page notifies, and stands as tall as its content measured the last time it drew.
-struct Part {
-    page: WeakEntity<EqualizerView>,
-    build: Build,
-    height: Pixels,
-}
-
-impl Part {
-    fn new(page: &Entity<EqualizerView>, build: Build, cx: &mut Context<Self>) -> Self {
-        cx.observe(page, |_, _, cx| cx.notify()).detach();
-        Self {
-            page: page.downgrade(),
-            build,
-            height: Pixels::ZERO,
-        }
-    }
-}
-
-impl Render for Part {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let build = self.build;
-        let content = self
-            .page
-            .update(cx, |page, cx| build(page, window, cx))
-            .unwrap_or_else(|_| div().into_any_element());
-        let part = cx.entity().downgrade();
-        div()
-            .w_full()
-            .when(self.height == Pixels::ZERO, |this| this.invisible())
-            .child(content)
-            .on_children_prepainted(move |bounds, _, cx| {
-                let Some(height) = bounds.first().map(|bounds| bounds.size.height) else {
-                    return;
-                };
-                part.update(cx, |part, cx| {
-                    if part.height != height {
-                        part.height = height;
-                        cx.notify();
-                    }
-                })
-                .ok();
-            })
-    }
+    controls: Entity<Part<EqualizerView>>,
+    below: Entity<Part<EqualizerView>>,
+    advanced: Entity<Part<EqualizerView>>,
 }
 
 impl EqualizerView {
@@ -824,7 +775,7 @@ impl Render for EqualizerView {
         let sound = div()
             .flex()
             .flex_col()
-            .child(shown(&parts.controls, cx))
+            .child(Part::shown(&parts.controls, cx))
             .child(
                 div()
                     .relative()
@@ -842,13 +793,15 @@ impl Render for EqualizerView {
                         .mt_3(),
                 ),
             )
-            .child(shown(&parts.below, cx));
+            .child(Part::shown(&parts.below, cx));
         let body = div()
             .flex()
             .flex_col()
             .gap(settings::GROUPS)
             .child(sound)
-            .when(advanced, |this| this.child(shown(&parts.advanced, cx)));
+            .when(advanced, |this| {
+                this.child(Part::shown(&parts.advanced, cx))
+            });
 
         settings::frame(
             &Destination::Equalizer,
@@ -861,13 +814,6 @@ impl Render for EqualizerView {
         )
         .children(self.name_dialog(cx))
     }
-}
-
-/// `part` laid out cached at the height it measured.
-fn shown(part: &Entity<Part>, cx: &App) -> impl IntoElement + use<> {
-    let height = part.read(cx).height;
-    part.clone()
-        .cached(StyleRefinement::default().w_full().h(height))
 }
 
 /// A group's heading as every settings page draws it, its icon before an uppercase eyebrow, with

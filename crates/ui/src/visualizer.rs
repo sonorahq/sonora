@@ -4,7 +4,7 @@ use std::f32::consts::FRAC_PI_2;
 use gpui::{
     App, Background, Bounds, Div, Hsla, IntoElement, PathBuilder, Pixels, Point, RenderOnce,
     SharedString, StyleRefinement, Window, canvas, div, linear_color_stop, linear_gradient, point,
-    px,
+    px, relative,
 };
 use i18n::t;
 
@@ -28,6 +28,10 @@ const RIDE: f32 = 0.4;
 const FILL: f32 = 0.22;
 const FILL_BASE: f32 = 0.05;
 const LINE_BLUR: f32 = 0.7;
+/// How many times smaller across each side the glow is drawn before it is stretched back over the
+/// box. Nothing in it is sharper than its blur, so the stretch does not show, and the blur runs on
+/// a quarter of the pixels.
+const GLOW_SHRINK: f32 = 2.;
 /// How many straight edges stand in for a quarter circle when a shape is cut to a rounded corner.
 const ARC_STEPS: usize = 12;
 /// How many straight edges stand in for each span of the wave when it is flattened for cutting.
@@ -261,30 +265,49 @@ fn bars(
     .inset_0()
 }
 
+/// The blurred half of the wave, painted in a box `GLOW_SHRINK` times smaller across each side and
+/// stretched back over the visualizer, so the blur filters a fraction of the pixels.
 fn glow(levels: Levels, color: Hsla, corner: Option<Pixels>) -> Div {
-    div().absolute().inset_0().blur(px(GLOW)).child(
-        canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| wave(bounds, &levels, color, true, corner, window),
-        )
-        .size_full(),
+    div().absolute().inset_0().child(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w(relative(1. / GLOW_SHRINK))
+            .h(relative(1. / GLOW_SHRINK))
+            .blur(px(GLOW / GLOW_SHRINK))
+            .layer_scale(GLOW_SHRINK)
+            .layer_scale_origin(point(0., 0.))
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        wave(bounds, &levels, color, GLOW_SHRINK, true, corner, window)
+                    },
+                )
+                .size_full(),
+            ),
     )
 }
 
 fn line(levels: Levels, color: Hsla, corner: Option<Pixels>) -> impl IntoElement {
     canvas(
         |_, _, _| {},
-        move |bounds, _, window, _| wave(bounds, &levels, color, false, corner, window),
+        move |bounds, _, window, _| wave(bounds, &levels, color, 1., false, corner, window),
     )
     .absolute()
     .inset_0()
     .blur(px(LINE_BLUR))
 }
 
+/// Paints the wave into `bounds`, which is the visualizer's box divided by `shrink` across each
+/// side. Every length the wave carries of its own is divided by it too, so the stretched result
+/// matches an unshrunk wave.
 fn wave(
     bounds: Bounds<Pixels>,
     levels: &Levels,
     color: Hsla,
+    shrink: f32,
     blurred: bool,
     corner: Option<Pixels>,
     window: &mut Window,
@@ -294,15 +317,15 @@ fn wave(
         return;
     }
     let width = match blurred {
-        true => STROKE * GLOW_STROKE,
-        false => STROKE,
+        true => STROKE * GLOW_STROKE / shrink,
+        false => STROKE / shrink,
     };
     let inset = px(width / 2.);
     let floor = bounds.origin.y + bounds.size.height;
     let span = (bounds.size.height - inset * 2.).max(px(0.));
     let outline = corner.map(|radius| match blurred {
-        true => outline(bounds, radius + px(GLOW * GLOW_REACH)),
-        false => outline(bounds, radius),
+        true => outline(bounds, (radius + px(GLOW * GLOW_REACH)) / shrink),
+        false => outline(bounds, radius / shrink),
     });
 
     for (bands, weight) in channels.into_iter().zip(CHANNELS) {

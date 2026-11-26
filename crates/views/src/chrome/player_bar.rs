@@ -12,7 +12,7 @@ use gpui::{
 use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
-use state::{AppSettings, Playback, PlayerBarLayout, Queue, SideTab, Sonora};
+use state::{AppSettings, Playback, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora};
 use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState, Sprung};
 
 use crate::chrome::sessions_button::SessionsButton;
@@ -327,16 +327,24 @@ impl PlayerBar {
     }
 
     fn now_playing(&self, room: bool, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
-        let label = match self.playback.read(cx).shown_track(cx) {
-            Some(track) => match members::picked_by(cx) {
-                Some(added) => SharedString::from(format!(
-                    "{} — {}, {}",
-                    track.name,
-                    track.artists,
-                    t!("queue-added-by", name = added.name.as_str())
-                )),
-                None => SharedString::from(format!("{} — {}", track.name, track.artists)),
-            },
+        let playback = self.playback.read(cx);
+        let recommended = playback
+            .shown_queue(cx)
+            .recommended(QueuePosition::Current, cx);
+        let label = match playback.shown_track(cx) {
+            Some(track) => {
+                let mut label = format!("{} — {}", track.name, track.artists);
+                if let Some(added) = members::picked_by(cx) {
+                    label = format!(
+                        "{label}, {}",
+                        t!("queue-added-by", name = added.name.as_str())
+                    );
+                }
+                if recommended {
+                    label = format!("{label}, {}", t!("queue-recommended"));
+                }
+                SharedString::from(label)
+            }
             None => t!("player-nothing-playing"),
         };
         div()
@@ -677,7 +685,7 @@ impl PlayerBar {
             |this| ui::bar_surface(this, cx).text_color(theme.popover_foreground),
             |this| match island {
                 true => this.bg(theme.popover).text_color(theme.popover_foreground),
-                false => this.when(!theme.transparent, |this| this.bg(theme.sidebar)),
+                false => this.bg(theme.sidebar),
             },
         )
         // Glass over the page needs an edge, while an opaque bar is chrome that the sheet's own

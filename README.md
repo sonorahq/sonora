@@ -203,24 +203,24 @@ Discord is the primary one, but we do have a Matrix bridge.
 
 | Language | Translated | Coverage |
 | --- | --- | --- |
-| English (`en-US`) | 1383/1383 | 100% |
-| Deutsch (`de`) | 1021/1383 | 74% |
-| Español (`es`) | 1019/1383 | 74% |
-| Français (`fr`) | 1020/1383 | 74% |
-| Italiano (`it`) | 1019/1383 | 74% |
-| Bahasa Indonesia (`id`) | 1322/1383 | 96% |
-| 日本語 (`ja`) | 1019/1383 | 74% |
-| 한국어 (`ko`) | 1383/1383 | 100% |
-| Русский (`ru`) | 1138/1383 | 82% |
-| Українська (`uk`) | 1022/1383 | 74% |
-| Polski (`pl`) | 1022/1383 | 74% |
-| Čeština (`cs`) | 1019/1383 | 74% |
-| Português (Brasil) (`pt-BR`) | 1332/1383 | 96% |
-| Português (Portugal) (`pt-PT`) | 1019/1383 | 74% |
-| 简体中文 (`zh-CN`) | 1019/1383 | 74% |
-| Türkçe (`tr`) | 1328/1383 | 96% |
-| Shqip (`sq`) | 1019/1383 | 74% |
-| Tiếng Việt (`vi`) | 1240/1383 | 90% |
+| English (`en-US`) | 1395/1395 | 100% |
+| Deutsch (`de`) | 1021/1395 | 73% |
+| Español (`es`) | 1019/1395 | 73% |
+| Français (`fr`) | 1021/1395 | 73% |
+| Italiano (`it`) | 1019/1395 | 73% |
+| Bahasa Indonesia (`id`) | 1322/1395 | 95% |
+| 日本語 (`ja`) | 1019/1395 | 73% |
+| 한국어 (`ko`) | 1385/1395 | 99% |
+| Русский (`ru`) | 1138/1395 | 82% |
+| Українська (`uk`) | 1022/1395 | 73% |
+| Polski (`pl`) | 1022/1395 | 73% |
+| Čeština (`cs`) | 1019/1395 | 73% |
+| Português (Brasil) (`pt-BR`) | 1332/1395 | 95% |
+| Português (Portugal) (`pt-PT`) | 1019/1395 | 73% |
+| 简体中文 (`zh-CN`) | 1019/1395 | 73% |
+| Türkçe (`tr`) | 1328/1395 | 95% |
+| Shqip (`sq`) | 1019/1395 | 73% |
+| Tiếng Việt (`vi`) | 1240/1395 | 89% |
 
 <!-- i18n:end -->
 
@@ -269,4 +269,4 @@ Open Font License 1.1) and four interchangeable icon sets:
 [Remix Icon](https://remixicon.com) 4.8.0 (Apache 2.0) and the
 [Solar](https://www.figma.com/community/file/1166831539721848736) Linear set
 (CC BY 4.0, by 480 Design). Each pack keeps its licence beside its files in
-`assets/icons`. `THIRD-PARTY.md` lists every bundled dependency.
+`assets/icons`. [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md) lists every bundled dependency.

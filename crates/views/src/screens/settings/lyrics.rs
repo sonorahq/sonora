@@ -459,7 +459,7 @@ impl Render for DraggedSource {
 /// The name a lyrics source goes by in the settings, falling back to the provider's own name.
 pub(super) fn source_name(provider: &str) -> SharedString {
     let key = match provider {
-        music::lyrics::LOCAL => "common-local-files",
+        lyrics::LOCAL => "common-local-files",
         "Subsonic" => "settings-lyrics-provider-subsonic",
         "Jellyfin" => "settings-lyrics-provider-jellyfin",
         "Plex" => "settings-lyrics-provider-plex",

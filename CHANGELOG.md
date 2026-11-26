@@ -19,22 +19,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
+- `sonora queue remove`, `queue move` and `queue clear` edit the play order from the command line and the control socket, addressing rows by the id shown in `sonora queue --json`.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
 - The fullscreen player has the Sessions button at the left of its controls on wide windows too, across from the volume.
+- Cast YouTube Music to a TV or speaker with YouTube on your network from the devices menu. It keeps playing after you close Sonora or your laptop, and you can still pause, skip and seek from Sonora. A speaker plays only while you are signed in.
+- `sonora playlist list`, `create`, `rename`, `public`, `add`, `remove` and `delete` manage playlists from the command line and the control socket.
+- Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
+- Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
+- Playlists, favorites and play history stay with a local song when its file moves within your music folders.
 
 ### Changed
 
+- YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.
+- Settings use much less CPU while the Now playing or Lyrics preview is on screen.
+- The fullscreen player uses less CPU while it is open, most of all while paused.
+- Sonora uses less CPU while music plays in the background.
 - Word-synced lyrics move like Apple Music: each word lifts gently as it is sung, and long held syllables glow and swell a little before settling back.
 - Seeking far ahead in a song that is still downloading plays from there in a second or two on Deezer, YouTube Music, Subsonic, Navidrome and Jellyfin, as it already did on Tidal.
 - Home on Subsonic and Navidrome servers labels the albums added to the server most recently as Recently added and adds a Newest releases shelf ordered by release year.
 - The Brazilian Portuguese translation is complete again, including sessions, smart playlists and audio settings.
 - Removing songs, albums, artists or playlists from your library, songs from a playlist, or plays from your history happens at once without asking. Undo on the toast puts them back.
 - Last.fm, Libre.fm, ListenBrainz and Maloja sign-ins are kept with your other account sign-ins instead of in settings.json, so the settings file is safe to share. Linked accounts move over on their own.
+- The streaming service and scrobbler in use are outlined in your theme's colour in Settings, with only their logo in the service's own colour.
 - Starting a song from Liked Songs or another big collection in a Sonora Session shows the others only the next 20 songs of it, and more as they play, along with everything you queued yourself.
 - Switching to another service from the account menu opens your startup page instead of leaving you on a page of the previous service.
 - The account menu lists Guest mode next to your services so you can switch to it from there, and Manage accounts opens a page of its own for signing in and out, which Settings now links to instead of listing every service.
 - In a narrow window the fullscreen player keeps its controls where the player bar has them, so nothing jumps as it opens or closes. On the cover view the bar's cover flies up into the big one and the title slides into its place, and the view switcher floats above the controls again.
 - In a narrow window the player bar folds the volume into the mute button, which raises a slider on hover, so the seek bar has more room.
+- Switching the right sidebar between the queue, lyrics and members fades the new one in the way moving to another page does.
 - A song that fails because the server never answered says it timed out and asks you to check your connection, instead of only saying it could not be played.
 - Last.fm scrobbling warns you when Last.fm refuses your API key, which from 1 December 2026 happens to every key whose account has no Last.fm Pro, and Settings says so before you connect.
 - Toasts color their icon by what happened, red for a failure and green for a success, and the update card in the top left looks like a larger toast that drops in, shows download progress and fades away when closed.
@@ -54,10 +66,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A setting's description waits behind an info mark next to its name and shows the moment you point at it, and settings Soloist keeps to local files carry a red mark instead.
 - Scrobbling services are cards with each service's logo, like the streaming services.
 - Throttle inactive window steps through its frame caps with minus and plus, and About shows the team as one row of avatars.
-- Toasts move on springs: they settle into the pile with a little bounce, a toast you let go of after a short swipe springs back, and a flicked one flies off at the speed you threw it.
+- Toasts move on springs: they glide into the pile, a toast you let go of after a short swipe slides back, and a flicked one flies off at the speed you threw it.
+- Apple Music lyrics credit lrc.red, the service they come from, with a link to its site under the lyrics.
+- The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
+- Karaoke lyrics, the fullscreen player and scrolling long lists use less CPU.
+- Guest mode for YouTube Music is in its sign-in dialog, next to signing in and connecting manually.
 
 ### Fixed
 
+- Liking, saving or creating a playlist as a YouTube Music guest now asks you to sign in, with a button that takes you there, instead of saying the change could not be saved.
+- Playback handed to Sonora through Spotify Connect starts at once, and the rest of its queue fills in as it loads.
+- Opening a menu no longer thickens the haze under the Settings header, so the page scrolling beneath it looks the same with the menu open as without.
+- A dropdown in Settings resizes to a newly picked option without shaking: its arrow and edge stay in place, and its text no longer jumps up and down.
 - The YouTube Music sign-in window on NixOS without GNOME lays Google's page out properly instead of squeezing it into a narrow column of broken text.
 - Playing on an output set to 44.1 kHz no longer keeps a CPU core busy, which made audio stutter on slower laptops.
 - On Windows, changing the output device's format in the system sound settings moves Sonora to the new sample rate within a second, even while nothing plays, instead of only after a restart.
@@ -84,6 +104,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Escape closes the search suggestions and leaves the search field in one press.
 - Sonora keeps your Spotify API key out of the process list whenever Soloist 1.4.0 or newer can store it.
 - Highlighted menu entries round their corners in step with the menu's own, instead of half a pixel sharper.
+- Holding down the heart or another button on a song no longer tints the frosted column headers above it with the row's color.
+- A see-through window keeps its theme: the sidebars and bars stay their own colour beside the page, and buttons and the player bar no longer change shade the moment opacity drops below 100%.
+- The bottom edge of the fullscreen player no longer lets the desktop show through on a see-through window with the ambient background.
+- Opening and closing the fullscreen player on a see-through window no longer turns the window clearer halfway through, and the blur under its controls fades in instead of snapping on.
+- Play, pause and volume on another device show at once, and the volume slider no longer jumps back and replays your drag while the device catches up. A drag sets the device's volume once you let go.
+- Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
+- Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
+- When a queue ends without repeat, its last song moves to history instead of staying as now playing. Play button starts the queue over and Previous button brings that song back.
+- A song whose tags changed shows its new title and artist in the player, queue and lyrics after a rescan.
+- Songs in a music folder that is unavailable stay listed, and Sonora tells you which files it could not read.
 
 ### Fixed
 

@@ -2,9 +2,9 @@
 //! an action, the keys it has out of the box and where it listens. The user's choices are kept
 //! as a map from shortcut id to keystrokes, which [`bindings`] turns into key bindings.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
-use gpui::{Action, KeyBinding, Keystroke};
+use gpui::{Action, App, KeyBinding, KeyBindingContextPredicate, Keystroke, OperatingSystem};
 use ui::{FORM_CONTEXT, INPUT_CONTEXT, MENU_CONTEXT, TABLE_CONTEXT};
 
 use crate::{
@@ -19,8 +19,20 @@ use crate::{
 /// of them would type into a field, so it only works away from text.
 const COMMAND_MODIFIERS: [&str; 6] = ["ctrl", "alt", "cmd", "super", "win", "fn"];
 
-/// Builds the binding of one keystroke to a shortcut's action in a context.
-type Bind = fn(&str, Option<&str>) -> KeyBinding;
+/// The system keystrokes are spelled for, which decides whether `secondary-` means ⌘ or Ctrl.
+const HOST: OperatingSystem = if cfg!(target_os = "macos") {
+    OperatingSystem::Mac
+} else if cfg!(target_os = "windows") {
+    OperatingSystem::Windows
+} else if cfg!(target_os = "freebsd") {
+    OperatingSystem::FreeBsd
+} else {
+    OperatingSystem::Linux
+};
+
+/// Builds the binding of one keystroke to a shortcut's action in a context, or `None` when the
+/// keystroke does not parse.
+type Bind = fn(&str, Option<&str>, &App) -> Option<KeyBinding>;
 
 /// The group a shortcut is listed under in settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -355,14 +367,14 @@ pub fn shown(id: &str, overrides: &BTreeMap<String, Vec<String>>) -> Option<Stri
 
 /// The bindings of every shortcut, each to the user's keys or to its defaults. A saved key that
 /// does not parse, from a hand edit of `settings.json`, is skipped.
-pub(crate) fn bindings(overrides: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
+pub(crate) fn bindings(overrides: &BTreeMap<String, Vec<String>>, cx: &App) -> Vec<KeyBinding> {
     shortcuts()
         .flat_map(|shortcut| {
             shortcut
                 .keys(overrides)
                 .into_iter()
                 .filter(|key| parse(key).is_some())
-                .map(|key| (shortcut.bind)(&key, shortcut.context(&key).as_deref()))
+                .filter_map(|key| (shortcut.bind)(&key, shortcut.context(&key).as_deref(), cx))
         })
         .collect()
 }
@@ -374,7 +386,7 @@ pub fn keystroke_of(keystroke: &Keystroke) -> Option<String> {
         keystroke.key.as_str(),
         "shift" | "control" | "ctrl" | "alt" | "platform" | "cmd" | "super" | "win" | "function"
     );
-    (!modifier && !keystroke.key.is_empty()).then(|| keystroke.unparse())
+    (!modifier && !keystroke.key.is_empty()).then(|| keystroke.unparse(HOST))
 }
 
 /// Gives the shortcut `id` the key `keystroke` alone, and takes that key from every other
@@ -457,13 +469,28 @@ fn same(left: &str, right: &str) -> bool {
 fn parse(key: &str) -> Option<Keystroke> {
     match key.contains(' ') {
         true => None,
-        false => Keystroke::parse(key).ok(),
+        false => Keystroke::parse_with_os(key, HOST).ok(),
     }
 }
 
-/// Binds `keystroke` to a fresh `A` in `context`.
-fn bind<A: Action + Default>(keystroke: &str, context: Option<&str>) -> KeyBinding {
-    KeyBinding::new(keystroke, A::default(), context)
+/// Binds `keystroke` to a fresh `A` in `context`, or `None` when the keystroke does not parse.
+fn bind<A: Action + Default>(
+    keystroke: &str,
+    context: Option<&str>,
+    cx: &App,
+) -> Option<KeyBinding> {
+    let predicate = context.map(|context| {
+        Rc::new(KeyBindingContextPredicate::parse(context).expect("a valid shortcut context"))
+    });
+    KeyBinding::load(
+        keystroke,
+        Box::new(A::default()),
+        predicate,
+        false,
+        None,
+        cx,
+    )
+    .ok()
 }
 
 /// The context of a [`Scope::Browsing`] shortcut: the workspace with no text field, list, menu,
@@ -478,13 +505,13 @@ fn browsing_context() -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use gpui::KeyContext;
+    use gpui::{KeyContext, TestAppContext};
 
     use super::*;
 
     /// The binding the default keymap gives action `A`.
-    fn binding_of<A: Action>() -> KeyBinding {
-        crate::bindings(&BTreeMap::new())
+    fn binding_of<A: Action>(cx: &App) -> KeyBinding {
+        crate::bindings(&BTreeMap::new(), cx)
             .into_iter()
             .find(|binding| binding.action().as_any().is::<A>())
             .expect("the action has a default binding")
@@ -528,14 +555,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn arrow_keys_do_nothing_while_a_text_field_has_focus() {
-        let predicates = [
-            binding_of::<VolumeUp>(),
-            binding_of::<VolumeDown>(),
-            binding_of::<SeekBack>(),
-            binding_of::<SeekForward>(),
-        ];
+    #[gpui::test]
+    fn arrow_keys_do_nothing_while_a_text_field_has_focus(cx: &mut TestAppContext) {
+        let predicates = cx.update(|cx| {
+            [
+                binding_of::<VolumeUp>(cx),
+                binding_of::<VolumeDown>(cx),
+                binding_of::<SeekBack>(cx),
+                binding_of::<SeekForward>(cx),
+            ]
+        });
         for binding in &predicates {
             let predicate = binding.predicate().expect("bound in a context");
             assert!(!predicate.eval(&stack(&["Workspace", INPUT_CONTEXT])));
@@ -543,28 +572,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn arrow_keys_work_on_the_bare_workspace() {
-        let predicates = [
-            binding_of::<VolumeUp>(),
-            binding_of::<VolumeDown>(),
-            binding_of::<SeekBack>(),
-            binding_of::<SeekForward>(),
-        ];
+    #[gpui::test]
+    fn arrow_keys_work_on_the_bare_workspace(cx: &mut TestAppContext) {
+        let predicates = cx.update(|cx| {
+            [
+                binding_of::<VolumeUp>(cx),
+                binding_of::<VolumeDown>(cx),
+                binding_of::<SeekBack>(cx),
+                binding_of::<SeekForward>(cx),
+            ]
+        });
         for binding in &predicates {
             let predicate = binding.predicate().expect("bound in a context");
             assert!(predicate.eval(&stack(&["Workspace"])));
         }
     }
 
-    #[test]
-    fn arrow_keys_yield_to_lists_menus_forms_search_and_the_powerbar() {
-        let predicates = [
-            binding_of::<VolumeUp>(),
-            binding_of::<VolumeDown>(),
-            binding_of::<SeekBack>(),
-            binding_of::<SeekForward>(),
-        ];
+    #[gpui::test]
+    fn arrow_keys_yield_to_lists_menus_forms_search_and_the_powerbar(cx: &mut TestAppContext) {
+        let predicates = cx.update(|cx| {
+            [
+                binding_of::<VolumeUp>(cx),
+                binding_of::<VolumeDown>(cx),
+                binding_of::<SeekBack>(cx),
+                binding_of::<SeekForward>(cx),
+            ]
+        });
         let owners = [
             TABLE_CONTEXT,
             MENU_CONTEXT,

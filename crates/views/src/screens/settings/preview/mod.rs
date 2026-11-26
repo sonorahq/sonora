@@ -1,5 +1,5 @@
 //! The previews of the pages where seeing a setting beats reading it. Each page with one has a
-//! file here holding the preview's own state and the function that draws it, framed by `framed`.
+//! file here holding the preview's own state and what draws it, framed by `framed`.
 //! The tab lays it across its column, under the page's title and above its first group.
 
 use std::cell::{Cell, RefCell};
@@ -30,12 +30,18 @@ const CORNER_REACH: f32 = 0.5;
 const DIMMED: f32 = 0.4;
 
 /// The state every preview keeps between frames, one field per preview, each owned by its file,
-/// and what they share.
+/// and what they share. The Now playing and Lyrics previews are views of their own, so one that
+/// moves draws itself and leaves the page's groups as they were.
 pub(super) struct Previews {
-    pub(super) now_playing: now_playing::NowPlayingPreview,
-    pub(super) lyrics: lyrics::LyricsPreview,
+    pub(super) now_playing: Entity<now_playing::NowPlayingPreview>,
+    pub(super) lyrics: Entity<lyrics::LyricsPreview>,
     pub(super) sound: sound::SoundPreview,
     pub(super) discord: discord::DiscordPreview,
+    stage: Rc<Stage>,
+}
+
+/// What the previews share: the track they show and the ambient field behind it.
+pub(super) struct Stage {
     /// The ambient field the Now playing and Lyrics previews paint behind themselves, following
     /// the cover of the track they show.
     ambient: Entity<Ambient>,
@@ -72,32 +78,30 @@ impl Previews {
         // history may still be loading when settings first draw, and a pick waits for it
         let history = Sonora::global(cx).history.clone();
         cx.observe(&history, |this, _, cx| {
-            if this.previews.picked.borrow().is_none() {
+            if this.previews.stage.picked.borrow().is_none() {
                 cx.notify();
             }
         })
         .detach();
 
-        // the previews over the field take their colours from the cover it samples, so they
-        // redraw once that lands
-        let ambient = cx.new(Ambient::framed);
-        cx.observe(&ambient, |_, _, cx| cx.notify()).detach();
-
-        Self {
-            now_playing: now_playing::NowPlayingPreview::new(cx),
-            lyrics: lyrics::LyricsPreview::new(cx),
-            sound: sound::SoundPreview::new(cx),
-            discord: discord::DiscordPreview::new(cx),
-            ambient,
+        let stage = Rc::new(Stage {
+            ambient: cx.new(Ambient::framed),
             seed: Cell::new(random()),
             picked: RefCell::new(None),
+        });
+        Self {
+            now_playing: cx.new(|cx| now_playing::NowPlayingPreview::new(stage.clone(), cx)),
+            lyrics: cx.new(|cx| lyrics::LyricsPreview::new(stage.clone(), cx)),
+            sound: sound::SoundPreview::new(cx),
+            discord: discord::DiscordPreview::new(cx),
+            stage,
         }
     }
 
     /// Settings opened: the next track from history is a new pick.
     pub(super) fn opened(&self) {
-        self.seed.set(random());
-        self.picked.replace(None);
+        self.stage.seed.set(random());
+        self.stage.picked.replace(None);
         self.discord.opened();
     }
 
@@ -113,6 +117,14 @@ impl Previews {
         }
     }
 
+    /// The track picked from history this time settings opened, or a placeholder while history
+    /// is empty.
+    pub(super) fn picked(&self, cx: &App) -> Sample {
+        self.stage.picked(cx)
+    }
+}
+
+impl Stage {
     /// The track playing, or while nothing is loaded the one picked from history this time
     /// settings opened, or a placeholder while history is empty.
     pub(super) fn playing_or_picked(&self, cx: &App) -> Sample {

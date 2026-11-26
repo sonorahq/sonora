@@ -310,6 +310,13 @@ pub enum PlaybackEvent {
     Seeked,
 }
 
+/// A drag of the volume slider: the level it is at, and the other device that had playback
+/// when it began, `None` for this app.
+struct Slide {
+    level: f32,
+    device: Option<String>,
+}
+
 /// Remembers the level silenced by a temporary mute, without saving it as a volume preference.
 #[derive(Default)]
 struct MuteMemory {
@@ -603,7 +610,7 @@ pub struct Playback {
     level: f32,
     mute: MuteMemory,
     /// The level the volume slider is being dragged to, heard and shown but not yet saved.
-    sliding: Option<f32>,
+    sliding: Option<Slide>,
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
@@ -733,12 +740,15 @@ impl Playback {
         cx.on_app_quit(|this, _| {
             this.task = None;
             this.engine = None;
-            music::soloist::stopped()
+            soloist::stopped()
         })
         .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn => {
                 let Some(playback) = session.read(cx).playback() else {
+                    if session.read(cx).local_only() {
+                        this.adopt(cx);
+                    }
                     return;
                 };
                 // an engine left from playing offline hands its track over where it stands
@@ -768,6 +778,7 @@ impl Playback {
                 {
                     this.start_local_engine(playback, cx);
                 }
+                this.refresh_local_metadata(cx);
             }
         })
         .detach();
@@ -975,8 +986,8 @@ impl Playback {
 
     /// The volume the controls show and change, on the other device while one is steered.
     pub fn shown_volume(&self, cx: &App) -> f32 {
-        if let Some(level) = self.sliding {
-            return level;
+        if let Some(slide) = &self.sliding {
+            return slide.level;
         }
         self.steered(cx)
             .map_or(self.level, |steered| steered.device.volume)
@@ -993,9 +1004,24 @@ impl Playback {
         true
     }
 
+    /// Plays or pauses the other device that has playback, if one does, and says whether it did.
+    /// The device shows the new state at once rather than once it reports it.
+    fn steer_playing(&self, playing: bool, cx: &mut Context<Self>) -> bool {
+        let Some((devices, steered)) = self.steering(cx) else {
+            return false;
+        };
+        devices.update(cx, |devices, cx| {
+            devices.set_playing(&steered.device.id, playing, cx)
+        });
+        cx.notify();
+        true
+    }
+
     /// Has the other device that has playback start the track at `index` of `tracks`, from the
     /// collection `origin` names, and says whether it did. A local file has no place there and
-    /// plays here.
+    /// plays here. The tracks after it go along for a device that cannot read the collection
+    /// itself, such as a cast screen. While the queue shuffles, every other track goes in a
+    /// shuffled order, since a shuffled start may pick any track to begin with.
     fn hand_over(&self, tracks: &[Track], index: usize, origin: Option<&Origin>, cx: &App) -> bool {
         let Some(id) = tracks
             .get(index)
@@ -1004,6 +1030,20 @@ impl Playback {
         else {
             return false;
         };
+        let shuffled = self.queue.read(cx).shuffle();
+        let mut upcoming: Vec<_> = tracks
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| *at > index || shuffled && *at != index)
+            .filter_map(|(_, track)| track.id.clone())
+            .filter(|id| !music::is_local_id(id))
+            .map(|id| connect::QueuedTrack::new(id, false))
+            .collect();
+        // a device that plays these as given would otherwise play them in order while this app
+        // shuffles
+        if shuffled {
+            fastrand::shuffle(&mut upcoming);
+        }
         self.steer(
             |_| {
                 Command::Start(connect::Start {
@@ -1016,6 +1056,7 @@ impl Playback {
                             _ => collection_of(origin),
                         }),
                         track: Some(connect::QueuedTrack::new(id, false)),
+                        upcoming,
                         playing: true,
                         ..Default::default()
                     }),
@@ -1393,6 +1434,62 @@ impl Playback {
                 }
             }
         }
+    }
+
+    /// The occurrence id of a queue row, for callers that address edits by id. A queue shown by
+    /// another device has no local ids to give out.
+    pub fn queue_uid(&self, position: QueuePosition, cx: &App) -> Option<String> {
+        if self.steered(cx).is_some() {
+            return None;
+        }
+        self.queue.read(cx).uid(position).map(str::to_owned)
+    }
+
+    /// Removes the upcoming queue row with `uid`, saying whether it was there. The current and
+    /// past rows cannot be removed.
+    pub fn remove_queued(&mut self, uid: &str, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(index) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
+            return false;
+        };
+        self.queue.update(cx, |queue, cx| {
+            queue.remove(QueuePosition::Upcoming(index), cx)
+        });
+        true
+    }
+
+    /// Moves the upcoming row with `uid` to `gap`, saying whether it could be moved.
+    pub fn move_queued(&mut self, uid: &str, gap: usize, cx: &mut Context<Self>) -> bool {
+        if self.steered(cx).is_some() {
+            return false;
+        }
+        let Some(from) = self
+            .queue
+            .read(cx)
+            .position(uid)
+            .and_then(QueuePosition::upcoming)
+        else {
+            return false;
+        };
+        self.queue
+            .update(cx, |queue, cx| queue.move_upcoming_to_gap(from, gap, cx));
+        true
+    }
+
+    /// Drops everything queued after the current track, the same as the queue's Clear button.
+    /// Does nothing while another device has playback.
+    pub fn clear_queued(&mut self, cx: &mut Context<Self>) {
+        if self.steered(cx).is_some() {
+            return;
+        }
+        self.queue.update(cx, |queue, cx| queue.clear_upcoming(cx));
     }
 
     /// Puts tracks into the queue at `placement` without a word, or starts playing them when
@@ -2054,7 +2151,7 @@ impl Playback {
                         this.queue.update(cx, |queue, cx| {
                             queue.extend_context(tracks, station.origin.clone(), cx)
                         });
-                        if idle {
+                        if idle && this.queue.read(cx).has_next() {
                             this.follow_queue(Start::Segue, cx);
                         }
                     }
@@ -2250,6 +2347,16 @@ impl Playback {
         }
     }
 
+    /// Ends a queue that has run out with repeat off, moving its last song to history so Play
+    /// can start it over. Does nothing while a track is loaded or more is queued.
+    fn finish_queue(&mut self, cx: &mut Context<Self>) {
+        if self.repeat == Repeat::Off && self.track.is_none() && !self.queue.read(cx).has_next() {
+            self.fetch = None;
+            self.queue.update(cx, |queue, cx| queue.finish(cx));
+            cx.notify();
+        }
+    }
+
     fn segue_queue(&mut self, cx: &mut Context<Self>) {
         self.fetch = None;
         self.follow_queue(Start::Segue, cx);
@@ -2281,8 +2388,14 @@ impl Playback {
                     this.leave_station();
                     this.follow_queue(Start::Segue, cx);
                 }
-                Ok(_) => log::warn!("playback: radio returned no tracks"),
-                Err(error) => log::warn!("playback: cannot extend radio: {error:#}"),
+                Ok(_) => {
+                    log::warn!("playback: radio returned no tracks");
+                    this.finish_queue(cx);
+                }
+                Err(error) => {
+                    log::warn!("playback: cannot extend radio: {error:#}");
+                    this.finish_queue(cx);
+                }
             },
             cx,
         ));
@@ -2290,7 +2403,7 @@ impl Playback {
 
     fn follow_queue(&mut self, start: Start, cx: &mut Context<Self>) {
         let Some(track) = self.playable_next(cx) else {
-            return;
+            return self.finish_queue(cx);
         };
         self.load_after(&track, start, cx);
     }
@@ -2408,7 +2521,13 @@ impl Playback {
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Play, cx) {
+        if self.steer_playing(true, cx) {
+            return;
+        }
+        if self.can_restart_queue(cx) {
+            if let Some(track) = self.queue.update(cx, |queue, cx| queue.rewind(cx)) {
+                self.follow_after(track, Start::Pick, cx);
+            }
             return;
         }
         self.intent = Intent::Play;
@@ -2482,7 +2601,7 @@ impl Playback {
         if self.track.is_some() || !self.queue.read(cx).is_empty() {
             return;
         }
-        let Some(slug) = self.session.read(cx).provider_slug() else {
+        let Some(slug) = self.session.read(cx).playback_slug() else {
             return;
         };
         let Some(resume) = self
@@ -2521,7 +2640,7 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Pause, cx) {
+        if self.steer_playing(false, cx) {
             return;
         }
         self.intent = Intent::Pause;
@@ -2533,11 +2652,8 @@ impl Playback {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
-        let command = |remote: &Elsewhere| match remote.state.playing {
-            true => Command::Pause,
-            false => Command::Play,
-        };
-        if self.steer(command, cx) {
+        if let Some(remote) = self.steered(cx) {
+            self.steer_playing(!remote.state.playing, cx);
             return;
         }
         match self.wants_playing() {
@@ -2583,7 +2699,7 @@ impl Playback {
         self.sleep_task = None;
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
-            return;
+            return self.finish_queue(cx);
         };
         self.track = Some(track);
         self.resume_at = Some(Duration::ZERO);
@@ -2633,6 +2749,15 @@ impl Playback {
     /// press could resume, so the button starts its tracks instead.
     pub fn control(&self) -> Option<bool> {
         self.has_active_playback().then(|| self.wants_playing())
+    }
+
+    /// Whether a play press with no track loaded starts the finished queue over instead of
+    /// doing nothing.
+    pub fn can_restart_queue(&self, cx: &App) -> bool {
+        self.fetch.is_none()
+            && self.track.is_none()
+            && self.queue.read(cx).current().is_none()
+            && self.queue.read(cx).has_previous()
     }
 
     /// Starts `origin` once its tracks are loaded. Local files are left to the library table.
@@ -2879,23 +3004,38 @@ impl Playback {
     /// Follows the volume slider while it is dragged: the level is heard at once, but nothing is
     /// saved and no observer wakes, since nearly every view and the media controls observe
     /// playback. The caller repaints itself, and calls `end_volume_slide` when the slider is let go.
+    /// Another device that has playback is only sent the level the slider is let go at, since each
+    /// change is a request over the network that it takes its time to answer.
     pub fn slide_volume(&mut self, level: f32, cx: &App) {
         let level = level.clamp(0., 1.);
         self.mute.volume_changed();
-        self.sliding = Some(level);
-        if self.steer(|_| Command::Volume(level), cx) {
+        let steered = self.steered(cx).map(|steered| steered.device.id);
+        let device = match self.sliding.take() {
+            Some(slide) => slide.device,
+            None => steered.clone(),
+        };
+        // only a drag that began here and still is here is heard here
+        let here = device.is_none() && steered.is_none();
+        self.sliding = Some(Slide { level, device });
+        if !here {
             return;
         }
         self.level = level;
         self.apply_gain();
     }
 
-    /// Saves the level the slider was let go at and tells every observer, once per drag.
+    /// Saves the level the slider was let go at and tells every observer, once per drag. A drag
+    /// goes only to the device it started on, so one whose playback moved meanwhile is dropped.
     pub fn end_volume_slide(&mut self, cx: &mut Context<Self>) {
-        let Some(level) = self.sliding else {
+        let Some(slide) = self.sliding.take() else {
             return;
         };
-        self.set_volume(level, cx);
+        let steered = self.steered(cx).map(|steered| steered.device.id);
+        if slide.device != steered {
+            cx.notify();
+            return;
+        }
+        self.set_volume(slide.level, cx);
     }
 
     /// Turns the volume by `steps` notches of `VOLUME_STEP` from the level shown, which is the
@@ -3314,6 +3454,57 @@ impl Playback {
         self.listen(events, true, cx);
         self.local_engine = Some(engine);
         self.prepare_resume(cx);
+    }
+
+    /// Applies rescanned tags without restarting audio; a moved file reopens at the same position.
+    fn refresh_local_metadata(&mut self, cx: &mut Context<Self>) {
+        let Some(previous) = self.track.as_ref() else {
+            return;
+        };
+        let Some(track) = previous
+            .id
+            .as_deref()
+            .and_then(|id| self.session.read(cx).refreshed_local_track(id))
+            .cloned()
+        else {
+            return;
+        };
+        if previous == &track {
+            return;
+        }
+        let moved = previous.id != track.id;
+        if moved
+            && track.playable
+            && let Some(id) = track.id.as_deref()
+        {
+            let playing = self.intent == Intent::Play
+                && matches!(self.state, PlaybackState::Playing | PlaybackState::Loading);
+            self.load = None;
+            self.seek_in_flight = None;
+            self.seek_next = None;
+            self.seek_target = None;
+            self.intent = match playing {
+                true => Intent::Play,
+                false => Intent::Pause,
+            };
+            self.resume_ready = !playing;
+            self.clock.reset(self.position, false);
+            if let Some(engine) = self.engine_for(id) {
+                let reopened = match playing {
+                    true => engine.load(id, self.position, false),
+                    false => engine.load_paused_at(id, self.position),
+                };
+                if let Err(error) = reopened {
+                    self.track = Some(track);
+                    return self
+                        .failed(format!("cannot reopen a moved local track: {error:#}"), cx);
+                }
+            }
+        }
+        self.track = Some(track);
+        self.preloaded = None;
+        self.remember(true, cx);
+        cx.notify();
     }
 
     /// Pumps an engine's events into `on_backend_event` until the engine is dropped.
@@ -3751,12 +3942,12 @@ impl Playback {
                  this session"
             );
         }
-        let note = match music::soloist::ready() {
+        let note = match soloist::ready() {
             true => "toast-soloist-refused",
             false => "toast-keys-refused",
         };
         let toast = Toast::new(Outcome::Failed, "toast-keys-error").note(note);
-        let toast = match music::soloist::supported() {
+        let toast = match soloist::supported() {
             true => toast.lead("soloist-setup-title", Target::PlaybackSettings, |cx| {
                 let soloist = Sonora::global(cx).soloist.clone();
                 soloist.update(cx, |soloist, cx| soloist.begin(cx));

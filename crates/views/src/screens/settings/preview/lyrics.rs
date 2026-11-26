@@ -2,16 +2,19 @@
 //! draws them, held still in the middle of a karaoke line so every lyrics setting shows the
 //! moment it changes. The line being sung is in Japanese, so romanization has something to add.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, Div, Pixels, Window, div};
+use gpui::{Context, Div, Pixels, Render, Window, div};
 use music::{LyricsLine, LyricsWord, RomanizedText, WritingSystem};
-use state::RomanizationScripts;
+use state::{RomanizationScripts, Sonora};
 use ui::{ActiveTheme as _, Theme};
 
+use super::Stage;
 use crate::chrome::{VerseLook, verse, verse_gap, verse_sizes};
-use crate::screens::settings::{Layout, SettingsView};
+use crate::screens::settings::Layout;
+use crate::shared::ambient::Landed;
 
 /// How tall the preview stands for its width.
 const ASPECT: f32 = 0.4;
@@ -39,8 +42,12 @@ const SAMPLE: [&str; 5] = [
 ];
 const ROMANIZED: &str = "settings-lyrics-sample-romanized";
 
-/// What the Lyrics page's preview keeps between frames, which is nothing, since it never moves.
-pub(in crate::screens::settings) struct LyricsPreview;
+/// The Lyrics page's preview: the sample lines as Now playing draws them at its text size, over
+/// the ambient field while that is on. It never moves, and the field drifting under it draws only
+/// the preview and the page around it.
+pub(in crate::screens::settings) struct LyricsPreview {
+    stage: Rc<Stage>,
+}
 
 /// The lyrics settings the preview follows.
 #[derive(Clone, Copy)]
@@ -51,50 +58,50 @@ struct Look {
 }
 
 impl LyricsPreview {
-    pub(in crate::screens::settings) fn new(_cx: &mut Context<SettingsView>) -> Self {
-        Self
+    pub(in crate::screens::settings) fn new(stage: Rc<Stage>, cx: &mut Context<Self>) -> Self {
+        // over the field the lines wear the colours sampled off the cover, so they redraw once
+        // those land
+        cx.subscribe(&stage.ambient, |_, _, _: &Landed, cx| cx.notify())
+            .detach();
+        Self { stage }
     }
 }
 
-/// The Lyrics page's preview: the sample lines as Now playing draws them at its text size, over
-/// the ambient field while that is on.
-pub(in crate::screens::settings) fn preview(
-    _state: &LyricsPreview,
-    view: &SettingsView,
-    window: &mut Window,
-    cx: &mut Context<SettingsView>,
-) -> Option<AnyElement> {
-    let height = (Layout::of(window, cx).width * ASPECT).round();
-    let field = view.settings.read(cx).ambient().then(|| {
-        let cover = view.previews.playing_or_picked(cx).large_cover(cx);
-        view.previews.ambient(cover, cx)
-    });
-    // over the field the lines wear what fullscreen would, not the theme around them
-    let theme = match &field {
-        Some(field) => field.read(cx).theme(cx),
-        None => *cx.theme(),
-    };
+impl Render for LyricsPreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let height = (Layout::of(window, cx).width * ASPECT).round();
+        let settings = Sonora::global(cx).settings.clone();
+        let field = settings.read(cx).ambient().then(|| {
+            let cover = self.stage.playing_or_picked(cx).large_cover(cx);
+            self.stage.ambient(cover, cx)
+        });
+        // over the field the lines wear what fullscreen would, not the theme around them
+        let theme = match &field {
+            Some(field) => field.read(cx).theme(cx),
+            None => *cx.theme(),
+        };
 
-    let settings = view.settings.read(cx);
-    let look = Look {
-        karaoke: settings.karaoke_lyrics(),
-        blur: settings.blur_lyrics(),
-        scripts: settings
-            .romanized_lyrics()
-            .then(|| settings.romanization_scripts()),
-    };
-    let sizes = verse_sizes(false, settings.fullscreen_lyrics_scale(), &theme);
-    let on = settings.lyrics_enabled();
-    let sheet = div()
-        .relative()
-        .w_full()
-        .h(height)
-        .bg(theme.background)
-        .children(field)
-        .child(lines(look, sizes, height, &theme))
-        .when(!on, |sheet| sheet.opacity(super::DIMMED));
+        let settings = settings.read(cx);
+        let look = Look {
+            karaoke: settings.karaoke_lyrics(),
+            blur: settings.blur_lyrics(),
+            scripts: settings
+                .romanized_lyrics()
+                .then(|| settings.romanization_scripts()),
+        };
+        let sizes = verse_sizes(false, settings.fullscreen_lyrics_scale(), &theme);
+        let on = settings.lyrics_enabled();
+        let sheet = div()
+            .relative()
+            .w_full()
+            .h(height)
+            .bg(theme.background)
+            .children(field)
+            .child(lines(look, sizes, height, &theme))
+            .when(!on, |sheet| sheet.opacity(super::DIMMED));
 
-    Some(super::framed(sheet, cx).into_any_element())
+        super::framed(sheet, cx)
+    }
 }
 
 /// The sample lines around the one being sung, drawn the way the sheet draws them at the verse

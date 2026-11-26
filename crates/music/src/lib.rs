@@ -1,50 +1,23 @@
-mod aac;
-pub mod apple;
-pub mod artwork;
-mod audio;
-pub mod binimum;
-mod calendar;
+//! What every provider implements and the app reads: the `MusicApi`, `MusicProvider` and
+//! `Player` contracts, the models they hand over, and what more than one provider needs, such
+//! as kept tracks, covers and links. Each provider is a crate of its own on top of this
+//! one, so `state` and `views` depend on the contract and never on a provider.
+
+pub mod calendar;
 pub mod connect;
 pub mod cover;
 pub mod credentials;
-pub mod deezer;
 pub mod drm;
-pub mod engine;
-pub mod equalizer;
 pub mod escape;
-pub mod jellyfin;
-pub mod kugou;
 pub mod link;
-#[cfg(test)]
-mod live_tests;
-pub mod local;
-pub mod lrclib;
-pub mod lyrics;
 mod models;
-mod mp4;
-pub mod musixmatch;
-pub mod netease;
 pub mod order;
-pub mod output;
-pub mod plex;
 pub mod potoken;
 pub mod progress;
-pub mod ranged;
 mod redact;
-pub mod scrobble;
-mod sink;
 pub mod smart;
-pub mod soloist;
-mod spectrum;
-mod sponsorblock;
-pub mod spotify;
-mod stream;
-pub mod subsonic;
-pub mod tidal;
-mod trim;
 pub mod trouble;
 pub mod vault;
-pub mod youtube;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -55,28 +28,30 @@ use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
 
-pub use audio::Meter;
-pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
     ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
     PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice, WritingSystem,
+    SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
+    WritingSystem,
 };
-pub use output::{Server as SoundServer, missing_bridge};
 pub use redact::redact;
 pub use smart::{
     Condition, FieldKind, Operand, OperandShape, Operator, Problem, Rule, RuleGroup, RuleProblem,
     SmartPlaylist, SmartPlaylistUpdate, SmartRules, field_kind, parse_number,
 };
-pub use spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
-pub use sponsorblock::{SkipSegment, SponsorBlock};
+pub use sound::audio::Meter;
+pub use sound::equalizer::{self, Equalizer};
+pub use sound::output::{self, Server as SoundServer, missing_bridge};
+pub use sound::spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
 pub const LOCAL_ARTIST_PREFIX: &str = "local-artist:";
 pub const LOCAL_PLAYLIST_PREFIX: &str = "local-playlist:";
+/// Browse categories derived from the genre tags of local files.
+pub const LOCAL_GENRE_PREFIX: &str = "local-genre:";
 
 /// The most recommendations a provider hands one list of an album or artist page, so a
 /// rail never asks for or draws more than this many releases or artists.
@@ -90,6 +65,7 @@ pub fn is_local_id(id: &str) -> bool {
         || id.starts_with(LOCAL_ALBUM_PREFIX)
         || id.starts_with(LOCAL_ARTIST_PREFIX)
         || id.starts_with(LOCAL_PLAYLIST_PREFIX)
+        || id.starts_with(LOCAL_GENRE_PREFIX)
 }
 
 pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
@@ -124,6 +100,10 @@ pub enum Report {
 
 #[async_trait]
 pub trait MusicApi: Send + Sync {
+    /// Diagnostics and reconciled moves from the last local scan, empty for streaming sources.
+    fn scan_report(&self) -> ScanReport {
+        ScanReport::default()
+    }
     fn alive(&self) -> bool {
         true
     }
@@ -1313,6 +1293,21 @@ pub trait MusicProvider: Send + Sync {
         None
     }
     async fn restore(&self) -> Result<Option<ProviderSession>>;
+    /// Scans local folders under a reservation made before the worker was scheduled.
+    async fn scan(
+        &self,
+        paths: Vec<PathBuf>,
+        _ticket: progress::Ticket,
+        thorough: bool,
+    ) -> Result<ProviderSession> {
+        if thorough {
+            self.forget_scan();
+        }
+        let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        self.sign_in(SignIn::Path(paths), Arc::new(|_| {}), receiver)
+            .await
+    }
+
     async fn sign_in(
         &self,
         method: SignIn,
@@ -1352,7 +1347,7 @@ pub fn iso_8601_to_epoch(value: Option<&str>) -> Option<i64> {
 /// Keeps playable songs credited to the artist in their supplied order, collapsing repeat
 /// ids and matching titles of similar duration across releases. Remaster labels do not
 /// distinguish songs.
-fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
+pub fn artist_songs(tracks: Vec<Track>, artist_id: &str) -> Vec<Track> {
     let mut kept: HashMap<String, Vec<Duration>> = HashMap::new();
     let mut ids = HashSet::new();
     tracks

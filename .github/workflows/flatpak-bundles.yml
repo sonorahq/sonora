@@ -27,7 +27,7 @@ jobs:
       - name: export the bundles
         env:
           TAG: ${{ inputs.tag }}
-        run: ./flatpak/export-bundles.sh site/repo "$TAG" dist
+        run: ./packaging/flatpak/export-bundles.sh site/repo "$TAG" dist
 
       - name: replace the release assets
         env:

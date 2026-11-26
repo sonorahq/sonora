@@ -566,7 +566,7 @@ impl RenderOnce for ResponseGraph {
                     }
                 })
                 .when(reshape, |this| {
-                    this.on_scroll_wheel(move |event, window, cx| {
+                    this.on_scroll(move |event, window, cx| {
                         let hovered = plot.state.hovered.get();
                         if let Some(node) = plot
                             .hit(event.position)

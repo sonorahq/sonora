@@ -25,8 +25,8 @@ pub fn ordered(
     priority: &[String],
     worded_first: bool,
 ) -> Vec<LyricsHit> {
-    let mut ranked = music::lyrics::rank_with_priority(query, hits, priority, worded_first);
-    music::lyrics::reshape(&mut ranked);
+    let mut ranked = lyrics::rank_with_priority(query, hits, priority, worded_first);
+    lyrics::reshape(&mut ranked);
     ranked
 }
 
@@ -40,7 +40,7 @@ pub fn awaits_better(
     priority: &[String],
     worded_first: bool,
 ) -> bool {
-    let place = match music::lyrics::best_kind(query, &shown.lyrics, worded_first) {
+    let place = match lyrics::best_kind(query, &shown.lyrics, worded_first) {
         true => rank_in(priority, shown.source),
         false => usize::MAX,
     };
@@ -68,7 +68,7 @@ pub async fn gather(
                 .map(|mut found| {
                     // Hits for another track are dropped here, before the lookup holds and
                     // copies them.
-                    found.retain(|hit| music::lyrics::matched(&query, hit));
+                    found.retain(|hit| lyrics::matched(&query, hit));
                     log::debug!(
                         "lyrics: {name} returned {} matching answer(s) for {}",
                         found.len(),

@@ -11,8 +11,8 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     App, Context, DispatchPhase, FocusHandle, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rems, Render, ScrollWheelEvent, SharedString, Size, WeakEntity,
-    Window, anchored, canvas, deferred, div, point, px, rems, size,
+    MouseUpEvent, Pixels, Point, Rems, Render, ScrollEvent, SharedString, Size, WeakEntity, Window,
+    anchored, canvas, deferred, div, point, px, rems, size,
 };
 use input::{COVER_VIEWER_CONTEXT, ToggleFullscreen, ZoomIn, ZoomOut, ZoomReset};
 use ui::{
@@ -344,7 +344,7 @@ impl CoverViewer {
     }
 
     /// Turns wheel travel over the stage into zoom steps about the pointer.
-    fn wheel(&mut self, event: &ScrollWheelEvent, window: &Window, cx: &mut Context<Self>) {
+    fn wheel(&mut self, event: &ScrollEvent, window: &Window, cx: &mut Context<Self>) {
         let Some(open) = self.open.as_mut().filter(|open| !open.closing) else {
             return;
         };
@@ -409,7 +409,7 @@ impl CoverViewer {
                     }
                 });
                 let wheeled = viewer;
-                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         cx.stop_propagation();
                         wheeled

@@ -24,6 +24,7 @@ use ui::{
 };
 
 use crate::chrome::{Chrome, OutputPicker};
+use crate::shared::part::Part;
 use crate::shared::popups::{Credentials, SearchPopup};
 use crate::shared::text;
 
@@ -326,7 +327,7 @@ pub struct SettingsView {
     /// sign-in it started is over, so the veil never blinks away between it and the prompt
     /// that follows.
     sign_in_running: bool,
-    /// The card the user just switched to, by slug or `guest`. Its radio fills while the
+    /// The card the user just switched to, by slug or `offline`. Its radio fills while the
     /// session tears the old provider down and brings the new one up, which reports nothing
     /// active in between.
     chosen: Option<&'static str>,
@@ -347,6 +348,9 @@ pub struct SettingsView {
     font_task: Option<Task<()>>,
     /// What the pages' previews keep between frames.
     previews: preview::Previews,
+    /// Each page's groups as a view of its own, made the first time the page shows, so a preview
+    /// that moves renders the page without building them again.
+    parts: Vec<(SettingsPage, Entity<Part<SettingsView>>)>,
     /// The shortcut, by id, whose new key the page is waiting for.
     recording: Option<&'static str>,
     /// Catches every key pressed while a shortcut records, before it does anything else.
@@ -545,6 +549,7 @@ impl SettingsView {
             loading_fonts: false,
             font_task: None,
             previews,
+            parts: Vec::new(),
             recording: None,
             recorder: None,
         }
@@ -910,11 +915,9 @@ impl SettingsView {
                 let previews = &this.previews;
                 match page {
                     SettingsPage::NowPlaying => {
-                        preview::now_playing::preview(&previews.now_playing, this, window, cx)
+                        Some(previews.now_playing.clone().into_any_element())
                     }
-                    SettingsPage::Lyrics => {
-                        preview::lyrics::preview(&previews.lyrics, this, window, cx)
-                    }
+                    SettingsPage::Lyrics => Some(previews.lyrics.clone().into_any_element()),
                     SettingsPage::Sound => {
                         preview::sound::preview(&previews.sound, this, window, cx)
                     }
@@ -1214,12 +1217,16 @@ impl SettingsView {
                 t!("settings-lyrics-for-local-files"),
                 t!("settings-lyrics-for-local-files-detail"),
             ),
-            Slot::SpotifyConnect => match connect::jellyfin(cx) {
-                true => (
+            Slot::SpotifyConnect => match () {
+                () if connect::jellyfin(cx) => (
                     t!("settings-jellyfin-remote"),
                     t!("settings-jellyfin-remote-detail"),
                 ),
-                false => (
+                () if connect::youtube(cx) => (
+                    t!("settings-youtube-cast"),
+                    t!("settings-youtube-cast-detail"),
+                ),
+                () => (
                     t!("settings-spotify-connect"),
                     t!("settings-spotify-connect-detail"),
                 ),
@@ -1546,19 +1553,23 @@ impl SettingsView {
     /// The tab on show, or the drill-in on its own: each of its pages in turn. The frame draws
     /// the first page's title, and every later page opens on its own title, set well apart from
     /// the page above it.
-    fn tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn tab(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let pages = match self.page.parent() {
             Some(_) => vec![self.page],
             None => self.page.tab().sections().to_vec(),
         };
+        let parts = pages
+            .iter()
+            .map(|page| self.part(*page, cx))
+            .collect::<Vec<_>>();
         // a section's title stands as close over its groups as the page's own title does, and
         // only as far below the section above as the title's own size sets it apart
-        let theme = *cx.theme();
-        let inset = theme.metrics.inset;
+        let inset = cx.theme().metrics.inset;
         let pages = pages
             .into_iter()
+            .zip(parts)
             .enumerate()
-            .map(|(index, page)| {
+            .map(|(index, (page, part))| {
                 let title = (index > 0).then(|| {
                     let control = self.title_control(page, cx);
                     let title = section_title(page, control, cx).into_any_element();
@@ -1566,45 +1577,10 @@ impl SettingsView {
                         .mb(inset)
                         .child(self.revealing(Reveal::Section(page), title, cx))
                 });
-                let groups = self.groups(page, cx);
-                let indent = groups.iter().any(|group| group.title.is_some());
-                let mut parts = groups
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, group)| {
-                        // A search target must lay out even off screen so its reveal marker
-                        // can position the scroll. The other groups keep their cached heights.
-                        match self.reveal.is_some_and(|reveal| {
-                            group.slots().any(|slot| reveal == Reveal::Slot(slot))
-                        }) {
-                            true => self.group(group, indent, window, cx),
-                            false => self
-                                .lazy((page.id(), index + 3), cx, move |this, window, cx| {
-                                    this.group(group, indent, window, cx)
-                                })
-                                .into_any_element(),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                parts.extend(self.footer(page, window, cx));
-                let groups = parts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, shown)| {
-                        div()
-                            .when(index > 0, |this| {
-                                this.mt(theme.metrics.pad)
-                                    .pt(theme.metrics.pad)
-                                    .border_t_1()
-                                    .border_color(theme.border)
-                            })
-                            .child(shown)
-                    })
-                    .collect::<Vec<_>>();
 
                 // the Now playing preview stands beside its settings where the column has room,
                 // and every other preview over them
-                let groups = div().flex().flex_col().children(groups);
+                let groups = div().flex().flex_col().child(Part::shown(&part, cx));
                 let preview = self.preview(page, cx);
                 let beside = (page == SettingsPage::NowPlaying)
                     .then(|| preview::now_playing::beside(window, cx))
@@ -1636,6 +1612,67 @@ impl SettingsView {
             .collect::<Vec<_>>();
 
         div().flex().flex_col().gap(GROUPS).children(pages)
+    }
+
+    /// The view that draws `page`'s groups, made the first time the page shows.
+    fn part(&mut self, page: SettingsPage, cx: &mut Context<Self>) -> Entity<Part<Self>> {
+        if let Some((_, part)) = self.parts.iter().find(|(shown, _)| *shown == page) {
+            return part.clone();
+        }
+        let view = cx.entity();
+        let part = cx.new(|cx| {
+            Part::new(
+                &view,
+                move |this: &mut Self, window, cx| this.sections(page, window, cx),
+                cx,
+            )
+        });
+        self.parts.push((page, part.clone()));
+        part
+    }
+
+    /// The groups of `page` and what it shows under them, each set apart from the one above by a
+    /// line, as the page's part draws them.
+    fn sections(&self, page: SettingsPage, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let groups = self.groups(page, cx);
+        let indent = groups.iter().any(|group| group.title.is_some());
+        let mut blocks = groups
+            .into_iter()
+            .enumerate()
+            .map(|(index, group)| {
+                // A search target must lay out even off screen so its reveal marker
+                // can position the scroll. The other groups keep their cached heights.
+                match self
+                    .reveal
+                    .is_some_and(|reveal| group.slots().any(|slot| reveal == Reveal::Slot(slot)))
+                {
+                    true => self.group(group, indent, window, cx),
+                    false => self
+                        .lazy((page.id(), index + 3), cx, move |this, window, cx| {
+                            this.group(group, indent, window, cx)
+                        })
+                        .into_any_element(),
+                }
+            })
+            .collect::<Vec<_>>();
+        blocks.extend(self.footer(page, window, cx));
+        let blocks = blocks
+            .into_iter()
+            .enumerate()
+            .map(|(index, shown)| {
+                div()
+                    .when(index > 0, |this| {
+                        this.mt(theme.metrics.pad)
+                            .pt(theme.metrics.pad)
+                            .border_t_1()
+                            .border_color(theme.border)
+                    })
+                    .child(shown)
+            })
+            .collect::<Vec<_>>();
+
+        div().flex().flex_col().children(blocks).into_any_element()
     }
 
     /// What a search shows instead of the page: every setting that answers it, each naming the
@@ -1813,6 +1850,9 @@ impl Render for SettingsView {
         let geometry = (Layout::of(window, cx).width, theme.font_size, theme.radius);
         if self.geometry.replace(geometry) != Some(geometry) {
             self.layout_revision = self.layout_revision.wrapping_add(1);
+            for (_, part) in &self.parts {
+                part.update(cx, |part, _| part.unsettle());
+            }
         }
         if !cx.has_active_drag() {
             self.lyrics_drop_gap = None;
@@ -1920,7 +1960,7 @@ impl Render for SettingsView {
         )
         .track_focus(&self.focus)
         // the user taking the page in hand lets go of whatever it was holding in view
-        .on_scroll_wheel(cx.listener(|this, _, _, _| this.reveal = None))
+        .on_scroll(cx.listener(|this, _, _, _| this.reveal = None))
         .capture_any_mouse_down(cx.listener(|this, _, _, _| this.reveal = None))
         // an action stops where it is handled unless told to go on, so an escape with nothing
         // to close here goes on to the workspace

@@ -10,14 +10,12 @@ on:
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   pull_request:
     paths-ignore:
       - "**/*.md"
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   workflow_dispatch:
 
 # A pull request event handled after the merge resolves github.ref to the base branch, so
@@ -98,8 +96,8 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # The dev profile optimises ui, views and music for a usable debug build, which makes
-      # compiling them for the tests take three times as long. The tests do not need it.
+      # The dev profile optimises ui, views and the sound path for a usable debug build, which
+      # makes compiling them for the tests take three times as long. The tests do not need it.
       - name: tests
         if: matrix.task == 'test'
         run: >-
@@ -107,7 +105,8 @@ jobs:
           --config 'profile.dev.debug="line-tables-only"'
           --config 'profile.dev.package.ui.opt-level=0'
           --config 'profile.dev.package.views.opt-level=0'
-          --config 'profile.dev.package.music.opt-level=0'
+          --config 'profile.dev.package.engine.opt-level=0'
+          --config 'profile.dev.package.sound.opt-level=0'
 
   # The check job only ever sees the Linux side of a cfg. The next jobs lint the other two
   # platforms' code without paying for codegen, linking or an installer, which is the whole
@@ -332,7 +331,7 @@ jobs:
           $env:SONORA_VERSION = "0.0.0"
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging/windows/sonora.iss"
 
       # A convenience binary, not a release artefact: GitHub's artifact service times out often
       # enough that it must not be what turns a green build red.

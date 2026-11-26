@@ -794,6 +794,17 @@ impl Sprung {
         self.state.position
     }
 
+    /// How fast the spring moves now, in units a second.
+    pub fn velocity(&self) -> f32 {
+        self.state.velocity
+    }
+
+    /// Sets how fast the spring moves, in units a second, keeping where it stands and its clock,
+    /// so a motion turned mid-flight carries on without a stalled frame.
+    pub fn set_velocity(&mut self, velocity: f32) {
+        self.state.velocity = velocity;
+    }
+
     /// Whether the spring has come to rest where it was last sent, rather than moving.
     pub fn resting(&self) -> bool {
         self.beat.is_none()
@@ -803,13 +814,6 @@ impl Sprung {
     /// start of a motion that springs from there.
     pub fn jump(&mut self, position: f32) {
         *self = Self::at(position);
-    }
-
-    /// Sets the spring at `position` moving at `velocity` units a second, for something the hand
-    /// lets go of, so it carries on at the speed it was thrown before the spring takes over.
-    pub fn launch(&mut self, position: f32, velocity: f32) {
-        self.state = SpringState { position, velocity };
-        self.beat = None;
     }
 
     /// Moves where the spring stands by `delta`, keeping its velocity.

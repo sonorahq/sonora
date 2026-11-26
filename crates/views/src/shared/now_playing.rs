@@ -7,10 +7,10 @@ use gpui::{
 use i18n::t;
 use music::{Encoding, TrackSignal};
 use router::{Destination, Link, navigate};
-use state::{Playback, PlayerBarLayout, Sonora};
+use state::{Playback, QueuePosition};
 use ui::{
-    ActiveTheme as _, AudioQualityBadge, Badge, InlineLink, InlineLinks, Perch, Pinnable,
-    Tails as _, Tipped as _,
+    ActiveTheme as _, Badge, InlineLink, InlineLinks, Perch, Pinnable, Sparkle, Tails as _,
+    Tipped as _,
 };
 
 use crate::shared::pins::Pinned as _;
@@ -144,7 +144,8 @@ fn sample_rate(rate: u32) -> String {
 }
 
 /// The playing track's title and artist links with its explicit badge and heart, the way the
-/// player bar draws them beside its cover. The fullscreen player draws the same block where the
+/// player bar draws them beside its cover. A sparkle leads the title when smart shuffle
+/// recommended the song. The fullscreen player draws the same block where the
 /// bar has it, so the two read as one. `centered` keeps the title centred without moving the
 /// heart into it, and a right click on the title calls `open_menu`.
 pub(crate) fn track_details<V: 'static>(
@@ -158,6 +159,11 @@ pub(crate) fn track_details<V: 'static>(
     let muted = theme.muted_foreground;
     let artist_size = theme.text(ui::Text::Small);
     let explicit = track.is_some_and(|track| track.explicit);
+    let recommended = track.is_some()
+        && playback
+            .read(cx)
+            .shown_queue(cx)
+            .recommended(QueuePosition::Current, cx);
     let title = match track {
         Some(track) => {
             let name = SharedString::from(track.name.clone());
@@ -228,9 +234,10 @@ pub(crate) fn track_details<V: 'static>(
                     .relative()
                     .flex()
                     .items_center()
+                    .gap_1()
                     .min_w_0()
                     .min_h(theme.text(ui::Text::Body) * ui::LEADING)
-                    .gap(theme.metrics.pad / 2.)
+                    .when(recommended, |this| this.child(Sparkle::new()))
                     .child(title)
                     .when_some(quality_badge, |this, badge| this.child(badge))
                     .child(
@@ -252,16 +259,8 @@ pub(crate) fn track_details<V: 'static>(
             .items_center()
             .h(theme.text(ui::Text::Body) * ui::LEADING)
             .gap_1()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .min_w_0()
-                    .flex_shrink(1.)
-                    .gap(theme.metrics.pad / 2.)
-                    .child(title.flex_shrink(1.))
-                    .when_some(quality_badge, |this, badge| this.child(badge)),
-            )
+            .when(recommended, |this| this.child(Sparkle::new()))
+            .child(title)
             .child(actions),
     };
     div()

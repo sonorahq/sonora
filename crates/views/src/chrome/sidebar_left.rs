@@ -882,7 +882,7 @@ impl Render for SidebarLeft {
                 cx.notify();
             }))
             .when(!self.is_open() && !self.lingering, |this| this.hidden())
-            .when(!theme.transparent, |this| this.bg(sidebar_bg))
+            .bg(sidebar_bg)
             // Beside the page the sheet's own edge parts them. An overlaid sidebar floats over
             // the page and keeps its own.
             .border_color(match overlaid {

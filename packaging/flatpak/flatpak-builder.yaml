@@ -1,0 +1,100 @@
+id: io.github.nolight132.sonora
+branch: stable
+
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: sonora
+finish-args:
+  - --socket=wayland # Permission needed to show the window
+  - --socket=fallback-x11 # Permission needed to show the window on legacy windowing systems
+  - --socket=pulseaudio # Play audio
+  - --device=dri # GPU acceleration
+  - --share=network # Internet access
+  - --share=ipc
+  - --filesystem=xdg-run/pipewire-0:ro # Spotify flatpak has this
+  # Open With passes an arbitrary path as argv; a plain Exec launch (unlike a portal file-open)
+  # gets no per-file bind mount, so reading it needs read access to the whole host.
+  - --filesystem=host:ro
+  # Discord presence talks to Discord's IPC socket in the host runtime dir: a native Discord
+  # puts it at discord-ipc-0, or discord-ipc-1 when Canary runs next to stable, a Flatpak
+  # Discord or Vesktop under app/<its id> or, on newer Flatpak, inside its private runtime dir
+  # .flatpak/<its id>/xdg-run. Each folder has to be created from our side so the bind exists
+  # before the client starts.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/discord-ipc-1
+  - --filesystem=xdg-run/discord-ipc-2
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/app/com.discordapp.DiscordCanary:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  - --filesystem=xdg-run/.flatpak/com.discordapp.Discord/xdg-run:create
+  - --filesystem=xdg-run/.flatpak/com.discordapp.DiscordCanary/xdg-run:create
+  - --filesystem=xdg-run/.flatpak/dev.vencord.Vesktop/xdg-run:create
+
+  # Session Bus Permissions (Same as Spotify flatpak):
+  - --talk-name=org.gnome.SettingsDaemon.MediaKeys
+  - --talk-name=org.freedesktop.ScreenSaver
+  - --talk-name=org.kde.StatusNotifierWatcher
+
+  # MPRIS media controls
+  - --own-name=org.mpris.MediaPlayer2.sonora
+
+modules:
+  - name: sonora
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/sonora/cargo
+        CARGO_NET_OFFLINE: 'true'
+    sources:
+      # Use source from GitHub:
+      #- type: git
+      #  url: https://github.com/sonorahq/sonora.git
+      #  tag: v0.28.0
+
+      # Use source from this machine:
+      - type: dir
+        path: ../..
+        skip:
+        - .git
+        - .direnv
+        - .flatpak-builder
+        - target
+        - dist
+        - result
+        - vendor
+        - packaging/flatpak/flatpak
+        - packaging/flatpak/flatpak-repo
+
+      # Sources to build with Cargo:
+      - cargo-sources.json
+    build-commands:
+      # Symlink/move cargo/config to config.toml to fix deprecation warning
+      - test -f cargo/config && mv cargo/config cargo/config.toml || true
+
+      # Build directly - Cargo will automatically use $CARGO_HOME/config
+      - cargo build --offline --locked --release --package sonora
+
+      # Collect info as suggested by: https://v2.tauri.app/distribute/flatpak/
+      # Install binary to /app/bin
+      - install -Dm755 "target/release/sonora" /app/bin/sonora
+
+      # Install desktop icons
+      - for icon in assets/linux/icons/hicolor/*/apps/sonora.png; do install -Dm644 "$icon" "/app/share/icons/hicolor/$(basename "$(dirname "$(dirname "$icon")")")/apps/io.github.nolight132.sonora.png"; done
+      - install -Dm644 assets/linux/sonora.svg /app/share/icons/hicolor/scalable/apps/io.github.nolight132.sonora.svg
+
+      # Install Desktop File and AppData Metainfo
+      - install -d /app/share/applications /app/share/metainfo
+      - sed -e 's/^Icon=sonora$/Icon=io.github.nolight132.sonora/' -e 's/^StartupWMClass=sonora$/StartupWMClass=io.github.nolight132.sonora/' assets/linux/sonora.desktop > /app/share/applications/io.github.nolight132.sonora.desktop
+      - sed -e "s/@VERSION@/$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)/" -e "s/@DATE@/$(date -I)/" packaging/flatpak/io.github.nolight132.sonora.metainfo.xml > /app/share/metainfo/io.github.nolight132.sonora.metainfo.xml
+
+      # Install licenses
+      - install -Dm644 COPYING /app/share/licenses/io.github.nolight132.sonora/LICENSE
+      - install -Dm644 docs/THIRD-PARTY.md /app/share/licenses/io.github.nolight132.sonora/THIRD-PARTY.md
+      - install -Dm644 assets/fonts/LICENSE.txt /app/share/licenses/io.github.nolight132.sonora/LICENSE.Inter
+      - install -Dm644 assets/icons/LICENSE /app/share/licenses/io.github.nolight132.sonora/icons/LICENSE
+      - for licence in assets/icons/*/LICENSE; do install -Dm644 "$licence" "/app/share/licenses/io.github.nolight132.sonora/icons/LICENSE.$(basename "$(dirname "$licence")")"; done

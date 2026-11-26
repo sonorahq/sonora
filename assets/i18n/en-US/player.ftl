@@ -12,6 +12,7 @@ queue-added-by = Added by { $name }
 queue-empty = Your queue is empty
 queue-similar = Similar tracks
 queue-radio = Autoplay similar tracks
+queue-recommended = Recommended by smart shuffle
 queue-return-playing = Back to now playing
 
 # player bar
@@ -29,6 +30,7 @@ player-fullscreen-leave = Leave Now playing
 player-time-left = -{ $time }
 player-time-left-spoken = { $time } left
 devices-this-computer = This computer
+devices-connecting = Connecting…
 devices-jam-join = Join a Jam…
 devices-jam-join-title = Join a Jam
 devices-jam-join-detail = Paste the link a friend shared with you
@@ -108,4 +110,5 @@ lyrics-follow = Follow the song again
 lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
+lyrics-via = Via { $service }
 lyrics-instrumental-break = Instrumental break

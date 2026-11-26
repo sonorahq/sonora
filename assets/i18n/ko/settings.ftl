@@ -424,6 +424,7 @@ settings-lyrics-providers-selected = { $count ->
     }
 settings-lyrics-provider-subsonic = Subsonic
 settings-lyrics-provider-jellyfin = Jellyfin
+settings-lyrics-provider-plex = Plex
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music

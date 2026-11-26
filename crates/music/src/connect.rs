@@ -53,6 +53,8 @@ pub struct QueuedTrack {
     /// chose once that runs out.
     pub suggested: bool,
     pub added_by: Option<String>,
+    /// Whether the provider mixed this track in as a recommendation, as smart shuffle does.
+    pub recommended: bool,
 }
 
 impl QueuedTrack {
@@ -63,6 +65,7 @@ impl QueuedTrack {
             suggested: false,
             uid: String::new(),
             added_by: None,
+            recommended: false,
         }
     }
 }
@@ -261,6 +264,8 @@ pub enum Event {
     Jam(Option<Jam>),
     /// What `Request::Peek` found, or `None` when the link names no group session.
     Invite(Option<Invite>),
+    /// Handing playback to the device with this id failed.
+    TransferFailed(String),
     /// Starting or joining a group session failed.
     JamFailed,
     /// Leaving or ending the group session failed. The session as it stands follows as a `Jam`.

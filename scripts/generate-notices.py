@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "THIRD-PARTY.md"
+OUTPUT = ROOT / "docs" / "THIRD-PARTY.md"
 
 COPYRIGHT = re.compile(r"^\s*(?:#\s*)?Copyright\b.*$", re.MULTILINE)
 
@@ -51,7 +51,7 @@ def harvest():
         sys.exit("notices: cargo-about missing, run `cargo install cargo-about`")
 
     done = subprocess.run(
-        ["cargo", "about", "generate", "--format", "json"],
+        ["cargo", "about", "generate", "--config", "packaging/about.toml", "--format", "json"],
         cwd=ROOT,
         capture_output=True,
         text=True,

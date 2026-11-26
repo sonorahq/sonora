@@ -5,6 +5,7 @@ use std::rc::{Rc, Weak};
 use gpui::{App, Context, Entity};
 use logic::queue::{Order, Removed};
 use music::Track;
+use music::connect::QueuedTrack;
 
 use crate::{AppSettings, Origin, Outcome, Session, SessionEvent, Toast, Toasts};
 
@@ -71,10 +72,8 @@ impl Queue {
     ) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::SignedOut => this.edit(cx, Order::purge),
-            SessionEvent::SignedIn
-            | SessionEvent::Reconnected
-            | SessionEvent::WentOffline
-            | SessionEvent::LocalChanged => {}
+            SessionEvent::LocalChanged => this.refresh_local(cx),
+            SessionEvent::SignedIn | SessionEvent::Reconnected | SessionEvent::WentOffline => {}
         })
         .detach();
 
@@ -99,11 +98,23 @@ impl Queue {
         answer
     }
 
+    /// Swaps in the rescanned tags of every local song in the queue, keeping its place.
+    fn refresh_local(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        let session = session.read(cx);
+        let before = self.order.revision();
+        self.order.refresh(|id| session.refreshed_local_track(id));
+        if self.order.revision() != before {
+            self.remember(cx);
+            cx.notify();
+        }
+    }
+
     fn remember(&mut self, cx: &mut Context<Self>) {
         let resume = self
             .session
             .read(cx)
-            .provider_slug()
+            .playback_slug()
             .and_then(|slug| self.order.record(slug));
         self.settings
             .update(cx, |settings, cx| settings.set_resume(resume, cx));
@@ -181,9 +192,9 @@ impl Queue {
     /// gone like any other too.
     pub(crate) fn replace_remote(
         &mut self,
-        past: Vec<(Track, QueueKind)>,
-        current: QueueKind,
-        upcoming: Vec<(Track, QueueKind)>,
+        past: Vec<(Track, QueuedTrack)>,
+        current: Option<QueuedTrack>,
+        upcoming: Vec<(Track, QueuedTrack)>,
         reach: Reach,
         cx: &mut Context<Self>,
     ) {
@@ -294,6 +305,11 @@ impl Queue {
 
     pub fn next(&mut self, cx: &mut Context<Self>) -> Option<Track> {
         self.edit(cx, Order::advance)
+    }
+
+    /// Puts the last song in history when the queue runs out, leaving nothing as now playing.
+    pub fn finish(&mut self, cx: &mut Context<Self>) {
+        self.edit(cx, Order::finish);
     }
 
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins

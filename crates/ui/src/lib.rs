@@ -49,6 +49,7 @@ mod separator;
 mod shader;
 mod shield;
 mod skeleton;
+mod sparkle;
 mod spinner;
 mod swipe;
 mod switch;
@@ -90,7 +91,7 @@ pub use form::{FORM_CONTEXT, Field, Form, NextField, PreviousField, Submit, step
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
-pub use glide::{Glide, ScrollPosition};
+pub use glide::{Glide, ScrollPosition, scrolling};
 pub use hold::{Held, Hold, held};
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
@@ -144,6 +145,7 @@ pub use scrubber::{Scrubber, ScrubberState};
 pub use separator::Separator;
 pub use shield::Shield;
 pub use skeleton::{Initials, Skeleton};
+pub use sparkle::Sparkle;
 pub use spinner::{Spin, Spinner};
 pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;

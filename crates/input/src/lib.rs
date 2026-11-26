@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use gpui::{KeyBinding, actions};
+use gpui::{App, KeyBinding, actions};
 use ui::{
     Activate, Backspace, BackspaceToStart, BackspaceWord, Copy, Cut, Delete, DeleteToEnd,
     DeleteWord, Deselect, Dismiss, End, FORM_CONTEXT, Home, INPUT_CONTEXT, Left, MENU_CONTEXT,
@@ -72,8 +72,8 @@ pub const POWERBAR_CONTEXT: &str = "Powerbar";
 /// tries the next binding, which is how the arrow keys reach the volume and seek shortcuts.
 /// `overrides` holds the keys the user chose for shortcuts under Settings, Keybinds, by
 /// shortcut id. A shortcut missing from it keeps its defaults, and an empty list unbinds it.
-pub fn bindings(overrides: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
-    let mut bindings = shortcuts::bindings(overrides);
+pub fn bindings(overrides: &BTreeMap<String, Vec<String>>, cx: &App) -> Vec<KeyBinding> {
+    let mut bindings = shortcuts::bindings(overrides, cx);
     bindings.extend(shared());
     if cfg!(target_os = "macos") {
         bindings.extend(macos());

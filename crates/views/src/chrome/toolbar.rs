@@ -108,7 +108,12 @@ impl Toolbar {
                 .unwrap_or_default()
         }));
 
-        cx.observe(view, |_, _, cx| cx.notify()).detach();
+        cx.observe(view, |_, _, cx| {
+            if !ui::scrolling(cx) {
+                cx.notify();
+            }
+        })
+        .detach();
         cx.notify();
     }
 

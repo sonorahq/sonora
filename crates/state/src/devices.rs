@@ -25,10 +25,65 @@ const PREVIOUS: usize = 10;
 /// Resolving a queue should not fan out into a request for every track at once.
 const QUEUE_READS: usize = 8;
 const REMOTE_TRACKS: usize = 25;
+/// How long a volume or a play state asked of another device is shown before the device has
+/// reported it. Reports still on their way when it was asked would otherwise undo it.
+const HOLD: Duration = Duration::from_secs(5);
+/// How close a reported volume has to come to the one asked for to count as it.
+const VOLUME_MATCH: f32 = 0.015;
+/// How long a handoff to another device may take before the app stops showing it under way.
+const CONNECT_LIMIT: Duration = Duration::from_secs(20);
 /// How often the views are told that another device's playback moved on while it plays.
 const TICK: Duration = Duration::from_millis(500);
+/// What a start loads: the collection to play, where in it, its origin, the queue window to
+/// apply, and whether that window still misses songs.
+type Loaded = (
+    Vec<Track>,
+    usize,
+    Option<Origin>,
+    Option<RemoteWindow>,
+    bool,
+);
+/// A queue's past and current occurrences, its upcoming ones with their kinds, and its shuffle,
+/// compared to learn whether the listener or playback changed it.
+type Chosen = (Vec<String>, Option<String>, Vec<(String, QueueKind)>, bool);
 /// The actual history and upcoming order supplied by another device.
-type RemoteWindow = (Vec<(Track, QueueKind)>, QueueKind, Vec<(Track, QueueKind)>);
+type RemoteWindow = (
+    Vec<(Track, QueuedTrack)>,
+    Option<QueuedTrack>,
+    Vec<(Track, QueuedTrack)>,
+);
+
+/// A value asked of another device, shown in place of what it reports until it reports it.
+struct Held<T> {
+    device: String,
+    value: T,
+    asked: Instant,
+}
+
+impl<T> Held<T> {
+    fn new(device: &str, value: T) -> Self {
+        Self {
+            device: device.to_owned(),
+            value,
+            asked: Instant::now(),
+        }
+    }
+
+    /// Whether it still stands for `device`.
+    fn holds(&self, device: &str) -> bool {
+        self.device == device && self.asked.elapsed() < HOLD
+    }
+}
+
+/// A handoff to another device that the device has not taken up yet.
+struct Connecting {
+    device: String,
+    /// Whether the device has to report playing to have taken it, which it only does for
+    /// playback that played when it was handed.
+    playing: bool,
+    /// Gives up on the handoff after `CONNECT_LIMIT`.
+    _limit: Task<()>,
+}
 
 /// A seek another device asked for while a song was loading, kept until that song plays.
 struct LateSeek {
@@ -84,8 +139,15 @@ pub struct Devices {
     claimed: bool,
     sent: Option<Arc<Snapshot>>,
     events: Option<Task<()>>,
+    /// The handoff to another device under way, if any.
+    connecting: Option<Connecting>,
+    /// The volume and play state last asked of another device, until it reports them.
+    held_volume: Option<Held<f32>>,
+    held_playing: Option<Held<bool>>,
     /// The latest transfer or queue edit; a newer request cancels its predecessor.
     changing: Option<Task<()>>,
+    /// Reads the songs a handover named that were not known yet, after playback started.
+    filling: Option<Task<()>>,
     /// A seek another device asked for while the song was loading here. It is made once the
     /// song plays, unless another song has taken its place by then.
     seek_due: Option<LateSeek>,
@@ -152,7 +214,11 @@ impl Devices {
             claimed: false,
             sent: None,
             events: None,
+            connecting: None,
+            held_volume: None,
+            held_playing: None,
             changing: None,
+            filling: None,
             seek_due: None,
             queuing: HashMap::new(),
             liking: HashMap::new(),
@@ -308,19 +374,30 @@ impl Devices {
 
     /// Addresses the provider's queue through its metadata cache without copying the play order.
     pub(crate) fn queue_tracks(&self, position: QueuePosition) -> Option<Track> {
+        let listed = self.queue_row(position)?;
+        let mut track = self.listed.get(&listed.id)?.clone();
+        track.added_by = listed.added_by.as_deref().and_then(|id| self.known(id));
+        Some(track)
+    }
+
+    /// Whether the provider mixed the remote queue's song at `position` in as a recommendation.
+    pub(crate) fn queue_recommended(&self, position: QueuePosition) -> bool {
+        self.queue_row(position)
+            .is_some_and(|listed| listed.recommended)
+    }
+
+    /// The remote queue's row at `position`, where past places count readable rows only.
+    fn queue_row(&self, position: QueuePosition) -> Option<&QueuedTrack> {
         let remote = &self.elsewhere()?.state;
-        let listed = match position {
+        match position {
             QueuePosition::Past(at) => remote
                 .previous
                 .iter()
                 .filter(|row| self.readable(&row.id))
-                .nth(at)?,
-            QueuePosition::Current => remote.track.as_ref()?,
-            QueuePosition::Upcoming(at) => remote.upcoming.get(at)?,
-        };
-        let mut track = self.listed.get(&listed.id)?.clone();
-        track.added_by = listed.added_by.as_deref().and_then(|id| self.known(id));
-        Some(track)
+                .nth(at),
+            QueuePosition::Current => remote.track.as_ref(),
+            QueuePosition::Upcoming(at) => remote.upcoming.get(at),
+        }
     }
 
     /// Counts readable rows, stopping upcoming at the first gap so Next never names a later song.
@@ -343,7 +420,7 @@ impl Devices {
                 .upcoming
                 .iter()
                 .take_while(|row| self.readable(&row.id))
-                .map(kind_of),
+                .map(QueueKind::of),
         )
     }
 
@@ -381,17 +458,49 @@ impl Devices {
     }
 
     /// Moves playback onto this app from whichever device has it.
-    pub fn transfer_here(&self) {
+    pub fn transfer_here(&mut self, cx: &mut Context<Self>) {
         if let Some(link) = &self.link {
             link.send(Request::Transfer(link.device().to_owned()));
         }
+        if self.connecting.take().is_some() {
+            cx.notify();
+        }
     }
 
-    /// Moves playback onto another device.
-    pub fn transfer(&self, device: &str) {
-        if let Some(link) = &self.link {
-            link.send(Request::Transfer(device.to_owned()));
+    /// Moves playback onto another device, which shows as connecting until it has taken it.
+    pub fn transfer(&mut self, device: &str, cx: &mut Context<Self>) {
+        let Some(link) = self.link.clone() else {
+            return;
+        };
+        // a song that was loaded and never played is not reported, so picking a device counts as
+        // taking it, which reports it ahead of the transfer that carries it there. With nothing
+        // loaded there is nothing to take, and the device picked is where what comes next plays.
+        if self.elsewhere().is_none() && !self.claimed && self.queue.read(cx).current().is_some() {
+            self.claimed = true;
+            self.publish(cx);
         }
+        link.send(Request::Transfer(device.to_owned()));
+        let limit = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CONNECT_LIMIT).await;
+            this.update(cx, |this, cx| {
+                this.connecting = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.connecting = Some(Connecting {
+            device: device.to_owned(),
+            playing: self.sent.as_ref().is_some_and(|sent| sent.playing),
+            _limit: limit,
+        });
+        cx.notify();
+    }
+
+    /// The device a handoff is under way to, until it has taken playback.
+    pub fn connecting(&self) -> Option<&str> {
+        self.connecting
+            .as_ref()
+            .map(|connecting| connecting.device.as_str())
     }
 
     /// Sends a command to another device.
@@ -405,6 +514,7 @@ impl Devices {
     /// The caller notifies playback, since playback may already be updating when this runs.
     pub(crate) fn set_volume(&mut self, device: &str, level: f32, cx: &mut Context<Self>) {
         self.control(device, Command::Volume(level));
+        self.held_volume = Some(Held::new(device, level));
         if let Some(listed) = self
             .roster
             .devices
@@ -422,6 +532,83 @@ impl Devices {
             elsewhere.device.volume = level;
         }
         cx.notify();
+    }
+
+    /// Plays or pauses another device and shows it so until its next report says otherwise.
+    /// The caller notifies playback, since playback may already be updating when this runs.
+    pub(crate) fn set_playing(&mut self, device: &str, playing: bool, cx: &mut Context<Self>) {
+        self.control(
+            device,
+            match playing {
+                true => Command::Play,
+                false => Command::Pause,
+            },
+        );
+        self.held_playing = Some(Held::new(device, playing));
+        if let Some(elsewhere) = self
+            .roster
+            .elsewhere
+            .as_mut()
+            .filter(|elsewhere| elsewhere.device.id == device)
+        {
+            hold_playing(&mut elsewhere.state, playing);
+        }
+        self.tick(cx);
+        cx.notify();
+    }
+
+    /// Shows what was last asked of another device over what it reports, until it reports it
+    /// or the hold runs out.
+    fn apply_held(&mut self, roster: &mut Roster) {
+        if self
+            .held_volume
+            .as_ref()
+            .is_some_and(|held| held.asked.elapsed() >= HOLD)
+        {
+            self.held_volume = None;
+        }
+        if let Some(held) = &self.held_volume {
+            let reported = roster
+                .devices
+                .iter()
+                .chain(roster.elsewhere.as_ref().map(|elsewhere| &elsewhere.device))
+                .find(|device| device.id == held.device)
+                .map(|device| device.volume);
+            match reported {
+                Some(level) if (level - held.value).abs() < VOLUME_MATCH => {
+                    self.held_volume = None;
+                }
+                _ => {
+                    let level = held.value;
+                    let device = held.device.clone();
+                    for listed in roster
+                        .devices
+                        .iter_mut()
+                        .chain(
+                            roster
+                                .elsewhere
+                                .as_mut()
+                                .map(|elsewhere| &mut elsewhere.device),
+                        )
+                        .filter(|listed| listed.id == device)
+                    {
+                        listed.volume = level;
+                    }
+                }
+            }
+        }
+        let playing = self.held_playing.as_ref().and_then(|held| {
+            let elsewhere = roster.elsewhere.as_mut()?;
+            held.holds(&elsewhere.device.id)
+                .then_some((held.value, elsewhere))
+        });
+        match playing {
+            Some((playing, elsewhere)) if elsewhere.state.playing == playing => {
+                self.held_playing = None;
+            }
+            Some((playing, elsewhere)) => hold_playing(&mut elsewhere.state, playing),
+            None => self.held_playing = None,
+        }
     }
 
     /// Seeks here as another device asked. A seek into a song that is still loading leaves
@@ -534,9 +721,13 @@ impl Devices {
         self.sent = None;
         self.events = None;
         self.changing = None;
+        self.filling = None;
         self.queuing.clear();
         self.liking.clear();
         self.ticking = None;
+        self.connecting = None;
+        self.held_volume = None;
+        self.held_playing = None;
     }
 
     /// Lists the app on the device network, or takes it off, as the setting says. It stays off
@@ -547,7 +738,7 @@ impl Devices {
             return;
         };
         let settings = self.settings.read(cx);
-        let wanted = settings.spotify_connect() && !music::soloist::ready();
+        let wanted = settings.spotify_connect() && !soloist::ready();
         let naming = match settings.spotify_connect_name() {
             ConnectName::Sonora => Naming::App,
             ConnectName::Both => Naming::AppOnComputer,
@@ -651,6 +842,13 @@ impl Devices {
                     self.leaving = false;
                     Toasts::show(Outcome::Failed, "toast-jam-leave-failed", cx);
                 }
+                Event::TransferFailed(device) => {
+                    if self.connecting() == Some(device.as_str()) {
+                        self.connecting = None;
+                        cx.notify();
+                    }
+                    Toasts::show(Outcome::Failed, "toast-transfer-failed", cx);
+                }
                 Event::JamFailed => {
                     self.awaiting_code = false;
                     Toasts::show(Outcome::Failed, "toast-jam-failed", cx);
@@ -664,7 +862,8 @@ impl Devices {
         }
     }
 
-    fn set_roster(&mut self, roster: Roster, cx: &mut Context<Self>) {
+    fn set_roster(&mut self, mut roster: Roster, cx: &mut Context<Self>) {
+        self.apply_held(&mut roster);
         let reported_volume = match (self.roster.elsewhere.as_ref(), roster.elsewhere.as_ref()) {
             (Some(had), Some(wanted))
                 if had.device.id == wanted.device.id
@@ -693,6 +892,16 @@ impl Devices {
                 .as_ref()
                 .is_some_and(|e| e.state.playing);
         self.roster = roster;
+        let taken = match (&self.connecting, &self.roster.elsewhere) {
+            (Some(connecting), Some(elsewhere)) => {
+                elsewhere.device.id == connecting.device
+                    && (elsewhere.state.playing || !connecting.playing)
+            }
+            _ => false,
+        };
+        if taken {
+            self.connecting = None;
+        }
         if let Some((device, level)) = reported_volume {
             self.playback.update(cx, |playback, _| {
                 playback.reported_steered_volume(&device, level)
@@ -883,6 +1092,7 @@ impl Devices {
             Command::Released => {
                 // another device took over, so this one stops without calling playback back
                 self.changing = None;
+                self.filling = None;
                 self.claimed = false;
                 self.here(cx, |playback, cx| playback.pause(cx));
                 self.publish(cx);
@@ -1000,6 +1210,7 @@ impl Devices {
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
+        self.filling = None;
         let capabilities = self.session.read(cx).capabilities();
         let state = start.state.clone();
         let restart = start.restart;
@@ -1012,13 +1223,7 @@ impl Devices {
         };
         let revision = self.queue.read(cx).revision();
         let shown = self.snapshot(cx);
-        let queue = self.queue.read(cx);
-        let mut known = self.listed.clone();
-        known.extend(
-            queue
-                .tracks()
-                .filter_map(|track| Some((track.id.clone()?, track.clone()))),
-        );
+        let known = self.known_tracks(cx);
         self.changing = Some(self.io.load(
             load(client, capabilities, start, known),
             move |this, loaded, cx| {
@@ -1035,7 +1240,7 @@ impl Devices {
                     return;
                 }
                 match loaded {
-                    Ok((tracks, index, origin, window)) => {
+                    Ok((tracks, index, origin, window, gaps)) => {
                         if restart {
                             this.claimed = true;
                             let queue = this.queue.clone();
@@ -1055,6 +1260,9 @@ impl Devices {
                         if let Some(window) = window {
                             this.apply_window(window, reach, cx);
                         }
+                        if gaps {
+                            this.fill(state.clone(), cx);
+                        }
                     }
                     Err(error) => {
                         log::warn!("connect: cannot apply playback change: {error:#}");
@@ -1066,6 +1274,54 @@ impl Devices {
             },
             cx,
         ));
+    }
+
+    /// Puts the songs a handover named into the queue once they are read, unless the queue
+    /// changed meanwhile, as playback moving on or the listener editing it does.
+    fn fill(&mut self, state: Arc<Snapshot>, cx: &mut Context<Self>) {
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let capabilities = self.session.read(cx).capabilities();
+        let held = chosen(self.queue.read(cx));
+        let start = Start {
+            state,
+            preserve_queue: true,
+            restart: false,
+        };
+        let known = self.known_tracks(cx);
+        self.filling = Some(self.io.load(
+            load(client, capabilities, start, known),
+            move |this, loaded, cx| {
+                this.filling = None;
+                if chosen(this.queue.read(cx)) != held {
+                    return log::debug!(
+                        "connect: the queue changed while its missing songs loaded"
+                    );
+                }
+                match loaded {
+                    Ok((.., Some(window), _)) => this.apply_window(window, Reach::Handed, cx),
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::warn!("connect: cannot read the handed-over queue: {error:#}")
+                    }
+                }
+                cx.notify();
+            },
+            cx,
+        ));
+    }
+
+    /// The songs this app holds already, so a start does not read them from the provider again.
+    fn known_tracks(&self, cx: &App) -> HashMap<String, Track> {
+        let mut known = self.listed.clone();
+        known.extend(
+            self.queue
+                .read(cx)
+                .tracks()
+                .filter_map(|track| Some((track.id.clone()?, track.clone()))),
+        );
+        known
     }
 
     /// Tells the account's other apps what plays, when something does that this app took.
@@ -1221,13 +1477,14 @@ async fn person(client: &dyn MusicApi, id: String) -> Option<(String, Arc<Contri
 
 /// Reads in what a start names: the collection if it has one the track is in, otherwise the
 /// track and the tracks that follow it. `capabilities` are the provider's, which pick where a
-/// collection's radio comes from.
+/// collection's radio comes from. A handover reads only its current song beyond what is known,
+/// so it plays at once, and says whether songs are missing for `Devices::fill` to read.
 async fn load(
     client: Arc<dyn MusicApi>,
     capabilities: Capabilities,
     start: Start,
     mut known: HashMap<String, Track>,
-) -> Result<(Vec<Track>, usize, Option<Origin>, Option<RemoteWindow>)> {
+) -> Result<Loaded> {
     let Start {
         state: start,
         preserve_queue,
@@ -1281,16 +1538,23 @@ async fn load(
         .filter(|at| tracks.get(*at).is_some_and(accepts))
         .or_else(|| tracks.iter().position(accepts));
     let resolved = if preserve_queue || index.is_none() {
-        let ids = start
+        let ids: Vec<_> = start
             .previous
             .iter()
             .chain(&start.track)
             .chain(&start.upcoming)
-            .map(|track| &track.id);
-        resolve_queue(&*client, &mut known, ids.cloned().collect()).await
+            .map(|track| track.id.clone())
+            .collect();
+        let read = match restart {
+            true => start.track.iter().map(|track| track.id.clone()).collect(),
+            false => ids.clone(),
+        };
+        resolve_queue(&*client, &mut known, read).await;
+        ids.iter().map(|id| known.get(id).cloned()).collect()
     } else {
         Vec::new()
     };
+    let gaps = restart && resolved.iter().any(Option::is_none);
     let (tracks, index) = if restart {
         match index {
             Some(index) => (tracks, index),
@@ -1316,7 +1580,7 @@ async fn load(
             .by_ref()
             .take(start.previous.len())
             .zip(&start.previous)
-            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
+            .filter_map(|(track, listed)| Some((track?, listed.clone())))
             .collect();
         // The current song has its own slot in the resolver, outside history and upcoming.
         if start.track.is_some() {
@@ -1324,16 +1588,12 @@ async fn load(
         }
         let next = resolved
             .zip(&start.upcoming)
-            .filter_map(|(track, listed)| Some((track?, kind_of(listed))))
+            .filter_map(|(track, listed)| Some((track?, listed.clone())))
             .collect();
-        (
-            past,
-            start.track.as_ref().map_or(QueueKind::Context, kind_of),
-            next,
-        )
+        (past, start.track.clone(), next)
     });
 
-    Ok((tracks, index, origin, window))
+    Ok((tracks, index, origin, window, gaps))
 }
 
 /// Fetches each missing song once, concurrently, then reconstructs the requested order.
@@ -1363,17 +1623,33 @@ async fn resolve_queue(
     ids.iter().map(|id| known.get(id).cloned()).collect()
 }
 
-/// Why a track another device lists is in its play order: queued by hand, picked by the
-/// provider to follow the collection, or part of the collection itself.
-fn kind_of(row: &QueuedTrack) -> QueueKind {
-    match (row.queued, row.suggested) {
-        (true, _) => QueueKind::Queued,
-        (false, true) => QueueKind::Suggested,
-        (false, false) => QueueKind::Context,
-    }
+/// The queue's occurrences by section and its shuffle, with why each upcoming one is there,
+/// leaving out the autoplay suggestions, which arrive on their own while a handover's songs load
+/// and change nothing the listener or playback did. A skip shows as the current occurrence
+/// changing.
+fn chosen(queue: &Queue) -> Chosen {
+    let uid = |at| queue.uid(at).map(str::to_owned);
+    let past = (0..queue.past().len())
+        .filter_map(|at| uid(QueuePosition::Past(at)))
+        .collect();
+    let upcoming = (0..queue.upcoming().len())
+        .map(QueuePosition::Upcoming)
+        .filter_map(|at| Some((uid(at)?, queue.kind(at)?)))
+        .filter(|(_, kind)| *kind != QueueKind::Suggested)
+        .collect();
+    (past, uid(QueuePosition::Current), upcoming, queue.shuffle())
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.
 fn same_queue(a: &Snapshot, b: &Snapshot) -> bool {
     a.track == b.track && a.previous == b.previous && a.upcoming == b.upcoming
+}
+
+/// Shows `state` as playing or paused from where it is now.
+fn hold_playing(state: &mut Arc<Snapshot>, playing: bool) {
+    let position = state.live_position();
+    let state = Arc::make_mut(state);
+    state.position = position;
+    state.stamp = Some(SystemTime::now());
+    state.playing = playing;
 }

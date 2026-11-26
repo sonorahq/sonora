@@ -100,6 +100,7 @@ MAP = {
     "sliders-horizontal": ("control-slider", "slider-horizontal-linear", "equalizer-line"),
     "smartphone": ("smartphone-device", "smartphone-linear", "smartphone-line"),
     "speaker": (None, "speaker-linear", "speaker-line"),
+    "sparkles": ("sparks", "stars-minimalistic-linear", "sparkling-line"),
     "square-plus": ("plus-square", "add-square-linear", "add-box-line"),
     "tablet": (None, "tablet-linear", "tablet-line"),
     "text-select": (None, "text-selection-linear", None),

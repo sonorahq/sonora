@@ -52,7 +52,8 @@ impl SettingsView {
         // the choice only means something while Spotify is signed in and listed as a device
         let connect = settings.spotify_connect()
             && Sonora::global(cx).devices.read(cx).supported()
-            && !super::connect::jellyfin(cx);
+            && !super::connect::jellyfin(cx)
+            && !super::connect::youtube(cx);
 
         let option =
             |id: &'static str, icon: &'static str, key: &'static str, on: bool, cx: &App| {

@@ -52,7 +52,7 @@ impl SmartPlaylistUpdate {
     }
 
     /// The request body carrying exactly the fields set on the update.
-    pub(crate) fn to_wire(&self) -> Value {
+    pub fn to_wire(&self) -> Value {
         let mut body = Map::new();
         if let Some(name) = &self.name {
             body.insert("name".into(), Value::String(name.clone()));

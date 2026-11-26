@@ -144,7 +144,7 @@ pub fn register(lingers: bool, cx: &mut App) {
 fn bind_keys(cx: &mut App) {
     let settings = Sonora::global(cx).settings.clone();
     let mut bound = settings.read(cx).keybinds().clone();
-    cx.bind_keys(input::bindings(&bound));
+    cx.bind_keys(input::bindings(&bound, cx));
     cx.observe(&settings, move |settings, cx| {
         let chosen = settings.read(cx).keybinds();
         if *chosen == bound {
@@ -152,7 +152,7 @@ fn bind_keys(cx: &mut App) {
         }
         bound = chosen.clone();
         cx.clear_key_bindings();
-        cx.bind_keys(input::bindings(&bound));
+        cx.bind_keys(input::bindings(&bound, cx));
         // the macOS menu bar reads its key equivalents when the menus are set
         cx.set_menus(menus());
     })

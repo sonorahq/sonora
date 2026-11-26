@@ -8,7 +8,6 @@ use gpui::{
     svg,
 };
 
-use crate::Badge;
 use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar};
 use crate::button::Button;
@@ -19,6 +18,7 @@ use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing,
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
+use crate::{Badge, Sparkle};
 
 const BAR_TITLE: (Pixels, Pixels) = (px(140.), px(11.));
 const BAR_META: (Pixels, Pixels) = (px(90.), px(9.));
@@ -60,6 +60,7 @@ pub struct Card {
     circle: bool,
     tint: Option<Hsla>,
     explicit: bool,
+    recommended: bool,
     /// A badge after the title and the words it is read as, as `(icon, label)`.
     mark: Option<(SharedString, SharedString)>,
     fill: bool,
@@ -107,6 +108,7 @@ impl Card {
             circle: false,
             tint: None,
             explicit: false,
+            recommended: false,
             mark: None,
             fill: true,
             hovered: None,
@@ -280,6 +282,12 @@ impl Card {
         self
     }
 
+    /// Puts a sparkle ahead of the title, for a song the provider mixed in as a recommendation.
+    pub fn recommended(mut self) -> Self {
+        self.recommended = true;
+        self
+    }
+
     /// Sets a badge showing `icon` after the title, after the explicit one, which screen readers
     /// hear as `label`.
     pub fn mark(mut self, icon: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
@@ -383,6 +391,7 @@ impl RenderOnce for Card {
             circle,
             tint,
             explicit,
+            recommended,
             mark,
             fill,
             hovered,
@@ -615,13 +624,14 @@ impl RenderOnce for Card {
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
             .child(title);
-        let heading = match explicit || mark.is_some() {
+        let heading = match explicit || recommended || mark.is_some() {
             false => title.into_any_element(),
             true => div()
                 .flex()
                 .items_center()
                 .gap(px(3.))
                 .min_w_0()
+                .when(recommended, |this| this.child(Sparkle::new()))
                 .child(title)
                 .when(explicit, |this| {
                     this.child(div().flex_none().child(Badge::explicit()))

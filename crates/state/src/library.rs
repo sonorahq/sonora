@@ -571,7 +571,8 @@ fn place(
 
 /// Puts one part's rows, or its failure, onto the shelf. A part arriving in pages passes here
 /// once per page, so the rows already there stay and the new ones go behind them. A track the
-/// provider cannot play is left out, so the songs list and its count hold only what plays.
+/// provider cannot play is left out. Cached local files remain visible while their folder is
+/// unavailable, with playback disabled until it can be read again.
 fn extend(state: &mut LibraryState, landed: Landed) {
     if !matches!(state, LibraryState::Ready(_)) {
         *state = LibraryState::Ready(Ready::default());
@@ -588,11 +589,11 @@ fn extend(state: &mut LibraryState, landed: Landed) {
     } = ready;
     let part = landed.part();
     match landed {
-        Landed::Tracks(result) => tracks.extend(
-            take(part, result, problems)
-                .into_iter()
-                .filter(|track| track.playable),
-        ),
+        Landed::Tracks(result) => {
+            tracks.extend(take(part, result, problems).into_iter().filter(|track| {
+                track.playable || track.id.as_deref().is_some_and(music::is_local_id)
+            }))
+        }
         Landed::Playlists(result) => playlists.extend(take(part, result, problems)),
         Landed::Albums(result) => albums.extend(take(part, result, problems)),
         Landed::Artists(result) => artists.extend(take(part, result, problems)),
@@ -735,7 +736,7 @@ impl Library {
             finish_save(completion, false);
             return;
         };
-        if S::requests(self).contains_key(&id) {
+        if S::requests(self).contains_key(&id) || self.refuse_guest(Shelf::of(&id), cx) {
             finish_save(completion, false);
             return;
         }
@@ -1990,6 +1991,9 @@ impl Library {
             return;
         }
         let shelf = Shelf::of(&id);
+        if self.refuse_guest(shelf, cx) {
+            return;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             return;
         };
@@ -2129,18 +2133,54 @@ impl Library {
                 let tracks = addition.resolve(&client).await?;
                 let id = client.create_playlist(&name).await?;
                 client.add_tracks_to_playlist(&id, &tracks).await?;
-                let fetched = client.playlist(&id).await.map(|detail| detail.playlist);
-                Ok(fetched.unwrap_or_else(|error| {
-                    log::warn!("library: a new playlist is not readable yet: {error:#}");
-                    Playlist {
-                        id,
-                        name,
-                        owned: true,
-                        ..Default::default()
+                let (playlist, contents) = match client.playlist(&id).await {
+                    Ok(detail) => {
+                        let contents = if tracks.is_empty() {
+                            Some(HashSet::new())
+                        } else if detail.continuation.is_none()
+                            && detail.tracks.len() >= tracks.len()
+                        {
+                            Some(
+                                detail
+                                    .tracks
+                                    .into_iter()
+                                    .filter_map(|track| track.id)
+                                    .collect(),
+                            )
+                        } else {
+                            client.playlist_tracks(&id).await.ok().and_then(|listed| {
+                                (listed.len() >= tracks.len()).then(|| {
+                                    listed.into_iter().filter_map(|track| track.id).collect()
+                                })
+                            })
+                        };
+                        (detail.playlist, contents)
                     }
-                }))
+                    Err(error) => {
+                        log::warn!("library: a new playlist is not readable yet: {error:#}");
+                        let playlist = Playlist {
+                            id,
+                            name,
+                            owned: true,
+                            track_count: tracks.len() as u32,
+                            ..Default::default()
+                        };
+                        let contents = tracks.is_empty().then(HashSet::new);
+                        (playlist, contents)
+                    }
+                };
+                Ok((playlist, contents))
             },
-            Self::insert_playlist,
+            move |this, (playlist, contents), cx| {
+                let unread = contents.is_none();
+                if let Some(ids) = contents {
+                    this.contents.insert(playlist.id.clone(), ids);
+                }
+                this.insert_playlist(playlist, cx);
+                if unread {
+                    this.read_playlists(shelf, cx);
+                }
+            },
             cx,
         );
     }
@@ -2153,6 +2193,9 @@ impl Library {
         let opening = self.smart_opening;
         let epoch = self.epochs[shelf.slot()];
         self.smart_editing = None;
+        if self.refuse_guest(shelf, cx) {
+            return;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
             return;
@@ -2751,8 +2794,11 @@ impl Library {
             |playlist| playlist.track_count += added_count,
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             ids.extend(track_ids);
+        } else {
+            self.read_playlists(Shelf::of(playlist_id), cx);
         }
         cx.emit(LibraryEvent::TrackAdded {
             playlist: playlist_id.to_owned(),
@@ -2772,10 +2818,13 @@ impl Library {
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
             cx,
         );
+        self.reading.remove(playlist_id);
         if let Some(ids) = self.contents.get_mut(playlist_id) {
             for track in &track_ids {
                 ids.remove(track);
             }
+        } else {
+            self.read_playlists(Shelf::of(playlist_id), cx);
         }
         for track in track_ids {
             cx.emit(LibraryEvent::TrackDropped {
@@ -2797,15 +2846,15 @@ impl Library {
     /// Takes tracks out of a playlist and reports it once the provider agrees, with an Undo that
     /// adds them back at the end, the way every provider adds. Every copy of a named track goes,
     /// the way the page drops every row of it, so `rows` names a track once for each copy the
-    /// playlist holds and the count and the Undo follow it.
+    /// playlist holds and the count and the Undo follow it. Says whether the change started.
     pub fn remove_tracks_from_playlist(
         &mut self,
         playlist_id: String,
         rows: Vec<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if rows.is_empty() {
-            return;
+            return true;
         }
         let mut seen = HashSet::new();
         let track_ids: Vec<String> = rows
@@ -2842,7 +2891,7 @@ impl Library {
                 this.note_removed(&emptied, gone, dropped_count, cx);
             },
             cx,
-        );
+        )
     }
 
     /// Takes the order the listener left a playlist's page in. `seen` is the order the page
@@ -2862,6 +2911,16 @@ impl Library {
             .and_modify(|pending| pending.wanted.clone_from(&wanted))
             .or_insert(PendingOrder { base: seen, wanted });
         self.arm_reorders(REORDER_PAUSE, cx);
+    }
+
+    /// Whether a playlist change is running, so another one cannot start yet.
+    pub fn playlist_busy(&self) -> bool {
+        self.playlist_task.is_some()
+    }
+
+    /// The account generation of `shelf`, so a delayed edit can refuse to run after a switch.
+    pub fn shelf_epoch(&self, shelf: Shelf) -> u64 {
+        self.epochs[shelf.slot()]
     }
 
     /// Whether the playlist has a new order that is not written yet, or is being written.
@@ -3373,7 +3432,7 @@ impl Library {
                 })
                 .ok();
             });
-            self.reading.insert(id.clone(), task);
+            self.reading.insert(id, task);
         }
     }
 
@@ -3452,6 +3511,11 @@ impl Library {
             on_result(self, Err(()), cx);
             return false;
         }
+        if self.refuse_guest(shelf, cx) {
+            log::debug!("library: cannot {action} as a guest");
+            on_result(self, Err(()), cx);
+            return false;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
@@ -3500,6 +3564,24 @@ impl Library {
             })
             .ok();
         }));
+        true
+    }
+
+    /// Whether a change to `shelf` comes from a guest session, which can browse and play but not
+    /// change anything on the account. A local shelf with a library of its own still takes the
+    /// change. A refusal tells the listener to sign in, and the caller stops before asking.
+    fn refuse_guest(&self, shelf: Shelf, cx: &mut Context<Self>) -> bool {
+        let session = self.session.read(cx);
+        if !session.guest() || (shelf.local() && session.client_of(shelf).is_some()) {
+            return false;
+        }
+        let Some(provider) = session.provider_name() else {
+            return false;
+        };
+        let toast = Toast::new(Outcome::Failed, "toast-guest-refused")
+            .name(provider)
+            .open("toast-sign-in", Target::ProviderSettings);
+        Toasts::post(toast, cx);
         true
     }
 

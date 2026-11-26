@@ -4,7 +4,7 @@ use i18n::t;
 use input::ShowMembers;
 use music::connect::{DeviceKind, Elsewhere};
 use state::{Devices, Listening, Sonora};
-use ui::{ActiveTheme as _, Menu, MenuItem, Picker, Popovers, SubmenuState};
+use ui::{ActiveTheme as _, Menu, MenuItem, Picker, Popovers, Spin, Spinner, SubmenuState, Text};
 
 use crate::chrome::jam;
 use crate::chrome::members::gathered;
@@ -25,6 +25,8 @@ pub(crate) struct SessionsButton {
     popovers: Popovers,
     /// The Spotify Jams submenu, kept between frames so it stays open under the pointer.
     jams: SubmenuState,
+    /// Turns the button's icon while playback is being handed to another device.
+    spin: Spin,
 }
 
 impl SessionsButton {
@@ -39,6 +41,7 @@ impl SessionsButton {
             listening,
             popovers: Popovers::default(),
             jams: SubmenuState::default(),
+            spin: Spin::default(),
         }
     }
 
@@ -50,6 +53,8 @@ impl SessionsButton {
     /// The account's other devices, with the one that plays marked.
     fn connect_items(&self, elsewhere: Option<&Elsewhere>, cx: &App) -> Vec<MenuItem> {
         let state = self.devices.read(cx);
+        let theme = cx.theme();
+        let connecting = state.connecting();
         let devices = self.devices.clone();
 
         let mut items = vec![
@@ -58,22 +63,35 @@ impl SessionsButton {
                 .selected(elsewhere.is_none())
                 .on_click({
                     let devices = devices.clone();
-                    move |_, _, cx| devices.read(cx).transfer_here()
+                    move |_, _, cx| devices.update(cx, |devices, cx| devices.transfer_here(cx))
                 }),
         ];
         for device in state.devices() {
             let id = device.id.clone();
             let playing = elsewhere.is_some_and(|elsewhere| elsewhere.device.id == device.id);
+            let pending = connecting == Some(device.id.as_str());
             items.push(
                 MenuItem::new(
                     SharedString::from(format!("device-{}", device.id)),
                     device.name.clone(),
                 )
                 .icon(icon(device.kind))
-                .selected(playing)
+                .selected(playing && !pending)
+                .when(pending, |item| {
+                    item.detail(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .text_size(theme.text(Text::Small))
+                            .child(t!("devices-connecting")),
+                    )
+                    .trailing(Spinner::new(SharedString::from(format!(
+                        "device-{}-connecting",
+                        device.id
+                    ))))
+                })
                 .on_click({
                     let devices = devices.clone();
-                    move |_, _, cx| devices.read(cx).transfer(&id)
+                    move |_, _, cx| devices.update(cx, |devices, cx| devices.transfer(&id, cx))
                 }),
             );
         }
@@ -246,12 +264,23 @@ impl Render for SessionsButton {
         // another device
         let busy = together || state.jam().is_some_and(|_| connect) || elsewhere.is_some();
 
-        // while another device plays, the button wears that device's icon
-        let glyph = elsewhere
-            .as_ref()
-            .map_or("icons/monitor-speaker.svg", |elsewhere| {
-                icon(elsewhere.device.kind)
-            });
+        // while playback is handed to another device the button turns a loader, and otherwise
+        // wears the icon of the device that plays
+        let connecting = connect && state.connecting().is_some();
+        match connecting {
+            true => self.spin.start(),
+            false => self.spin.stop(),
+        }
+        let turn = self.spin.turn(window, cx);
+        // the loader stays until it has sprung back to rest, so no device icon turns
+        let glyph = match connecting || turn != 0. {
+            true => "icons/loader-circle.svg",
+            false => elsewhere
+                .as_ref()
+                .map_or("icons/monitor-speaker.svg", |elsewhere| {
+                    icon(elsewhere.device.kind)
+                }),
+        };
         Picker::icon(KEY, &self.popovers, glyph)
             .tooltip_above("player-sessions")
             .tint(match busy {
@@ -259,6 +288,7 @@ impl Render for SessionsButton {
                 false => theme.muted_foreground,
             })
             .when(busy, |picker| picker.status(theme.primary))
+            .turned(turn)
             .width(Picker::WIDE)
             .items(items)
             .into_any_element()

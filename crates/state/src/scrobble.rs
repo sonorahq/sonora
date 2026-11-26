@@ -8,8 +8,8 @@
 use std::time::{Duration, SystemTime};
 
 use gpui::{App, Context, Entity, SharedString, Task};
-use music::scrobble::{self, Account, KeyRefused, Link, Play, Secret, Service};
 use music::{MusicApi, Report, Track};
+use scrobble::{self, Account, KeyRefused, Link, Play, Secret, Service};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;

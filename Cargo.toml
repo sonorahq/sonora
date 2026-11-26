@@ -10,20 +10,36 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/sonorahq/sonora"
 
 [workspace.dependencies]
-embed = { path = "crates/embed" }
+apple = { path = "crates/apple" }
+artwork = { path = "crates/artwork" }
 cli = { path = "crates/cli" }
+deezer = { path = "crates/deezer" }
+embed = { path = "crates/embed" }
+engine = { path = "crates/engine" }
 i18n = { path = "crates/i18n" }
 icons = { path = "crates/icons" }
+input = { path = "crates/input" }
+jellyfin = { path = "crates/jellyfin" }
+local = { path = "crates/local" }
+logic = { path = "crates/logic" }
+lyric-sources = { path = "crates/lyric-sources" }
+lyrics = { path = "crates/lyrics" }
 music = { path = "crates/music" }
+plex = { path = "crates/plex" }
+router = { path = "crates/router" }
+scrobble = { path = "crates/scrobble" }
+soloist = { path = "crates/soloist" }
+sound = { path = "crates/sound" }
+spotify = { path = "crates/spotify" }
 state = { path = "crates/state" }
 storage = { path = "crates/storage" }
-input = { path = "crates/input" }
-logic = { path = "crates/logic" }
-router = { path = "crates/router" }
+subsonic = { path = "crates/subsonic" }
+tidal = { path = "crates/tidal" }
 ui = { path = "crates/ui" }
 views = { path = "crates/views" }
 webview = { path = "crates/webview" }
 widevine = { path = "crates/widevine" }
+youtube = { path = "crates/youtube" }
 
 alsa = "0.11"
 anyhow = "1.0"
@@ -52,8 +68,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "258ab88a374db13604b8f8c6d875405cd53c8e24" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "258ab88a374db13604b8f8c6d875405cd53c8e24", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "4e2879a2a1514aac8d08d6d256b5bc3226108129" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "4e2879a2a1514aac8d08d6d256b5bc3226108129", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -108,6 +124,7 @@ libc = "0.2"
 lofty = "0.25"
 log = "0.4"
 md-5 = "0.11"
+mdns-sd = "0.22"
 moka = { version = "0.12", features = ["future", "sync"] }
 mpris-server = "0.11"
 notify = "8.2"
@@ -207,9 +224,6 @@ ytmusic = { git = "https://github.com/sonorahq/ytmusic-rs", rev = "62b36b8" }
 librespot-core = { version = "0.8.0", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
-librespot-oauth = { version = "0.8.0", default-features = false, features = [
-    "rustls-tls-native-roots",
-] }
 librespot-playback = { version = "0.8.0", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
@@ -228,6 +242,10 @@ tokio = { version = "1.54", features = [
     "process",
     "sync",
     "time",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+    "tls12",
 ] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
     "connect",
@@ -266,6 +284,9 @@ strip = "debuginfo"
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# File and line numbers for backtraces and profilers, without the types and variables a debugger
+# shows. Full debug info made compiling the workspace crates take 30% more CPU time.
+debug = "line-tables-only"
 
 [profile.dev.package.ui]
 debug = false
@@ -281,7 +302,10 @@ opt-level = 2
 
 # The audio path runs in real time, decoding, resampling and mixing every sample, so it is built
 # fully optimised even in debug builds.
-[profile.dev.package.music]
+[profile.dev.package.sound]
+opt-level = 3
+
+[profile.dev.package.engine]
 opt-level = 3
 
 [profile.dev.package.rodio]
