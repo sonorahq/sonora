@@ -10,14 +10,12 @@ on:
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   pull_request:
     paths-ignore:
       - "**/*.md"
       - .github/ISSUE_TEMPLATE/**
       - .github/triage/**
       - .github/labeler.yml
-      - .coderabbit.yaml
   workflow_dispatch:
 
 # A pull request event handled after the merge resolves github.ref to the base branch, so
