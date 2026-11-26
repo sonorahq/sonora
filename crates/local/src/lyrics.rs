@@ -106,13 +106,11 @@ mod tests {
 
     const TIMED: &str = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en"><head><metadata><ttm:agent type="person" xml:id="v1"/></metadata></head><body dur="0:10.000"><div begin="1.000" end="6.000"><p begin="1.000" end="3.500" ttm:agent="v1">So here I am</p><p begin="3.500" end="6.000" ttm:agent="v1">Doing it again</p></div></body></tt>"#;
 
-    fn track(name: &str, comments: &[&str]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("Song.flac");
+    fn track(comments: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Song.flac");
         flac(&path, comments);
-        path
+        (dir, path)
     }
 
     fn assert_timed(lyrics: Option<Lyrics>) {
@@ -128,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_ttml_file_beside_the_track_is_decoded() {
-        let path = track("sonora-local-ttml-sidecar", &[]);
+        let (_root, path) = track(&[]);
         fs::write(path.with_extension("ttml"), TIMED).unwrap();
 
         assert_timed(read(&path).unwrap());
@@ -137,14 +135,14 @@ mod tests {
     #[test]
     fn ttml_in_the_lyrics_tag_is_decoded() {
         let comment = format!("LYRICS={TIMED}");
-        let path = track("sonora-local-ttml-tag", &[&comment]);
+        let (_root, path) = track(&[&comment]);
 
         assert_timed(read(&path).unwrap());
     }
 
     #[test]
     fn a_broken_ttml_file_falls_back_to_the_tags() {
-        let path = track("sonora-local-ttml-broken", &["LYRICS=From the tags"]);
+        let (_root, path) = track(&["LYRICS=From the tags"]);
         fs::write(path.with_extension("ttml"), "<tt><body><p begin=\"1.0\">").unwrap();
 
         let Some(Lyrics::Plain { text, .. }) = read(&path).unwrap() else {
@@ -155,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_ttml_file_without_lines_gives_nothing() {
-        let path = track("sonora-local-ttml-empty", &[]);
+        let (_root, path) = track(&[]);
         fs::write(path.with_extension("ttml"), "<tt><body></body></tt>").unwrap();
 
         assert!(read(&path).unwrap().is_none());
@@ -178,7 +176,7 @@ mod tests {
 
     #[test]
     fn a_synced_lrc_beside_the_track_is_unchanged() {
-        let path = track("sonora-local-lrc-synced", &[]);
+        let (_root, path) = track(&[]);
         fs::write(
             path.with_extension("lrc"),
             "[00:01.00]So here I am\n[00:03.50]Doing it again\n",
@@ -190,7 +188,7 @@ mod tests {
 
     #[test]
     fn an_unsynced_lrc_alone_shows_its_lyrics() {
-        let path = track("sonora-local-lrc-alone", &[]);
+        let (_root, path) = track(&[]);
         fs::write(path.with_extension("lrc"), "First line\nSecond line\n").unwrap();
 
         assert_plain(read(&path).unwrap(), "First line\nSecond line");
@@ -198,7 +196,7 @@ mod tests {
 
     #[test]
     fn an_unsynced_lrc_beside_the_track_wins_over_the_tags() {
-        let path = track("sonora-local-lrc-priority", &["LYRICS=From the tags"]);
+        let (_root, path) = track(&["LYRICS=From the tags"]);
         fs::write(path.with_extension("lrc"), "From the file\n").unwrap();
 
         assert_plain(read(&path).unwrap(), "From the file");
@@ -206,7 +204,7 @@ mod tests {
 
     #[test]
     fn a_missing_lrc_gives_nothing() {
-        let path = track("sonora-local-lrc-missing", &[]);
+        let (_root, path) = track(&[]);
 
         assert!(read(&path).unwrap().is_none());
     }

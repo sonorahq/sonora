@@ -4,6 +4,7 @@
 //! quality. It reads them at startup from the preference stores Spotify's desktop app uses,
 //! plain `key=value` lines in its data folder, so they are written before every start.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -51,10 +52,13 @@ pub(crate) fn write(data: &Path, normalise: bool, gapless: bool, quality: Qualit
         let folder = store.parent().context("the settings store has no folder")?;
         std::fs::create_dir_all(folder)
             .with_context(|| format!("cannot create {}", folder.display()))?;
-        let part = store.with_extension("part");
-        std::fs::write(&part, lines.join("\n") + "\n")
-            .and_then(|()| std::fs::rename(&part, &store))
+        let mut part = tempfile::NamedTempFile::new_in(folder)
+            .with_context(|| format!("cannot stage {}", store.display()))?;
+        part.write_all((lines.join("\n") + "\n").as_bytes())
             .with_context(|| format!("cannot write {}", store.display()))?;
+        part.persist(&store)
+            .map_err(std::io::Error::from)
+            .with_context(|| format!("cannot replace {}", store.display()))?;
     }
     Ok(())
 }

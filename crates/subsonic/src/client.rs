@@ -2077,6 +2077,7 @@ fn reordered<'a>(held: &[&'a str], seen: &[String], wanted: &[String]) -> Result
 #[cfg(test)]
 mod tests {
     use std::io::ErrorKind;
+    use std::mem::DropGuard;
     use std::sync::{Arc, Mutex};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2170,7 +2171,7 @@ mod tests {
     struct Stub {
         server: String,
         requests: Arc<Mutex<Vec<String>>>,
-        task: tokio::task::JoinHandle<()>,
+        _task: DropGuard<tokio::task::JoinHandle<()>, fn(tokio::task::JoinHandle<()>)>,
     }
 
     impl Stub {
@@ -2191,7 +2192,7 @@ mod tests {
             Self {
                 server: format!("http://127.0.0.1:{port}"),
                 requests,
-                task,
+                _task: DropGuard::new(task, |task| task.abort()),
             }
         }
 
@@ -2210,12 +2211,6 @@ mod tests {
         /// The endpoints asked so far, each with its query.
         fn asked(&self) -> Vec<String> {
             self.requests.lock().unwrap().clone()
-        }
-    }
-
-    impl Drop for Stub {
-        fn drop(&mut self) {
-            self.task.abort();
         }
     }
 

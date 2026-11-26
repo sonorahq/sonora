@@ -12,6 +12,7 @@
 //! and [`Offer::install`] puts the module into the store. [`fetch`] runs both for a module the
 //! user accepted before, when a newer version is out.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -81,10 +82,12 @@ impl Offer {
                     .with_context(|| format!("cannot write {name} beside the module"))?;
             }
         }
-        let part = folder.join(format!("{LIBRARY}.part"));
-        std::fs::write(&part, module)
-            .with_context(|| format!("cannot write {}", part.display()))?;
-        std::fs::rename(&part, &path)
+        let mut file = tempfile::NamedTempFile::new_in(&folder)
+            .with_context(|| format!("cannot stage {}", path.display()))?;
+        file.write_all(&module)
+            .with_context(|| format!("cannot write {}", path.display()))?;
+        file.persist(&path)
+            .map_err(std::io::Error::from)
             .with_context(|| format!("cannot move {} into place", path.display()))?;
         log::info!("widevine: {} is in the store", self.release.version);
 

@@ -1,7 +1,6 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
 
@@ -18,9 +17,6 @@ const MOVED: &[(&str, &[&str])] = &[
     ("tidal", &[FILE]),
     ("youtube", &[FILE, "cookies.json"]),
 ];
-
-/// Tells apart the temporary files of two writes running at once in one process.
-static WRITES: AtomicU64 = AtomicU64::new(0);
 
 /// Runs the move out of the cache folder once per process, before the first provider looks.
 static MIGRATION: Once = Once::new();
@@ -57,23 +53,16 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
         .parent()
         .with_context(|| format!("cannot find the folder of {}", path.display()))?;
     create_private(parent)?;
-    let name = path
-        .file_name()
-        .with_context(|| format!("cannot name a temporary file for {}", path.display()))?
-        .to_string_lossy();
-    let temporary = parent.join(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        WRITES.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = write_synced(&temporary, contents).and_then(|()| {
-        std::fs::rename(&temporary, path)
-            .with_context(|| format!("cannot move credentials into {}", path.display()))
-    });
-    if written.is_err() {
-        remove(&temporary);
-        return written;
-    }
+    let mut file = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("cannot stage credentials for {}", path.display()))?;
+    file.write_all(contents)
+        .with_context(|| format!("cannot write credentials for {}", path.display()))?;
+    file.as_file()
+        .sync_all()
+        .with_context(|| format!("cannot sync credentials for {}", path.display()))?;
+    file.persist(path)
+        .map_err(std::io::Error::from)
+        .with_context(|| format!("cannot move credentials into {}", path.display()))?;
     sync_folder(parent);
     Ok(())
 }
@@ -163,24 +152,6 @@ fn create_private(folder: &Path) -> Result<()> {
         .create(folder)
         .with_context(|| format!("cannot create {}", folder.display()))?;
     Ok(())
-}
-
-/// Writes a new file that only its owner can read on unix and syncs it to disk.
-fn write_synced(path: &Path, contents: &[u8]) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("cannot create {}", path.display()))?;
-    file.write_all(contents)
-        .with_context(|| format!("cannot write {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("cannot sync {}", path.display()))
 }
 
 /// Syncs a folder so a rename inside it survives a crash. Only unix can open a folder for this,

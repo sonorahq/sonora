@@ -44,6 +44,7 @@ webview.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 interprocess.workspace = true
 image.workspace = true

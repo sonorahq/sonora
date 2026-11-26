@@ -535,13 +535,6 @@ pub(super) mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     fn stored(path: &Path) -> Tag {
         Probe::open(path)
             .unwrap()
@@ -554,7 +547,8 @@ pub(super) mod tests {
 
     #[test]
     fn saving_a_new_title_keeps_every_genre() {
-        let dir = scratch("sonora-tags-test-genres");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let path = dir.join("song.flac");
         flac(&path, &["TITLE=Song", "GENRE=Rock", "GENRE=Pop"]);
 
@@ -568,12 +562,12 @@ pub(super) mod tests {
             tag.get_strings(ItemKey::Genre).collect::<Vec<_>>(),
             ["Rock", "Pop"]
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn saving_a_new_title_keeps_the_full_date() {
-        let dir = scratch("sonora-tags-test-date");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let path = dir.join("song.flac");
         flac(&path, &["TITLE=Song", "DATE=2004-05-12"]);
 
@@ -585,12 +579,12 @@ pub(super) mod tests {
             stored(&path).get_string(ItemKey::RecordingDate),
             Some("2004-05-12")
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn saving_a_new_year_replaces_the_date() {
-        let dir = scratch("sonora-tags-test-year");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let path = dir.join("song.flac");
         flac(&path, &["TITLE=Song", "DATE=2004-05-12"]);
 
@@ -602,6 +596,5 @@ pub(super) mod tests {
             stored(&path).get_string(ItemKey::RecordingDate),
             Some("2010")
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

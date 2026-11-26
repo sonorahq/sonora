@@ -1,3 +1,5 @@
+#[cfg(not(target_os = "windows"))]
+use std::mem::DropGuard;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -331,19 +333,26 @@ fn unpack_bundle(image: &Path, staged: &Path) -> Result<PathBuf> {
         .arg(image))
     .context("cannot open the disk image")?;
 
-    let copied = remove(staged).and_then(|()| {
-        run(Command::new("/usr/bin/ditto")
-            .arg(mount.path().join("Sonora.app"))
-            .arg(staged))
-        .context("cannot copy the new version off the disk image")
+    let mount = DropGuard::new(mount, |mount: tempfile::TempDir| {
+        if let Err(error) = run(Command::new("/usr/bin/hdiutil")
+            .args(["detach", "-quiet"])
+            .arg(mount.path()))
+        {
+            log::warn!("updates: cannot eject the disk image: {error:#}");
+        }
     });
-    if let Err(error) = run(Command::new("/usr/bin/hdiutil")
-        .args(["detach", "-quiet"])
-        .arg(mount.path()))
-    {
-        log::warn!("updates: cannot eject the disk image: {error:#}");
-    }
-    copied?;
+    remove(staged)?;
+    let staged = DropGuard::new(staged, |staged| {
+        if let Err(error) = remove(staged) {
+            log::warn!("updates: cannot clean up the partial bundle: {error:#}");
+        }
+    });
+    run(Command::new("/usr/bin/ditto")
+        .arg(mount.path().join("Sonora.app"))
+        .arg(*staged))
+    .context("cannot copy the new version off the disk image")?;
+    let staged = DropGuard::dismiss(staged);
+    drop(mount);
     std::fs::remove_file(image).ok();
     Ok(staged.to_path_buf())
 }
@@ -358,10 +367,16 @@ fn swap_bundle(staged: &Path, bundle: &Path) -> Result<()> {
     let retired = bundle.with_file_name(".Sonora.app.old");
     remove(&retired)?;
     std::fs::rename(bundle, &retired).context("cannot move the old version aside")?;
-    if let Err(error) = std::fs::rename(staged, bundle) {
-        std::fs::rename(&retired, bundle).ok();
-        return Err(error).context("cannot put the new version in place");
-    }
+    let retired = DropGuard::new(retired, |retired: PathBuf| {
+        if let Err(error) = std::fs::rename(&retired, bundle) {
+            log::error!(
+                "updates: cannot restore the old version from {}: {error}",
+                retired.display()
+            );
+        }
+    });
+    std::fs::rename(staged, bundle).context("cannot put the new version in place")?;
+    let retired = DropGuard::dismiss(retired);
     if let Err(error) = remove(&retired) {
         log::warn!("updates: cannot delete the old version: {error:#}");
     }
@@ -374,11 +389,14 @@ fn swap_bundle(staged: &Path, bundle: &Path) -> Result<()> {
 fn stage_image(download: &Path, staged: &Path) -> Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt as _;
 
-    std::fs::copy(download, staged).context("cannot copy the new AppImage beside the old")?;
-    std::fs::remove_file(download).ok();
-    std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
+    let staged = DropGuard::new(staged, |staged| {
+        std::fs::remove_file(staged).ok();
+    });
+    std::fs::copy(download, *staged).context("cannot copy the new AppImage beside the old")?;
+    std::fs::set_permissions(*staged, std::fs::Permissions::from_mode(0o755))
         .context("cannot make the new AppImage executable")?;
-    Ok(staged.to_path_buf())
+    std::fs::remove_file(download).ok();
+    Ok(DropGuard::dismiss(staged).to_path_buf())
 }
 
 /// Renames the staged image over the old one and schedules it to start. The running image

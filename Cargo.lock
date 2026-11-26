@@ -4447,6 +4447,7 @@ dependencies = [
  "sound",
  "storage",
  "symphonia",
+ "tempfile",
  "tokio",
  "windows 0.62.2",
 ]
@@ -4838,6 +4839,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound",
+ "tempfile",
  "tokio",
  "widevine",
 ]
@@ -7823,6 +7825,7 @@ dependencies = [
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
 ]
@@ -7868,6 +7871,7 @@ dependencies = [
  "state",
  "storage",
  "subsonic",
+ "tempfile",
  "tidal",
  "tokio",
  "tray-icon",
@@ -10068,6 +10072,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "smallvec",
+ "tempfile",
  "tokio",
  "windows-sys 0.61.2",
 ]

@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -753,14 +754,12 @@ fn slug(title: &str) -> String {
 /// Writes `bytes` to `path` through a hidden file beside it, so the folder watcher never reads
 /// half a theme.
 fn write(directory: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("theme path has no file name")?;
-    let partial = directory.join(format!(".{name}.part"));
-    fs::write(&partial, bytes).with_context(|| format!("cannot write {}", partial.display()))?;
-    fs::rename(&partial, path).map_err(|error| {
-        fs::remove_file(&partial).ok();
-        anyhow::Error::new(error).context(format!("cannot write {}", path.display()))
-    })
+    let mut file = tempfile::NamedTempFile::new_in(directory)
+        .with_context(|| format!("cannot stage {}", path.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("cannot write {}", path.display()))?;
+    file.persist(path)
+        .map_err(std::io::Error::from)
+        .with_context(|| format!("cannot publish {}", path.display()))?;
+    Ok(())
 }

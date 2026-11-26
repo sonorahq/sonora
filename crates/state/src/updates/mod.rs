@@ -402,15 +402,12 @@ impl Updates {
         let progress = Arc::new(AtomicU32::new(0));
         self.progress = progress.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let fetched =
-                join(io.spawn(async move {
-                    download(&http, &package, &sums, &version, &progress).await
-                }))
-                .await;
-            let applied = match fetched {
-                Ok(path) => join(io.spawn_blocking(move || Install::current().apply(&path))).await,
-                Err(error) => Err(error),
-            };
+            let applied = join(io.spawn(async move {
+                let _staging = STAGING.lock().await;
+                let path = download(&http, &package, &sums, &version, &progress).await?;
+                tokio::task::spawn_blocking(move || Install::current().apply(&path)).await?
+            }))
+            .await;
             this.update(cx, |this, cx| this.finish(applied, cx)).ok();
         }));
     }
@@ -728,8 +725,11 @@ async fn download(
 
     let folder = staged::folder().unwrap_or_else(std::env::temp_dir);
     std::fs::create_dir_all(&folder).context("cannot make the update folder")?;
-    let path = folder.join(format!("sonora-{version}-{}", package.name));
-    let mut file = std::fs::File::create(&path).context("cannot keep the update")?;
+    let mut file = tempfile::Builder::new()
+        .prefix(&format!("sonora-{version}-"))
+        .suffix(&format!("-{}", package.name))
+        .tempfile_in(&folder)
+        .context("cannot keep the update")?;
     let total = response.content_length().filter(|total| *total > 0);
     let mut received = 0_u64;
     let mut hasher = Sha256::new();
@@ -742,17 +742,18 @@ async fn download(
             progress.store((done * PROGRESS_STEPS) as u32, Ordering::Relaxed);
         }
     }
-    drop(file);
-
     let checksum: String = hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
     if checksum != expected {
-        std::fs::remove_file(&path).ok();
         anyhow::bail!("the update does not match its checksum");
     }
+    let (_, path) = file
+        .keep()
+        .map_err(std::io::Error::from)
+        .context("cannot keep the verified update")?;
     Ok(path)
 }
 

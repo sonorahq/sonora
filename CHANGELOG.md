@@ -71,6 +71,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
 - Karaoke lyrics, the fullscreen player and scrolling long lists use less CPU.
 - Guest mode for YouTube Music is in its sign-in dialog, next to signing in and connecting manually.
+- Interrupted app updates and failed Soloist installs, theme writes and offline downloads clean up their partial files.
 
 ### Fixed
 

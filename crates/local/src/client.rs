@@ -1027,8 +1027,8 @@ mod tests {
 
     #[tokio::test]
     async fn home_feed_quick_picks_mixes_starred_played_and_random() {
-        let dir = std::env::temp_dir().join(format!("sonora-test-{}", fastrand::u64(..)));
-        std::fs::create_dir_all(&dir).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let db = Database::at(dir.join("state.sqlite"));
         let cache = storage::Cache::at(dir.join("cache.sqlite"));
         let index = Index::new(cache);
@@ -1076,14 +1076,12 @@ mod tests {
         assert!(ids.contains(&"local:0"));
         assert!(ids.contains(&"local:1"));
         assert!(ids.contains(&"local:2"));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn moves_a_playlist_track_down_and_up_and_keeps_the_order() {
-        let dir = std::env::temp_dir().join(format!("sonora-test-{}", fastrand::u64(..)));
-        std::fs::create_dir_all(&dir).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let db = Database::at(dir.join("state.sqlite"));
         let index = Index::new(storage::Cache::at(dir.join("cache.sqlite")));
         let tracks = (0..4)
@@ -1185,7 +1183,5 @@ mod tests {
             listed(&reopened).await,
             ["local:3", "local:1", "local:2", "local:0"]
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

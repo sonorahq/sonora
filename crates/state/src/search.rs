@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::mem::DropGuard;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -183,16 +184,6 @@ struct Scored {
     score: u32,
     popularity: u32,
     hit: Hit,
-}
-
-/// Aborts a provider request when the search task waiting on it is dropped, so a query the
-/// user typed past stops asking and stops retrying.
-struct Abort(AbortHandle);
-
-impl Drop for Abort {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// A search against the provider and the library, ranked into hits as the answers land. The
@@ -406,7 +397,8 @@ impl Search {
             }
 
             let request = io.spawn(async move { client.search_all(&asked).await });
-            let _abort = Abort(request.abort_handle());
+            let _abort =
+                DropGuard::new(request.abort_handle(), |handle: AbortHandle| handle.abort());
             let found = request
                 .await
                 .unwrap_or_else(|error| Found::failed(error.into()));

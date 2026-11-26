@@ -25,6 +25,9 @@ storage.workspace = true
 symphonia.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
