@@ -189,6 +189,13 @@ pub enum QueueCommand {
     /// Plays items at once, right after the current track so the rest of the queue follows
     /// them. Stands for `sonora play <items>`
     Play(Vec<Item>),
+    /// Removes the upcoming queue row with this occurrence id. Stands for `sonora queue remove <uid>`
+    Remove { uid: String },
+    /// Moves an upcoming row to a gap in the upcoming queue. Stands for
+    /// `sonora queue move <uid> <gap>`
+    Move { uid: String, gap: usize },
+    /// Drops everything queued after the current track. Stands for `sonora queue clear`
+    ClearUpcoming,
 }
 
 /// Something to queue: a link of the current provider, or a file the running Sonora reads.

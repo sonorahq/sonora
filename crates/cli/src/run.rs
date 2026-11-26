@@ -343,12 +343,13 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
         Failure::SteeredReadOnly => {
-            "another device has playback; its queue cannot be placed at a position".to_owned()
+            "another device has playback; its queue cannot be edited here".to_owned()
         }
         Failure::AccountChanged => "the account changed while the command was waiting".to_owned(),
         Failure::ReadOnlyPlaylist => {
             "the provider picks this playlist's tracks, so they cannot be changed".to_owned()
         }
+        Failure::UnknownQueueEntry(uid) => format!("no upcoming queue row with id '{uid}'"),
     }
 }
 
@@ -368,6 +369,7 @@ mod tests {
                 duration: 125,
             },
             kind,
+            uid: None,
         }
     }
 
