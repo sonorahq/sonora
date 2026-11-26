@@ -90,7 +90,7 @@ pub use form::{FORM_CONTEXT, Field, Form, NextField, PreviousField, Submit, step
 pub use glass::{
     GLASS_BLUR, GLASS_FILL, bar_surface, blurring, frost, glass, popover_fill, popover_surface,
 };
-pub use glide::{Glide, ScrollPosition};
+pub use glide::{Glide, ScrollPosition, scrolling};
 pub use hold::{Held, Hold, held};
 pub use info_card::{Fact, InfoCard};
 pub use inline_links::{InlineLink, InlineLinks};
