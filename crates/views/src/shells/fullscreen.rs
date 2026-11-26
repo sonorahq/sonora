@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Entity, EntityId, FocusHandle,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Corners, Entity, EntityId, FocusHandle,
     FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point, Render, ScrollEvent, SharedString, SpringConfig, SpringState,
     Stateful, StyleRefinement, Task, TextRun, TextShadow,
@@ -1810,7 +1810,7 @@ impl Render for FullscreenView {
                         band,
                         VEIL_BLUR,
                         theme.background,
-                        corner,
+                        corner.map_or_else(Corners::default, Corners::all),
                         window,
                     ))
                     .into_any_element(),

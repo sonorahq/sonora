@@ -4,6 +4,7 @@ use router::{Destination, SettingsPage, SettingsTab, navigate};
 use ui::{ActiveTheme as _, Button, Room, TabBar, VeilEdge, effects, veil};
 
 use super::{Layout, SettingsView};
+use crate::chrome::Chrome;
 use crate::screens::equalizer::EqualizerView;
 
 /// How far the rows are blurred where they pass under the header. One blur pass serves every
@@ -114,14 +115,15 @@ impl Render for SettingsHeader {
             })
             // A see-through page has content of its own passing under the header and reads
             // worse without the haze, so only the flat fallback is dropped there, since a solid
-            // band over a see-through page is a slab.
+            // band over a see-through page is a slab. The haze stops at the sheet's top corners,
+            // where a see-through window would show it through the chrome's colour.
             .when(effects() || !theme.transparent, |header| {
                 header.child(veil(
                     VeilEdge::Top,
                     layout.top,
                     BLUR,
                     theme.background,
-                    None,
+                    Chrome::sheet_corners(cx),
                     window,
                 ))
             })
