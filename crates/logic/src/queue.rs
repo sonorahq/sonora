@@ -987,14 +987,14 @@ impl<O: Clone + PartialEq> Order<O> {
             entry.kind = current.as_ref().map_or(QueueKind::Context, QueueKind::of);
             entry.recommended = current.is_some_and(|listed| listed.recommended);
         }
-        // only the collection's own songs belong in its order, or a shuffle would deal a queued
-        // or a suggested one in a second time
+        // only the collection's own songs belong in its order, or a shuffle would deal a queued,
+        // a suggested or a recommended one in a second time
         let apart: HashSet<_> = self
             .past
             .iter()
             .chain(&self.current)
             .chain(&self.upcoming)
-            .filter(|entry| entry.kind != QueueKind::Context)
+            .filter(|entry| entry.kind != QueueKind::Context || entry.recommended)
             .map(|entry| &entry.uid)
             .collect();
         self.source.retain(|entry| !apart.contains(&entry.uid));
