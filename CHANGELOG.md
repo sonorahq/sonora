@@ -61,7 +61,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora renews the Spotify sign-in automatically and keeps Soloist paired when you sign out.
 - Spotify Browse focuses on music. Home, Browse, large playlists, artist discographies and wide Search can show results as they load.
 - Reopening a Spotify playlist or Browse category fetches its latest contents.
-- Built-in Spotify playback can reuse cached tracks for offline downloads. Spotify downloads adjust their pace when the service asks them to slow down.
+- Built-in Spotify playback can reuse cached tracks for offline downloads. Spotify downloads adjust their pace when the service asks them to slow down, and the downloads list counts down to when they go on.
+- Pins you add or remove in Sonora stay in Sonora on Spotify, while pins you make in Spotify's own apps still show up.
 - Scrollbars fade in as you scroll and fade out once you stop, instead of popping in and out.
 - The settings search suggests matching settings in a panel under the field as you type, like the Search page does. Pick one with the arrow keys or a click to jump to it and light it up for a moment, or press Enter to list every match.
 - Settings name each group of options in a column beside it, with a thin line between groups instead of headings and wide gaps.
