@@ -354,12 +354,10 @@ impl MusicApi for SpotifyClient {
         playlists::reorder(&self.session, playlist_id, seen, wanted).await
     }
 
-    async fn set_pinned(&self, uri: &str, pinned: bool) -> Result<music::PinOutcome> {
-        collection::set_pinned(&self.session, uri, pinned).await?;
-        Ok(match pinned {
-            true => music::PinOutcome::Accepted,
-            false => music::PinOutcome::Updated,
-        })
+    /// Spotify ignores pin writes through its collection sets, so a pin changed here stays a
+    /// local one while Spotify's own pins are still read and followed.
+    async fn set_pinned(&self, _uri: &str, _pinned: bool) -> Result<music::PinOutcome> {
+        Ok(music::PinOutcome::Accepted)
     }
 
     async fn pin_targets(&self) -> Result<Option<Vec<music::PinTarget>>> {

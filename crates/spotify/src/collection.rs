@@ -458,17 +458,6 @@ fn cover_url(album: &AlbumMessage) -> Option<String> {
     wire::image_url(smallest.file_id())
 }
 
-/// Updates the collection set used by Spotify's native client for library pins.
-pub(super) async fn set_pinned(session: &Session, uri: &str, pinned: bool) -> Result<()> {
-    let uri = match uri {
-        "spotify:collection:tracks" => "spotify:collection",
-        uri => uri,
-    };
-    set_saved(session, PINS, uri, pinned)
-        .await
-        .context("cannot update the Spotify library pin")
-}
-
 /// Writes an entity to its collection set, or removes it.
 pub(super) async fn set_saved(session: &Session, set: &str, uri: &str, saved: bool) -> Result<()> {
     let now = SystemTime::now()
