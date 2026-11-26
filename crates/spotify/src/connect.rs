@@ -2268,7 +2268,11 @@ async fn read_pages(session: &Session, context: &mut Context) -> Result<(), Erro
         reads += 1;
         let (tracks, next) = linked_page(&session.spclient().get_next_page(&url).await?);
         page.tracks = tracks;
-        page.next_page_url = page.next_page_url.take().or(next);
+        page.next_page_url = page
+            .next_page_url
+            .take()
+            .filter(|url| !url.is_empty())
+            .or(next);
     }
     let mut next = context
         .pages
