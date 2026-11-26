@@ -248,7 +248,8 @@ Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 [SignPath Foundation](https://signpath.org).
 
 The Windows executable and installer are built by GitHub Actions from this repository and signed
-through SignPath.
+through SignPath. The macOS app and disk image are built the same way, signed with Sonora's
+Developer ID certificate and notarized by Apple.
 
 - Reviewers: members of sonorahq
 - Approvers: [@nolight132](https://github.com/nolight132)
