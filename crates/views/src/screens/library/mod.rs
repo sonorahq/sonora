@@ -988,9 +988,10 @@ impl LibraryView {
         let depth =
             (scrolled(&scroll) - deck_lead(&self.card_rows, inset, window)).max(Pixels::ZERO);
 
-        let repacked = self.card_columns != columns
-            || (self.card_tile - tile).abs() >= px(0.5)
-            || (self.card_heading - heading).abs() >= px(0.5);
+        // Any change in a row's height counts, since a slow resize grows every row above the
+        // top by less than a pixel per frame and the deck would drift by their sum.
+        let repacked =
+            self.card_columns != columns || self.card_tile != tile || self.card_heading != heading;
         // A deck still at its top stays there, since only a row scrolled into needs holding.
         let anchor =
             (repacked && self.card_columns != 0 && !self.cards_dirty && depth > Pixels::ZERO)
