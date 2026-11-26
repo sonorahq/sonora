@@ -34,14 +34,20 @@ pub(super) fn read(text: &str) -> Option<Linked> {
     }
 }
 
-/// Reads the kind and ID from a Spotify URI or web path.
+/// Reads the kind and ID from a Spotify URI or web path, including the old form that names a
+/// playlist under its owner as `user/<owner>/playlist/<id>`.
 fn from_parts<'a>(mut parts: impl Iterator<Item = &'a str>) -> Option<Linked> {
-    let kind = parts.next()?;
-    let id = parts.next()?;
-    if kind == "user" && parts.next().is_some() {
-        return None;
+    match parts.next()? {
+        "user" => {
+            let user = parts.next()?;
+            match (parts.next(), parts.next()) {
+                (Some("playlist"), Some(id)) => route("playlist", id),
+                (None, _) => route("user", user),
+                _ => None,
+            }
+        }
+        kind => route(kind, parts.next()?),
     }
-    route(kind, id)
 }
 
 fn route(kind: &str, id: &str) -> Option<Linked> {
@@ -72,7 +78,15 @@ mod tests {
             ),
             ("https://spotify.link/a", Some(Linked::Short)),
             ("https://open.spotify.com.example.org/track/t", None),
-            ("spotify:user:u:playlist:p", None),
+            (
+                "spotify:user:u:playlist:p",
+                Some(Linked::Playlist("p".into())),
+            ),
+            (
+                "https://open.spotify.com/user/u/playlist/p",
+                Some(Linked::Playlist("p".into())),
+            ),
+            ("spotify:user:u:collection", None),
             ("spotify:track:", None),
         ] {
             assert_eq!(read(url), target, "{url}");
