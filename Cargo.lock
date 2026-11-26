@@ -8116,7 +8116,6 @@ version = "0.50.3"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
- "log",
  "rusqlite",
 ]
 
