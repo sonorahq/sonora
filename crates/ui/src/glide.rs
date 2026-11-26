@@ -1,10 +1,11 @@
 use std::cell::RefCell;
+use std::mem;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, EntityId, ListState, Pixels, Point, ScrollHandle, SpringConfig, SpringState, Window,
-    point, px,
+    App, EntityId, Global, ListState, Pixels, Point, ScrollHandle, SpringConfig, SpringState,
+    Window, point, px,
 };
 
 use crate::snapped;
@@ -290,7 +291,10 @@ impl Glide {
         scroll.set_offset(landed);
         self.drift.borrow_mut().placed = Some(landed);
         match self.watched {
-            Some(view) => cx.notify(view),
+            Some(view) => {
+                mark_scrolling(cx);
+                cx.notify(view);
+            }
             None => window.refresh(),
         }
         self.schedule_frame(scroll, window);
@@ -313,6 +317,30 @@ impl Drift {
         self.target += moved;
         self.placed = Some(now);
     }
+}
+
+/// Set while the notifies of a scroll are being delivered.
+#[derive(Default)]
+struct Scrolling(bool);
+
+impl Global for Scrolling {}
+
+/// Tells observers that the notifies about to be delivered are the work of a scroll. The mark
+/// lasts until the effects queued so far have been delivered, so a later change of the view is
+/// never taken for scrolling.
+pub(crate) fn mark_scrolling(cx: &mut App) {
+    let marked = &mut cx.default_global::<Scrolling>().0;
+    if mem::replace(marked, true) {
+        return;
+    }
+    cx.defer(|cx| cx.defer(|cx| cx.global_mut::<Scrolling>().0 = false));
+}
+
+/// Whether the notify an observer is handling was caused by a scroll. An observer of a scrolled
+/// view that only cares about the view's own state can leave such a notify alone.
+pub fn scrolling(cx: &App) -> bool {
+    cx.try_global::<Scrolling>()
+        .is_some_and(|scrolling| scrolling.0)
 }
 
 fn grid(at: Point<Pixels>, window: &Window) -> Point<Pixels> {
