@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora queue remove`, `queue move` and `queue clear` edit the play order from the command line and the control socket, addressing rows by the id shown in `sonora queue --json`.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
 - The fullscreen player has the Sessions button at the left of its controls on wide windows too, across from the volume.
+- `sonora playlist list`, `create`, `rename`, `public`, `add`, `remove` and `delete` manage playlists from the command line and the control socket.
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 
 ### Changed
