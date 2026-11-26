@@ -90,8 +90,8 @@ pub(crate) fn turn_volume<V: VolumeHost>(
 }
 
 /// The mute button with a horizontal slider `width` wide beside it, for a place with room for
-/// one. `slider` is the host's own, `over` is where the pointer hovers the slider if it does and
-/// places the level bubble, and the drag shares `RisingVolume::held` with the slider that rises.
+/// one. `slider` is the host's own, `over` is where the pointer hovers the slider if it does,
+/// and the drag shares `RisingVolume::held` with the slider that rises.
 pub(crate) fn volume_slider<V: VolumeHost>(
     slider: &ScrubberState,
     over: Option<f32>,
@@ -104,13 +104,9 @@ pub(crate) fn volume_slider<V: VolumeHost>(
     let empty = theme.muted_foreground.opacity(0.3);
     let level = playback.read(cx).shown_volume(cx);
     let muted = playback.read(cx).muted(cx);
-    // A drag shows the level it sets. Otherwise the bubble follows the pointer and reads the
-    // level a click there would set, the way the seek bar reads a time.
-    let bubble = match held {
-        true => Some(level),
-        false => over,
-    }
-    .map(|at| (at, percent(at)));
+    // Hover and drag alike show the current level over the thumb, not the level under the
+    // pointer the way the seek bar shows a time.
+    let bubble = (over.is_some() || held).then(|| (level, percent(level)));
 
     div()
         .id("player-volume")

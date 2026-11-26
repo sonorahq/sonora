@@ -62,6 +62,8 @@ const ISLAND_CLEAR: f32 = 1.5;
 const ISLAND_MIDDLE: f32 = 1.3;
 /// The widest the island grows, so it stays a pill on a wide sheet rather than a bar.
 const ISLAND_MAX: f32 = 800.;
+/// The width of the line along the top of a see-through bar, the same as its `border_t_1`.
+const EDGE: Pixels = px(1.);
 /// How far below the cover the middle of the island's seek line stands, and as far again the
 /// island's content runs on below it, in pads.
 const LINE_DROP: f32 = 0.5;
@@ -689,9 +691,19 @@ impl PlayerBar {
             },
         )
         // Glass over the page needs an edge, while an opaque bar is chrome that the sheet's own
-        // edge already parts from the page.
+        // edge already parts from the page. The border only keeps the line's room and the line
+        // is a child drawn before the bar's content, since gpui paints a border over children
+        // and it would cut through the volume bubble that rises past the top of a compact bar.
         .when(transparent && !island, |this| {
-            this.border_t_1().border_color(theme.border)
+            this.border_t_1().child(
+                div()
+                    .absolute()
+                    .top(-EDGE)
+                    .left_0()
+                    .right_0()
+                    .h(EDGE)
+                    .bg(theme.border),
+            )
         })
         .when(island, |this| {
             this.when_else(
