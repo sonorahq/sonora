@@ -12,6 +12,8 @@ use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Field, Form, Modal, OtpInput, OtpSlots, Submit,
 };
 
+use crate::shared::overlay::Overlay;
+
 /// How many digits a code shows in each group, with a dash between the groups.
 const GROUP: usize = 3;
 /// How wide both session dialogs stand, in covers, so the code keeps a margin on either side.
@@ -68,6 +70,12 @@ impl SessionJoin {
         }
         self.code.update(cx, |code, cx| code.set_value("", cx));
         self.shown = false;
+    }
+}
+
+impl Overlay for SessionJoin {
+    fn showing(&self, cx: &App) -> bool {
+        self.listening.read(cx).join_shown()
     }
 }
 
@@ -163,6 +171,13 @@ impl SessionCode {
             window.focus(&focus, cx);
         }
         self.shown = false;
+    }
+}
+
+impl Overlay for SessionCode {
+    fn showing(&self, cx: &App) -> bool {
+        let listening = self.listening.read(cx);
+        listening.code_shown() && listening.room().is_some()
     }
 }
 

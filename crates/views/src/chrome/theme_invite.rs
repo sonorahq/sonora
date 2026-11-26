@@ -4,13 +4,14 @@
 //! `state::Links` holds the offer and does the installing. This only draws it.
 
 use gpui::prelude::*;
-use gpui::{Context, Entity, FocusHandle, Pixels, Render, Window, div, px};
+use gpui::{App, Context, Entity, FocusHandle, Pixels, Render, Window, div, px};
 use i18n::t;
 use state::{Links, Sonora};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Look, Modal, Submit, Text, Theme, ThemeKind,
 };
 
+use crate::shared::overlay::Overlay;
 use crate::shared::theme_miniature::{SLICES, framed, sliced};
 
 /// The modal panel's border, which counts toward its width.
@@ -69,6 +70,12 @@ impl ThemeInvite {
             window.focus(&focus, cx);
         }
         self.shown = false;
+    }
+}
+
+impl Overlay for ThemeInvite {
+    fn showing(&self, cx: &App) -> bool {
+        self.links.read(cx).theme_offer().is_some()
     }
 }
 

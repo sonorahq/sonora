@@ -13,6 +13,7 @@ use ui::{
     Submit, Text,
 };
 
+use crate::shared::overlay::Overlay;
 use crate::shared::steps::{progress, steps};
 
 const ID: &str = "soloist-setup";
@@ -201,6 +202,12 @@ impl SoloistSetup {
             }
         }
         body
+    }
+}
+
+impl Overlay for SoloistSetup {
+    fn showing(&self, cx: &App) -> bool {
+        self.open_on(cx).is_some()
     }
 }
 

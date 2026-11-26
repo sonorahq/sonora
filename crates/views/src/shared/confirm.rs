@@ -4,6 +4,8 @@ use i18n::t;
 use state::{Io, Outcome, Sonora, Toasts, equalizer_profile_label};
 use ui::{Button, Dismiss, FORM_CONTEXT, Modal, Submit};
 
+use crate::shared::overlay::Overlay;
+
 /// An action that cannot be taken back, which is why it asks first. A removal that its toast
 /// can undo runs straight away and never comes through here.
 #[derive(Clone)]
@@ -175,6 +177,12 @@ impl Confirm {
         }
         (pending.apply)(cx);
         cx.notify();
+    }
+}
+
+impl Overlay for Confirm {
+    fn showing(&self, _: &App) -> bool {
+        self.pending.is_some()
     }
 }
 

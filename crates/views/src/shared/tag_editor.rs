@@ -9,6 +9,8 @@ use ui::{
     Text,
 };
 
+use crate::shared::overlay::Overlay;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sheet {
     Song,
@@ -361,6 +363,12 @@ impl TagEditor {
         if let Some(first) = first {
             first.update(cx, |input, cx| input.focus(window, cx));
         }
+    }
+}
+
+impl Overlay for TagEditor {
+    fn showing(&self, cx: &App) -> bool {
+        self.tags.read(cx).track().is_some()
     }
 }
 

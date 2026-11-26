@@ -3,10 +3,12 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{Context, Entity, FocusHandle, Render, Window, div};
+use gpui::{App, Context, Entity, FocusHandle, Render, Window, div};
 use i18n::t;
 use state::{CdmState, Drm, Sonora};
 use ui::{ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Modal, Submit, Text};
+
+use crate::shared::overlay::Overlay;
 
 pub(crate) struct WidevinePrompt {
     drm: Entity<Drm>,
@@ -51,14 +53,19 @@ impl WidevinePrompt {
     }
 }
 
+impl Overlay for WidevinePrompt {
+    fn showing(&self, cx: &App) -> bool {
+        matches!(
+            self.drm.read(cx).state(),
+            CdmState::Wanted | CdmState::Offering | CdmState::Offered(_) | CdmState::Installing
+        )
+    }
+}
+
 impl Render for WidevinePrompt {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.drm.read(cx).state().clone();
-        let open = matches!(
-            state,
-            CdmState::Wanted | CdmState::Offering | CdmState::Offered(_) | CdmState::Installing
-        );
-        if !open {
+        if !self.showing(cx) {
             if self.shown {
                 self.release(window, cx);
             }

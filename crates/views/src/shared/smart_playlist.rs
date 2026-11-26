@@ -22,6 +22,8 @@ use ui::{
     Picker, Popovers, PreviousField, Submit, step_focus,
 };
 
+use crate::shared::overlay::Overlay;
+
 /// What the editor is doing: making a new smart playlist, or changing the rules of one the
 /// provider already has.
 #[derive(Clone)]
@@ -776,6 +778,12 @@ enum RowData {
         key: String,
         text: String,
     },
+}
+
+impl Overlay for SmartPlaylistEditor {
+    fn showing(&self, _: &App) -> bool {
+        self.edit.is_some()
+    }
 }
 
 impl Render for SmartPlaylistEditor {

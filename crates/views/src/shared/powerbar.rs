@@ -16,6 +16,7 @@ use ui::{
 };
 
 use crate::screens::search::hit_card;
+use crate::shared::overlay::Overlay;
 use crate::shared::tracks::{PlaybackStatus, playback_status};
 use crate::shared::trouble;
 
@@ -501,6 +502,13 @@ impl Powerbar {
                 ))
             })
             .child(hint("powerbar-hint-close", "escape", t!("common-dismiss")))
+    }
+}
+
+impl Overlay for Powerbar {
+    fn showing(&self, _: &App) -> bool {
+        // A panel just closed still stands in place until its spring sets off.
+        self.open || !self.shown.resting() || self.shown.position() != 0.
     }
 }
 

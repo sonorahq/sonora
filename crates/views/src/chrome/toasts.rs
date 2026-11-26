@@ -13,6 +13,8 @@ use router::{Destination, SettingsPage, navigate};
 use state::{Outcome, Target, Toasts};
 use ui::{ActiveTheme as _, Springs, Sprung, Toast};
 
+use crate::shared::overlay::Overlay;
+
 /// The toast width in multiples of the font size.
 const WIDTH: f32 = 26.;
 /// The space between toasts when the stack is spread out, and how far each one behind the front
@@ -499,6 +501,15 @@ impl ToastStack {
         )
         .absolute()
         .size_0()
+    }
+}
+
+impl Overlay for ToastStack {
+    fn showing(&self, cx: &App) -> bool {
+        self.hovered
+            || self.swipe.is_some()
+            || !self.slots.is_empty()
+            || !self.toasts.read(cx).shown().is_empty()
     }
 }
 

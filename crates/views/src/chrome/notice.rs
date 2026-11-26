@@ -16,6 +16,8 @@ use ui::{
     ActiveTheme as _, ArrowRing, Button, Linger, Springs, Sprung, Text, Unfold, corners, spring,
 };
 
+use crate::shared::overlay::Overlay;
+
 const ICON: Pixels = px(18.);
 /// The title's line height as a multiple of its size, which the icon centres on.
 const LEADING: f32 = 1.4;
@@ -280,6 +282,13 @@ impl AppNotice {
             actions: action.into_iter().collect(),
             progress: fetching.then_some(progress),
         })
+    }
+}
+
+impl Overlay for AppNotice {
+    fn showing(&self, cx: &App) -> bool {
+        !matches!(self.updates.read(cx).state(), UpdateState::Quiet)
+            || !self.requirements.read(cx).shown(cx).is_empty()
     }
 }
 

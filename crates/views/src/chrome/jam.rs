@@ -19,6 +19,8 @@ use ui::{
     Submit, Text, Theme, Tipped as _, single_line, snapped,
 };
 
+use crate::shared::overlay::Overlay;
+
 /// The side of the Jam's QR code. It does not scale with the theme, since a code has to stay a
 /// size a camera can read.
 const CODE: Pixels = px(220.);
@@ -89,6 +91,12 @@ impl JamInvite {
             window.focus(&focus, cx);
         }
         self.shown = false;
+    }
+}
+
+impl Overlay for JamInvite {
+    fn showing(&self, cx: &App) -> bool {
+        self.devices.read(cx).invite().is_some()
     }
 }
 
@@ -213,6 +221,12 @@ impl JamJoin {
     }
 }
 
+impl Overlay for JamJoin {
+    fn showing(&self, cx: &App) -> bool {
+        self.devices.read(cx).join_shown()
+    }
+}
+
 impl Render for JamJoin {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.devices.read(cx).join_shown() {
@@ -323,6 +337,13 @@ impl JamCode {
             window.focus(&focus, cx);
         }
         self.shown = false;
+    }
+}
+
+impl Overlay for JamCode {
+    fn showing(&self, cx: &App) -> bool {
+        let devices = self.devices.read(cx);
+        devices.code_shown() && devices.jam().is_some_and(|jam| jam.link.is_some())
     }
 }
 

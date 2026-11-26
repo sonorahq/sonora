@@ -1,4 +1,4 @@
-use gpui::{AnyView, Context, Entity, MouseButton, NavigationDirection, Render, Task};
+use gpui::{AnyElement, AnyView, Context, Entity, MouseButton, NavigationDirection, Render, Task};
 use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelude::*};
 use gpui::{Pixels, Window, deferred, div};
 use input::{
@@ -27,6 +27,7 @@ use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
 use crate::shared::ambient::{self, Ambient};
 use crate::shared::confirm::Confirm;
+use crate::shared::overlay::overlaid;
 use crate::shared::playlist_editor::PlaylistEditor;
 use crate::shared::powerbar::{Powerbar, PowerbarEvent};
 use crate::shared::smart_playlist::SmartPlaylistEditor;
@@ -115,18 +116,19 @@ impl Dialogs {
         }
     }
 
-    fn views(&self) -> [AnyView; 10] {
+    /// The dialogs in the order they stack, each embedded by [`overlaid`].
+    fn views(&self, cx: &App) -> [AnyElement; 10] {
         [
-            self.playlist_editor.clone().into(),
-            self.smart_playlist_editor.clone().into(),
-            self.tag_editor.clone().into(),
-            self.confirm.clone().into(),
-            self.widevine.clone().into(),
-            self.soloist.clone().into(),
-            self.jam_join.clone().into(),
-            self.jam_code.clone().into(),
-            self.session_join.clone().into(),
-            self.session_code.clone().into(),
+            overlaid(&self.playlist_editor, cx),
+            overlaid(&self.smart_playlist_editor, cx),
+            overlaid(&self.tag_editor, cx),
+            overlaid(&self.confirm, cx),
+            overlaid(&self.widevine, cx),
+            overlaid(&self.soloist, cx),
+            overlaid(&self.jam_join, cx),
+            overlaid(&self.jam_code, cx),
+            overlaid(&self.session_join, cx),
+            overlaid(&self.session_code, cx),
         ]
     }
 }
@@ -1562,12 +1564,12 @@ impl Render for Root {
                     .right_0()
                     .bottom_0()
                     .h(floor)
-                    .child(deferred(self.toasts.clone()).with_priority(TOAST_LAYER)),
+                    .child(deferred(overlaid(&self.toasts, cx)).with_priority(TOAST_LAYER)),
             )
-            .children(self.dialogs.views())
-            .child(self.jam_invite.clone())
-            .child(self.theme_invite.clone())
-            .child(self.powerbar.clone());
+            .children(self.dialogs.views(cx))
+            .child(overlaid(&self.jam_invite, cx))
+            .child(overlaid(&self.theme_invite, cx))
+            .child(overlaid(&self.powerbar, cx));
 
         let root = div()
             .relative()

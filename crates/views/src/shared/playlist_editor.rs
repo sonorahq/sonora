@@ -9,6 +9,8 @@ use state::{Addition, CoverEdit, Leaving, Outcome, Shelf, Sonora, Toasts, cover_
 use ui::{ActiveTheme as _, Artwork, Button, Modal, PinKind, TabBar};
 use ui::{Dismiss, FORM_CONTEXT, Field, Form, Input, Submit};
 
+use crate::shared::overlay::Overlay;
+
 #[derive(Clone)]
 pub(crate) enum Edit {
     Create {
@@ -300,6 +302,12 @@ impl PlaylistEditor {
                         )
                     }),
             )
+    }
+}
+
+impl Overlay for PlaylistEditor {
+    fn showing(&self, _: &App) -> bool {
+        self.edit.is_some()
     }
 }
 

@@ -16,6 +16,7 @@ pub(crate) mod local;
 pub(crate) mod menus;
 pub(crate) mod nav;
 pub(crate) mod now_playing;
+pub(crate) mod overlay;
 pub(crate) mod page;
 pub(crate) mod picks;
 pub(crate) mod pins;

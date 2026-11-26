@@ -5,10 +5,12 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    Context, NavigationDirection, Pixels, Render, ScrollWheelEvent, SpringState, Window, div,
+    App, Context, NavigationDirection, Pixels, Render, ScrollWheelEvent, SpringState, Window, div,
     point, px, svg,
 };
 use ui::{ActiveTheme as _, Springs, ease_out_cubic, mix, motion, paced};
+
+use crate::shared::overlay::Overlay;
 
 const ICON: Pixels = px(16.);
 /// How far the chevron leans towards the page it points to once the arrow is armed.
@@ -161,6 +163,16 @@ impl SwipeCue {
             self.armed = SpringState::default();
         }
         moving || self.launched.is_some()
+    }
+}
+
+impl Overlay for SwipeCue {
+    fn showing(&self, _: &App) -> bool {
+        // An arrow the fingers just let go of still stands out until its spring sets off.
+        self.pull.is_some()
+            || self.launched.is_some()
+            || self.beat.is_some()
+            || self.shown.position > REST
     }
 }
 

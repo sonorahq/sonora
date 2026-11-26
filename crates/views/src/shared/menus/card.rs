@@ -4,6 +4,7 @@ use state::{Playback, Sonora};
 use ui::{Popup, Scrollbar};
 
 use crate::shared::menus::{Item, ItemMenu};
+use crate::shared::overlay::Overlay;
 
 /// The one context menu every album, playlist, artist and track card opens, drawn once at the
 /// root of the workspace. A card factory attaches it, so no screen has to keep menu state of
@@ -64,6 +65,12 @@ impl CardMenu {
                 cx.notify();
             });
         }
+    }
+}
+
+impl Overlay for CardMenu {
+    fn showing(&self, _: &App) -> bool {
+        self.open.is_some()
     }
 }
 

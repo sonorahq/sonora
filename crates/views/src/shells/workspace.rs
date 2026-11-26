@@ -18,6 +18,7 @@ use crate::chrome::{
     AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, SwipeCue, TitleBarOptions, sheet_frame,
 };
 use crate::shared::menus::CardMenu;
+use crate::shared::overlay::overlaid;
 use crate::shells::Shell;
 
 /// How close in pixels a sliding sidebar has to come to its width to count as landed.
@@ -492,7 +493,7 @@ impl Render for Workspace {
                             .when(floating, |this| {
                                 this.child(island_fade(bar_height, window, cx))
                             })
-                            .child(self.swipe_cue.clone())
+                            .child(overlaid(&self.swipe_cue, cx))
                             .child(sheet_frame(corners, edges, cx)),
                     )
                     .child(sidebar_right)
@@ -514,8 +515,8 @@ impl Render for Workspace {
             )
             // Deferred so the cards sit above the sidebars' resize grips. The root draws the
             // dialogs after the shell, so those still cover them.
-            .child(deferred(self.notice.clone()))
-            .child(self.card_menu.clone())
+            .child(deferred(overlaid(&self.notice, cx)))
+            .child(overlaid(&self.card_menu, cx))
     }
 }
 
