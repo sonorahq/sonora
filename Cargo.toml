@@ -185,6 +185,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "query",
     "rustls-no-provider",
     "http2",
+    "socks",
 ] }
 qrcodegen = "1"
 raw-window-handle = "0.6"
