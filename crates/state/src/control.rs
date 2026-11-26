@@ -293,49 +293,10 @@ impl Control {
                 (items, Place::Queue(placement))
             }
             QueueCommand::Play(items) => (items, Place::Now),
-            QueueCommand::Remove { uid } => {
-                let steered = self.playback.read(cx).steered(cx).is_some();
-                if steered {
-                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
-                    return;
-                }
-                let removed = self
-                    .playback
-                    .update(cx, |playback, cx| playback.remove_queued(&uid, cx));
-                let answer = match removed {
-                    true => Reply::Done,
-                    false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
-                };
-                reply.send(answer).ok();
-                return;
-            }
-            QueueCommand::Move { uid, gap } => {
-                let steered = self.playback.read(cx).steered(cx).is_some();
-                if steered {
-                    reply.send(Reply::Failed(Failure::SteeredReadOnly)).ok();
-                    return;
-                }
-                let moved = self
-                    .playback
-                    .update(cx, |playback, cx| playback.move_queued(&uid, gap, cx));
-                let answer = match moved {
-                    true => Reply::Done,
-                    false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
-                };
-                reply.send(answer).ok();
-                return;
-            }
-            QueueCommand::ClearUpcoming => {
-                let steered = self.playback.read(cx).steered(cx).is_some();
-                let answer = match steered {
-                    true => Reply::Failed(Failure::SteeredReadOnly),
-                    false => {
-                        self.playback
-                            .update(cx, |playback, cx| playback.clear_queued(cx));
-                        Reply::Done
-                    }
-                };
-                reply.send(answer).ok();
+            edit @ (QueueCommand::Remove { .. }
+            | QueueCommand::Move { .. }
+            | QueueCommand::ClearUpcoming) => {
+                reply.send(self.edit_queue(edit, cx)).ok();
                 return;
             }
         };
@@ -366,6 +327,29 @@ impl Control {
             };
             reply.send(Reply::Failed(failure)).ok();
         });
+    }
+
+    /// Applies a remove, move or clear to the local queue and says how it went. While another
+    /// device has playback the queue on show is its own and read-only, so every edit is refused.
+    fn edit_queue(&mut self, edit: QueueCommand, cx: &mut Context<Self>) -> Reply {
+        if self.playback.read(cx).steered(cx).is_some() {
+            return Reply::Failed(Failure::SteeredReadOnly);
+        }
+        self.playback.update(cx, |playback, cx| {
+            let (done, uid) = match edit {
+                QueueCommand::Remove { uid } => (playback.remove_queued(&uid, cx), uid),
+                QueueCommand::Move { uid, gap } => (playback.move_queued(&uid, gap, cx), uid),
+                QueueCommand::ClearUpcoming => {
+                    playback.clear_queued(cx);
+                    return Reply::Done;
+                }
+                _ => return Reply::Failed(Failure::Unsupported),
+            };
+            match done {
+                true => Reply::Done,
+                false => Reply::Failed(Failure::UnknownQueueEntry(uid)),
+            }
+        })
     }
 
     /// Where a 1-based queue position puts its items. Position 1 is the `Next` placement, the same
