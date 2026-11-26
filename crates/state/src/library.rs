@@ -735,7 +735,7 @@ impl Library {
             finish_save(completion, false);
             return;
         };
-        if S::requests(self).contains_key(&id) {
+        if S::requests(self).contains_key(&id) || self.refuse_guest(Shelf::of(&id), cx) {
             finish_save(completion, false);
             return;
         }
@@ -1990,6 +1990,9 @@ impl Library {
             return;
         }
         let shelf = Shelf::of(&id);
+        if self.refuse_guest(shelf, cx) {
+            return;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             return;
         };
@@ -2189,6 +2192,9 @@ impl Library {
         let opening = self.smart_opening;
         let epoch = self.epochs[shelf.slot()];
         self.smart_editing = None;
+        if self.refuse_guest(shelf, cx) {
+            return;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
             return;
@@ -3504,6 +3510,11 @@ impl Library {
             on_result(self, Err(()), cx);
             return false;
         }
+        if self.refuse_guest(shelf, cx) {
+            log::debug!("library: cannot {action} as a guest");
+            on_result(self, Err(()), cx);
+            return false;
+        }
         let Some(client) = self.session.read(cx).client_of(shelf) else {
             log::warn!("library: cannot {action} while signed out");
             Toasts::show(Outcome::Failed, "toast-playlist-signed-out", cx);
@@ -3552,6 +3563,24 @@ impl Library {
             })
             .ok();
         }));
+        true
+    }
+
+    /// Whether a change to `shelf` comes from a guest session, which can browse and play but not
+    /// change anything on the account. A local shelf with a library of its own still takes the
+    /// change. A refusal tells the listener to sign in, and the caller stops before asking.
+    fn refuse_guest(&self, shelf: Shelf, cx: &mut Context<Self>) -> bool {
+        let session = self.session.read(cx);
+        if !session.guest() || (shelf.local() && session.client_of(shelf).is_some()) {
+            return false;
+        }
+        let Some(provider) = session.provider_name() else {
+            return false;
+        };
+        let toast = Toast::new(Outcome::Failed, "toast-guest-refused")
+            .name(provider)
+            .open("toast-sign-in", Target::ProviderSettings);
+        Toasts::post(toast, cx);
         true
     }
 
