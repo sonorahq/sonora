@@ -53,6 +53,17 @@ pub enum Value {
     Lyrics(LyricsSnapshot),
     /// Whether the current track is a favorite, as `sonora like` prints it.
     Liked(bool),
+    /// The listener's playlists, as `sonora playlist list` prints them.
+    Playlists(Vec<PlaylistSummary>),
+}
+
+/// One playlist in `sonora playlist list`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistSummary {
+    pub id: String,
+    pub name: String,
+    pub public: bool,
+    pub owned: bool,
 }
 
 /// At most this many lines of lyrics are reported, from the start, so a very long text never
@@ -230,6 +241,9 @@ pub struct SessionInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hit {
     pub kind: Kind,
+    /// The provider id, for commands that take an id such as `playlist add`.
+    #[serde(default)]
+    pub id: String,
     pub title: String,
     /// The artists, or a playlist's owner. Empty for an artist.
     pub by: String,
@@ -364,6 +378,10 @@ pub enum Failure {
     NothingFound(String),
     /// Another device has playback, and its queue is read-only here.
     SteeredReadOnly,
+    /// The account changed while the command was waiting, so it was not applied.
+    AccountChanged,
+    /// The provider picks this playlist's tracks, so none can be added or removed by hand.
+    ReadOnlyPlaylist,
     /// No upcoming row in the queue carries this id.
     UnknownQueueEntry(String),
 }
