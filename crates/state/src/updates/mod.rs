@@ -3,6 +3,7 @@ mod install;
 mod staged;
 
 use std::io::Write as _;
+use std::mem::DropGuard;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -12,6 +13,7 @@ use gpui::{Context, Entity, SharedString, Subscription, Task};
 use i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use tokio::task::AbortHandle;
 
 use crate::{AppSettings, Io, Outcome, Toast, Toasts, join};
 use install::Install;
@@ -396,17 +398,21 @@ impl Updates {
 
         let http = self.http.clone();
         let io = self.io.clone();
-        // A fresh counter, so a download the listener closed earlier and that still runs on
-        // tokio writes where nothing reads.
+        // A fresh counter, so an abandoned download that has not stopped yet writes where
+        // nothing reads.
         let progress = Arc::new(AtomicU32::new(0));
         self.progress = progress.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let applied = join(io.spawn(async move {
+            let install = io.spawn(async move {
                 let _staging = STAGING.lock().await;
                 let path = download(&http, &package, &sums, &version, &progress).await?;
                 tokio::task::spawn_blocking(move || Install::current().apply(path)).await?
-            }))
-            .await;
+            });
+            // Dropping this task abandons the install, so the tokio side stops with it rather
+            // than putting in a release the listener walked away from.
+            let _abandon =
+                DropGuard::new(install.abort_handle(), |handle: AbortHandle| handle.abort());
+            let applied = join(install).await;
             this.update(cx, |this, cx| this.finish(applied, cx)).ok();
         }));
     }
