@@ -1442,16 +1442,20 @@ async fn resolve_queue(
     ids.iter().map(|id| known.get(id).cloned()).collect()
 }
 
-/// The occurrences the queue holds besides the autoplay suggestions, which arrive on their own
-/// while a handover's songs load and change nothing the listener or playback did.
-fn chosen(queue: &Queue) -> Vec<String> {
-    queue
-        .connect_previous()
-        .chain(queue.connect_current())
-        .chain(queue.connect_upcoming())
-        .filter(|row| !row.suggested)
-        .map(|row| row.uid)
-        .collect()
+/// The queue's occurrences by section and its shuffle, leaving out the autoplay suggestions,
+/// which arrive on their own while a handover's songs load and change nothing the listener or
+/// playback did. A skip shows as the current occurrence changing.
+fn chosen(queue: &Queue) -> (Vec<String>, Option<String>, Vec<String>, bool) {
+    let uid = |at| queue.uid(at).map(str::to_owned);
+    let past = (0..queue.past().len())
+        .filter_map(|at| uid(QueuePosition::Past(at)))
+        .collect();
+    let upcoming = (0..queue.upcoming().len())
+        .map(QueuePosition::Upcoming)
+        .filter(|at| queue.kind(*at) != Some(QueueKind::Suggested))
+        .filter_map(uid)
+        .collect();
+    (past, uid(QueuePosition::Current), upcoming, queue.shuffle())
 }
 
 /// Whether two reports show the same queue around the same song, whatever their clocks say.
