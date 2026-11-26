@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use base64::Engine as _;
@@ -65,8 +65,8 @@ pub(super) struct Screen {
     pub volume: Option<f32>,
     /// When `position` was measured.
     pub stamp: Option<SystemTime>,
-    /// The video the screen said it may not play, until it plays one again.
-    pub refused: Option<String>,
+    /// When the screen last said it may not play its video, until it plays one again.
+    pub refused: Option<Instant>,
 }
 
 /// How a long poll ended.
@@ -448,12 +448,11 @@ impl Lounge {
                         .as_str()
                         .filter(|video| !video.is_empty())
                         .map(str::to_owned);
-                    // the clock and a refusal belong to the video the screen had before
+                    // the clock belongs to the video the screen had before
                     if video != reported.video {
                         reported.position = Duration::ZERO;
                         reported.duration = Duration::ZERO;
                         reported.stamp = None;
-                        reported.refused = None;
                     }
                     reported.video = video;
                     reported.index = number(&argument["currentIndex"])
@@ -535,7 +534,7 @@ fn clock(reported: &mut Screen, argument: &Value) {
         Some(status) => {
             log::info!("youtube: the screen cannot play its video: {status}");
             reported.playing = false;
-            reported.refused = Some(reported.video.clone().unwrap_or_default());
+            reported.refused = Some(Instant::now());
         }
         None => {}
     }

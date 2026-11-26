@@ -123,6 +123,11 @@ struct Cast {
     paused: Option<String>,
     /// That pause on its way to the screen, which a Play pressed meanwhile calls off.
     pausing: Option<JoinHandle<()>>,
+    /// When the latest handoff began. A refusal the screen reports after it is news once, since
+    /// a screen skips through a queue it may not play, which is one failure.
+    armed: Option<Instant>,
+    /// Whether the refusal of the latest handoff was already told.
+    warned: bool,
     /// Whether the device stopped announcing itself while this app held its lounge. The lounge
     /// runs through YouTube rather than the network, so the device stays listed until its screen
     /// leaves. Its announcement lapses whenever the computer sleeps.
@@ -143,6 +148,8 @@ impl Cast {
             queue: None,
             paused: None,
             pausing: None,
+            armed: None,
+            warned: false,
             lost: false,
         }
     }
@@ -431,8 +438,8 @@ async fn hand(shared: &Arc<Shared>, device: &str, state: &Snapshot, at: Duration
         {
             task.abort();
         }
-        // a refusal before this handoff is news again once the screen refuses this one
-        cast.reported.refused = None;
+        cast.armed = Some(Instant::now());
+        cast.warned = false;
         cast.paused = (!state.playing).then(|| first.clone());
     }
     lounge.play(first, at).await?;
@@ -575,8 +582,12 @@ async fn watch(shared: Arc<Shared>, device: String, lounge: Arc<Lounge>, mut rep
     let update = |reported: &Screen| {
         let refused = match lock(&shared.casts).get_mut(&device) {
             Some(cast) => {
-                // a screen skips through a queue it may not play, which is one failure
-                let refused = reported.refused.is_some() && cast.reported.refused.is_none();
+                let refused = !cast.warned
+                    && reported
+                        .refused
+                        .zip(cast.armed)
+                        .is_some_and(|(refused, armed)| refused > armed);
+                cast.warned |= refused;
                 if reported.playing && cast.paused.is_some() && reported.video == cast.paused {
                     cast.paused = None;
                     let lounge = lounge.clone();
