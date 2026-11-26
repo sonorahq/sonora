@@ -185,7 +185,7 @@ jobs:
           $env:SONORA_BUILD_METADATA = (Resolve-Path build.json).Path
           $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging/windows/sonora.iss"
 
       - uses: actions/upload-artifact@v7
         if: ${{ !inputs.reuse || runner.os != 'macOS' }}
@@ -272,7 +272,7 @@ jobs:
             Sonora.app/Contents/Resources/LICENSE
 
           cp \
-            THIRD-PARTY.md \
+            docs/THIRD-PARTY.md \
             Sonora.app/Contents/Resources/
 
           cp \
@@ -500,7 +500,7 @@ jobs:
 
           mkdir -p AppDir/usr/share/doc/sonora/icons
           cp COPYING AppDir/usr/share/doc/sonora/LICENSE
-          cp THIRD-PARTY.md AppDir/usr/share/doc/sonora/
+          cp docs/THIRD-PARTY.md AppDir/usr/share/doc/sonora/
           cp assets/fonts/LICENSE.txt AppDir/usr/share/doc/sonora/LICENSE.Inter
           cp assets/icons/LICENSE AppDir/usr/share/doc/sonora/icons/LICENSE
           for licence in assets/icons/*/LICENSE; do
@@ -602,13 +602,13 @@ jobs:
 
       - name: Generate Cargo Sources
         run: |
-          chmod +x ./flatpak/generate-sources.sh
-          ./flatpak/generate-sources.sh
+          chmod +x ./packaging/flatpak/generate-sources.sh
+          ./packaging/flatpak/generate-sources.sh
 
       - name: Build Flatpak Bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
         with:
-          manifest-path: flatpak/flatpak-builder.yaml
+          manifest-path: packaging/flatpak/flatpak-builder.yaml
           bundle: sonora-${{ steps.meta.outputs.version }}-${{ matrix.variant.arch }}.flatpak
           arch: ${{ matrix.variant.arch }}
           upload-artifact: true
@@ -681,12 +681,12 @@ jobs:
             --gpg-homedir="$GNUPGHOME" \
             site/repo
           rm -rf site/repo/tmp
-          cp -R flatpak/pages/. site/
+          cp -R packaging/flatpak/pages/. site/
 
       - name: export the bundles
         env:
           VERSION: ${{ github.ref_name }}
-        run: ./flatpak/export-bundles.sh site/repo "$VERSION" dist
+        run: ./packaging/flatpak/export-bundles.sh site/repo "$VERSION" dist
 
       - uses: actions/upload-artifact@v7
         with:
@@ -751,7 +751,7 @@ jobs:
 
   # The nightly prerelease is one release, tagged `nightly-build`, whose assets every nightly
   # replaces. The tag and the `nightly` branch, the flake ref of the nightly channel, move to a
-  # commit on top of the main it built, which adds nix/nightly.json so the flake there builds the
+  # commit on top of the main it built, which adds packaging/nix/nightly.json so the flake there builds the
   # nightly version. Immutable releases must stay off for the repository, since an immutable
   # release freezes its tag and assets and retires the tag name for good, as it did to `nightly`.
   nightly:
@@ -787,14 +787,14 @@ jobs:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
           jq -n --arg version "$NIGHTLY" --arg commit "$GITHUB_SHA" \
-            '{version: $version, commit: $commit}' > nix/nightly.json
+            '{version: $version, commit: $commit}' > packaging/nix/nightly.json
 
       - name: move the nightly branch and tag
         env:
           NIGHTLY: ${{ inputs.nightly }}
         run: |
           set -euo pipefail
-          git add nix/nightly.json
+          git add packaging/nix/nightly.json
           git \
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
@@ -883,7 +883,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: gh workflow run nightly.yml --repo "$GITHUB_REPOSITORY" --ref main -f release_tag="$RELEASE_TAG"
 
-  # sonora-bin is rendered from aur/sonora-bin/PKGBUILD on every stable release, so the AUR
+  # sonora-bin is rendered from packaging/aur/sonora-bin/PKGBUILD on every stable release, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, the key nightly.yml
   # pushes sonora-nightly-bin with, since one AUR account maintains both.
   aur:
@@ -920,7 +920,7 @@ jobs:
             -e "s/@SHA256_SOURCE@/$source/" \
             -e "s/@SHA256_X86_64@/$x86_64/" \
             -e "s/@SHA256_AARCH64@/$aarch64/" \
-            aur/sonora-bin/PKGBUILD > package/PKGBUILD
+            packaging/aur/sonora-bin/PKGBUILD > package/PKGBUILD
           if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
 
           # A package build downloads every source and checks it against its sum, so a PKGBUILD

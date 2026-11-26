@@ -69,9 +69,9 @@ echo "  All required Flatpak dependencies are installed."
 
 # Run flatpak-builder
 echo "==> Building Flatpak..."
-cd ..
-flatpak-builder --force-clean --user --disable-cache --repo flatpak/flatpak-repo flatpak/flatpak flatpak/flatpak-builder.yaml
-cd flatpak
+cd ../..
+flatpak-builder --force-clean --user --disable-cache --repo packaging/flatpak/flatpak-repo packaging/flatpak/flatpak packaging/flatpak/flatpak-builder.yaml
+cd packaging/flatpak
 echo "==> Build complete!"
 
 echo "==> Packaging into .flatpak"

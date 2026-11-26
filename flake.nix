@@ -52,21 +52,27 @@
           path = root;
           filter =
             path: _:
-            builtins.elem (lib.head (lib.splitString "/" (lib.removePrefix "${toString root}/" path))) [
+            let
+              relative = lib.removePrefix "${toString root}/" path;
+            in
+            builtins.elem (lib.head (lib.splitString "/" relative)) [
               ".cargo"
               "Cargo.toml"
               "Cargo.lock"
               "crates"
               "assets"
               "COPYING"
-              "THIRD-PARTY.md"
+            ]
+            || builtins.elem relative [
+              "docs"
+              "docs/THIRD-PARTY.md"
             ];
         };
 
       # The nightly's version. Only the commit the nightly workflow puts on the `nightly` branch
       # carries this file, and its presence makes the package a nightly build.
-      nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
-        lib.importJSON ./nix/nightly.json
+      nightly = lib.optionalAttrs (builtins.pathExists ./packaging/nix/nightly.json) (
+        lib.importJSON ./packaging/nix/nightly.json
       );
       toolchainChannel = (lib.importTOML ./rust-toolchain.toml).toolchain.channel;
     in
@@ -306,7 +312,7 @@
                     ''
                 }
                 install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
-                install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
+                install -Dm444 "$src/docs/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
                 install -Dm444 "$src/assets/fonts/LICENSE.txt" \
                   "$LICENSE_DIR/sonora/LICENSE.Inter"
                 for licence in "$src/assets/icons"/*/LICENSE; do
@@ -461,7 +467,7 @@
         default =
           { pkgs, lib, ... }:
           {
-            imports = [ ./nix/home-manager.nix ];
+            imports = [ ./packaging/nix/home-manager.nix ];
             programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         sonora = self.homeManagerModules.default;
@@ -473,7 +479,7 @@
         default =
           { pkgs, lib, ... }:
           {
-            imports = [ ./nix/nixos.nix ];
+            imports = [ ./packaging/nix/nixos.nix ];
             programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         sonora = self.nixosModules.default;

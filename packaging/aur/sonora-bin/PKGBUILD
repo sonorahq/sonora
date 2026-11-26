@@ -1,6 +1,6 @@
 # Maintainer: Pavel Olizko <contact@nolight.dev>
 
-# Rendered on every stable release from aur/sonora-bin/PKGBUILD in github.com/sonorahq/sonora by
+# Rendered on every stable release from packaging/aur/sonora-bin/PKGBUILD in github.com/sonorahq/sonora by
 # its release workflow, which overwrites any change made in the AUR repository.
 
 pkgname=sonora-bin
@@ -59,7 +59,7 @@ package() {
   done
 
   install -Dm644 COPYING "${pkgdir}/usr/share/licenses/${_pkgname}/LICENSE"
-  install -Dm644 THIRD-PARTY.md "${pkgdir}/usr/share/licenses/${_pkgname}/THIRD-PARTY.md"
+  install -Dm644 docs/THIRD-PARTY.md "${pkgdir}/usr/share/licenses/${_pkgname}/THIRD-PARTY.md"
   install -Dm644 assets/fonts/LICENSE.txt \
     "${pkgdir}/usr/share/licenses/${_pkgname}/LICENSE.Inter"
   install -Dm644 assets/icons/LICENSE \

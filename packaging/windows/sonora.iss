@@ -40,7 +40,7 @@ Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: igno
 Source: "{#BuildMetadata}"; DestDir: "{app}"; DestName: "sonora-build.json"; Flags: ignoreversion
 #endif
 Source: "..\..\COPYING"; DestDir: "{app}"; DestName: "LICENSE"; Flags: ignoreversion
-Source: "..\..\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\docs\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
 Type: files; Name: "{app}\sonora-build.json"
