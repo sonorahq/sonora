@@ -343,6 +343,8 @@ impl Search {
             cx.notify();
             return;
         };
+        // an offline run searches the local files, which say nothing about the network
+        let local = self.session.read(cx).local_only();
 
         if let Some((slug, _)) = &linked
             && self.session.read(cx).provider_slug() != Some(*slug)
@@ -432,9 +434,12 @@ impl Search {
                     artists: salvaged(found.artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
-                    Some(reason) => Network::failed(reason, cx),
+                    Some(reason) if !local => Network::failed(reason, cx),
+                    Some(_) => {}
                     None => {
-                        Network::reached(cx);
+                        if !local {
+                            Network::reached(cx);
+                        }
                         this.served = Some(query);
                     }
                 }

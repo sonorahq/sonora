@@ -202,7 +202,7 @@ impl LoginView {
         else {
             return;
         };
-        let methods: Vec<SignIn> = info.options.into_iter().filter(offered).collect();
+        let methods = offered_methods(info.options);
         let buttons: usize = methods
             .iter()
             .map(|method| method_count(method, info.web_sign_in))
@@ -386,7 +386,7 @@ impl LoginView {
             .into_any_element()
     }
 
-    /// A rule with "or" in its middle, between the providers and guest mode.
+    /// A rule with "or" in its middle, between the providers and the offline button.
     fn divider(&self, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
         div()
@@ -404,15 +404,21 @@ impl LoginView {
             .child(div().flex_1().child(Separator::horizontal()))
     }
 
-    fn guest_mode(&self, slug: &'static str, pending: bool, cx: &mut Context<Self>) -> Button {
-        Button::new("guest-mode")
-            .label(t!("login-guest-use"))
-            .icon("icons/hat-glasses.svg")
+    /// Plays only the music folders, without any streaming account. With no folder chosen yet
+    /// it asks for one first, and a cancelled picker leaves the screen as it was.
+    fn offline(&self, pending: bool, cx: &mut Context<Self>) -> Button {
+        Button::new("login-offline")
+            .label(t!("login-offline-use"))
+            .icon(crate::shared::blend::LOCAL_MARK)
             .outline()
             .w_full()
             .disabled(pending)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.start(slug, SignIn::Anonymous, cx);
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.acted(cx);
+                match this.session.read(cx).local_paths().is_empty() {
+                    true => crate::shared::local::choose_offline_folder(|_| {}, cx),
+                    false => this.session.update(cx, |session, cx| session.use_local(cx)),
+                }
             }))
     }
 
@@ -443,11 +449,8 @@ impl LoginView {
             .providers()
             .find(|info| info.slug == slug);
         let web_sign_in = info.as_ref().is_some_and(|info| info.web_sign_in);
-        let buttons = info
-            .map(|info| info.options)
-            .unwrap_or_default()
+        let buttons = offered_methods(info.map(|info| info.options).unwrap_or_default())
             .into_iter()
-            .filter(offered)
             .flat_map(|method| {
                 self.method_buttons(slug, provider, method, web_sign_in, pending, cx)
             })
@@ -494,6 +497,21 @@ impl LoginView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut buttons = Vec::new();
+        if matches!(method, SignIn::Anonymous) {
+            buttons.push(
+                Button::new(SharedString::from(format!("sign-in-{slug}-guest")))
+                    .label(t!("login-guest-use"))
+                    .icon("icons/hat-glasses.svg")
+                    .outline()
+                    .disabled(pending)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.choice_running = true;
+                        this.start(slug, SignIn::Anonymous, cx);
+                    }))
+                    .into_any_element(),
+            );
+            return buttons;
+        }
         let manual = matches!(method, SignIn::Secret);
         if !manual || web_sign_in {
             let id = match &method {
@@ -583,15 +601,6 @@ impl Render for LoginView {
         let state = self.session.read(cx).state().clone();
         let pending = self.session.read(cx).is_pending();
         let providers: Vec<ProviderInfo> = self.session.read(cx).providers().collect();
-        let guest = providers
-            .iter()
-            .filter(|info| {
-                info.options
-                    .iter()
-                    .any(|option| matches!(option, SignIn::Anonymous))
-            })
-            .map(|info| info.slug)
-            .next();
         let manual_secret = self.manual_secret.filter(|_| {
             matches!(
                 &state,
@@ -698,10 +707,8 @@ impl Render for LoginView {
                     .when_some(url, |this, url| this.child(self.url_prompt(url))),
             )
             .child(self.rows(&providers, pending, waiting, cx))
-            .when_some(guest, |this, slug| {
-                this.child(div().flex_none().child(self.divider(cx)))
-                    .child(div().flex_none().child(self.guest_mode(slug, pending, cx)))
-            });
+            .child(div().flex_none().child(self.divider(cx)))
+            .child(div().flex_none().child(self.offline(pending, cx)));
 
         let backdrop = Lattice::new(POOLS.map(|(h, s, l, a)| hsla(h, s, l, a)))
             .stage(Hsla {
@@ -755,13 +762,15 @@ impl Render for LoginView {
     }
 }
 
-/// Which sign-in methods a provider offers on this screen. Guest mode has a button of its own,
-/// and a local path is not a way to sign in.
-fn offered(method: &SignIn) -> bool {
-    matches!(
-        method,
-        SignIn::Default | SignIn::Secret | SignIn::Credentials { .. }
-    )
+/// The sign-in methods a provider offers on this screen, with guest mode last so it stands
+/// under the ways to sign in to an account. A local path is not a way to sign in.
+fn offered_methods(options: Vec<SignIn>) -> Vec<SignIn> {
+    let mut methods: Vec<SignIn> = options
+        .into_iter()
+        .filter(|method| !matches!(method, SignIn::Path(_)))
+        .collect();
+    methods.sort_by_key(|method| matches!(method, SignIn::Anonymous));
+    methods
 }
 
 /// How many buttons one sign-in method draws: the method itself, and the manual paste beside

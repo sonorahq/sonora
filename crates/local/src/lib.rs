@@ -77,10 +77,13 @@ impl LocalProvider {
         });
         let store = store::Store::new(self.database.clone());
         store.reconcile(&scanned.report, &scanned.tracks)?;
-        scanned
-            .report
-            .issues
-            .extend(store.missing_tracks(&scanned.tracks, &roots)?);
+        match store.missing_tracks(&scanned.tracks, &roots) {
+            Ok(missing) => scanned.report.issues.extend(missing),
+            Err(error) => scanned
+                .report
+                .issues
+                .push(format!("cannot check missing music references: {error:#}")),
+        }
         let api: Arc<dyn MusicApi> = Arc::new(client::LocalClient::new(
             scanned,
             self.database.clone(),

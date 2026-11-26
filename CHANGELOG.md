@@ -23,6 +23,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cast YouTube Music to a TV or speaker with YouTube on your network from the devices menu. It keeps playing after you close Sonora or your laptop, and you can still pause, skip and seek from Sonora. A speaker plays only while you are signed in.
 - `sonora playlist list`, `create`, `rename`, `public`, `add`, `remove` and `delete` manage playlists from the command line and the control socket.
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
+- Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
+- Playlists, favorites and play history stay with a local song when its file moves within your music folders.
 
 ### Changed
 
@@ -64,6 +66,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Apple Music lyrics credit lrc.red, the service they come from, with a link to its site under the lyrics.
 - The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
 - Karaoke lyrics, the fullscreen player and scrolling long lists use less CPU.
+- Guest mode for YouTube Music is in its sign-in dialog, next to signing in and connecting manually.
 
 ### Fixed
 
@@ -105,6 +108,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
 - Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
 - When a queue ends without repeat, its last song moves to history instead of staying as now playing. Play button starts the queue over and Previous button brings that song back.
+- A song whose tags changed shows its new title and artist in the player, queue and lyrics after a rescan.
+- Songs in a music folder that is unavailable stay listed, and Sonora tells you which files it could not read.
 
 ### Fixed
 

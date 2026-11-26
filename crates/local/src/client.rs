@@ -786,12 +786,13 @@ impl MusicApi for LocalClient {
     }
 
     async fn delete_track_file(&self, track_id: &str) -> Result<()> {
-        let path = wire::path_from_track_id(track_id)
+        let track_id = self.current_id(track_id);
+        let path = wire::path_from_track_id(&track_id)
             .ok_or_else(|| anyhow!("{track_id} is not a local track id"))?;
 
-        self.store.set_starred(Starred::Tracks, track_id, false)?;
+        // a file that cannot be found may sit on an unplugged drive, so its references stay
         std::fs::remove_file(path).with_context(|| format!("cannot delete {}", path.display()))?;
-        Ok(())
+        self.store.forget_track(&self.aliases(&track_id, false))
     }
 
     async fn home(&self) -> Result<HomeFeed> {

@@ -95,6 +95,23 @@ impl Store {
             .context("cannot commit moved music references")
     }
 
+    /// Drops a deleted track, under each of its ids, from every playlist and from the favorites,
+    /// so a later scan does not report it missing.
+    pub fn forget_track(&self, track_ids: &[String]) -> Result<()> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        for track_id in track_ids {
+            transaction.execute(
+                "DELETE FROM playlist_tracks WHERE track_id = ?1",
+                [track_id],
+            )?;
+            transaction.execute("DELETE FROM favorites WHERE track_id = ?1", [track_id])?;
+        }
+        transaction
+            .commit()
+            .context("cannot forget a deleted local track")
+    }
+
     /// Reports missing references only inside the currently configured music folders. References
     /// in a removed folder remain stored for re-adding it and are not scan failures.
     pub fn missing_tracks(&self, tracks: &[Track], roots: &[PathBuf]) -> Result<Vec<String>> {

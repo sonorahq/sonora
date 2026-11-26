@@ -15,7 +15,6 @@ use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
-use music::SignIn;
 use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
 use state::{AppSettings, Sonora};
 
@@ -236,15 +235,13 @@ impl TitleBar {
             )
     }
 
-    /// The account button and the menu it opens: the connected services to switch between,
-    /// guest mode when a provider offers it, a way to manage them, then History and Settings.
+    /// The account button and the menu it opens: the connected services to switch between, a
+    /// stored guest session, offline, a way to manage them, then History and Settings. Guest mode
+    /// itself starts from its provider's sign-in.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
-        let guest = session.read(cx).providers().find(|info| {
-            info.options
-                .iter()
-                .any(|option| matches!(option, SignIn::Anonymous))
-        });
+        let local_only = session.read(cx).local_only();
+        let guest = session.read(cx).providers().find(|info| info.guest);
         let mut services: Vec<MenuItem> = session
             .read(cx)
             .connected()
@@ -265,30 +262,38 @@ impl TitleBar {
             })
             .collect();
         if let Some(info) = guest {
-            let (slug, stored) = (info.slug, info.guest);
+            let slug = info.slug;
+            let session = session.clone();
             services.push(
                 MenuItem::new("account-guest", t!("login-guest-title"))
                     .icon("icons/hat-glasses.svg")
-                    .selected(info.active && info.guest)
+                    .selected(info.active)
                     .on_click(move |_, _, cx| {
                         let before = session.read(cx).provider_slug();
-                        let idle = !session.read(cx).is_pending();
-                        session.update(cx, |session, cx| match stored {
-                            true => session.switch(slug, cx),
-                            false => session.sign_in(slug, SignIn::Anonymous, cx),
-                        });
-                        // an anonymous sign-in only takes over the provider once it lands, so a
-                        // started one counts as the switch
-                        let switched = match stored {
-                            true => session.read(cx).provider_slug() != before,
-                            false => idle && session.read(cx).is_pending() && before != Some(slug),
-                        };
-                        if switched {
+                        session.update(cx, |session, cx| session.switch(slug, cx));
+                        if session.read(cx).provider_slug() != before {
                             open_startup(cx);
                         }
                     }),
             );
         }
+        services.push(
+            MenuItem::new("account-offline", t!("login-offline-title"))
+                .icon(crate::shared::blend::LOCAL_MARK)
+                .selected(local_only)
+                .on_click(move |_, _, cx| {
+                    if session.read(cx).local_only() {
+                        return;
+                    }
+                    match session.read(cx).local_paths().is_empty() {
+                        true => crate::shared::local::choose_offline_folder(open_startup, cx),
+                        false => {
+                            session.update(cx, |session, cx| session.use_local(cx));
+                            open_startup(cx);
+                        }
+                    }
+                }),
+        );
 
         div()
             .flex()

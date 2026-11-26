@@ -259,13 +259,25 @@ impl Session {
         self.settings.update(cx, |settings, cx| {
             settings.set_provider(self.local_slug(), cx);
         });
-        self.state = SessionState::SignedIn(UserProfile {
+        self.state = SessionState::SignedIn(self.local_profile());
+        cx.notify();
+        cx.emit(SessionEvent::SignedIn);
+    }
+
+    /// The profile an offline run is signed in as.
+    fn local_profile(&self) -> UserProfile {
+        UserProfile {
             id: self.local_slug().to_owned(),
             display_name: t!("login-offline-title").to_string(),
             avatar: None,
-        });
+        }
+    }
+
+    /// Takes a sign-in started offline back to the offline run it left. That run is still
+    /// loaded, so nothing is released and the queue keeps playing.
+    fn back_to_local(&mut self, cx: &mut Context<Self>) {
+        self.state = SessionState::SignedIn(self.local_profile());
         cx.notify();
-        cx.emit(SessionEvent::SignedIn);
     }
 
     pub fn playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
@@ -863,7 +875,7 @@ impl Session {
             return;
         }
         if self.local_only {
-            return self.use_local(cx);
+            return self.back_to_local(cx);
         }
         self.state = SessionState::SignedOut;
         cx.notify();
@@ -1273,7 +1285,7 @@ impl Session {
             return;
         }
         if self.local_only {
-            return self.use_local(cx);
+            return self.back_to_local(cx);
         }
         if restoring && failure.offline() && self.stored_active() {
             log::warn!("session: the account could not be reached, carrying on offline");
@@ -1463,7 +1475,7 @@ impl Session {
                                 Toast::new(Outcome::Warning, "toast-scan-issues")
                                     .count(this.local_report.issues.len())
                                     .detail(this.local_report.issues.join("\n"))
-                                    .open("settings-local-folder", Target::ProviderSettings),
+                                    .open("settings-music-folders", Target::MusicFolders),
                                 cx,
                             ));
                         }
