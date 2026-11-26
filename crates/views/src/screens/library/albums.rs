@@ -490,7 +490,7 @@ impl TableSource for AlbumSource {
 }
 
 /// The positive values among `values`, sorted and without repeats, as a range filter's stops.
-fn stops(values: impl Iterator<Item = f32>) -> Vec<f32> {
+pub(super) fn stops(values: impl Iterator<Item = f32>) -> Vec<f32> {
     let mut stops: Vec<f32> = values.filter(|value| *value > 0.).collect();
     stops.sort_by(f32::total_cmp);
     stops.dedup();
