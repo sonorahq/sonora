@@ -10,9 +10,9 @@ type Build<V> = Rc<dyn Fn(&mut V, &mut Window, &mut Context<V>) -> AnyElement>;
 
 /// A piece of a page drawn as a view of its own and laid out cached, so that whatever animates
 /// beside it renders the page again without building the piece. It rebuilds when the page
-/// notifies, and stands as tall as its content measured the last time it drew. Cached, its
-/// content rounds to device pixels from the part's own origin, so on a half-pixel origin an edge
-/// that falls between pixels may land one device pixel away from where inline layout puts it.
+/// notifies, and stands as tall as its content measured the last time it drew. Its content is
+/// laid out from the part's unrounded box, so every edge rounds to the same device pixel as it
+/// would inline.
 pub(crate) struct Part<V: 'static> {
     page: WeakEntity<V>,
     build: Build<V>,
