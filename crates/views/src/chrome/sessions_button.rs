@@ -272,7 +272,8 @@ impl Render for SessionsButton {
             false => self.spin.stop(),
         }
         let turn = self.spin.turn(window, cx);
-        let glyph = match connecting {
+        // the loader stays until it has sprung back to rest, so no device icon turns
+        let glyph = match connecting || turn != 0. {
             true => "icons/loader-circle.svg",
             false => elsewhere
                 .as_ref()
