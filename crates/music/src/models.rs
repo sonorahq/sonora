@@ -101,6 +101,7 @@ pub struct Track {
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
+    #[serde(deserialize_with = "crate::calendar::lenient")]
     pub release_date: Option<ReleaseDate>,
     pub playcount: Option<u64>,
     pub popularity: u32,
@@ -218,6 +219,7 @@ pub struct Album {
     pub release_type: ReleaseType,
     pub year: i32,
     pub track_count: u32,
+    #[serde(deserialize_with = "crate::calendar::lenient")]
     pub release_date: Option<ReleaseDate>,
     pub label: String,
     pub copyrights: Vec<String>,
