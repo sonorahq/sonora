@@ -143,7 +143,7 @@ pub(crate) async fn login(
         }),
         ..Default::default()
     };
-    for _ in 0..ROUNDS {
+    for round in 1..=ROUNDS {
         let body = request.encode_to_vec();
         let response = http::request(|client| {
             client
@@ -171,7 +171,8 @@ pub(crate) async fn login(
                 credential: ok.stored_credential,
             });
         }
-        if let Some(challenges) = reply.challenges {
+        // a last round's answers would never be sent, so they are not worked out
+        if let Some(challenges) = reply.challenges.filter(|_| round < ROUNDS) {
             let context = reply.login_context.clone();
             let solutions = tokio::task::spawn_blocking(move || solve(&context, &challenges))
                 .await

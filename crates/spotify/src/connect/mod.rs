@@ -223,7 +223,9 @@ impl Worker {
                 }
                 (start, smart) = when_ready(self.play_read.as_mut().map(|(read, _)| read)) => {
                     if let Some((_, reply)) = self.play_read.take() {
-                        self.smart = smart;
+                        if start.is_some() {
+                            self.smart = smart;
+                        }
                         self.finish_play(start, reply);
                     }
                 }
@@ -584,16 +586,17 @@ impl Worker {
         self.sync(before).await;
     }
 
-    /// Lets a change made in the app end smart shuffle: switching shuffle off ends it, and another
-    /// collection or stopped playback ends it for the playlist it was on. Only a change since the
-    /// last report counts, so a report sent while a smart shuffle start is on its way leaves it.
+    /// Lets a change made in the app end smart shuffle: switching shuffle off, or starting again
+    /// unshuffled, ends it, and another collection or stopped playback ends it for the playlist it
+    /// was on. Only a change since the last report counts, so a report sent while a smart shuffle
+    /// start is on its way leaves it.
     fn follow_smart(&mut self, before: Option<&Snapshot>) {
         let Some(now) = self.now.clone() else {
             self.smart = None;
             return;
         };
         let shuffle_was = before.map(|before| before.shuffle);
-        if now.shuffle == Some(false) && shuffle_was.is_some_and(|was| was != Some(false)) {
+        if now.shuffle == Some(false) && shuffle_was.is_none_or(|was| was != Some(false)) {
             self.smart_mode = false;
             self.smart = None;
             self.smart_read = None;
