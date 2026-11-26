@@ -1,7 +1,158 @@
-//! Dates as providers write them, turned into seconds since the epoch.
+//! Partial release dates and provider timestamps.
 //!
 //! Every provider stamps when something was added or changed, and each spells it a little
 //! differently, so one tolerant reader serves them all rather than one per provider.
+
+use std::fmt;
+
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// A release date with the precision supplied by the provider. It is stored as the ISO date it
+/// spells, such as `2017-10` for a month, which is also how builds before it stored a date.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseDate {
+    Year(u32),
+    YearMonth { year: u32, month: u8 },
+    YearMonthDay { year: u32, month: u8, day: u8 },
+}
+
+impl ReleaseDate {
+    /// Builds a date from the longest valid prefix of its components.
+    pub fn from_parts(year: i32, month: i32, day: i32) -> Option<Self> {
+        if !(1..=9999).contains(&year) {
+            return None;
+        }
+        let year = year as u32;
+        if !(1..=12).contains(&month) {
+            return Some(Self::Year(year));
+        }
+        let month = month as u8;
+        if jiff::civil::Date::new(year as i16, month as i8, day.try_into().ok().unwrap_or(0))
+            .is_ok()
+        {
+            Some(Self::YearMonthDay {
+                year,
+                month,
+                day: day as u8,
+            })
+        } else {
+            Some(Self::YearMonth { year, month })
+        }
+    }
+
+    /// Reads a partial or full ISO date, ignoring a time suffix.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim().split(['T', ' ']).next()?;
+        let mut parts = value.split('-');
+        let year = parts.next()?;
+        if year.len() != 4 {
+            return None;
+        }
+        let month = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+        let day = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+        Self::from_parts(year.parse().ok()?, month, day)
+    }
+
+    /// Returns the date components in chronological sort order.
+    pub fn parts(self) -> (u32, Option<u8>, Option<u8>) {
+        match self {
+            Self::Year(year) => (year, None, None),
+            Self::YearMonth { year, month } => (year, Some(month), None),
+            Self::YearMonthDay { year, month, day } => (year, Some(month), Some(day)),
+        }
+    }
+
+    pub fn year(self) -> u32 {
+        self.parts().0
+    }
+
+    /// Checks whether a more precise date agrees with all the known components.
+    pub(crate) fn is_prefix_of(self, other: Self) -> bool {
+        let (year, month, day) = self.parts();
+        let (other_year, other_month, other_day) = other.parts();
+        year == other_year
+            && month.is_none_or(|month| Some(month) == other_month)
+            && day.is_none_or(|day| Some(day) == other_day)
+    }
+}
+
+impl fmt::Display for ReleaseDate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Year(year) => write!(f, "{year:04}"),
+            Self::YearMonth { year, month } => write!(f, "{year:04}-{month:02}"),
+            Self::YearMonthDay { year, month, day } => write!(f, "{year:04}-{month:02}-{day:02}"),
+        }
+    }
+}
+
+impl Serialize for ReleaseDate {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ReleaseDate {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let spelled = Spelled::deserialize(deserializer)?;
+        spelled
+            .date()
+            .ok_or_else(|| D::Error::custom("not a release date"))
+    }
+}
+
+/// Reads an optional release date the way any build stored it: an ISO string, empty when there
+/// was none, or the tagged form a development build wrote. A string that is no date reads as
+/// none, so one odd value never loses the album or track around it.
+pub fn lenient<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ReleaseDate>, D::Error> {
+    Ok(Option::<Spelled>::deserialize(deserializer)?.and_then(Spelled::date))
+}
+
+/// Every way a release date has been written down.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Spelled {
+    Text(String),
+    Tagged(Tagged),
+}
+
+/// The externally tagged form serde derived for [`ReleaseDate`] in development builds.
+#[derive(Deserialize)]
+enum Tagged {
+    Year(u32),
+    YearMonth { year: u32, month: u8 },
+    YearMonthDay { year: u32, month: u8, day: u8 },
+}
+
+impl Spelled {
+    fn date(self) -> Option<ReleaseDate> {
+        match self {
+            Self::Text(text) => ReleaseDate::parse(&text),
+            Self::Tagged(Tagged::Year(year)) => Some(ReleaseDate::Year(year)),
+            Self::Tagged(Tagged::YearMonth { year, month }) => {
+                Some(ReleaseDate::YearMonth { year, month })
+            }
+            Self::Tagged(Tagged::YearMonthDay { year, month, day }) => {
+                Some(ReleaseDate::YearMonthDay { year, month, day })
+            }
+        }
+    }
+}
+
+impl Ord for ReleaseDate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.parts().cmp(&other.parts())
+    }
+}
+
+impl PartialOrd for ReleaseDate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// An ISO-8601 stamp as seconds since the epoch. It takes a bare date (`2026-09-15`), a date and
 /// time joined by `T` or a space, fractional seconds, and a `Z`, `+02:00` or `+0000` offset,

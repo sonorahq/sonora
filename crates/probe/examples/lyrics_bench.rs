@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use lyric_sources::{kugou, lrclib, lrcred, musixmatch, netease};
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery, MusicApi, Track, TrackKey};
-use spotify::{AuthConfig, LibrespotClient, auth};
+use spotify::{AuthConfig, SpotifyClient, auth};
 
 const SOURCES: [&str; 7] = [
     "Spotify",
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
         .await
         .context("cannot restore the cached session")?
         .context("no cached credentials; sign in with sonora first")?;
-    let client = Arc::new(LibrespotClient::new(session));
+    let client = Arc::new(SpotifyClient::new(session));
     let providers = providers();
 
     if let Ok(wanted) = std::env::var("FIND") {

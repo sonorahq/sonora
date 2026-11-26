@@ -5,31 +5,32 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aes.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
+ctr.workspace = true
+dirs.workspace = true
+engine.workspace = true
 fastrand.workspace = true
-flate2.workspace = true
 futures.workspace = true
 gethostname.workspace = true
 http.workspace = true
 jiff.workspace = true
-librespot-core.workspace = true
-librespot-playback.workspace = true
-librespot-protocol.workspace = true
 log.workspace = true
 lyrics.workspace = true
 music.workspace = true
-oauth2.workspace = true
 open.workspace = true
-protobuf.workspace = true
 reqwest.workspace = true
+ring.workspace = true
+rodio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 soloist.workspace = true
 sound.workspace = true
+spotifyapis.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

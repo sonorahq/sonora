@@ -5,6 +5,7 @@ members-picked = Queued the song playing now
 # login
 login-restoring = Checking your saved session…
 login-authorizing = Waiting for authorization in your browser…
+login-browser-confirmed = Sign-in complete. You can return to Sonora.
 login-signed-in = Signed in as { $name }
 login-failed-title = Sign-in failed
 login-window-title = Sign in to { $provider }
@@ -126,7 +127,7 @@ powerbar-song = Go to song
 
 # search page
 search-placeholder = What do you want to listen to?
-search-browse = Browse all
+search-browse = Browse
 search-submit = Search
 search-open-link = Open link in Sonora
 search-recent = Recent searches
@@ -149,6 +150,7 @@ song-eyebrow = Song
 song-view-album = View album
 song-about = About this song
 song-album = Album
+song-album-artist = Album artist
 song-released = Released
 song-streams = Streams
 song-position = Position
@@ -160,6 +162,9 @@ song-credits = Credits
 song-performed-by = Performed by
 song-details = Genres & details
 song-genres = Genres
+song-tempo = Tempo
+song-moods = Moods
+song-tags = Tags
 song-language = Language
 song-content = Content
 song-explicit = Explicit

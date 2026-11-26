@@ -3,7 +3,7 @@ use std::time::Duration;
 use music::{
     Album, ArtistRef, Playlist, ReleaseType, SavedArtist, Track, UserProfile, iso_8601_to_epoch,
 };
-use opensubsonic::data::{AlbumId3, ArtistId3, Child, ItemGenre, RecordLabel};
+use opensubsonic::data::{AlbumId3, ArtistId3, Child, ItemDate, ItemGenre, RecordLabel};
 
 pub fn track(song: Child, cover: Option<String>) -> Track {
     // only an OpenSubsonic server names the album's artists, so a plain one leaves this empty
@@ -33,15 +33,16 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         cover,
         duration: Duration::from_secs(song.duration.unwrap_or(0).max(0) as u64),
         added_at: iso_8601_to_epoch(song.created.as_deref()),
-        added_by: None,
+        release_date: music::ReleaseDate::from_parts(song.year.unwrap_or_default(), 0, 0),
         playcount: song.play_count.map(|count| count as u64),
-        popularity: 0,
         explicit: song.explicit_status.as_deref() == Some("explicit"),
         track_number: song.track.unwrap_or(0).max(0) as u32,
         disc_number: song.disc_number.unwrap_or(1).max(1) as u32,
-        tags: genres(song.genres.as_deref(), song.genre),
-        languages: Vec::new(),
-        credits: Vec::new(),
+        genres: genres(song.genres.as_deref(), song.genre),
+        tags: song.groupings.unwrap_or_default(),
+        moods: song.moods.unwrap_or_default(),
+        bpm: song.bpm.filter(|bpm| *bpm > 0).map(|bpm| bpm as f32),
+        ..Track::default()
     }
 }
 
@@ -66,6 +67,18 @@ fn genres(listed: Option<&[ItemGenre]>, single: Option<String>) -> Vec<String> {
         .collect()
 }
 
+/// Reads the date of an OpenSubsonic release, falling back to the legacy year.
+pub(super) fn release_date(date: Option<&ItemDate>, year: i32) -> Option<music::ReleaseDate> {
+    date.and_then(|date| {
+        music::ReleaseDate::from_parts(
+            date.year.unwrap_or(year),
+            date.month.unwrap_or_default(),
+            date.day.unwrap_or_default(),
+        )
+    })
+    .or_else(|| music::ReleaseDate::from_parts(year, 0, 0))
+}
+
 pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String>) -> Album {
     let (artists, artist_refs) = artists_of(
         source.artist,
@@ -85,10 +98,7 @@ pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String
         release_type: release_type(source.release_types.as_deref(), source.is_compilation),
         year,
         track_count: source.song_count.unwrap_or(0).max(0) as u32,
-        release_date: match year {
-            0 => String::new(),
-            _ => year.to_string(),
-        },
+        release_date: release_date(source.release_date.as_ref(), year),
         label,
         copyrights: Vec::new(),
         added_at: iso_8601_to_epoch(source.created.as_deref()),
@@ -127,6 +137,7 @@ pub fn playlist(
 ) -> Playlist {
     let owner = owner.unwrap_or_default().to_owned();
     Playlist {
+        revision: None,
         id: id.to_owned(),
         name: name.to_owned(),
         owner: owner.clone(),

@@ -143,7 +143,7 @@ impl ItemMenu {
         {
             return self.build(tracks, None, None, None, columns, cx);
         }
-        let remove = match ids.is_empty() {
+        let remove = match ids.is_empty() || !detail.read(cx).playlist_tracks_complete() {
             true => MenuItem::new(
                 "remove-from-playlist",
                 t!("menu-remove-tracks-from-playlist", count = count),

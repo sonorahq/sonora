@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use mdns_sd::ServiceDaemon;
 use music::connect::{
-    Command, Connect, Device, Elsewhere, Event, Invite, QueuedTrack, Request, Roster, Snapshot,
-    Start,
+    Command, Connect, Device, Elsewhere, Event, Invite, Mode, QueuedTrack, Request, Roster,
+    Snapshot, Start,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -190,7 +190,7 @@ impl Worker {
 
     async fn handle(&mut self, request: Request) -> Result<()> {
         match request {
-            Request::Enable(on) => self.enable(on)?,
+            Request::Mode(mode) => self.enable(mode != Mode::Off)?,
             Request::Publish(now) => *lock(&self.shared.now) = now,
             Request::Transfer(device) if device == HERE => self.take_back().await?,
             Request::Transfer(device) => {
@@ -209,7 +209,10 @@ impl Worker {
             Request::Leave => {
                 self.shared.out.send(Event::LeaveFailed).ok();
             }
-            Request::Rename(_) | Request::Kick(_) => {}
+            Request::Rename(_)
+            | Request::Kick(_)
+            | Request::ControlLocal(_)
+            | Request::Jump { .. } => {}
         }
         Ok(())
     }
@@ -714,6 +717,7 @@ async fn control(shared: &Arc<Shared>, device: &str, command: Command) -> Result
         | Command::Shuffle(_)
         | Command::Repeat(_)
         | Command::SetQueue { .. }
+        | Command::SelectQueue(_)
         | Command::Start(_) => Ok(()),
     }
 }
@@ -733,7 +737,11 @@ fn report(shared: &Shared) {
                 device: device(cast),
                 state: Arc::new(state),
             });
-        Roster { devices, elsewhere }
+        Roster {
+            local: None,
+            devices,
+            elsewhere,
+        }
     };
     shared.out.send(Event::Roster(roster)).ok();
 }

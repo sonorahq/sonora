@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -1133,6 +1134,8 @@ pub enum LibraryEvent {
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),
+    /// A remote playlist edit with the revision reported by its provider.
+    PlaylistChangedRemotely(String, Option<Vec<u8>>),
     /// The provider answered `open_smart_playlist`; the rules editor reads `smart_editing`.
     SmartPlaylistReady(String),
     /// A playlist's new order was written, so a page that put off loading it again can do it now.
@@ -1260,6 +1263,12 @@ impl LibraryState {
     }
 }
 
+/// The applied track membership and its provider revision.
+struct Membership {
+    tracks: HashSet<String>,
+    revision: Option<Vec<u8>>,
+}
+
 impl gpui::EventEmitter<LibraryEvent> for Library {}
 
 pub struct Library {
@@ -1270,6 +1279,8 @@ pub struct Library {
     /// Reads the streaming playlists again after one changed elsewhere, without the rest of
     /// the shelf.
     relisting: Option<Task<()>>,
+    // An empty map requests the full playlist list.
+    pending_relist: Option<HashMap<String, Option<Vec<u8>>>>,
     pin_targets_task: Option<Task<()>>,
     pin_task: Option<Task<()>>,
     pin_targets: Option<Vec<music::PinTarget>>,
@@ -1278,10 +1289,10 @@ pub struct Library {
     pending_artists: HashMap<String, Task<()>>,
     /// Tracks and albums on their way into or out of the provider's own library, by id.
     pending_library: HashMap<String, Task<()>>,
-    contents: HashMap<String, HashSet<String>>,
+    contents: HashMap<String, Membership>,
     hidden_local_tracks: HashSet<String>,
-    reading: HashMap<String, Task<()>>,
-    mosaics: HashMap<String, Task<()>>,
+    reading: HashMap<String, Rc<Task<()>>>,
+    mosaics: mosaic::Tasks,
     snapshots: Snapshots,
     priming: [Option<Task<()>>; 2],
     /// Whether each shelf is done reading the last run's snapshot, found or not.
@@ -1322,6 +1333,8 @@ impl Library {
                 this.smart_opening += 1;
                 this.smart_editing = None;
                 this.pin_task = None;
+                this.relisting = None;
+                this.pending_relist = None;
                 if !session.read(cx).authenticated() {
                     this.pin_targets_task = None;
                     this.pin_targets = None;
@@ -1330,7 +1343,6 @@ impl Library {
                     return;
                 }
                 this.playlist_task = None;
-                this.relisting = None;
                 this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -1365,6 +1377,7 @@ impl Library {
                 this.mosaics.clear();
                 this.playlist_task = None;
                 this.relisting = None;
+                this.pending_relist = None;
                 this.forget_reorders(cx);
                 this.pending.clear();
                 this.pending_albums.clear();
@@ -1409,6 +1422,7 @@ impl Library {
             io,
             playlist_task: None,
             relisting: None,
+            pending_relist: None,
             pin_targets_task: None,
             pin_task: None,
             pin_targets: None,
@@ -1591,10 +1605,11 @@ impl Library {
         done: impl FnOnce(bool, &mut App) + 'static,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .pin_targets
-            .as_ref()
-            .is_some_and(|items| holds_pin(items, &uri) == pinned)
+        if pinned
+            && self
+                .pin_targets
+                .as_ref()
+                .is_some_and(|items| holds_pin(items, &uri))
         {
             return;
         }
@@ -1627,6 +1642,7 @@ impl Library {
                         this.pin_targets = items;
                         done(true, cx);
                     }
+                    Ok((music::PinOutcome::Accepted, _)) => done(true, cx),
                     Ok((music::PinOutcome::LimitReached, _)) => {
                         log::debug!(
                             "library: the provider's pin limit is reached, pinning locally"
@@ -2173,8 +2189,14 @@ impl Library {
             },
             move |this, (playlist, contents), cx| {
                 let unread = contents.is_none();
-                if let Some(ids) = contents {
-                    this.contents.insert(playlist.id.clone(), ids);
+                if let Some(tracks) = contents {
+                    this.contents.insert(
+                        playlist.id.clone(),
+                        Membership {
+                            tracks,
+                            revision: None,
+                        },
+                    );
                 }
                 this.insert_playlist(playlist, cx);
                 if unread {
@@ -2500,25 +2522,18 @@ impl Library {
                     })?),
                     None => None,
                 };
-                client.set_playlist_cover(&id, image.as_deref()).await?;
-                if let Some(name) = &name {
-                    client.rename_playlist(&id, name).await?;
-                }
-                let reported = match client.playlist(&id).await {
-                    Ok(detail) => detail.playlist.cover,
-                    Err(error) => {
-                        log::warn!("library: cannot read a playlist after its cover: {error:#}");
-                        None
-                    }
-                };
+                let reported = client
+                    .edit_playlist_appearance(&id, name.as_deref(), image.as_deref())
+                    .await?;
                 Ok(match picture {
                     Some(path) if reported.is_none() || reported == before => {
-                        Some(format!("file://{}", path.display()))
+                        (Some(format!("file://{}", path.display())), true)
                     }
-                    _ => reported,
+                    Some(_) => (reported, false),
+                    None => (reported, true),
                 })
             },
-            move |this, cover, cx| {
+            move |this, (cover, refresh), cx| {
                 let bare = cover.is_none();
                 this.amend_playlist(
                     &changed,
@@ -2533,7 +2548,9 @@ impl Library {
                 if bare {
                     this.build_mosaics(cx);
                 }
-                cx.emit(LibraryEvent::PlaylistChanged(changed));
+                if refresh || this.playlist(&changed).is_none() {
+                    cx.emit(LibraryEvent::PlaylistChanged(changed));
+                }
             },
             cx,
         );
@@ -2569,7 +2586,11 @@ impl Library {
         }
         let added = playlist_id.clone();
         let known = match addition {
-            Addition::Album(_) => self.contents.get(&playlist_id).cloned().unwrap_or_default(),
+            Addition::Album(_) => self
+                .contents
+                .get(&playlist_id)
+                .map(|membership| membership.tracks.clone())
+                .unwrap_or_default(),
             Addition::Tracks(_) => HashSet::new(),
         };
         let name = self
@@ -2795,8 +2816,9 @@ impl Library {
             cx,
         );
         self.reading.remove(playlist_id);
-        if let Some(ids) = self.contents.get_mut(playlist_id) {
-            ids.extend(track_ids);
+        if let Some(membership) = self.contents.get_mut(playlist_id) {
+            membership.revision = None;
+            membership.tracks.extend(track_ids);
         } else {
             self.read_playlists(Shelf::of(playlist_id), cx);
         }
@@ -2813,15 +2835,16 @@ impl Library {
         dropped_count: u32,
         cx: &mut Context<Self>,
     ) {
+        self.reading.remove(playlist_id);
         self.amend_playlist(
             playlist_id,
             |playlist| playlist.track_count = playlist.track_count.saturating_sub(dropped_count),
             cx,
         );
-        self.reading.remove(playlist_id);
-        if let Some(ids) = self.contents.get_mut(playlist_id) {
+        if let Some(membership) = self.contents.get_mut(playlist_id) {
+            membership.revision = None;
             for track in &track_ids {
-                ids.remove(track);
+                membership.tracks.remove(track);
             }
         } else {
             self.read_playlists(Shelf::of(playlist_id), cx);
@@ -3239,7 +3262,7 @@ impl Library {
         let held = self.contents.get(&playlist_id);
         let tracks: Vec<String> = tracks
             .into_iter()
-            .filter(|track| !held.is_some_and(|held| held.contains(track)))
+            .filter(|track| !held.is_some_and(|held| held.tracks.contains(track)))
             .collect();
         self.add_tracks_to_playlist(playlist_id, Addition::Tracks(tracks), cx);
     }
@@ -3255,7 +3278,7 @@ impl Library {
     }
 
     pub fn holds(&self, playlist_id: &str, track_id: &str) -> Option<bool> {
-        Some(self.contents.get(playlist_id)?.contains(track_id))
+        Some(self.contents.get(playlist_id)?.tracks.contains(track_id))
     }
 
     /// Gives each coverless streaming playlist the mosaic already on disk for it, and answers
@@ -3286,39 +3309,27 @@ impl Library {
     }
 
     fn build_mosaics(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.adopt_mosaics();
+        let wanted: Vec<_> = self
+            .adopt_mosaics()
+            .into_iter()
+            .filter(|(id, _)| !self.mosaics.contains_key(id) && !self.is_editable(id))
+            .collect();
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
-
-        for (id, stamp) in wanted {
-            if self.mosaics.contains_key(&id) {
-                continue;
-            }
-            if self.is_editable(&id) {
-                continue;
-            }
-
-            let io = self.io.clone();
-            let client = client.clone();
-            let asked = id.clone();
-            let key = id.clone();
-            let task = cx.spawn(async move |this, cx| {
-                let covers = join(io.spawn(async move {
-                    let _turn = READS.acquire().await;
-                    client.playlist_covers(&asked, mosaic::TILES).await
-                }))
-                .await;
-                match covers {
-                    Ok(covers) => {
-                        this.update(cx, |this, cx| this.paint_mosaic(id, stamp, covers, cx))
-                            .ok();
-                    }
-                    Err(error) => log::warn!("library: cannot read playlist covers: {error:#}"),
+        self.mosaics.extend(mosaic::fetch_covers(
+            &self.io,
+            client,
+            wanted,
+            Some(&READS),
+            |this| &mut this.mosaics,
+            |this, id, stamp, covers, cx| {
+                if this.mosaic_stamp(&id) == Some(stamp) {
+                    this.paint_mosaic(id, stamp, covers, cx);
                 }
-            });
-            self.mosaics.insert(key, task);
-        }
+            },
+            cx,
+        ));
     }
 
     fn mosaic_stamp(&self, id: &str) -> Option<u32> {
@@ -3346,28 +3357,16 @@ impl Library {
             return;
         }
 
-        let io = self.io.clone();
-        let http = cx.http_client();
-        let built_for = id.clone();
-        let key = id.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let built =
-                join(io.spawn(async move { mosaic::build(http, &built_for, stamp, covers).await }))
-                    .await;
-
-            this.update(cx, |this, cx| {
-                this.mosaics.remove(&id);
-                match built {
-                    Ok(cover) => {
-                        this.set_playlist_cover(&id, cover);
-                        cx.notify();
-                    }
-                    Err(error) => log::warn!("library: cannot build a mosaic: {error:#}"),
-                }
-            })
-            .ok();
-        });
-        self.mosaics.insert(key, task);
+        let task = mosaic::paint(
+            &self.io,
+            id.clone(),
+            stamp,
+            covers,
+            |this| &mut this.mosaics,
+            Self::set_playlist_cover,
+            cx,
+        );
+        self.mosaics.insert(id, task);
     }
 
     fn set_playlist_cover(&mut self, id: &str, cover: String) {
@@ -3399,41 +3398,75 @@ impl Library {
         client: Arc<dyn MusicApi>,
         cx: &mut Context<Self>,
     ) {
-        for id in wanted {
-            let io = self.io.clone();
-            let client = client.clone();
-            let key = id.clone();
-            let asked = id.clone();
-            let task = cx.spawn(async move |this, cx| {
-                let listed = join(io.spawn(async move {
+        if wanted.is_empty() {
+            return;
+        }
+        let keys = wanted.clone();
+        let wanted: Vec<_> = wanted
+            .into_iter()
+            .map(|id| {
+                let stamp = self.mosaic_stamp(&id);
+                (id, stamp)
+            })
+            .collect();
+        let requests: Vec<_> = wanted
+            .iter()
+            .map(|(id, stamp)| (id.clone(), stamp.map_or(0, |_| mosaic::TILES)))
+            .collect();
+        let task = Rc::new_cyclic(|batch| {
+            let batch = batch.clone();
+            self.io.load(
+                async move {
                     let _turn = READS.acquire().await;
-                    let tracks = client.playlist_tracks(&asked).await?;
-                    let covers = music::distinct_covers(&tracks, mosaic::TILES);
-                    let ids: HashSet<String> =
-                        tracks.into_iter().filter_map(|track| track.id).collect();
-                    anyhow::Ok((ids, covers))
-                }))
-                .await;
-
-                this.update(cx, |this, cx| {
-                    this.reading.remove(&key);
-                    match listed {
-                        Ok((ids, covers)) => {
-                            if let Some(stamp) = this.mosaic_stamp(&key) {
-                                this.paint_mosaic(key.clone(), stamp, covers, cx);
-                            }
-                            this.contents.insert(key, ids);
-                            cx.notify();
+                    Ok(client.playlist_memberships(&requests).await)
+                },
+                move |this, listed, cx| {
+                    let Some(batch) = batch.upgrade() else { return };
+                    let mut listed = listed
+                        .unwrap_or_else(|error| {
+                            log::warn!("library: cannot read playlist membership: {error:#}");
+                            Vec::new()
+                        })
+                        .into_iter();
+                    for (id, requested_stamp) in wanted {
+                        let result = listed.next();
+                        if !this
+                            .reading
+                            .get(&id)
+                            .is_some_and(|task| Rc::ptr_eq(task, &batch))
+                        {
+                            continue;
                         }
-                        Err(error) => {
-                            log::warn!("library: cannot read a playlist: {error:#}")
+                        this.reading.remove(&id);
+                        match result {
+                            Some(Ok(membership)) => {
+                                if !this.mosaics.contains_key(&id)
+                                    && let Some(stamp) = requested_stamp
+                                    && this.mosaic_stamp(&id) == Some(stamp)
+                                {
+                                    this.paint_mosaic(id.clone(), stamp, membership.covers, cx);
+                                }
+                                this.contents.insert(
+                                    id,
+                                    Membership {
+                                        tracks: membership.tracks,
+                                        revision: membership.revision,
+                                    },
+                                );
+                            }
+                            Some(Err(error)) => {
+                                log::warn!("library: cannot read a playlist: {error:#}")
+                            }
+                            None => {}
                         }
                     }
-                })
-                .ok();
-            });
-            self.reading.insert(id, task);
-        }
+                    cx.notify();
+                },
+                cx,
+            )
+        });
+        self.reading
+            .extend(keys.into_iter().map(|id| (id, task.clone())));
     }
 
     pub fn playlist(&self, id: &str) -> Option<&Playlist> {
@@ -3522,18 +3555,9 @@ impl Library {
             on_result(self, Err(()), cx);
             return false;
         };
-        let catalog = invalidated
-            .first()
-            .and_then(|id| self.session.read(cx).catalog(id));
         let io = self.io.clone();
         self.playlist_task = Some(cx.spawn(async move |this, cx| {
             let result = join(io.spawn(async move { mutation(client).await })).await;
-            // A change that failed part way may still have landed in part.
-            if let Some(catalog) = catalog {
-                for id in &invalidated {
-                    catalog.invalidate_playlist(id).await;
-                }
-            }
             this.update(cx, |this, cx| {
                 this.playlist_task = None;
                 match result {
@@ -3620,7 +3644,10 @@ impl Library {
         amend: impl FnOnce(&mut Playlist),
         cx: &mut Context<Self>,
     ) {
-        if self.amend_playlist_quietly(id, amend) {
+        if self.amend_playlist_quietly(id, |playlist| {
+            amend(playlist);
+            playlist.revision = None;
+        }) {
             cx.notify();
         }
     }
@@ -3680,50 +3707,120 @@ impl Library {
     }
 
     /// Drops what is cached for the playlists another client changed, so their pages read
-    /// again. A change to the library's own lists reloads the streaming shelf, while a change
-    /// inside a playlist only reads the playlist list again for its name, cover and count.
+    /// again. Root-list changes refresh playlists and pins. Changes inside individual playlists
+    /// refresh their summary rows.
     pub(crate) fn changed_elsewhere(
         &mut self,
-        playlists: HashSet<String>,
-        listed: bool,
+        playlists: HashMap<String, Option<Vec<u8>>>,
+        library_changed: bool,
+        list_changed: bool,
         cx: &mut Context<Self>,
     ) {
-        for id in playlists {
-            self.reading.remove(&id);
-            self.contents.remove(&id);
-            cx.emit(LibraryEvent::PlaylistChanged(id));
-        }
-        match listed {
-            true => self.refresh(Shelf::Streaming, cx),
-            false => {
-                // a change that only names a playlist may still have moved the pins
-                self.sync_pin_targets(cx);
-                self.relist(cx);
+        let mut membership_only = false;
+        for (id, revision) in &playlists {
+            let membership_current = revision.as_ref().is_some_and(|revision| {
+                self.contents.get(id).and_then(|row| row.revision.as_ref()) == Some(revision)
+            });
+            if !membership_current {
+                self.reading.remove(id);
+                self.contents.remove(id);
+                membership_only |= revision.as_ref().is_some_and(|revision| {
+                    self.playlist(id).and_then(|row| row.revision.as_ref()) == Some(revision)
+                });
             }
+            cx.emit(LibraryEvent::PlaylistChangedRemotely(
+                id.clone(),
+                revision.clone(),
+            ));
         }
+        if library_changed {
+            self.refresh(Shelf::Streaming, cx);
+            return;
+        }
+        if list_changed
+            || self.pin_targets.as_deref().is_some_and(|pins| {
+                pins.iter().any(|pin| {
+                    pin.pinned
+                        && pin.kind == music::PinTargetKind::Playlist
+                        && pin
+                            .uri
+                            .rsplit_once(':')
+                            .is_some_and(|(_, id)| playlists.contains_key(id))
+                })
+            })
+        {
+            self.sync_pin_targets(cx);
+        }
+        if membership_only && !list_changed {
+            self.read_playlists(Shelf::Streaming, cx);
+        }
+        self.relist(
+            if list_changed {
+                HashMap::new()
+            } else {
+                playlists
+            },
+            cx,
+        );
     }
 
-    /// Reads the streaming shelf's playlists again and leaves its other parts as they are. A
-    /// shelf still loading brings its playlists anyway, so nothing more is asked of it.
-    fn relist(&mut self, cx: &mut Context<Self>) {
+    /// Reads the streaming shelf's playlists and coalesces notifications that arrive during a read.
+    fn relist(&mut self, changed: HashMap<String, Option<Vec<u8>>>, cx: &mut Context<Self>) {
         let Some(client) = self.session.read(cx).client_of(Shelf::Streaming) else {
             return;
         };
-        let held = self.held_mut(Shelf::Streaming);
-        if !matches!(held.state, LibraryState::Ready(_))
-            || held.awaited.contains(&LibraryPart::Playlists)
+        if self.relisting.is_some()
+            || self
+                .held(Shelf::Streaming)
+                .awaited
+                .contains(&LibraryPart::Playlists)
         {
+            match self.pending_relist.as_mut() {
+                Some(pending) if changed.is_empty() => pending.clear(),
+                Some(pending) if !pending.is_empty() => pending.extend(changed),
+                Some(_) => {}
+                None => self.pending_relist = Some(changed),
+            }
+            return;
+        }
+        let selected = !changed.is_empty();
+        let held = self.held_mut(Shelf::Streaming);
+        if !matches!(held.state, LibraryState::Ready(_)) {
+            return;
+        }
+        let ids: Vec<_> = held
+            .state
+            .playlists()
+            .iter()
+            .filter(|playlist| {
+                changed
+                    .get(&playlist.id)
+                    .is_some_and(|revision| revision.is_none() || playlist.revision != *revision)
+            })
+            .map(|playlist| playlist.id.clone())
+            .collect();
+        if selected && ids.is_empty() {
             return;
         }
         held.stale.insert(LibraryPart::Playlists);
         self.relisting = Some(self.io.load(
-            async move { client.playlists().await },
+            async move {
+                if selected && let Some(snapshots) = client.playlist_snapshots(ids.clone()).await {
+                    let returned: HashSet<_> =
+                        snapshots.iter().map(|row| row.id.as_str()).collect();
+                    if ids.iter().all(|id| returned.contains(id.as_str())) {
+                        return Ok((true, snapshots));
+                    }
+                }
+                client.playlists().await.map(|playlists| (false, playlists))
+            },
             |this, loaded, cx| {
                 this.relisting = None;
                 // a failed read leaves the playlists on screen as they were, with no problem
                 // noted that only a full refresh would clear
                 match loaded {
-                    Ok(playlists) => {
+                    Ok((true, snapshots)) => this.land_playlist_snapshots(snapshots, cx),
+                    Ok((false, playlists)) => {
                         this.land(Shelf::Streaming, Landed::Playlists(Ok(playlists)), cx)
                     }
                     Err(error) => {
@@ -3733,9 +3830,39 @@ impl Library {
                             .remove(&LibraryPart::Playlists);
                     }
                 }
+                if let Some(changed) = this.pending_relist.take() {
+                    this.relist(changed, cx);
+                }
             },
             cx,
         ));
+    }
+
+    /// Updates only rows that arrived and keeps root-list visibility on each row.
+    fn land_playlist_snapshots(&mut self, snapshots: Vec<Playlist>, cx: &mut Context<Self>) {
+        if snapshots.is_empty() {
+            self.held_mut(Shelf::Streaming)
+                .stale
+                .remove(&LibraryPart::Playlists);
+            return;
+        }
+        let mut snapshots: HashMap<_, _> = snapshots
+            .into_iter()
+            .map(|playlist| (playlist.id.clone(), playlist))
+            .collect();
+        let playlists = self
+            .state(Shelf::Streaming)
+            .playlists()
+            .iter()
+            .map(|previous| {
+                let Some(mut updated) = snapshots.remove(&previous.id) else {
+                    return previous.clone();
+                };
+                updated.public = previous.public;
+                updated
+            })
+            .collect();
+        self.land(Shelf::Streaming, Landed::Playlists(Ok(playlists)), cx);
     }
 
     /// Loads a shelf again from its provider. A shelf that is showing rows keeps them, each part
@@ -3781,6 +3908,7 @@ impl Library {
         // a full load lands the playlists too, and two of them would list each one twice
         if shelf == Shelf::Streaming {
             self.relisting = None;
+            self.pending_relist = None;
         }
         let session = self.session.read(cx);
         let Some(client) = session.client_of(shelf) else {
@@ -3817,13 +3945,23 @@ impl Library {
         let playlists = client.clone();
         let albums = client.clone();
         let artists = client.clone();
+        let (albums_out, albums_in) = oneshot::channel();
         let mut tasks = vec![
             self.stream(
                 shelf,
                 LibraryPart::Tracks,
                 async move {
                     match shape {
-                        Shape::Saved => tracks.saved_tracks_paged().await,
+                        Shape::Saved => match tracks.saved_collection_paged().await {
+                            Some(pages) => {
+                                albums_out.send(Some(pages.albums)).ok();
+                                Ok(pages.tracks)
+                            }
+                            None => {
+                                albums_out.send(None).ok();
+                                tracks.saved_tracks_paged().await
+                            }
+                        },
                         Shape::Catalog(_) => tracks.all_tracks_paged().await,
                     }
                 },
@@ -3840,7 +3978,10 @@ impl Library {
                 LibraryPart::Albums,
                 async move {
                     match shape {
-                        Shape::Saved => albums.saved_albums_paged().await,
+                        Shape::Saved => match albums_in.await? {
+                            Some(pages) => Ok(pages),
+                            None => albums.saved_albums_paged().await,
+                        },
                         Shape::Catalog(_) => albums.all_albums_paged().await,
                     }
                 },
@@ -3975,6 +4116,9 @@ impl Library {
         let before =
             (arrived && part == LibraryPart::Playlists && !shelf.local()).then(|| counts(self));
         let held = self.held_mut(shelf);
+        let listed = shelf == Shelf::Streaming
+            && part == LibraryPart::Playlists
+            && held.awaited.contains(&part);
         held.expected.remove(&part);
         if arrived {
             shed(&mut held.state, &mut held.stale, part);
@@ -3986,13 +4130,22 @@ impl Library {
         if arrived {
             self.keep(shelf, Kind::Listed, part, cx);
         }
-        // A streaming playlist's contents are never read again once known, so one whose count
-        // moved, or that is gone, drops them here and the read below fetches them afresh.
+        // A changed revision, or a changed count when revisions are unavailable, reloads membership.
         if let Some(before) = before {
-            let fresh = counts(self);
-            self.contents.retain(|id, _| {
+            let fresh: HashMap<_, _> = self.shelves[shelf.slot()]
+                .state
+                .playlists()
+                .iter()
+                .map(|row| (row.id.as_str(), row))
+                .collect();
+            self.contents.retain(|id, membership| {
                 Shelf::of(id) != shelf
-                    || (fresh.contains_key(id) && fresh.get(id) == before.get(id))
+                    || fresh.get(id.as_str()).is_some_and(|row| {
+                        match row.revision.as_ref().zip(membership.revision.as_ref()) {
+                            Some((new, old)) if !new.is_empty() && !old.is_empty() => new == old,
+                            _ => before.get(id) == Some(&row.track_count),
+                        }
+                    })
             });
         }
         if part == LibraryPart::Playlists {
@@ -4000,6 +4153,9 @@ impl Library {
             if shelf == Shelf::Streaming {
                 self.build_mosaics(cx);
             }
+        }
+        if listed && let Some(changed) = self.pending_relist.take() {
+            self.relist(changed, cx);
         }
         cx.notify();
     }

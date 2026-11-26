@@ -16,8 +16,6 @@ const PROBE: [Duration; 4] = [
 ];
 /// How long a check may take before it counts as a failure.
 const PATIENCE: Duration = Duration::from_secs(4);
-/// The port a check connects on, which is the one every provider is reached over.
-const PORT: u16 = 443;
 
 /// Raised when the network came back, so a screen that gave up can load again.
 pub struct Reconnected;
@@ -158,10 +156,7 @@ impl Network {
         }
     }
 
-    /// Opens a connection to the active provider's host until one succeeds, waiting longer
-    /// between tries as they keep failing. Nothing is asked of the host but the connection, and
-    /// it is one the app talks to anyway, so no other service ever learns Sonora is running. A
-    /// provider that needs no network hands back no host, and then nothing is tried at all.
+    /// Runs the active provider's reachability check until it succeeds.
     fn watch(&mut self, cx: &mut Context<Self>) {
         let io = self.io.clone();
 
@@ -170,19 +165,16 @@ impl Network {
                 let wait = PROBE[tried.min(PROBE.len() - 1)];
                 cx.background_executor().timer(wait).await;
 
-                let Ok(host) = this.update(cx, |this, cx| this.session.read(cx).reach()) else {
+                let Ok(probe) = this.update(cx, |this, cx| this.session.read(cx).network_probe())
+                else {
                     return;
                 };
-                let Some(host) = host else {
+                let Some(probe) = probe else {
                     continue;
                 };
                 let reached = io
                     .spawn(async move {
-                        let connect = tokio::net::TcpStream::connect((host.as_str(), PORT));
-                        match tokio::time::timeout(PATIENCE, connect).await {
-                            Ok(answer) => answer.is_ok(),
-                            Err(_) => false,
-                        }
+                        matches!(tokio::time::timeout(PATIENCE, probe).await, Ok(true))
                     })
                     .await;
                 if matches!(reached, Ok(true)) {

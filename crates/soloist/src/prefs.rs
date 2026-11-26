@@ -1,27 +1,22 @@
-//! The audio settings Soloist takes from files rather than from its command line.
-//!
-//! The program has no flag for loudness normalisation, gapless joins, crossfade or stream
-//! quality. It reads them at startup from the preference stores Spotify's desktop app uses,
-//! plain `key=value` lines in its data folder, so they are written before every start.
+//! Writes the audio preferences Soloist reads at startup.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
+
 use music::Quality;
 
 const CROSSFADE: &str = "audio.crossfade_v2";
 const CROSSFADE_TIME: &str = "audio.crossfade.time_v2";
 const NORMALISE: &str = "audio.normalize_v2";
 const GAPLESS: &str = "audio.gapless_v2";
-/// The level on a metered connection and on any other, plus the marker that makes the program
-/// read the second rather than derive it from the first.
+/// Quality settings and the flag that enables a separate unmetered level.
 const LEVEL: &str = "audio.play_bitrate_enumeration";
 const LEVEL_UNMETERED: &str = "audio.play_bitrate_non_metered_enumeration";
 const LEVEL_MIGRATED: &str = "audio.play_bitrate_non_metered_migrated";
 
-/// Writes the settings into the shared store and every account's own, whose values win over the
-/// shared ones. Lines the program wrote itself are kept. Blocking.
+/// Updates shared and per-account settings, preserving other lines. Blocks on disk I/O.
 pub(crate) fn write(data: &Path, normalise: bool, gapless: bool, quality: Quality) -> Result<()> {
     let level = level(quality);
     let ours = [
@@ -35,7 +30,7 @@ pub(crate) fn write(data: &Path, normalise: bool, gapless: bool, quality: Qualit
     let managed = |key: &str| key == CROSSFADE_TIME || ours.iter().any(|(ours, _)| *ours == key);
 
     for store in stores(data) {
-        // a store that is there and cannot be read is left alone, with what the program keeps in it
+        // Leave unreadable preference files untouched.
         let kept = match std::fs::read_to_string(&store) {
             Ok(kept) => kept,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -63,7 +58,7 @@ pub(crate) fn write(data: &Path, normalise: bool, gapless: bool, quality: Qualit
     Ok(())
 }
 
-/// The shared store and the one of every account the program has signed in.
+/// Shared and per-account preference files.
 fn stores(data: &Path) -> Vec<PathBuf> {
     let settings = data.join("settings");
     let mut stores = vec![settings.join("prefs")];
@@ -79,8 +74,7 @@ fn stores(data: &Path) -> Vec<PathBuf> {
     stores
 }
 
-/// The program's number for a level: 2 is about 96 kbps, 3 about 160, 4 about 320 and 5
-/// lossless. It falls back to 160 kbps for any number outside 1 to 5.
+/// Maps quality to the Soloist preference values.
 fn level(quality: Quality) -> u8 {
     match quality.within(super::QUALITIES) {
         Quality::HiRes | Quality::Lossless => 5,

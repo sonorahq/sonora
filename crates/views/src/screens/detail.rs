@@ -291,10 +291,14 @@ impl DetailView {
 
         cx.subscribe(&table, |this, _, event, cx| match event {
             TableEvent::DoubleClicked(display) => {
-                page::play(&this.table, &this.playback, *display, cx)
+                if !this.detail.read(cx).previewing_playlist() {
+                    page::play(&this.table, &this.playback, *display, cx);
+                }
             }
             TableEvent::Activated(display) => {
-                page::play_or_toggle(&this.table, &this.playback, *display, cx)
+                if !this.detail.read(cx).previewing_playlist() {
+                    page::play_or_toggle(&this.table, &this.playback, *display, cx);
+                }
             }
             TableEvent::Removed => drop_picked(&this.table, cx),
             TableEvent::Moved { from, to } => this.move_track(*from, *to, cx),
@@ -459,7 +463,7 @@ impl DetailView {
             .map(|header| header.artist_refs.clone())
             .unwrap_or_default();
         let owner = header.and_then(|header| header.owner.clone());
-        let release_date = header.and_then(|header| header.release_date.as_deref());
+        let release_date = header.and_then(|header| header.release_date);
         let owner_name = header.and_then(|header| header.owner_name.clone());
         let track_count = header.map(|header| header.track_count).unwrap_or(0);
         let listed = self.detail.read(cx).tracks();
@@ -503,9 +507,13 @@ impl DetailView {
             strip = strip.text(runtime(duration));
         }
 
-        let play = HeroPlayButton::listed("play-detail", &self.table, self.playback.clone());
-        let shuffle =
+        let mut play = HeroPlayButton::listed("play-detail", &self.table, self.playback.clone());
+        let mut shuffle =
             HeroPlayButton::shuffle_listed("shuffle-detail", &self.table, self.playback.clone());
+        if self.detail.read(cx).previewing_playlist() {
+            play = play.load_origin(None);
+            shuffle = shuffle.load_origin(None);
+        }
         let menu = self.menu(cx);
         // Buttons whose action the overflow menu also offers fold into it from the right when
         // the row runs out of room, Download first and Shuffle last. Play and More always show.
@@ -572,6 +580,7 @@ impl DetailView {
             .pending(header.is_none() && self.detail.read(cx).is_loading())
             .pin(pin)
             .cover(cover)
+            .cover_preview(header.and_then(|header| header.cover_preview.clone()))
             .cover_away(self.cover_viewer.read(cx).is_open())
             .when_some(view_cover, |hero, on_cover| hero.on_cover_click(on_cover))
             .eyebrow(eyebrow)

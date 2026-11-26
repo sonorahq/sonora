@@ -17,6 +17,7 @@ toast-track-moved = Moved to { $name }
 toast-track-removed-unnamed = Removed from the playlist
 toast-playlist-failed = That change could not be saved
 toast-playlist-busy = Another change is still running
+toast-playlist-load-before-removing = Load the full playlist before removing tracks
 toast-playlist-signed-out = Sign in to change playlists
 toast-guest-refused = Sign in to your { $name } account to do that
 toast-playlist-imported = Imported { $name }

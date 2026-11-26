@@ -1,34 +1,30 @@
-//! Reading the one program out of a Soloist release archive. Spotify ships a gzipped tar for
-//! Linux and macOS and a zip for Windows, each holding the program beside a changelog and
-//! licenses.
+//! Extracts the Soloist executable from release archives.
 
 use std::io::Read as _;
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-/// The most an archive may unpack to, well above the program's real size.
+/// Maximum decompressed archive size.
 const LIMIT: usize = 256 * 1024 * 1024;
 
-/// The size of a tar header and the unit file contents are padded to.
+/// Tar header size and file alignment.
 const BLOCK: usize = 512;
 
-/// The file called `wanted` out of `archive`, whose `name` says which of the two formats it is.
+/// Extracts the named file using the format indicated by the archive name.
 pub(crate) fn extract(archive: &[u8], name: &str, wanted: &str) -> Result<Vec<u8>> {
-    match name.ends_with(".zip") {
-        true => unzip(archive, wanted),
-        false => untar(archive, wanted),
+    if name.ends_with(".zip") {
+        unzip(archive, wanted)
+    } else {
+        untar(archive, wanted)
     }
 }
 
 /// One regular file out of a gzipped tar, by its name without folders.
 fn untar(archive: &[u8], wanted: &str) -> Result<Vec<u8>> {
-    let mut tar = Vec::new();
-    flate2::read::GzDecoder::new(archive)
-        .take(LIMIT as u64 + 1)
-        .read_to_end(&mut tar)
-        .context("cannot unpack the soloist archive")?;
-    ensure!(tar.len() <= LIMIT, "the soloist archive is too large");
-
+    let tar = unpack(
+        flate2::read::GzDecoder::new(archive),
+        "cannot unpack the soloist archive",
+    )?;
     let mut at = 0;
     while let Some(header) = tar.get(at..at + BLOCK) {
         if header.iter().all(|byte| *byte == 0) {
@@ -50,8 +46,7 @@ fn untar(archive: &[u8], wanted: &str) -> Result<Vec<u8>> {
     bail!("{wanted} is not in the soloist archive")
 }
 
-/// One file out of a zip, by its name without folders. Stored and deflated entries are
-/// understood.
+/// Reads a named ZIP entry stored or compressed with deflate.
 fn unzip(zip: &[u8], wanted: &str) -> Result<Vec<u8>> {
     const END: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
     const CENTRAL: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
@@ -91,7 +86,10 @@ fn unzip(zip: &[u8], wanted: &str) -> Result<Vec<u8>> {
                 .context("the zip entry is cut short")?;
             return match method {
                 0 => Ok(data.to_vec()),
-                8 => inflate(data),
+                8 => unpack(
+                    flate2::read::DeflateDecoder::new(data),
+                    "cannot inflate the zip entry",
+                ),
                 other => bail!("the zip entry uses compression method {other}"),
             };
         }
@@ -100,12 +98,12 @@ fn unzip(zip: &[u8], wanted: &str) -> Result<Vec<u8>> {
     bail!("{wanted} is not in the soloist archive")
 }
 
-fn inflate(data: &[u8]) -> Result<Vec<u8>> {
+fn unpack(reader: impl std::io::Read, context: &'static str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    flate2::read::DeflateDecoder::new(data)
+    reader
         .take(LIMIT as u64 + 1)
         .read_to_end(&mut out)
-        .context("cannot inflate the zip entry")?;
+        .context(context)?;
     ensure!(out.len() <= LIMIT, "the soloist archive is too large");
     Ok(out)
 }
@@ -120,11 +118,16 @@ fn text(field: &[u8]) -> &str {
 }
 
 fn u16_at(bytes: &[u8], at: usize) -> Result<u16> {
-    let field = bytes.get(at..at + 2).context("the zip is cut short")?;
-    Ok(u16::from_le_bytes([field[0], field[1]]))
+    Ok(u16::from_le_bytes(field_at(bytes, at)?))
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
-    let field = bytes.get(at..at + 4).context("the zip is cut short")?;
-    Ok(u32::from_le_bytes([field[0], field[1], field[2], field[3]]))
+    Ok(u32::from_le_bytes(field_at(bytes, at)?))
+}
+
+fn field_at<const N: usize>(bytes: &[u8], at: usize) -> Result<[u8; N]> {
+    bytes
+        .get(at..at + N)
+        .and_then(|field| field.try_into().ok())
+        .context("the zip is cut short")
 }

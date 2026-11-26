@@ -159,6 +159,7 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         duration: Duration::from_secs(number(value, "duration").unwrap_or(0)),
         added_at: added(wrapper),
         added_by: None,
+        release_date: text(album, "releaseDate").and_then(music::ReleaseDate::parse),
         playcount: None,
         popularity: count(value, "popularity").unwrap_or(0),
         explicit: value
@@ -167,9 +168,11 @@ pub fn track(wrapper: &Value) -> Option<Track> {
             .unwrap_or(false),
         track_number: count(value, "trackNumber").unwrap_or(0),
         disc_number: count(value, "volumeNumber").unwrap_or(1),
+        isrc: None,
         tags: Vec::new(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     })
 }
 
@@ -204,7 +207,7 @@ pub fn album(wrapper: &Value) -> Option<Album> {
             .and_then(|year| year.parse().ok())
             .unwrap_or(0),
         track_count: count(value, "numberOfTracks").unwrap_or(0),
-        release_date: release_date.get(..10).unwrap_or(release_date).to_owned(),
+        release_date: music::ReleaseDate::parse(release_date),
         label: String::new(),
         copyrights: text(value, "copyright")
             .map(|copyright| vec![copyright.to_owned()])
@@ -464,6 +467,7 @@ pub fn playlist(wrapper: &Value, user_id: &str) -> Option<Playlist> {
         .or_else(|| text(value, "created"))
         .and_then(calendar::seconds);
     Some(Playlist {
+        revision: None,
         name: text(value, "title").unwrap_or_default().to_owned(),
         owned: !user_id.is_empty() && owner_id == user_id,
         owner,
@@ -515,6 +519,7 @@ pub fn mix(value: &Value) -> Option<Playlist> {
         })
         .map(str::to_owned);
     Some(Playlist {
+        revision: None,
         id: format!("{MIX}{id}"),
         name: title,
         // Tidal makes every mix. Its subtitles say so in a sentence, or describe the mix.

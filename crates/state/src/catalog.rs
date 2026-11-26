@@ -5,17 +5,16 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use moka::{future::Cache, sync::Cache as SyncCache};
 use music::{
-    AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, GenreDetail, MusicApi,
-    PlaylistDetail, Track,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, GenreDetail,
+    MusicApi, PlaylistDetail, PlaylistPreview, Track,
 };
+use tokio::sync::mpsc;
 
 const ARTISTS: usize = 32;
 const ARTIST_PROFILES: usize = 64;
 const ALBUMS: usize = 48;
 const ALBUM_CATALOGUES: usize = 48;
-const PLAYLISTS: usize = 16;
 const SONGS: usize = 64;
-const GENRES: usize = 24;
 
 #[async_trait]
 trait CatalogBackend: Send + Sync {
@@ -25,11 +24,22 @@ trait CatalogBackend: Send + Sync {
         Ok(ArtistCatalogue::default())
     }
 
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        _preview: mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.artist_catalogue(id, known).await
+    }
+
     async fn artist_profile(&self, id: &str) -> Result<ArtistProfile>;
     async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>>;
     async fn track(&self, id: &str) -> Result<Track>;
-    async fn track_playcount(&self, id: &str) -> Result<Option<u64>>;
     async fn album(&self, id: &str) -> Result<AlbumDetail>;
+    async fn song_album(&self, _id: &str) -> Result<Option<Album>> {
+        Ok(None)
+    }
     async fn album_catalogue(
         &self,
         _album_id: &str,
@@ -38,11 +48,24 @@ trait CatalogBackend: Send + Sync {
         Ok(AlbumCatalogue::default())
     }
     async fn playlist(&self, id: &str) -> Result<PlaylistDetail>;
+    /// Uses the ordinary detail load when the backend has no previews.
+    async fn playlist_with_preview(
+        &self,
+        id: &str,
+        _preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.playlist(id).await
+    }
     async fn playlist_continuation(
         &self,
         continuation: &str,
     ) -> Result<(Vec<Track>, Option<String>)>;
-    async fn genre(&self, id: &str) -> Result<GenreDetail>;
+    async fn genre(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail>;
 }
 
 struct ApiBackend(Arc<dyn MusicApi>);
@@ -55,6 +78,16 @@ impl CatalogBackend for ApiBackend {
     async fn artist_catalogue(&self, id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
         self.0.artist_catalogue(id, known).await
     }
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        preview: mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.0
+            .artist_catalogue_with_preview(id, known, preview)
+            .await
+    }
     async fn artist_profile(&self, id: &str) -> Result<ArtistProfile> {
         self.0.artist_profile(id).await
     }
@@ -64,11 +97,11 @@ impl CatalogBackend for ApiBackend {
     async fn track(&self, id: &str) -> Result<Track> {
         self.0.track(id).await
     }
-    async fn track_playcount(&self, id: &str) -> Result<Option<u64>> {
-        self.0.track_playcount(id).await
-    }
     async fn album(&self, id: &str) -> Result<AlbumDetail> {
         self.0.album(id).await
+    }
+    async fn song_album(&self, id: &str) -> Result<Option<Album>> {
+        self.0.song_album(id).await
     }
     async fn album_catalogue(
         &self,
@@ -80,14 +113,26 @@ impl CatalogBackend for ApiBackend {
     async fn playlist(&self, id: &str) -> Result<PlaylistDetail> {
         self.0.playlist(id).await
     }
+    async fn playlist_with_preview(
+        &self,
+        id: &str,
+        preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.0.playlist_with_preview(id, preview).await
+    }
     async fn playlist_continuation(
         &self,
         continuation: &str,
     ) -> Result<(Vec<Track>, Option<String>)> {
         self.0.playlist_continuation(continuation).await
     }
-    async fn genre(&self, id: &str) -> Result<GenreDetail> {
-        self.0.genre(id).await
+    async fn genre(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail> {
+        self.0.genre_with_preview(id, title, preview).await
     }
 }
 
@@ -148,9 +193,7 @@ pub(crate) struct CatalogSource {
     artist_profiles: CatalogCache<ArtistProfile>,
     albums: CatalogCache<AlbumDetail>,
     album_catalogues: CatalogCache<AlbumCatalogue>,
-    playlists: CatalogCache<PlaylistDetail>,
     songs: CatalogCache<SongPage>,
-    genres: CatalogCache<GenreDetail>,
 }
 
 impl CatalogSource {
@@ -166,9 +209,7 @@ impl CatalogSource {
             artist_profiles: CatalogCache::new(ARTIST_PROFILES),
             albums: CatalogCache::new(ALBUMS),
             album_catalogues: CatalogCache::new(ALBUM_CATALOGUES),
-            playlists: CatalogCache::new(PLAYLISTS),
             songs: CatalogCache::new(SONGS),
-            genres: CatalogCache::new(GENRES),
         }
     }
 
@@ -202,9 +243,14 @@ impl CatalogSource {
         &self,
         id: &str,
         known: &[Track],
+        preview: mpsc::Sender<ArtistCatalogue>,
     ) -> Result<Arc<ArtistCatalogue>> {
         self.catalogues
-            .load(id, self.backend.artist_catalogue(id, known))
+            .load(
+                id,
+                self.backend
+                    .artist_catalogue_with_preview(id, known, preview),
+            )
             .await
     }
 
@@ -220,6 +266,20 @@ impl CatalogSource {
 
     pub(crate) async fn album(&self, id: &str) -> Result<Arc<AlbumDetail>> {
         self.albums.load(id, self.backend.album(id)).await
+    }
+
+    /// Reuses a full album if it is loaded, otherwise reads only what the song page needs.
+    async fn song_album(&self, id: &str) -> Result<Arc<AlbumDetail>> {
+        if let Some(album) = self.peek_album(id) {
+            return Ok(album);
+        }
+        match self.backend.song_album(id).await? {
+            Some(album) => Ok(Arc::new(AlbumDetail {
+                album,
+                tracks: Vec::new(),
+            })),
+            None => self.album(id).await,
+        }
     }
 
     pub(crate) async fn invalidate_album(&self, id: &str) {
@@ -251,16 +311,20 @@ impl CatalogSource {
         self.album_catalogues.invalidate(id).await;
     }
 
-    pub(crate) fn peek_playlist(&self, id: &str) -> Option<Arc<PlaylistDetail>> {
-        self.playlists.peek(id)
-    }
-
     pub(crate) async fn playlist(&self, id: &str) -> Result<Arc<PlaylistDetail>> {
-        self.playlists.load(id, self.backend.playlist(id)).await
+        self.backend.playlist(id).await.map(Arc::new)
     }
 
-    pub(crate) async fn invalidate_playlist(&self, id: &str) {
-        self.playlists.invalidate(id).await;
+    /// Reads the playlist while passing interim batches to the page.
+    pub(crate) async fn playlist_with_preview(
+        &self,
+        id: &str,
+        preview: mpsc::Sender<PlaylistPreview>,
+    ) -> Result<Arc<PlaylistDetail>> {
+        self.backend
+            .playlist_with_preview(id, preview)
+            .await
+            .map(Arc::new)
     }
 
     pub(crate) async fn playlist_continuation(
@@ -270,16 +334,13 @@ impl CatalogSource {
         self.backend.playlist_continuation(continuation).await
     }
 
-    pub(crate) fn peek_genre(&self, id: &str) -> Option<Arc<GenreDetail>> {
-        self.genres.peek(id)
-    }
-
-    pub(crate) async fn genre(&self, id: &str) -> Result<Arc<GenreDetail>> {
-        self.genres.load(id, self.backend.genre(id)).await
-    }
-
-    pub(crate) async fn invalidate_genre(&self, id: &str) {
-        self.genres.invalidate(id).await;
+    pub(crate) async fn genre_with_preview(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        preview: mpsc::Sender<GenreDetail>,
+    ) -> Result<Arc<GenreDetail>> {
+        self.backend.genre(id, title, preview).await.map(Arc::new)
     }
 
     pub(crate) fn peek_song(&self, id: &str) -> Option<Arc<SongPage>> {
@@ -308,7 +369,7 @@ impl CatalogSource {
     pub(crate) async fn song(&self, id: &str) -> Result<Arc<SongPage>> {
         self.songs
             .load(id, async {
-                let track = self.backend.track(id).await?;
+                let mut track = self.backend.track(id).await?;
                 let album_id = track.album_id.clone();
                 let artist_id = track
                     .artist_refs
@@ -333,7 +394,7 @@ impl CatalogSource {
                 let primary_artist = artist_id.clone();
                 let album = async {
                     match album_id {
-                        Some(album_id) => self.album(&album_id).await.ok(),
+                        Some(album_id) => self.song_album(&album_id).await.ok(),
                         None => None,
                     }
                 };
@@ -368,17 +429,29 @@ impl CatalogSource {
                         .iter()
                         .find(|album_track| album_track.id == track.id)
                 });
-                let playcount = match (album_track, track.id.as_deref()) {
-                    (Some(album_track), _) => album_track.playcount,
-                    (None, Some(track_id)) => match self.backend.track_playcount(track_id).await {
-                        Ok(playcount) => playcount,
-                        Err(error) => {
-                            log::warn!("song: cannot read track play count: {error:#}");
-                            None
-                        }
-                    },
-                    (None, None) => None,
-                };
+                let playcount = album_track
+                    .and_then(|track| track.playcount)
+                    .or(track.playcount);
+                if let Some(album_track) = album_track {
+                    if track.genres.is_empty() {
+                        track.genres.clone_from(&album_track.genres);
+                    }
+                    if track.tags.is_empty() {
+                        track.tags.clone_from(&album_track.tags);
+                    }
+                    if track.moods.is_empty() {
+                        track.moods.clone_from(&album_track.moods);
+                    }
+                    if track.album_artist.is_empty() {
+                        track.album_artist.clone_from(&album_track.album_artist);
+                    }
+                    track.bpm = track.bpm.or(album_track.bpm);
+                }
+                if track.album_artist.is_empty()
+                    && let Some(album) = &album
+                {
+                    track.album_artist.clone_from(&album.album.artists);
+                }
                 Ok(SongPage {
                     track,
                     album,
@@ -397,6 +470,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, atomic::AtomicBool};
+    use tokio::sync::mpsc;
 
     use anyhow::anyhow;
     use async_trait::async_trait;
@@ -525,13 +599,6 @@ mod tests {
             self.count("track", id);
             Ok(self.track_value(id))
         }
-        async fn track_playcount(&self, _id: &str) -> anyhow::Result<Option<u64>> {
-            if self.fail_optional.load(Ordering::Relaxed) {
-                Err(anyhow!("playcount failed"))
-            } else {
-                Ok(None)
-            }
-        }
         async fn album(&self, id: &str) -> anyhow::Result<AlbumDetail> {
             self.count("album", id);
             if self.fail_optional.load(Ordering::Relaxed) {
@@ -550,7 +617,12 @@ mod tests {
         ) -> anyhow::Result<(Vec<Track>, Option<String>)> {
             Ok((Vec::new(), None))
         }
-        async fn genre(&self, id: &str) -> anyhow::Result<GenreDetail> {
+        async fn genre(
+            &self,
+            id: &str,
+            _title: Option<&str>,
+            _preview: mpsc::Sender<GenreDetail>,
+        ) -> anyhow::Result<GenreDetail> {
             self.count("genre", id);
             Ok(GenreDetail {
                 name: format!("{}:{id}", self.label),
@@ -623,19 +695,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn playlist_invalidation_is_scoped_to_one_id() {
-        let api = Arc::new(FakeBackend::new("remote"));
-        let catalog = CatalogSource::test(api.clone());
-        catalog.playlist("one").await.unwrap();
-        catalog.playlist("two").await.unwrap();
-        catalog.invalidate_playlist("one").await;
-        catalog.playlist("one").await.unwrap();
-        catalog.playlist("two").await.unwrap();
-        assert_eq!(api.called("playlist", "one"), 2);
-        assert_eq!(api.called("playlist", "two"), 1);
-    }
-
-    #[tokio::test]
     async fn replacing_a_source_cannot_return_the_old_sessions_values() {
         let old = CatalogSource::test(Arc::new(FakeBackend::new("old")));
         assert_eq!(old.artist("same").await.unwrap().name, "old:same");
@@ -644,16 +703,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_details_are_cache_hits() {
+    async fn empty_album_is_cached_and_playlist_and_genre_are_read_again() {
         let api = Arc::new(FakeBackend::new("remote"));
         let catalog = CatalogSource::test(api.clone());
         for _ in 0..2 {
             assert!(catalog.album("empty").await.unwrap().tracks.is_empty());
             assert!(catalog.playlist("empty").await.unwrap().tracks.is_empty());
-            assert!(catalog.genre("empty").await.unwrap().sections.is_empty());
+            let (preview, _updates) = mpsc::channel(1);
+            assert!(
+                catalog
+                    .genre_with_preview("empty", None, preview)
+                    .await
+                    .unwrap()
+                    .sections
+                    .is_empty()
+            );
         }
         assert_eq!(api.called("album", "empty"), 1);
-        assert_eq!(api.called("playlist", "empty"), 1);
-        assert_eq!(api.called("genre", "empty"), 1);
+        assert_eq!(api.called("playlist", "empty"), 2);
+        assert_eq!(api.called("genre", "empty"), 2);
     }
 }

@@ -715,7 +715,7 @@ impl SearchView {
         let Some(&(at, _)) = seats.get(row) else {
             return;
         };
-        let Some(hit) = self.search.read(cx).hits().get(at).cloned() else {
+        let Some(hit) = self.result_hits(stacked, cx).get(at).cloned() else {
             return;
         };
         self.open_hit(hit, cx);
@@ -1133,18 +1133,23 @@ impl SearchView {
         )
     }
 
-    /// Where each hit of the `only` kinds sits: its index among all hits and its place among
-    /// the hits of its kind. The first hit is the best match drawn above the lists, so the
-    /// lists leave it out.
+    fn result_hits<'a>(&self, combined: bool, cx: &'a App) -> &'a [Hit] {
+        let search = self.search.read(cx);
+        if combined {
+            search.hits().get(1..).unwrap_or_default()
+        } else {
+            search.column_hits()
+        }
+    }
+
+    /// Where each hit of the `only` kinds sits: its index in the list and its place among
+    /// the hits of its kind.
     fn seats(&self, only: &[Kind], cx: &App) -> Vec<(usize, usize)> {
         let mut taken = [0; Kind::ALL.len()];
 
-        self.search
-            .read(cx)
-            .hits()
+        self.result_hits(only == Kind::ALL, cx)
             .iter()
             .enumerate()
-            .skip(1)
             .filter_map(|(at, hit)| {
                 let kind = hit.kind();
                 let place = taken[seat(kind)];
@@ -1170,6 +1175,7 @@ impl SearchView {
             _ => ("search-all", &self.mixed),
         };
         let seats = self.seats(only, cx);
+        let combined = only == Kind::ALL;
         if seats.is_empty() {
             let title = t!("search-no-matches");
             let empty = div()
@@ -1216,7 +1222,7 @@ impl SearchView {
                     return div().into_any_element();
                 };
                 let this = view.read(cx);
-                let Some(hit) = this.search.read(cx).hits().get(at) else {
+                let Some(hit) = this.result_hits(combined, cx).get(at) else {
                     return div().into_any_element();
                 };
 

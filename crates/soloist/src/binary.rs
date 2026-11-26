@@ -1,9 +1,4 @@
-//! The Soloist program on disk: downloading it from Spotify, checking that it runs, and reading
-//! which build it is.
-//!
-//! Spotify forbids passing the program on, so Sonora ships none and fetches it from Spotify's own
-//! servers for each listener, the way their documentation tells people to. Every build stops
-//! working 90 days after it was made, which is why a build is replaced well before that.
+//! Downloads and installs Soloist builds before their 90-day expiration.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,7 +10,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 
 use super::archive;
 
-/// Where Spotify publishes the builds, one archive per platform under a fixed name.
+/// Spotify's base URL for platform archives.
 const CDN: &str = "https://soloist-builds.spotifycdn.com";
 
 /// The hosts a download may be redirected to.
@@ -23,43 +18,40 @@ const HOSTS: [&str; 2] = ["spotifycdn.com", "spotify.com"];
 
 const REDIRECTS: usize = 5;
 
-/// How long the download server gets to answer, and how long the whole archive may take on a
-/// slow line before the download is given up.
+/// Connection and total deadlines for the archive download.
 const CONNECT_PATIENCE: Duration = Duration::from_secs(15);
 const DOWNLOAD_PATIENCE: Duration = Duration::from_secs(10 * 60);
 
-/// The most an archive may weigh. A real one is about 14 MB.
+/// Maximum compressed archive size.
 const ARCHIVE_LIMIT: usize = 64 * 1024 * 1024;
 
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// How long Spotify's servers take a build for, counted from when it was made.
+/// Lifetime of a Soloist build from its build date.
 const LIFE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
-/// The age past which a build is replaced, two weeks short of its end.
+/// Refresh builds two weeks before expiration.
 const KEEP: Duration = Duration::from_secs(76 * 24 * 60 * 60);
 
-/// Held while the program's folder is written or cleared, so an install and a removal never
-/// run into each other.
+/// Serializes installation and removal.
 static STORE: Mutex<()> = Mutex::new(());
 
-/// How many times the program has been removed. A download that started before a removal must
-/// not install after it, or removing Soloist would not be the end of it.
+/// Removal counter used to discard downloads started before uninstall.
 static REMOVALS: AtomicU64 = AtomicU64::new(0);
 
-/// What the program exits with once its build is too old.
+/// Exit code for an expired build.
 pub(crate) const EXPIRED: i32 = 10;
 
 /// The build of the installed program, read from its `--version`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
     pub version: String,
-    /// When Spotify made it, when the program says.
+    /// Build timestamp when reported.
     built: Option<SystemTime>,
 }
 
 impl Build {
-    /// How many whole days the build still works for, when it says how old it is.
+    /// Whole days until expiration, when the build date is known.
     pub fn days_left(&self) -> Option<u64> {
         let end = self.built? + LIFE;
         let left = end.duration_since(SystemTime::now()).unwrap_or_default();
@@ -92,7 +84,7 @@ pub(crate) fn archive() -> Option<&'static str> {
     }
 }
 
-/// Sonora's own folder for the program, under its data folder so a cache cleaner leaves it.
+/// Keeps the installed binary outside the cache.
 pub(crate) fn store() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -100,56 +92,32 @@ pub(crate) fn store() -> PathBuf {
         .join("soloist")
 }
 
-/// Where the installed program is, or would be.
+/// Path to the platform executable.
 pub(crate) fn path() -> PathBuf {
     store().join(program())
 }
 
-/// A command for `program` that opens no console window on Windows and, in the Nix package,
-/// goes through the store's loader.
+/// Hides the Windows console and uses the Nix loader when configured.
 pub(crate) fn command(program: &Path) -> Command {
-    windowless(loaded(program))
-}
-
-/// Starts `program` through the loader and library path the Nix package bakes in, since a NixOS
-/// without nix-ld has nothing at the loader path the binary names. Every other build starts it
-/// directly. The program then sees the loader as `/proc/self/exe`, which only costs it the crash
-/// handler it never starts anyway.
-#[cfg(target_os = "linux")]
-fn loaded(program: &Path) -> Command {
-    const LOADER: Option<&str> = option_env!("SONORA_SOLOIST_LOADER");
-    const LIBRARIES: Option<&str> = option_env!("SONORA_SOLOIST_LIBRARIES");
-    let Some(loader) = LOADER else {
-        return Command::new(program);
-    };
-    let mut command = Command::new(loader);
-    if let Some(libraries) = LIBRARIES {
-        command.arg("--library-path").arg(libraries);
+    #[cfg(target_os = "linux")]
+    if let Some(launcher) = option_env!("SONORA_SOLOIST_LAUNCHER") {
+        let mut command = Command::new(launcher);
+        command.arg(program);
+        return command;
     }
-    command.arg("--argv0").arg(program).arg(program);
-    command
-}
-
-#[cfg(not(target_os = "linux"))]
-fn loaded(program: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = Command::new(program);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(windows))]
     Command::new(program)
 }
 
-#[cfg(windows)]
-fn windowless(mut command: Command) -> Command {
-    use std::os::windows::process::CommandExt as _;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-#[cfg(not(windows))]
-fn windowless(command: Command) -> Command {
-    command
-}
-
-/// The build that is installed, or `None` when nothing is or it does not run. Blocking: it
-/// runs the program for its version.
+/// Runs the installed binary to read its version. Blocks on the process.
 pub fn installed() -> Option<Build> {
     let path = path();
     if !path.is_file() {
@@ -160,8 +128,7 @@ pub fn installed() -> Option<Build> {
         .ok()
 }
 
-/// Downloads the current build from Spotify and installs it over whatever is there. The old
-/// program stays in place unless the new one runs.
+/// Downloads a replacement and installs it only after it runs.
 pub async fn fetch() -> Result<Build> {
     let name = archive().context("spotify builds no soloist for this computer")?;
     let url = format!("{CDN}/{name}");
@@ -216,17 +183,14 @@ async fn download(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Removes the program and its folder, and has any download still under way come to nothing.
-/// Blocking.
+/// Uninstalls Soloist and invalidates downloads in flight. Blocks on disk I/O.
 pub(super) fn uninstall() -> Result<()> {
     let _held = STORE.lock().unwrap_or_else(PoisonError::into_inner);
     REMOVALS.fetch_add(1, Ordering::Relaxed);
     super::clear(&store())
 }
 
-/// Unpacks the program beside the installed one, runs it once, and only then moves it into
-/// place. `removals` is the count of removals when the download began, and an install that a
-/// removal has overtaken is given up. Blocking.
+/// Tests the unpacked binary before installing it, unless removal came first.
 fn install(bytes: &[u8], name: &str, removals: u64) -> Result<Build> {
     let _held = STORE.lock().unwrap_or_else(PoisonError::into_inner);
     ensure!(
@@ -280,9 +244,7 @@ fn probe(path: &Path) -> Result<Build> {
     Ok(build)
 }
 
-/// Reads a line such as `soloist 1.3.10.59 build 1794333744 (20261110) (g19412df6ea)
-/// (linux/x86_64)`. Spotify documents no format, so a line it cannot read gives an empty version
-/// and no age rather than an error.
+/// Parses the build line, leaving version and age unknown when it is unreadable.
 fn read(output: &str) -> Build {
     let version = output
         .split_whitespace()
@@ -299,8 +261,7 @@ fn read(output: &str) -> Build {
     Build { version, built }
 }
 
-/// The first line the program printed to stderr, ready to follow an error, or nothing when it
-/// printed none. When the loader cannot start the program, that line names the missing library.
+/// Returns the first stderr line for launch diagnostics.
 fn complaint(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr)
         .lines()
@@ -310,7 +271,7 @@ fn complaint(stderr: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-/// The program's file name, `soloist` or `soloist.exe`.
+/// Platform executable name.
 fn program() -> String {
     format!("soloist{}", std::env::consts::EXE_SUFFIX)
 }

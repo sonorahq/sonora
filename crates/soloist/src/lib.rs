@@ -1,20 +1,4 @@
-//! Spotify Soloist, the headless player Spotify publishes, as a second way to play Spotify.
-//!
-//! librespot asks for audio keys the way Spotify's desktop app does, and Spotify denies them to
-//! some accounts. Soloist is Spotify's own client for third parties, so it plays for every
-//! Premium account, lossless included. It is a separate program. Sonora downloads it from
-//! Spotify on the listener's word, starts it with the listener's own API key and drives it over
-//! the WebSocket it opens on loopback. It plays to the system's output by itself, so the
-//! equalizer, the visualizer and the output setting do not reach its sound.
-//!
-//! It is off until the listener sets it up, in three steps `state` asks for in order: [`fetch`]
-//! the program, take an API key, and [`pair`] the program with the account from one of Spotify's
-//! own apps. [`set_up`] says whether all three are done. The listener can still switch Soloist
-//! off, and the Spotify provider starts a Soloist engine instead of librespot's while [`ready`]
-//! says it is both set up and on.
-//!
-//! It is a crate of its own rather than part of the Spotify provider, so `state` and `views`
-//! reach it without naming a provider.
+//! Installs and pairs Spotify's standalone player, controlled through Connect.
 
 mod archive;
 mod binary;
@@ -22,27 +6,26 @@ mod daemon;
 mod pair;
 mod player;
 mod prefs;
-mod wire;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use anyhow::{Context as _, Result};
+
 use music::{Encoding, Offer, Quality, credentials};
 
 pub use binary::{Build, fetch, installed};
 pub use daemon::stopped;
 pub use pair::{Trouble, pair};
-pub use player::{Engine, start};
+pub use player::start;
 
-/// Where the listener makes an API key, which only a Premium account can.
+/// API key page for Spotify Premium accounts.
 pub const DASHBOARD: &str = "https://developer.spotify.com/dashboard/soloist";
 
-/// Spotify's terms of use, which running Soloist accepts.
+/// Terms for using Soloist.
 pub const TERMS: &str = "https://www.spotify.com/legal/end-user-agreement/";
 
-/// What the program is called on the account's device list. It differs from the name Sonora
-/// lists itself under, so the listener can tell the two apart while pairing.
+/// Connect device name shown during pairing and playback.
 pub const DEVICE: &str = "Sonora Soloist";
 
 /// The levels Soloist serves, best first. Lossless is a ceiling: Spotify serves the best the
@@ -73,50 +56,32 @@ pub const QUALITIES: &[Offer] = &[
     },
 ];
 
-const UNKNOWN: u8 = 0;
+const UNREADY: u8 = 0;
 const READY: u8 = 1;
-const UNREADY: u8 = 2;
+const UNKNOWN: u8 = 2;
 
-/// What [`set_up`] last found, so asking again reads no files.
+/// Cached setup status.
 static STANDING: AtomicU8 = AtomicU8::new(UNKNOWN);
 
-/// What [`enabled`] last found: `READY` while Soloist is switched on.
+/// Cached enablement state.
 static SWITCH: AtomicU8 = AtomicU8::new(UNKNOWN);
 
-/// What [`wanted`] last found: `READY` for a denied account, `UNREADY` for any other.
+/// Cached audio-key denial state.
 static DENIED: AtomicU8 = AtomicU8::new(UNKNOWN);
 
-/// Whether Spotify builds Soloist for this computer.
+/// Checks whether Soloist supports this platform.
 pub fn supported() -> bool {
     binary::archive().is_some()
 }
 
-/// Whether the setup is complete: the program is installed, an API key is stored and an
-/// account is paired. The first call reads the disk and later ones answer from memory.
+/// Checks for a binary, API key, and pairing, then caches the result.
 pub fn set_up() -> bool {
-    match STANDING.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => recheck(),
-    }
+    cached_flag(&STANDING, setup_complete)
 }
 
-/// Whether the listener has Soloist switched on, which it is unless they switched it off. The
-/// switch keeps the setup, so switching back on needs no pairing. The first call reads the disk.
+/// Whether Soloist is switched on. Turning it off keeps the existing pairing.
 pub fn enabled() -> bool {
-    match SWITCH.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => {
-            let on = !switched_off().is_file();
-            let standing = match on {
-                true => READY,
-                false => UNREADY,
-            };
-            SWITCH.store(standing, Ordering::Relaxed);
-            on
-        }
-    }
+    cached_flag(&SWITCH, || !switched_off().is_file())
 }
 
 /// Switches Soloist on or off without touching its setup. Blocking.
@@ -133,38 +98,23 @@ pub fn enable(on: bool) -> Result<()> {
             .and_then(|()| std::fs::write(&marker, []))
             .with_context(|| format!("cannot write {}", marker.display()))?,
     }
-    let standing = match on {
-        true => READY,
-        false => UNREADY,
-    };
-    SWITCH.store(standing, Ordering::Relaxed);
+    SWITCH.store(u8::from(on), Ordering::Relaxed);
     Ok(())
 }
 
-/// Whether Soloist plays: it is set up and switched on. The Spotify provider starts a Soloist
-/// engine while this holds. Cheap enough for a render once the disk has been read.
-pub fn ready() -> bool {
-    set_up() && enabled()
+/// Whether the saved Soloist pairing belongs to this Spotify account.
+pub fn set_up_for(username: &str) -> bool {
+    set_up() && paired_account().is_some_and(|paired| same_account(&paired, username))
 }
 
-/// Whether Spotify denied this account an audio key the last time librespot asked for one,
-/// which is when Soloist is worth offering unasked. It is remembered across runs, since a
-/// denied account stays denied, and forgotten the first time librespot plays a track. The
-/// first call reads the disk and later ones answer from memory.
+/// Whether the paired daemon can play for this Spotify account.
+pub fn ready_for(username: &str) -> bool {
+    enabled() && set_up_for(username)
+}
+
+/// Reports whether Spotify denied the last native audio-key request.
 pub fn wanted() -> bool {
-    match DENIED.load(Ordering::Relaxed) {
-        READY => true,
-        UNREADY => false,
-        _ => {
-            let denied = denial().is_file();
-            let standing = match denied {
-                true => READY,
-                false => UNREADY,
-            };
-            DENIED.store(standing, Ordering::Relaxed);
-            denied
-        }
-    }
+    cached_flag(&DENIED, || denial().is_file())
 }
 
 /// Remembers that Spotify denied the account an audio key. Blocking the first time.
@@ -179,7 +129,7 @@ pub fn denied() {
     }
 }
 
-/// Forgets a denied key, now that librespot played a track. Blocking the first time.
+/// Forgets a denied key after native playback succeeds. Blocking the first time.
 pub fn granted() {
     if DENIED.swap(UNREADY, Ordering::Relaxed) == UNREADY {
         return;
@@ -187,29 +137,21 @@ pub fn granted() {
     std::fs::remove_file(denial()).ok();
 }
 
-/// Forgets what was read from the disk, so the next question reads it again. For after a
-/// removal that failed halfway, when what is left is not what memory says.
+/// Invalidates cached setup flags after a partial removal.
 pub fn reload() {
     for standing in [&STANDING, &SWITCH, &DENIED] {
         standing.store(UNKNOWN, Ordering::Relaxed);
     }
 }
 
-/// Removes what belongs to the account: the API key, the paired sign-in, the playback cache
-/// and the memory of a denied key. Soloist is off from here on, and the program stays for the
-/// next setup. Blocking.
-pub fn forget() -> Result<()> {
+/// Removes the Soloist program, pairing, key, and playback cache. Blocking.
+pub fn remove() -> Result<()> {
     STANDING.store(UNREADY, Ordering::Relaxed);
     DENIED.store(UNREADY, Ordering::Relaxed);
     SWITCH.store(READY, Ordering::Relaxed);
     [home(), cache()]
         .iter()
-        .try_for_each(|folder| clear(folder))
-}
-
-/// Removes everything [`forget`] does and the program too. Blocking.
-pub fn remove() -> Result<()> {
-    forget()?;
+        .try_for_each(|folder| clear(folder))?;
     binary::uninstall()
 }
 
@@ -221,35 +163,50 @@ fn clear(folder: &Path) -> Result<()> {
     }
 }
 
-/// Reads the disk for [`set_up`] and remembers the answer.
-fn recheck() -> bool {
-    let ready =
-        supported() && binary::path().is_file() && key().is_some() && paired_account().is_some();
-    let standing = match ready {
-        true => READY,
-        false => UNREADY,
-    };
-    STANDING.store(standing, Ordering::Relaxed);
-    ready
+/// Reads a persisted setting on first use and caches it until invalidated.
+fn cached_flag(flag: &AtomicU8, read: impl FnOnce() -> bool) -> bool {
+    match flag.load(Ordering::Relaxed) {
+        UNKNOWN => {
+            let value = read();
+            flag.store(u8::from(value), Ordering::Relaxed);
+            value
+        }
+        value => value == READY,
+    }
 }
 
-/// The folder for what belongs to the account: the API key and the program's own sign-in.
+fn setup_complete() -> bool {
+    supported() && binary::path().is_file() && key().is_some() && paired_account().is_some()
+}
+
+/// Refreshes setup status after a change to the pairing or installed program.
+fn recheck() {
+    STANDING.store(u8::from(setup_complete()), Ordering::Relaxed);
+}
+
+/// Soloist's account data directory.
 fn home() -> PathBuf {
     credentials::dir("spotify").join("soloist")
 }
 
-/// The folder the program keeps its device identity and paired sign-in in.
+/// Directory for the device ID and paired credentials.
 fn data() -> PathBuf {
     home().join("data")
 }
 
-/// The folder a pairing is made in. It only takes the place of [`data`] once the pairing has
-/// gone through, so a pairing that fails leaves the one before it as it was.
+/// Reads the local device identity saved by the paired Soloist daemon.
+pub fn device_id() -> Option<String> {
+    let id = std::fs::read_to_string(data().join(".device_id")).ok()?;
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
+/// Staging folder that replaces the active pairing only after success.
 fn pairing() -> PathBuf {
     home().join("pairing")
 }
 
-/// The folder for the audio the program has fetched, which it can fetch again.
+/// Directory for replaceable audio cache files.
 fn cache() -> PathBuf {
     credentials::root().join("soloist")
 }
@@ -258,12 +215,12 @@ fn key_file() -> PathBuf {
     home().join("key")
 }
 
-/// The empty file whose presence says the listener switched Soloist off.
+/// Marker file for disabled Soloist.
 fn switched_off() -> PathBuf {
     home().join("off")
 }
 
-/// The empty file whose presence says Spotify denied this account an audio key.
+/// Marker file for a denied native audio key.
 fn denial() -> PathBuf {
     home().join("denied")
 }
@@ -280,13 +237,18 @@ fn keep_key(key: &str) -> Result<()> {
     credentials::write(&key_file(), key.as_bytes())
 }
 
-/// The account the program is paired with. Its folder under `settings/Users` is the only place
-/// the program writes that name down, as `<username>-user`.
+/// Reads the paired username from `settings/Users/<username>-user`.
 fn paired_account() -> Option<String> {
     paired_in(&data())
 }
 
-/// The account a data folder holds a paired sign-in for.
+/// Compares the stored percent-encoded username with the signed-in account.
+fn same_account(paired: &str, account: &str) -> bool {
+    let paired = percent_encoding::percent_decode_str(paired).decode_utf8_lossy();
+    paired.to_lowercase() == account.to_lowercase()
+}
+
+/// Reads the account paired in the given data directory.
 fn paired_in(data: &Path) -> Option<String> {
     const SUFFIX: &str = "-user";
     std::fs::read_dir(data.join("settings").join("Users"))

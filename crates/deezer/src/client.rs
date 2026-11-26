@@ -1294,10 +1294,6 @@ impl MusicApi for DeezerClient {
         wire::track(&data).with_context(|| format!("cannot read the deezer track {track_id}"))
     }
 
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
-    }
-
     async fn playlists(&self) -> Result<Vec<Playlist>> {
         let user_id = self.user_id().await;
         Ok(self
@@ -1463,6 +1459,18 @@ impl MusicApi for DeezerClient {
         }
         let album =
             wire::album(&detail).with_context(|| format!("cannot read the album {album_id}"))?;
+        let genres: Vec<_> = detail["genres"]["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|genre| genre["name"].as_str().map(str::to_owned))
+            .collect();
+        album.date_tracks(&mut tracks);
+        for track in &mut tracks {
+            if track.genres.is_empty() {
+                track.genres.clone_from(&genres);
+            }
+        }
         Ok(AlbumDetail { album, tracks })
     }
 

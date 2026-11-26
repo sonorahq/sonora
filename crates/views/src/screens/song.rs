@@ -103,10 +103,7 @@ impl SongView {
             .album()
             .and_then(|album| album.album.cover_large.clone())
             .or_else(|| track.cover.clone());
-        let album = self.detail.read(cx).album().map(|detail| &detail.album);
-        let release = album
-            .map(|album| release_date_label(&album.release_date))
-            .filter(|release| !release.is_empty());
+        let release = self.release_label(track, cx);
 
         let mut meta = HeroMetaStrip::new().item(cells::artist_links(
             "song-artists",
@@ -175,18 +172,24 @@ impl SongView {
         )
     }
 
+    /// Formats the track date, using the album date when it supplies compatible detail.
+    fn release_label(&self, track: &Track, cx: &Context<Self>) -> Option<SharedString> {
+        let album = self
+            .detail
+            .read(cx)
+            .album()
+            .and_then(|detail| detail.album.release_date);
+        track.release_date_with(album).map(release_date_label)
+    }
+
     fn overview(&self, track: &Track, cx: &Context<Self>) -> AnyElement {
         let album = self.detail.read(cx).album();
         let album_name = album
             .map(|detail| detail.album.name.clone())
             .unwrap_or_else(|| track.album.clone());
-        let release = album
-            .map(|detail| detail.album.release_date.clone())
-            .unwrap_or_default();
-        let release = match release.is_empty() {
-            true => t!("common-unknown"),
-            false => release_date_label(&release),
-        };
+        let release = self
+            .release_label(track, cx)
+            .unwrap_or_else(|| t!("common-unknown"));
         let label = album
             .and_then(|detail| detail.album.label_name().map(str::to_owned))
             .map(SharedString::from)
@@ -222,17 +225,31 @@ impl SongView {
             .spoken("song-about-card")
             .stretch()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .children(
-                        facts
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, (id, name, value))| {
-                                Fact::new(name, value).spoken(id).striped(index % 2 == 1)
-                            }),
-                    ),
+                div().flex().flex_col().children(
+                    facts
+                        .into_iter()
+                        .chain(
+                            (!track.album_artist.is_empty() && track.album_artist != track.artists)
+                                .then(|| {
+                                    (
+                                        "song-fact-album-artist",
+                                        t!("song-album-artist"),
+                                        SharedString::from(track.album_artist.clone()),
+                                    )
+                                }),
+                        )
+                        .chain(track.isrc.as_ref().map(|isrc| {
+                            (
+                                "song-fact-isrc",
+                                t!("tags-isrc"),
+                                SharedString::from(isrc.clone()),
+                            )
+                        }))
+                        .enumerate()
+                        .map(|(index, (id, name, value))| {
+                            Fact::new(name, value).spoken(id).striped(index % 2 == 1)
+                        }),
+                ),
             )
             .into_any_element()
     }
@@ -328,9 +345,11 @@ impl SongView {
             .into_any_element()
     }
 
-    fn discovery(&self, track: &Track, cx: &Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let tags = track.tags.clone();
+    fn discovery(track: &Track) -> AnyElement {
+        let genres = match track.genres.is_empty() {
+            true => t!("common-not-available"),
+            false => SharedString::from(track.genres.join(", ")),
+        };
         let languages = match track.languages.is_empty() {
             true => t!("common-not-provided"),
             false => SharedString::from(
@@ -349,57 +368,28 @@ impl SongView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().when_else(
-                        tags.is_empty(),
-                        |this| {
-                            this.child(
-                                Fact::new(t!("song-genres"), t!("common-not-available"))
-                                    .spoken("song-fact-genres"),
+                    .child(Fact::new(t!("song-genres"), genres).spoken("song-fact-genres"))
+                    .when_some(track.bpm, |this, bpm| {
+                        this.child(
+                            Fact::new(
+                                t!("song-tempo"),
+                                t!("unit-bpm", value = f64::from(bpm.round())),
                             )
-                        },
-                        |this| {
-                            this.child(
-                                div()
-                                    .flex()
-                                    .items_start()
-                                    .justify_between()
-                                    .gap_4()
-                                    .min_w_0()
-                                    .px(theme.metrics.pad)
-                                    .py(theme.metrics.pad / 2.)
-                                    .child(
-                                        ui::spoken("song-genres", t!("song-genres"))
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_color(theme.muted_foreground),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex_wrap()
-                                            .justify_end()
-                                            .gap_2()
-                                            .children(tags.into_iter().enumerate().map(
-                                                |(index, tag)| {
-                                                    ui::spoken(("song-genre", index), tag)
-                                                        .max_w_full()
-                                                        .min_w_0()
-                                                        .truncate()
-                                                        .px_3()
-                                                        .py_1()
-                                                        .rounded_full()
-                                                        .bg(theme.secondary)
-                                                        .border_1()
-                                                        .border_color(theme.border)
-                                                        .text_size(theme.text(Text::Small))
-                                                },
-                                            )),
-                                    ),
-                            )
-                        },
-                    ))
+                            .spoken("song-fact-tempo"),
+                        )
+                    })
+                    .when(!track.tags.is_empty(), |this| {
+                        this.child(
+                            Fact::new(t!("song-tags"), track.tags.join(", "))
+                                .spoken("song-fact-tags"),
+                        )
+                    })
+                    .when(!track.moods.is_empty(), |this| {
+                        this.child(
+                            Fact::new(t!("song-moods"), track.moods.join(", "))
+                                .spoken("song-fact-moods"),
+                        )
+                    })
                     .child(
                         Fact::new(t!("song-language"), languages)
                             .spoken("song-fact-language")
@@ -615,7 +605,7 @@ impl Render for SongView {
                                             .flex_col()
                                             .gap_5()
                                             .child(self.credits(&track, cx))
-                                            .child(self.discovery(&track, cx)),
+                                            .child(Self::discovery(&track)),
                                     ),
                             )
                             .when_some(self.artist_profile(cx), |this, profile| {

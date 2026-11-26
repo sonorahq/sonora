@@ -57,15 +57,29 @@ impl SessionsButton {
         let connecting = state.connecting();
         let devices = self.devices.clone();
 
-        let mut items = vec![
-            MenuItem::new("device-here", t!("devices-this-computer"))
-                .icon(icon(DeviceKind::Computer))
-                .selected(elsewhere.is_none())
-                .on_click({
-                    let devices = devices.clone();
-                    move |_, _, cx| devices.update(cx, |devices, cx| devices.transfer_here(cx))
-                }),
-        ];
+        let mut items = Vec::new();
+        if let Some(local) = state.local_device() {
+            let id = local.id.clone();
+            items.push(
+                MenuItem::new("device-here", local.name.clone())
+                    .icon(icon(local.kind))
+                    .selected(elsewhere.is_none_or(|remote| remote.device.id == id))
+                    .on_click({
+                        let devices = devices.clone();
+                        move |_, _, cx| devices.update(cx, |devices, cx| devices.transfer(&id, cx))
+                    }),
+            );
+        } else if state.can_transfer_here() {
+            items.push(
+                MenuItem::new("device-here", t!("devices-this-computer"))
+                    .icon(icon(DeviceKind::Computer))
+                    .selected(elsewhere.is_none())
+                    .on_click({
+                        let devices = devices.clone();
+                        move |_, _, cx| devices.update(cx, |devices, cx| devices.transfer_here(cx))
+                    }),
+            );
+        }
         for device in state.devices() {
             let id = device.id.clone();
             let playing = elsewhere.is_some_and(|elsewhere| elsewhere.device.id == device.id);

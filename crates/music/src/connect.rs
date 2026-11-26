@@ -93,6 +93,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Whether two snapshots refer to the same current occurrence and queue.
+    pub fn same_queue(&self, other: &Self) -> bool {
+        self.track == other.track
+            && self.previous == other.previous
+            && self.upcoming == other.upcoming
+    }
+
     pub fn tracks(&self) -> impl Iterator<Item = &QueuedTrack> {
         self.track
             .iter()
@@ -152,6 +159,8 @@ pub enum Command {
     Pause,
     Next,
     Previous,
+    /// Plays a local queue occurrence identified by its stable UID.
+    SelectQueue(String),
     Seek(Duration),
     /// From 0 to 1.
     Volume(f32),
@@ -204,9 +213,11 @@ pub struct Elsewhere {
     pub state: std::sync::Arc<Snapshot>,
 }
 
-/// The account's devices other than this app, and the one of them that has playback, if any.
+/// Available devices and the playback Sonora is observing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Roster {
+    /// A local player that registers independently of Sonora.
+    pub local: Option<Device>,
     pub devices: Vec<Device>,
     pub elsewhere: Option<Elsewhere>,
 }
@@ -252,8 +263,13 @@ pub enum Event {
     Roster(Roster),
     /// Saved collections or the account's playlist list changed in another client.
     LibraryChanged,
+    /// Playlists were added, removed, or reordered in the account library.
+    PlaylistListChanged,
     /// A playlist's contents or attributes changed in another client.
-    PlaylistChanged(String),
+    PlaylistChanged {
+        id: String,
+        revision: Option<Vec<u8>>,
+    },
     /// One of the account's apps liked a track, or took the like back. `track` is a provider
     /// track id.
     Liked {
@@ -272,15 +288,31 @@ pub enum Event {
     LeaveFailed,
 }
 
+/// Whether the app joins the device list or only follows the account's playback.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Off,
+    Observe,
+    Publish,
+}
+
 /// Requests sent to the provider's worker; replies arrive through `Event`.
 pub enum Request {
-    Enable(bool),
+    Mode(Mode),
     Rename(Naming),
     /// Publishing claims playback, so only listener-initiated playback should be reported.
     Publish(Option<std::sync::Arc<Snapshot>>),
     Transfer(String),
-    /// A refused start returns as a command to play locally.
     Control(String, Command),
+    /// Controls the separately registered player on this computer.
+    ControlLocal(Command),
+    /// Advances within the remote queue to a specific occurrence.
+    Jump {
+        device: String,
+        track: QueuedTrack,
+        forward: bool,
+    },
     Join(String),
     Peek(String),
     Start,
@@ -293,6 +325,7 @@ pub struct Connect {
     device: String,
     /// Whether the network has group sessions to start and join.
     jams: bool,
+    queue_jump: bool,
     requests: UnboundedSender<Request>,
     events: Mutex<Option<UnboundedReceiver<Event>>>,
 }
@@ -306,6 +339,7 @@ impl Connect {
             Self {
                 device,
                 jams: true,
+                queue_jump: false,
                 requests,
                 events: Mutex::new(Some(events)),
             },
@@ -331,6 +365,15 @@ impl Connect {
     pub fn without_jams(mut self) -> Self {
         self.jams = false;
         self
+    }
+
+    pub fn with_queue_jump(mut self) -> Self {
+        self.queue_jump = true;
+        self
+    }
+
+    pub fn queue_jump(&self) -> bool {
+        self.queue_jump
     }
 
     pub fn jams(&self) -> bool {

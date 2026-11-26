@@ -43,6 +43,7 @@ unit-percent = { $value }%
 unit-db = { $value } dB
 unit-hz = { $value } Hz
 unit-khz = { $value } kHz
+unit-bpm = { $value } BPM
 unit-kbps = { $value } kbps
 unit-gb = { $value } GB
 unit-mb = { $value } MB
@@ -103,6 +104,7 @@ downloads-left = { $count ->
    *[other] { $count } songs left
 }
 downloads-eta = About { $minutes } min left
+downloads-paused = Paused by the service, resuming in { $seconds } s
 downloads-cancel = Cancel download
 downloads-cancel-all = Cancel all downloads
 app-sign-out = Sign Out
@@ -220,6 +222,7 @@ date-minutes-ago = { $count } minutes ago
 date-today = Today at { $time }
 date-yesterday = Yesterday at { $time }
 date-time = { $date }, { $time }
+date-month-year = { $month } { $year }
 date-full = { $month } { $day }, { $year }
 month-1 = Jan
 month-2 = Feb

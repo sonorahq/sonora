@@ -1,17 +1,18 @@
 //! Soloist, Spotify's own headless player, as app state: whether it plays, and the setup that
 //! turns it on.
 //!
-//! Spotify plays through librespot unless the listener sets Soloist up, which nothing does for
-//! them. The setup is a dialog of three steps that this entity walks through in order: consent
+//! Spotify uses the built-in player until the listener sets Soloist up. The setup walks
+//! through three steps in order: consent
 //! to downloading the program from Spotify, the listener's API key, and pairing the program with
 //! the account from one of Spotify's apps. Once all three are done the playback engine is rebuilt
-//! on Soloist, and removing the setup rebuilds it on librespot. The `soloist` crate does the
-//! work, and this only keeps track of where it stands.
+//! on Soloist. The `soloist` crate runs the pairing, and this entity keeps track of where it
+//! stands.
 
 use std::time::Duration;
 
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use soloist::{self, Build, Trouble};
+use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
 use crate::{Io, Outcome, Session, SessionEvent, SessionState, Toasts};
@@ -76,9 +77,6 @@ pub struct Soloist {
     session: Entity<Session>,
     io: Io,
     task: Option<Task<()>>,
-    /// The pairing under way. Dropping its task would leave the program listed on the account
-    /// and holding its data folder, so a cancelled pairing is aborted through this.
-    pairing: Option<AbortHandle>,
     /// The port the pairing program listens on, once pairing has waited `BLOCKED_AFTER`. A
     /// firewall that keeps the Spotify app off it is the usual reason nobody picks the device.
     blocked: Option<u16>,
@@ -97,10 +95,25 @@ pub struct Soloist {
 
 impl EventEmitter<SoloistSwitched> for Soloist {}
 
+/// Cancels the Tokio pairing operation when its UI task is dropped.
+struct CancelPairing(AbortHandle);
+
+impl Drop for CancelPairing {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 impl Soloist {
     pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&session, |this, session, event, cx| match event {
-            SessionEvent::SignedIn if session.read(cx).offers_soloist() => this.look(cx),
+            SessionEvent::SignedIn if session.read(cx).offers_soloist() => {
+                this.in_use = session
+                    .read(cx)
+                    .soloist_account()
+                    .is_some_and(soloist::ready_for);
+                this.look(cx);
+            }
             SessionEvent::SignedOut => this.close(cx),
             _ => {}
         })
@@ -110,11 +123,10 @@ impl Soloist {
             state: SoloistState::Off,
             problem: None,
             build: None,
-            in_use: soloist::ready(),
+            in_use: false,
             session,
             io,
             task: None,
-            pairing: None,
             blocked: None,
             hint: None,
             download: None,
@@ -314,10 +326,9 @@ impl Soloist {
             SessionState::SignedIn(profile) => Some(profile.id.clone()),
             _ => None,
         };
-        let (listening, port) = tokio::sync::oneshot::channel();
+        let (listening, port) = oneshot::channel();
         let pairing = self.io.spawn(soloist::pair(key, account, listening));
-        self.pairing = Some(pairing.abort_handle());
-        self.blocked = None;
+        let cancel = CancelPairing(pairing.abort_handle());
         self.hint = Some(cx.spawn(async move |this, cx| {
             let Ok(port) = port.await else {
                 return;
@@ -332,14 +343,15 @@ impl Soloist {
             .ok();
         }));
         self.task = Some(cx.spawn(async move |this, cx| {
+            let _cancel = cancel;
             let paired = pairing.await;
+            let paired = paired.unwrap_or_else(|error| Err(Trouble::Failed(error.to_string())));
             this.update(cx, |this, cx| {
                 this.task = None;
-                this.pairing = None;
                 this.hint = None;
                 this.blocked = None;
                 match paired {
-                    Ok(Ok(())) => {
+                    Ok(()) => {
                         // A pairing that replaces one already in use changes nothing `settle`
                         // can see, and the engine still has to start over on the new sign-in.
                         if !this.settle(cx) {
@@ -347,7 +359,7 @@ impl Soloist {
                         }
                         Toasts::show(Outcome::Done, "toast-soloist-ready", cx);
                     }
-                    Ok(Err(trouble)) => {
+                    Err(trouble) => {
                         log::warn!("soloist: pairing failed: {trouble:?}");
                         this.problem = Some(match trouble {
                             Trouble::Key => SoloistProblem::Key,
@@ -358,8 +370,6 @@ impl Soloist {
                         this.state = SoloistState::Setup(SoloistStep::Key);
                         cx.notify();
                     }
-                    // aborted by `close`, which has settled the state already
-                    Err(_) => {}
                 }
             })
             .ok();
@@ -385,7 +395,7 @@ impl Soloist {
         self.settle(cx);
     }
 
-    /// Removes the setup and the program, which puts Spotify back on librespot. Soloist is
+    /// Removes the setup and the program, which restores the built-in player. Soloist is
     /// switched off and its program stopped first, since a running program holds its own files.
     /// A removal that fails leaves whatever is still on disk, with Remove still on offer.
     pub fn remove(&mut self, cx: &mut Context<Self>) {
@@ -479,19 +489,23 @@ impl Soloist {
     }
 
     fn stop_pairing(&mut self) {
-        self.hint = None;
-        self.blocked = None;
-        if let Some(pairing) = self.pairing.take() {
-            pairing.abort();
+        if self.state == SoloistState::Setup(SoloistStep::Pairing) {
             self.task = None;
+            self.hint = None;
+            self.blocked = None;
         }
     }
 
     /// Takes the state from what is on disk and tells the engine when Soloist started or
     /// stopped being what plays. Answers whether it told the engine.
     fn settle(&mut self, cx: &mut Context<Self>) -> bool {
-        let ready = soloist::ready();
-        self.state = match (&self.build, soloist::set_up()) {
+        let paired = self
+            .session
+            .read(cx)
+            .soloist_account()
+            .is_some_and(soloist::set_up_for);
+        let ready = paired && soloist::enabled();
+        self.state = match (&self.build, paired) {
             (Some(build), true) => SoloistState::Ready(build.clone()),
             _ => SoloistState::Off,
         };

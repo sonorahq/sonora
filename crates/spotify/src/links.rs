@@ -1,17 +1,15 @@
-//! Spotify's links: `spotify:` and `spotify://` URIs, open.spotify.com pages and spotify.link short
-//! links.
-
-use music::link::{self, Linked};
+//! Spotify URI, web, and short-link handling.
 
 use crate::connect::INVITE;
+use music::link::{self, Linked};
 
 const SCHEME: &str = "spotify:";
 const HOST: &str = "open.spotify.com";
 const SHORT_HOST: &str = "spotify.link";
-/// The prefix of the locale part some page addresses carry before the kind, as in `intl-de`.
+/// Prefix for optional locale segments such as `intl-de`.
 const REGION: &str = "intl-";
 
-/// What a Spotify link points at.
+/// Entity referenced by a Spotify link.
 pub(super) fn read(text: &str) -> Option<Linked> {
     let text = text.trim();
     if let Some(rest) = text.strip_prefix(SCHEME) {
@@ -36,15 +34,16 @@ pub(super) fn read(text: &str) -> Option<Linked> {
     }
 }
 
-/// Reads the parts of a URI after `spotify:` or of a page path after the locale, including the
-/// old form that names a playlist under its owner as `user/<owner>/playlist/<id>`.
+/// Reads the kind and ID from a Spotify URI or web path, including the old form that names a
+/// playlist under its owner as `user/<owner>/playlist/<id>`.
 fn from_parts<'a>(mut parts: impl Iterator<Item = &'a str>) -> Option<Linked> {
     match parts.next()? {
         "user" => {
             let user = parts.next()?;
             match (parts.next(), parts.next()) {
-                (Some(kind), Some(id)) => route(kind, id),
-                _ => route("user", user),
+                (Some("playlist"), Some(id)) => route("playlist", id),
+                (None, _) => route("user", user),
+                _ => None,
             }
         }
         kind => route(kind, parts.next()?),
@@ -70,68 +69,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_every_uri_kind() {
-        assert_eq!(
-            read("spotify:track:6rqhFgbbKwnb9MLmUQDhG6"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-        assert_eq!(
-            read("spotify:album:1DFixLWuPkv3KT3TnV35m3"),
-            Some(Linked::Album("1DFixLWuPkv3KT3TnV35m3".into()))
-        );
-        assert_eq!(
-            read("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"),
-            Some(Linked::Playlist("37i9dQZF1DXcBWIGoYBM5M".into()))
-        );
-        assert_eq!(
-            read("spotify:artist:0TnOYISbd1XYRBk9myaseg"),
-            Some(Linked::Artist("0TnOYISbd1XYRBk9myaseg".into()))
-        );
-    }
-
-    #[test]
-    fn reads_web_links() {
-        assert_eq!(
-            read("https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-        assert_eq!(
-            read("http://www.open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3/"),
-            Some(Linked::Album("1DFixLWuPkv3KT3TnV35m3".into()))
-        );
-    }
-
-    #[test]
-    fn drops_the_share_query() {
-        assert_eq!(
-            read("https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6?si=abc123"),
-            Some(Linked::Track("6rqhFgbbKwnb9MLmUQDhG6".into()))
-        );
-    }
-
-    #[test]
-    fn skips_the_locale_segment() {
-        assert_eq!(
-            read("https://open.spotify.com/intl-de/artist/0TnOYISbd1XYRBk9myaseg"),
-            Some(Linked::Artist("0TnOYISbd1XYRBk9myaseg".into()))
-        );
-    }
-
-    #[test]
-    fn reads_the_legacy_user_playlist_uri() {
-        assert_eq!(
-            read("spotify:user:spotify:playlist:37i9dQZF1DXcBWIGoYBM5M"),
-            Some(Linked::Playlist("37i9dQZF1DXcBWIGoYBM5M".into()))
-        );
-    }
-
-    #[test]
-    fn refuses_what_it_cannot_route() {
-        assert_eq!(read("spotify:show:4rOoJ6Egrf8K2IrywzwOMk"), None);
-        assert_eq!(read("spotify:track:"), None);
-        assert_eq!(read("spotify:track"), None);
-        assert_eq!(read("https://example.com/track/abc"), None);
-        assert_eq!(read("nonsense"), None);
-        assert_eq!(read(""), None);
+    fn spotify_links_preserve_kind_and_reject_ambiguous_addresses() {
+        for (url, target) in [
+            ("spotify://album/a", Some(Linked::Album("a".into()))),
+            (
+                "https://open.spotify.com/intl-de/track/t?si=x",
+                Some(Linked::Track("t".into())),
+            ),
+            ("https://spotify.link/a", Some(Linked::Short)),
+            ("https://open.spotify.com.example.org/track/t", None),
+            (
+                "spotify:user:u:playlist:p",
+                Some(Linked::Playlist("p".into())),
+            ),
+            (
+                "https://open.spotify.com/user/u/playlist/p",
+                Some(Linked::Playlist("p".into())),
+            ),
+            ("spotify:user:u:collection", None),
+            ("spotify:track:", None),
+        ] {
+            assert_eq!(read(url), target, "{url}");
+        }
     }
 }

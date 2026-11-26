@@ -16,7 +16,7 @@ pub struct Profile {
     io: Io,
     task: Option<Task<()>>,
     request: Option<AbortHandle>,
-    mosaics: HashMap<String, Task<()>>,
+    mosaics: mosaic::Tasks,
 }
 
 impl Profile {
@@ -147,35 +147,23 @@ impl Profile {
     }
 
     fn build_mosaics(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.adopt_mosaics();
+        let wanted: Vec<_> = self
+            .adopt_mosaics()
+            .into_iter()
+            .filter(|(id, _)| !self.mosaics.contains_key(id))
+            .collect();
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
-
-        for (id, stamp) in wanted {
-            if self.mosaics.contains_key(&id) {
-                continue;
-            }
-
-            let io = self.io.clone();
-            let client = client.clone();
-            let asked = id.clone();
-            let key = id.clone();
-            let task = cx.spawn(async move |this, cx| {
-                let covers = join(
-                    io.spawn(async move { client.playlist_covers(&asked, mosaic::TILES).await }),
-                )
-                .await;
-                match covers {
-                    Ok(covers) => {
-                        this.update(cx, |this, cx| this.paint_mosaic(id, stamp, covers, cx))
-                            .ok();
-                    }
-                    Err(error) => log::warn!("profile: cannot read playlist covers: {error:#}"),
-                }
-            });
-            self.mosaics.insert(key, task);
-        }
+        self.mosaics.extend(mosaic::fetch_covers(
+            &self.io,
+            client,
+            wanted,
+            None,
+            |this| &mut this.mosaics,
+            Self::paint_mosaic,
+            cx,
+        ));
     }
 
     fn paint_mosaic(
@@ -190,28 +178,16 @@ impl Profile {
             return;
         }
 
-        let io = self.io.clone();
-        let http = cx.http_client();
-        let built_for = id.clone();
-        let key = id.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let built =
-                join(io.spawn(async move { mosaic::build(http, &built_for, stamp, covers).await }))
-                    .await;
-
-            this.update(cx, |this, cx| {
-                this.mosaics.remove(&id);
-                match built {
-                    Ok(cover) => {
-                        this.set_playlist_cover(&id, cover);
-                        cx.notify();
-                    }
-                    Err(error) => log::warn!("profile: cannot build a mosaic: {error:#}"),
-                }
-            })
-            .ok();
-        });
-        self.mosaics.insert(key, task);
+        let task = mosaic::paint(
+            &self.io,
+            id.clone(),
+            stamp,
+            covers,
+            |this| &mut this.mosaics,
+            Self::set_playlist_cover,
+            cx,
+        );
+        self.mosaics.insert(id, task);
     }
 
     fn set_playlist_cover(&mut self, id: &str, cover: String) {

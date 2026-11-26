@@ -101,7 +101,7 @@ impl Worker {
 
     async fn handle(&mut self, request: Request) -> Result<()> {
         match request {
-            Request::Enable(on) => self.enable(on).await?,
+            Request::Mode(mode) => self.enable(mode == music::connect::Mode::Publish).await?,
             Request::Publish(now) => {
                 *self
                     .shared
@@ -111,6 +111,7 @@ impl Worker {
             }
             Request::Transfer(device) => self.transfer(&device).await?,
             Request::Control(device, command) => control(&self.client, &device, command).await?,
+            Request::Jump { .. } | Request::ControlLocal(_) => {}
             Request::Peek(_) => {
                 self.out.send(Event::Invite(None::<Invite>)).ok();
             }
@@ -631,7 +632,11 @@ fn roster(sessions: &[Session]) -> Roster {
         device: session.device(),
         state: Arc::new(state),
     });
-    Roster { devices, elsewhere }
+    Roster {
+        devices,
+        elsewhere,
+        local: None,
+    }
 }
 
 /// The controllable session whose song a transfer takes over, with what it plays. One that
@@ -700,7 +705,7 @@ async fn control(client: &JellyfinClient, session: &str, command: Command) -> Re
         Command::Start(start) => {
             return play_on(client, session, &start.state, start.state.position).await;
         }
-        Command::SetQueue { .. } => return Ok(()),
+        Command::SelectQueue(_) | Command::SetQueue { .. } => return Ok(()),
     };
     client
         .request(Method::POST, &path, body)

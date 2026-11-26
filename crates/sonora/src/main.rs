@@ -87,11 +87,11 @@ fn main() -> ExitCode {
 
     let (sender, mut links) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
     let (asked, mut commands) = tokio::sync::mpsc::unbounded_channel::<single::Asked>();
-    match single::claim(&args, sender.clone(), asked) {
-        single::Instance::First => {}
+    let _socket = match single::claim(&args, sender.clone(), asked) {
+        single::Instance::First(socket) => socket,
         single::Instance::Running => return ExitCode::SUCCESS,
         single::Instance::Failed => exit(1),
-    }
+    };
     // Only the instance that owns the socket may replace Sonora, never a hand-off to one that runs.
     if state::start_staged(!args.is_empty()) {
         return ExitCode::SUCCESS;
@@ -128,9 +128,13 @@ fn main() -> ExitCode {
         }
 
         let database = storage::Database::standard();
+        let spotify = Arc::new(
+            spotify::SpotifyProvider::from_env()
+                .with_browser_confirmation(|| i18n::t!("login-browser-confirmed").to_string()),
+        );
         let providers: Vec<Arc<dyn music::MusicProvider>> = vec![
             Arc::new(youtube::YouTubeProvider::new()),
-            Arc::new(spotify::SpotifyProvider::from_env()),
+            spotify.clone(),
             Arc::new(apple::AppleProvider::new()),
             Arc::new(subsonic::SubsonicProvider::new()),
             Arc::new(jellyfin::JellyfinProvider::new()),
@@ -151,7 +155,7 @@ fn main() -> ExitCode {
             Arc::new(subsonic::SubsonicLyrics::new()),
             Arc::new(jellyfin::JellyfinLyrics::new()),
             Arc::new(plex::PlexLyrics::new()),
-            Arc::new(spotify::SpotifyLyrics::from_env()),
+            Arc::new(spotify.lyrics()),
             Arc::new(youtube::YouTubeLyrics::new()),
             Arc::new(lyric_sources::lrcred::LrcRed::new(lyrics_http.clone())),
             Arc::new(lyric_sources::musixmatch::Musixmatch::new(
@@ -200,6 +204,7 @@ fn main() -> ExitCode {
                 .update(cx, |settings, cx| settings.set_system_theme(reported, cx));
         }
         ui::Theme::init(look, &overrides, cx);
+        ui::set_artwork_variants(spotify::SpotifyProvider::thumbnail_at, cx);
 
         let lingers = tray::install(show_window, toggle_window, cx);
         if lingers {

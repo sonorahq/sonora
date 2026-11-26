@@ -1,248 +1,339 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::session::Session;
 use anyhow::{Context as _, Result};
-use librespot_core::{Session, SpotifyUri};
-use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery};
-use librespot_protocol::extension_kind::ExtensionKind;
-use librespot_protocol::metadata::{Artist as ArtistMessage, Image};
-use music::{
-    Album, Artist, ArtistCatalogue, ArtistProfile, ReleaseType, SavedArtist, Track, escape,
+use futures::{StreamExt as _, stream};
+use spotifyapis::proto::extended_metadata::{
+    AlbumGroup, AlbumType, Artist as ArtistMessage, Image, RelatedCreators, RelatedEntities,
+    Reputation, VisualIdentity,
 };
-use protobuf::{EnumOrUnknown, Message as _};
 
-use crate::collection2::SavedItem;
-use crate::pace::paced;
-use crate::{albums, collection, collection2, pathfinder, wire};
+use crate::{albums, collection, collection::take, wire};
+use music::{
+    Album, AlbumCatalogue, Artist, ArtistCatalogue, ArtistProfile, SUGGESTIONS, SavedArtist, Track,
+};
+use spotifyapis::proto::extended_metadata::{ExtensionKind, MetadataKey, MetadataPayload};
 
 const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
-const TRACK_PREFIX: &str = "spotify:track:";
 const UNKNOWN: &str = "Unknown";
-const TOP_TRACKS: usize = 30;
-/// How many releases the ranking reads the tracks of. A release holds ten or so tracks, so
-/// this hands the sort well over the thirty it keeps, and every release past that is a read
-/// of an album nothing will show.
-const MINED_RELEASES: usize = 12;
+const OVERVIEW_RELEASES: usize = 24;
+const ARTIST_OVERVIEW: &[ExtensionKind] = &[
+    ExtensionKind::ArtistV4,
+    ExtensionKind::VisualIdentity,
+    ExtensionKind::OnPlatformReputation,
+];
 
+/// Reads the profile and official ranking before hydrating tracks and releases together.
 pub async fn artist(session: &Session, artist_id: &str) -> Result<Artist> {
-    match pathfinder::artist(session, artist_id).await {
-        Ok(overview) => return overview_artist(session, overview).await,
-        Err(error) => log::warn!("artists: cannot load Pathfinder artist: {error:#}"),
-    }
-
-    legacy_artist(session, artist_id).await
-}
-
-/// The whole discography and the popular tracks mined from it, which the page fills in once
-/// the overview is already up. Neither can hold up the first frame: a prolific artist has
-/// well over a thousand releases, and ranking the rest of the catalogue reads the tracks of
-/// forty of them. `known` is what the overview already ranked, so nothing on the page is
-/// listed twice.
-pub async fn catalogue(
-    session: &Session,
-    artist_id: &str,
-    known: Vec<Track>,
-) -> Result<ArtistCatalogue> {
-    let albums = discography(session, artist_id).await?;
-    if albums.is_empty() {
-        return Ok(ArtistCatalogue::default());
-    }
-    let top_tracks = deepened(session, known, &albums).await;
-
-    Ok(ArtistCatalogue {
-        albums,
+    let uri = format!("{ARTIST_PREFIX}{artist_id}");
+    let requests = [(uri.as_str(), ARTIST_OVERVIEW)];
+    let mut data = collection::extended_batch(session, &requests).await?;
+    let artist: ArtistMessage = take(&mut data, ExtensionKind::ArtistV4, &uri)
+        .context("Spotify omitted the artist metadata")?;
+    let audience: Option<Reputation> = take(&mut data, ExtensionKind::OnPlatformReputation, &uri);
+    let banner = take::<VisualIdentity>(&mut data, ExtensionKind::VisualIdentity, &uri)
+        .and_then(|visual| visual.wide_full_bleed_image)
+        .and_then(|image| {
+            image
+                .instances
+                .into_iter()
+                .filter_map(|instance| Some((instance.size, instance.flat_file?.cdn_url)))
+                .filter(|(_, url)| wire::fetchable(url))
+                .max_by_key(|(size, _)| *size)
+                .map(|(_, url)| url)
+        });
+    let profile = profile_from(&artist);
+    let releases = release_uris(&artist)
+        .into_iter()
+        .take(OVERVIEW_RELEASES)
+        .collect::<Vec<_>>();
+    let ranked = ranked_tracks(session, &artist).await;
+    let (top_tracks, albums) = overview_cards(session, &ranked, &releases).await?;
+    Ok(Artist {
+        name: profile.name,
+        cover_large: profile.cover_large,
+        banner,
+        biography: profile.biography,
+        monthly_listeners: audience
+            .as_ref()
+            .and_then(|stats| audience_count(stats.monthly_listeners)),
+        followers: audience
+            .and_then(|stats| audience_count(stats.total_established_user_relationships)),
         top_tracks,
-        ..Default::default()
+        albums,
     })
 }
 
-/// Keeps the overview's popular tracks first, then ranks the discography by Spotify popularity.
-/// If the discography fails to load, playback can still use the overview.
+/// Loads the remaining releases after the artist overview appears.
+pub async fn catalogue(
+    session: &Session,
+    artist_id: &str,
+    top_tracks: Vec<Track>,
+    mut preview: Option<tokio::sync::mpsc::Sender<ArtistCatalogue>>,
+) -> Result<ArtistCatalogue> {
+    let artist = metadata(session, artist_id).await?;
+    let releases = release_uris(&artist);
+    let own: HashSet<_> = releases.iter().map(String::as_str).collect();
+    let appearances = group_uris(&artist.appears_on_group)
+        .filter(|uri| !own.contains(uri.as_str()))
+        .collect::<Vec<_>>();
+    let uris = releases
+        .iter()
+        .chain(&appearances)
+        .cloned()
+        .collect::<Vec<_>>();
+    let requests: Vec<_> = uris
+        .chunks(albums::ALBUM_BATCH)
+        .map(|batch| albums::metadata(session, batch))
+        .collect();
+    let batches = stream::iter(requests).buffered(2);
+    tokio::pin!(batches);
+    let mut known = HashMap::new();
+    while let Some(batch) = batches.next().await {
+        known.extend(batch?);
+        if uris.len() > albums::ALBUM_BATCH
+            && let Some(preview) = preview.take()
+        {
+            let _ = preview.try_send(catalogue_from(&releases, &appearances, &known, Vec::new()));
+        }
+    }
+    Ok(catalogue_from(&releases, &appearances, &known, top_tracks))
+}
+
+fn catalogue_from(
+    releases: &[String],
+    appearances: &[String],
+    known: &HashMap<String, Album>,
+    top_tracks: Vec<Track>,
+) -> ArtistCatalogue {
+    let sorted =
+        |uris: &[String]| newest_first(uris.iter().filter_map(|uri| known.get(uri).cloned()));
+    ArtistCatalogue {
+        albums: sorted(releases),
+        appears_on: sorted(appearances),
+        top_tracks,
+    }
+}
+
+/// Keeps Spotify's ranked tracks first, then adds the artist's playable discography.
 pub async fn tracks(session: &Session, artist_id: &str) -> Result<Vec<Track>> {
-    let (overview, releases) =
-        tokio::join!(artist(session, artist_id), discography(session, artist_id));
-    let ranked = overview?.top_tracks;
-    let mut releases = match releases {
-        Ok(releases) => releases,
-        Err(error) => {
-            log::warn!("artists: cannot list the releases to play: {error:#}");
-            return Ok(music::artist_songs(ranked, artist_id));
-        }
+    let artist = metadata(session, artist_id).await?;
+    let mut ranked = ranked_tracks(session, &artist).await;
+    let uris = release_uris(&artist);
+    let (mut known, mut release_error) = match albums::project(session, &uris, |_, album| {
+        let group = match album.album_type() {
+            AlbumType::Album | AlbumType::Ep => 0,
+            AlbumType::Single => 1,
+            _ => 2,
+        };
+        let order = (group, std::cmp::Reverse(albums::release_date(album)));
+        (order, albums::track_uris(album).collect::<Vec<_>>())
+    })
+    .await
+    {
+        Ok(releases) => (releases, None),
+        Err(error) if !ranked.is_empty() => (Default::default(), Some(error)),
+        Err(error) => return Err(error),
     };
-    releases.sort_by_key(|album| match album.release_type {
-        ReleaseType::Album | ReleaseType::Ep => 0,
-        ReleaseType::Single => 1,
-        _ => 2,
-    });
-    let tracks = match ranked_tracks(session, &releases).await {
-        Ok(rest) => ranked.into_iter().chain(rest).collect(),
-        Err(error) => {
-            log::warn!("artists: cannot rank the releases to play: {error:#}");
-            ranked
+    let mut releases: Vec<_> = uris.iter().filter_map(|uri| known.remove(uri)).collect();
+    releases.sort_by_key(|(order, _)| *order);
+
+    let mut seen: HashSet<_> = ranked.iter().cloned().collect();
+    let ranked_count = ranked.len();
+    ranked.extend(
+        releases
+            .into_iter()
+            .flat_map(|(_, tracks)| tracks)
+            .filter(|uri| seen.insert(uri.clone())),
+    );
+    let mut known = collection::metadata(session, &ranked)
+        .await
+        .map_err(|error| release_error.take().unwrap_or(error))?;
+    let (ranked_uris, other_uris) = ranked.split_at(ranked_count);
+    let mut ranked: Vec<_> = ranked_uris
+        .iter()
+        .filter_map(|uri| known.remove(uri))
+        .collect();
+    let mut other: Vec<_> = other_uris
+        .iter()
+        .filter_map(|uri| known.remove(uri))
+        .filter(|track| track.playable && track.id.is_some())
+        .collect();
+    other.sort_by_key(|track| std::cmp::Reverse(track.popularity));
+    ranked.extend(other);
+    let tracks = music::artist_songs(ranked, artist_id);
+    if let Some(error) = release_error {
+        if tracks.is_empty() {
+            return Err(error);
         }
-    };
-    Ok(music::artist_songs(tracks, artist_id))
+        log::warn!("artists: cannot read releases for {artist_id}: {error:#}");
+    }
+    Ok(tracks)
 }
 
 pub async fn profile(session: &Session, artist_id: &str) -> Result<ArtistProfile> {
     Ok(profile_from(&metadata(session, artist_id).await?))
 }
 
-/// The artist as the overview alone describes it: the profile, the tracks it ranked and the
-/// releases it happened to carry. The rest of the discography is `catalogue`'s job.
-async fn overview_artist(session: &Session, overview: pathfinder::Overview) -> Result<Artist> {
-    let track_uris: Vec<_> = overview.tracks.iter().map(|(uri, _)| uri.clone()).collect();
-    let mut known_tracks = match track_uris.is_empty() {
-        true => HashMap::<String, Track>::new(),
-        false => collection::metadata(session, &track_uris).await?,
+/// ArtistV4 normally returns a ranking scoped to the request's market.
+async fn ranked_tracks(session: &Session, artist: &ArtistMessage) -> Vec<String> {
+    let mut rankings = artist.top_tracks.iter().filter_map(|group| {
+        let mut seen = HashSet::new();
+        let tracks: Vec<_> = group
+            .tracks
+            .iter()
+            .filter_map(|track| spotifyapis::id::base62(track.gid()))
+            .map(|id| format!("spotify:track:{id}"))
+            .filter(|uri| seen.insert(uri.clone()))
+            .collect();
+        (!tracks.is_empty()).then_some((group.country(), tracks))
+    });
+    let Some(first) = rankings.next() else {
+        return Vec::new();
     };
-    let top_tracks = overview
-        .tracks
-        .into_iter()
-        .filter_map(|(uri, playcount)| {
-            let mut track = known_tracks.remove(&uri)?;
-            track.playcount = playcount;
-            Some(track)
-        })
-        .collect();
+    let others: Vec<_> = rankings.collect();
+    if others.iter().all(|(_, tracks)| *tracks == first.1) {
+        return first.1;
+    }
 
-    Ok(Artist {
-        name: overview.name,
-        cover_large: overview.cover_large,
-        banner: overview.banner,
-        biography: overview
-            .biography
-            .map(|biography| plain_text(&biography))
-            .filter(|biography| !biography.is_empty()),
-        monthly_listeners: overview.monthly_listeners,
-        followers: None,
-        top_tracks,
-        albums: overview.albums,
+    let market = session
+        .api()
+        .account_market()
+        .await
+        .inspect_err(|error| {
+            log::debug!("spotify: cannot read the market for artist rankings: {error:#}")
+        })
+        .ok();
+    let mut fallback = Vec::new();
+    for (country, tracks) in std::iter::once(first).chain(others) {
+        if market.is_some_and(|market| country.eq_ignore_ascii_case(market)) {
+            return tracks;
+        }
+        if country.is_empty() && fallback.is_empty() {
+            fallback = tracks;
+        }
+    }
+    fallback
+}
+
+/// Hydrates tracks, play counts, and album cards in one request per batch.
+async fn overview_cards(
+    session: &Session,
+    ranked: &[String],
+    releases: &[String],
+) -> Result<(Vec<Track>, Vec<Album>)> {
+    let requests = ranked
+        .iter()
+        .map(|uri| (uri.as_str(), collection::TRACK_DETAILS))
+        .chain(
+            releases
+                .iter()
+                .map(|uri| (uri.as_str(), &[ExtensionKind::AlbumV4][..])),
+        )
+        .collect::<Vec<_>>();
+    let mut data = collection::extended_batch(session, &requests).await?;
+    let ranked = ranked
+        .iter()
+        .filter_map(|uri| collection::take_track(&mut data, uri))
+        .collect();
+    let albums = newest_first(release_cards(releases, &mut data));
+    Ok((ranked, albums))
+}
+
+fn release_cards<'a>(
+    uris: &'a [String],
+    data: &'a mut HashMap<MetadataKey, MetadataPayload>,
+) -> impl Iterator<Item = Album> + 'a {
+    uris.iter().filter_map(move |uri| {
+        let album = take(data, ExtensionKind::AlbumV4, uri)?;
+        Some(albums::album_from(uri, &album))
     })
 }
 
-/// What the artist protobuf alone says, for when Pathfinder cannot answer. The releases are
-/// left to `catalogue` here too, so a failed overview still draws a page at the same speed.
-async fn legacy_artist(session: &Session, artist_id: &str) -> Result<Artist> {
-    let message = metadata(session, artist_id).await?;
-
-    let track_uris = top_track_uris(&message, &session.country());
-    let known_tracks = match track_uris.is_empty() {
-        true => HashMap::<String, Track>::new(),
-        false => collection::metadata(session, &track_uris).await?,
-    };
-    let top_tracks = track_uris
-        .iter()
-        .filter_map(|uri| known_tracks.get(uri).cloned())
-        .collect();
-
-    Ok(artist_from(&message, top_tracks, Vec::new()))
+fn audience_count(value: Option<i64>) -> Option<u64> {
+    value.and_then(|value| u64::try_from(value).ok())
 }
 
-async fn deepened(session: &Session, ranked: Vec<Track>, releases: &[Album]) -> Vec<Track> {
-    if ranked.len() >= TOP_TRACKS || releases.is_empty() {
-        return ranked;
+/// Loads Spotify’s related releases and creators, then hydrates both in one batch.
+pub(super) async fn album_catalogue(
+    session: &Session,
+    album_id: &str,
+    artist_id: Option<&str>,
+) -> Result<AlbumCatalogue> {
+    let album_uri = format!("{ALBUM_PREFIX}{album_id}");
+    let artist_uri = artist_id.map(|id| format!("{ARTIST_PREFIX}{id}"));
+    let mut requests = vec![(album_uri.as_str(), &[ExtensionKind::RelatedReleases][..])];
+    if let Some(uri) = artist_uri.as_deref() {
+        requests.push((uri, &[ExtensionKind::RelatedCreatorsSection]));
     }
-
-    let mined: Vec<Album> = releases
-        .iter()
-        .filter(|album| matches!(album.release_type, ReleaseType::Album | ReleaseType::Ep))
-        .take(MINED_RELEASES)
-        .cloned()
+    let mut data = collection::extended_batch(session, &requests).await?;
+    let mut seen = HashSet::from([album_uri.clone()]);
+    let related: Option<RelatedEntities> =
+        take(&mut data, ExtensionKind::RelatedReleases, &album_uri);
+    let related: Vec<_> = related
+        .into_iter()
+        .flat_map(|related| related.entities)
+        .map(|entry| entry.uri)
+        .filter(|uri| uri.starts_with(ALBUM_PREFIX) && seen.insert(uri.clone()))
+        .take(SUGGESTIONS)
         .collect();
-    match popular(session, &mined, &ranked).await {
-        Ok(rest) => ranked.into_iter().chain(rest).take(TOP_TRACKS).collect(),
-        Err(error) => {
-            log::warn!("artists: cannot rank the rest of the catalogue: {error:#}");
-            ranked
-        }
-    }
-}
-
-/// The playable tracks of `releases` most popular first, leaving out any named like one in
-/// `known`.
-async fn popular(session: &Session, releases: &[Album], known: &[Track]) -> Result<Vec<Track>> {
-    let mut rest = ranked_tracks(session, releases).await?;
-    let mut seen: HashSet<String> = known
+    let mut seen: HashSet<_> = artist_id.into_iter().collect();
+    let creators = artist_uri.as_deref().and_then(|uri| {
+        take::<RelatedCreators>(&mut data, ExtensionKind::RelatedCreatorsSection, uri)
+    });
+    let artist_uris = creators
         .iter()
-        .map(|track| track.name.to_lowercase())
-        .collect();
-    rest.retain(|track| seen.insert(track.name.to_lowercase()));
-    Ok(rest)
-}
-
-/// Reads album tracks in batches and ranks their metadata by Spotify's popularity score.
-async fn ranked_tracks(session: &Session, releases: &[Album]) -> Result<Vec<Track>> {
-    let mined: Vec<String> = releases
+        .flat_map(|creators| &creators.sections)
+        .flat_map(|section| &section.entities)
+        .map(|entry| entry.uri.as_str())
+        .filter(|uri| {
+            uri.strip_prefix(ARTIST_PREFIX)
+                .is_some_and(|id| seen.insert(id))
+        })
+        .take(SUGGESTIONS)
+        .collect::<Vec<_>>();
+    let requests: Vec<_> = artist_uris
         .iter()
-        .map(|album| format!("{ALBUM_PREFIX}{}", album.id))
+        .map(|&uri| (uri, &[ExtensionKind::ArtistV4][..]))
+        .chain(
+            related
+                .iter()
+                .map(|uri| (uri.as_str(), &[ExtensionKind::AlbumV4][..])),
+        )
         .collect();
-    if mined.is_empty() {
-        return Ok(Vec::new());
-    }
-    log::debug!(
-        "artists: ranking the tracks of {} of {} releases",
-        mined.len(),
-        releases.len()
-    );
-
-    let uris = albums::track_uris(session, &mined).await?;
-    if uris.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let known_tracks = collection::metadata(session, &uris).await?;
-    let mut rest: Vec<Track> = uris
-        .iter()
-        .filter_map(|uri| known_tracks.get(uri))
-        .filter(|track| track.playable && track.id.is_some())
-        .cloned()
+    let mut data = collection::extended_batch(session, &requests).await?;
+    let also_like = release_cards(&related, &mut data).collect();
+    let similar = artist_uris
+        .into_iter()
+        .filter_map(|uri| {
+            let artist = take(&mut data, ExtensionKind::ArtistV4, uri)?;
+            artist_card(uri, &artist)
+        })
         .collect();
-    rest.sort_by_key(|track| std::cmp::Reverse(track.popularity));
-
-    Ok(rest)
+    Ok(AlbumCatalogue { also_like, similar })
 }
 
-/// Every release of an artist, newest first: the albums tab of an album page reads its
-/// more-from-the-artist half off this.
-pub(crate) async fn discography(session: &Session, artist_id: &str) -> Result<Vec<Album>> {
-    let message = metadata(session, artist_id).await?;
-    releases(session, &message).await
-}
-
-async fn releases(session: &Session, artist: &ArtistMessage) -> Result<Vec<Album>> {
-    let uris = release_uris(artist);
-    if uris.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let known = albums::metadata(session, &uris).await?;
-    Ok(newest_first(
-        uris.iter().filter_map(|uri| known.get(uri).cloned()),
-    ))
-}
-
+/// Keeps one edition per title and release type, in newest-first order.
 fn newest_first(releases: impl Iterator<Item = Album>) -> Vec<Album> {
     let mut seen = HashSet::new();
     let mut releases: Vec<_> = releases
         .filter(|album| seen.insert((album.name.to_lowercase(), album.release_type)))
         .collect();
 
-    releases.sort_by(|left, right| right.release_date.cmp(&left.release_date));
+    releases.sort_by_key(|release| std::cmp::Reverse(release.release_date));
     releases
 }
 
 async fn metadata(session: &Session, artist_id: &str) -> Result<ArtistMessage> {
-    let uri = SpotifyUri::from_uri(&format!("{ARTIST_PREFIX}{artist_id}"))
-        .context("invalid artist ID")?;
-    let body = paced(|| session.spclient().get_artist_metadata(&uri))
-        .await
-        .context("cannot read artist metadata")?;
-    ArtistMessage::parse_from_bytes(&body).context("cannot decode artist metadata protobuf")
+    let uri = format!("{ARTIST_PREFIX}{artist_id}");
+    collection::read(session, &uri, ExtensionKind::ArtistV4)
+        .await?
+        .context("Spotify omitted the artist metadata")
 }
 
 pub async fn saved_artists(session: &Session) -> Result<Vec<SavedArtist>> {
-    let items = followed(session).await?;
+    let items = collection::saved_items(session, collection::ARTISTS, ARTIST_PREFIX).await?;
     if items.is_empty() {
         return Ok(Vec::new());
     }
@@ -257,20 +348,10 @@ pub async fn saved_artists(session: &Session) -> Result<Vec<SavedArtist>> {
         .into_iter()
         .filter_map(|item| {
             let mut artist = known.remove(item.uri.strip_prefix(ARTIST_PREFIX)?)?;
-            artist.added_at = item.added_at;
+            artist.added_at = item.added_at.map(i64::from);
             Some(artist)
         })
         .collect())
-}
-
-async fn followed(session: &Session) -> Result<Vec<SavedItem>> {
-    match collection2::saved_items(session, collection2::ARTISTS, ARTIST_PREFIX).await {
-        Ok(items) if !items.is_empty() => return Ok(items),
-        Ok(_) => log::debug!("artists: the followed set is empty, reading the collection set"),
-        Err(error) => log::warn!("artists: cannot read the followed set: {error:#}"),
-    }
-
-    collection2::saved_items(session, collection2::COLLECTION, ARTIST_PREFIX).await
 }
 
 pub async fn images(session: &Session, ids: &[String]) -> Result<HashMap<String, String>> {
@@ -281,83 +362,50 @@ pub async fn images(session: &Session, ids: &[String]) -> Result<HashMap<String,
         .collect())
 }
 
-async fn cards(session: &Session, ids: &[String]) -> Result<HashMap<String, SavedArtist>> {
-    if ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let request = BatchedEntityRequest {
-        entity_request: ids
-            .iter()
-            .map(|id| EntityRequest {
-                entity_uri: format!("{ARTIST_PREFIX}{id}"),
-                query: vec![ExtensionQuery {
-                    extension_kind: EnumOrUnknown::new(ExtensionKind::ARTIST_V4),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            })
-            .collect(),
-        ..Default::default()
-    };
-
-    let response = paced(|| session.spclient().get_extended_metadata(request.clone()))
-        .await
-        .context("cannot read artist portraits")?;
-
-    let mut found = HashMap::new();
-    for array in response.extended_metadata {
-        for entity in array.extension_data {
-            let Ok(message) = ArtistMessage::parse_from_bytes(&entity.extension_data.value) else {
-                continue;
-            };
-            let Some(id) = entity.entity_uri.strip_prefix(ARTIST_PREFIX) else {
-                continue;
-            };
-            let smallest = portraits(&message)
-                .into_iter()
-                .min_by_key(|image| wire::image_width(image));
-
-            found.insert(
-                id.to_owned(),
-                SavedArtist {
-                    id: id.to_owned(),
-                    name: match message.name() {
-                        "" => UNKNOWN.to_owned(),
-                        name => name.to_owned(),
-                    },
-                    cover: smallest.and_then(|image| wire::image_url(image.file_id())),
-                    added_at: None,
-                },
-            );
-        }
-    }
-
-    Ok(found)
+pub(super) async fn cards(
+    session: &Session,
+    ids: &[String],
+) -> Result<HashMap<String, SavedArtist>> {
+    let uris: Vec<_> = ids
+        .iter()
+        .map(|id| format!("{ARTIST_PREFIX}{id}"))
+        .collect();
+    let cards = collection::project(
+        session,
+        &uris,
+        ExtensionKind::ArtistV4,
+        collection::BATCH,
+        |uri, artist| artist_card(uri, &artist),
+    )
+    .await
+    .context("cannot read artist portraits")?;
+    Ok(cards
+        .into_values()
+        .map(|card| (card.id.clone(), card))
+        .collect())
 }
 
-fn artist_from(artist: &ArtistMessage, top_tracks: Vec<Track>, albums: Vec<Album>) -> Artist {
-    let profile = profile_from(artist);
-
-    Artist {
-        name: profile.name,
-        cover_large: profile.cover_large,
-        banner: None,
-        biography: profile.biography,
-        monthly_listeners: None,
-        followers: None,
-        top_tracks,
-        albums,
-    }
+pub(super) fn artist_card(uri: &str, message: &ArtistMessage) -> Option<SavedArtist> {
+    let id = uri.strip_prefix(ARTIST_PREFIX)?;
+    let cover = portraits(message)
+        .min_by_key(|image| wire::image_width(image))
+        .and_then(|image| wire::image_url(image.file_id()));
+    let name = match message.name() {
+        "" => UNKNOWN,
+        name => name,
+    };
+    Some(SavedArtist {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        cover,
+        added_at: None,
+    })
 }
 
 fn profile_from(artist: &ArtistMessage) -> ArtistProfile {
-    let portraits = portraits(artist);
-
     ArtistProfile {
         name: artist.name().to_owned(),
-        cover_large: portraits
-            .iter()
+        cover_large: portraits(artist)
             .max_by_key(|image| wire::image_width(image))
             .and_then(|image| wire::image_url(image.file_id())),
         biography: artist.biography.iter().find_map(|bio| {
@@ -370,144 +418,98 @@ fn profile_from(artist: &ArtistMessage) -> ArtistProfile {
     }
 }
 
-fn plain_text(html: &str) -> String {
+/// Strips biography markup, keeping a space at paragraph and line breaks.
+fn plain_text(mut html: &str) -> String {
     let mut text = String::with_capacity(html.len());
-    let mut tag = String::new();
-    let mut inside_tag = false;
-
-    for character in html.chars() {
-        match character {
-            '<' if !inside_tag => {
-                inside_tag = true;
-                tag.clear();
-            }
-            '>' if inside_tag => {
-                inside_tag = false;
-                let tag = tag.trim().to_ascii_lowercase();
-                if (tag.starts_with("br")
-                    || tag.starts_with("/p")
-                    || tag.starts_with("/li")
-                    || tag.starts_with("/div"))
-                    && !text.ends_with(char::is_whitespace)
-                {
-                    text.push(' ');
-                }
-            }
-            _ if inside_tag => tag.push(character),
-            _ => text.push(character),
+    while let Some((before, tagged)) = html.split_once('<') {
+        text.push_str(before);
+        let Some((tag, rest)) = tagged.split_once('>') else {
+            html = "";
+            break;
+        };
+        let tag = tag.trim().to_ascii_lowercase();
+        if ["br", "/p", "/li", "/div"]
+            .iter()
+            .any(|prefix| tag.starts_with(prefix))
+            && !text.ends_with(char::is_whitespace)
+        {
+            text.push(' ');
         }
+        html = rest;
     }
+    text.push_str(html);
 
-    escape::unescape(&text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+    let decoded = text
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
 
-fn top_track_uris(artist: &ArtistMessage, country: &str) -> Vec<String> {
-    artist
-        .top_track
-        .iter()
-        .find(|tracks| tracks.country() == country)
-        .or_else(|| {
-            artist
-                .top_track
-                .iter()
-                .find(|tracks| tracks.country().is_empty())
-        })
-        .into_iter()
-        .flat_map(|tracks| tracks.track.iter())
-        .filter_map(|track| collection::base62(track.gid()))
-        .map(|id| format!("{TRACK_PREFIX}{id}"))
-        .collect()
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn release_uris(artist: &ArtistMessage) -> Vec<String> {
-    let mut seen = HashSet::new();
-
-    artist
-        .album_group
-        .iter()
-        .chain(artist.single_group.iter())
-        .chain(artist.compilation_group.iter())
-        .flat_map(|group| group.album.iter())
-        .filter_map(|album| collection::base62(album.gid()))
-        .filter(|id| seen.insert(id.clone()))
-        .map(|id| format!("{ALBUM_PREFIX}{id}"))
-        .collect()
+    group_uris(
+        artist
+            .album_group
+            .iter()
+            .chain(&artist.single_group)
+            .chain(&artist.compilation_group),
+    )
+    .collect()
 }
 
-fn portraits(artist: &ArtistMessage) -> Vec<&Image> {
-    let mut portraits: Vec<_> = artist
-        .portrait_group
-        .as_ref()
+/// Lists each release ID once, retaining the service's edition order.
+fn group_uris<'a>(
+    groups: impl IntoIterator<Item = &'a AlbumGroup> + 'a,
+) -> impl Iterator<Item = String> + 'a {
+    let mut seen = HashSet::new();
+    groups
         .into_iter()
-        .flat_map(|group| group.image.iter())
-        .filter(|image| image.has_file_id())
-        .collect();
-    portraits.extend(artist.portrait.iter().filter(|image| image.has_file_id()));
-    portraits
+        .flat_map(|group| group.album.iter())
+        .filter_map(|album| spotifyapis::id::base62(album.gid()))
+        .filter(move |id| seen.insert(id.clone()))
+        .map(|id| format!("{ALBUM_PREFIX}{id}"))
+}
+
+fn portraits(artist: &ArtistMessage) -> impl Iterator<Item = &Image> {
+    artist
+        .portrait_group
+        .iter()
+        .flat_map(|group| &group.image)
+        .chain(&artist.portrait)
+        .filter(|image| image.file_id.is_some())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use music::ReleaseType;
 
-    use super::{Album, newest_first, plain_text};
-
-    fn release(name: &str, date: &str, release_type: ReleaseType) -> Album {
-        Album {
-            id: name.to_lowercase(),
-            name: name.to_owned(),
-            artists: String::new(),
-            artist_refs: Vec::new(),
-            cover: None,
-            cover_large: None,
+    #[test]
+    fn editions_keep_their_type_and_sort_by_date() {
+        let releases = [
+            ("Record", ReleaseType::Album, "2020"),
+            ("RECORD", ReleaseType::Album, "2019"),
+            ("Record", ReleaseType::Single, "2021"),
+            ("Record Deluxe", ReleaseType::Album, "2022"),
+        ]
+        .map(|(name, release_type, release_date)| Album {
+            name: name.into(),
             release_type,
-            year: 0,
-            track_count: 0,
-            release_date: date.to_owned(),
-            label: String::new(),
-            copyrights: Vec::new(),
-            added_at: None,
-        }
-    }
-
-    #[test]
-    fn every_edition_survives_but_market_duplicates_do_not() {
-        let releases = newest_first(
-            [
-                release("Meteora (Bonus Edition)", "2003-03-25", ReleaseType::Album),
-                release("Meteora", "2003-03-25", ReleaseType::Album),
-                release("METEORA", "2003-03-25", ReleaseType::Album),
-                release("Meteora", "2003-03-25", ReleaseType::Single),
-                release("From Zero", "2024-11-15", ReleaseType::Album),
-            ]
-            .into_iter(),
-        );
-        let names: Vec<_> = releases
-            .iter()
-            .map(|album| (album.name.as_str(), album.release_type))
-            .collect();
-
+            release_date: music::ReleaseDate::parse(release_date),
+            ..Album::default()
+        });
         assert_eq!(
-            names,
-            [
-                ("From Zero", ReleaseType::Album),
-                ("Meteora (Bonus Edition)", ReleaseType::Album),
-                ("Meteora", ReleaseType::Album),
-                ("Meteora", ReleaseType::Single),
-            ]
+            newest_first(releases.into_iter())
+                .into_iter()
+                .map(|album| album.release_date.unwrap().year())
+                .collect::<Vec<_>>(),
+            [2022, 2021, 2020]
         );
-    }
-
-    #[test]
-    fn biography_html_becomes_readable_text() {
-        assert_eq!(
-            plain_text(
-                "Formed by <a href=\"spotify:artist:abc\">Alice &amp; Bob</a>.<br>Based in Paris."
-            ),
-            "Formed by Alice & Bob. Based in Paris."
-        );
+        assert_eq!(plain_text("A &amp; B<br>Live"), "A & B Live");
     }
 }

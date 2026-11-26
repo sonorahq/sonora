@@ -28,6 +28,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use jiff::fmt::temporal::DateTimeParser;
 
+pub use calendar::ReleaseDate;
+pub use models::SearchPart;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
     Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
@@ -68,9 +70,24 @@ pub fn is_local_id(id: &str) -> bool {
         || id.starts_with(LOCAL_GENRE_PREFIX)
 }
 
-pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
-    let mut covers: Vec<String> = Vec::with_capacity(wanted);
-    for cover in tracks.iter().filter_map(|track| track.cover.as_deref()) {
+pub fn distinct_covers<'a>(
+    tracks: impl IntoIterator<Item = &'a Track>,
+    wanted: usize,
+) -> Vec<String> {
+    distinct_cover_urls(
+        tracks
+            .into_iter()
+            .filter_map(|track| track.cover.as_deref()),
+        wanted,
+    )
+}
+
+pub fn distinct_cover_urls<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+    wanted: usize,
+) -> Vec<String> {
+    let mut covers = Vec::with_capacity(wanted);
+    for cover in urls {
         if covers.len() == wanted {
             break;
         }
@@ -80,6 +97,13 @@ pub fn distinct_covers(tracks: &[Track], wanted: usize) -> Vec<String> {
     }
 
     covers
+}
+
+/// Track membership and artwork candidates for a playlist already listed in the library.
+pub struct PlaylistMembership {
+    pub tracks: HashSet<String>,
+    pub covers: Vec<String>,
+    pub revision: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +173,16 @@ pub trait MusicApi: Send + Sync {
         Ok(ArtistCatalogue::default())
     }
 
+    /// Optionally publishes a usable part of the catalogue before the full result.
+    async fn artist_catalogue_with_preview(
+        &self,
+        id: &str,
+        known: &[Track],
+        _preview: tokio::sync::mpsc::Sender<ArtistCatalogue>,
+    ) -> Result<ArtistCatalogue> {
+        self.artist_catalogue(id, known).await
+    }
+
     /// The artist's songs for playback, with popular tracks first when available.
     /// Providers extend the overview's tracks with their ranked catalogue or release order.
     async fn artist_tracks(&self, artist_id: &str) -> Result<Vec<Track>> {
@@ -166,6 +200,11 @@ pub trait MusicApi: Send + Sync {
     /// rest arrive. A provider that lists in one go leaves the default, which is one page.
     async fn saved_tracks_paged(&self) -> Result<Pages<Track>> {
         Ok(whole(self.saved_tracks().await?))
+    }
+
+    /// Opens both saved lists together when the provider can read them in one pass.
+    async fn saved_collection_paged(&self) -> Option<SavedCollectionPages> {
+        None
     }
 
     /// Every track the provider has. Only a `Shape::Catalog` provider answers.
@@ -189,11 +228,24 @@ pub trait MusicApi: Send + Sync {
     }
     async fn track(&self, track_id: &str) -> Result<Track>;
 
+    /// Resolves a group of track IDs, omitting unavailable rows.
+    async fn tracks_by_id(&self, ids: &[String]) -> Result<HashMap<String, Track>> {
+        use futures::StreamExt as _;
+        Ok(futures::stream::iter(ids.to_vec())
+            .map(|id| async move {
+                let track = self.track(&id).await.ok()?;
+                (track.id.as_ref() == Some(&id)).then_some((id, track))
+            })
+            .buffer_unordered(8)
+            .filter_map(std::future::ready)
+            .collect()
+            .await)
+    }
+
     /// Delete a track file from disk (only for local provider)
     async fn delete_track_file(&self, _track_id: &str) -> Result<()> {
         anyhow::bail!("this provider does not support file deletion")
     }
-    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>>;
 
     /// Tells the provider's own server whether a track is playing and where it is. It is sent on
     /// every start, pause, seek and stop, and never counts as a listen. A provider that keeps no
@@ -222,6 +274,12 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>>;
+
+    /// Refreshes named playlists independently, leaving failed snapshots out of the result.
+    async fn playlist_snapshots(&self, _ids: Vec<String>) -> Option<Vec<Playlist>> {
+        None
+    }
+
     /// Changes the provider's own pin for `uri`, one of the uris `pin_targets` lists or
     /// `pin_uri` builds.
     async fn set_pinned(&self, _uri: &str, _pinned: bool) -> Result<PinOutcome> {
@@ -259,6 +317,24 @@ pub trait MusicApi: Send + Sync {
     /// Only a provider whose capabilities list `playlist_covers` answers.
     async fn set_playlist_cover(&self, _playlist_id: &str, _image: Option<&[u8]>) -> Result<()> {
         anyhow::bail!("this provider cannot change a playlist's cover")
+    }
+
+    /// Changes a playlist's cover and optionally its name, returning the cover URL when known.
+    async fn edit_playlist_appearance(
+        &self,
+        playlist_id: &str,
+        name: Option<&str>,
+        image: Option<&[u8]>,
+    ) -> Result<Option<String>> {
+        self.set_playlist_cover(playlist_id, image).await?;
+        if let Some(name) = name {
+            self.rename_playlist(playlist_id, name).await?;
+        }
+        Ok(self
+            .playlist(playlist_id)
+            .await
+            .ok()
+            .and_then(|detail| detail.playlist.cover))
     }
 
     /// Reads one playlist's smart rules and edit bookkeeping. Only a provider whose
@@ -354,6 +430,10 @@ pub trait MusicApi: Send + Sync {
 
     async fn set_artist_saved(&self, artist_id: &str, saved: bool) -> Result<()>;
     async fn album(&self, album_id: &str) -> Result<AlbumDetail>;
+    /// Reads album metadata for a song page when the provider can fetch it without the tracks.
+    async fn song_album(&self, _album_id: &str) -> Result<Option<Album>> {
+        Ok(None)
+    }
     async fn album_tracks(&self, album_id: &str) -> Result<Vec<Track>>;
 
     /// The rest of an album page, fetched once `album` has put the tracks up: the releases
@@ -370,6 +450,16 @@ pub trait MusicApi: Send + Sync {
         Ok(AlbumCatalogue::default())
     }
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail>;
+
+    /// Loads a playlist in full, optionally sending ordered track batches as they arrive.
+    async fn playlist_with_preview(
+        &self,
+        playlist_id: &str,
+        _preview: tokio::sync::mpsc::Sender<PlaylistPreview>,
+    ) -> Result<PlaylistDetail> {
+        self.playlist(playlist_id).await
+    }
+
     async fn playlist_continuation(
         &self,
         _continuation: &str,
@@ -379,6 +469,41 @@ pub trait MusicApi: Send + Sync {
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>>;
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>>;
+
+    /// Reads artwork candidates in request order, with an independent result for each playlist.
+    async fn playlist_cover_batch(
+        &self,
+        ids: &[String],
+        wanted: usize,
+    ) -> Vec<Result<Vec<String>>> {
+        use futures::StreamExt as _;
+        futures::stream::iter(ids.iter().cloned())
+            .map(|id| async move { self.playlist_covers(&id, wanted).await })
+            .buffered(4)
+            .collect()
+            .await
+    }
+    /// Reads membership in request order. Each request also specifies how many covers it needs.
+    async fn playlist_memberships(
+        &self,
+        requests: &[(String, usize)],
+    ) -> Vec<Result<PlaylistMembership>> {
+        use futures::StreamExt as _;
+        futures::stream::iter(requests.iter().cloned())
+            .map(|(id, wanted)| async move {
+                let tracks = self.playlist_tracks(&id).await?;
+                let covers = distinct_covers(&tracks, wanted);
+                Ok(PlaylistMembership {
+                    tracks: tracks.into_iter().filter_map(|track| track.id).collect(),
+                    covers,
+                    revision: None,
+                })
+            })
+            .buffered(4)
+            .collect()
+            .await
+    }
+
     /// The station seeded by `track_id`, from its start or from `from`, a continuation an
     /// earlier call answered with. The continuation that comes back fetches the next stretch,
     /// and `None` means the provider has no more. A provider that serves a station in one go
@@ -436,6 +561,15 @@ pub trait MusicApi: Send + Sync {
         }
     }
 
+    /// Optionally delivers successful categories while the combined search is in flight.
+    async fn search_with_preview(
+        &self,
+        query: &str,
+        _preview: tokio::sync::mpsc::Sender<SearchPart>,
+    ) -> Found {
+        self.search_all(query).await
+    }
+
     async fn home(&self) -> Result<HomeFeed> {
         Ok(HomeFeed::default())
     }
@@ -457,6 +591,16 @@ pub trait MusicApi: Send + Sync {
 
     async fn genre(&self, _genre_id: &str) -> Result<GenreDetail> {
         Ok(GenreDetail::default())
+    }
+
+    /// Reads a category, optionally delivering its first ready shelves before the rest.
+    async fn genre_with_preview(
+        &self,
+        id: &str,
+        _title: Option<&str>,
+        _preview: tokio::sync::mpsc::Sender<GenreDetail>,
+    ) -> Result<GenreDetail> {
+        self.genre(id).await
     }
 
     /// A picture for a genre that `genres` listed without one, found with as few requests as
@@ -790,6 +934,7 @@ pub trait Player: Send + Sync {
 
     /// Fetches all of a track into the downloads without playing it. The future answers once it
     /// is kept, or why it could not be. A player that cannot download says so at once.
+    /// The caller may build the future outside Tokio and poll it on the I/O runtime.
     /// `progress` follows how much of it has arrived.
     fn download(
         &self,
@@ -954,9 +1099,8 @@ pub struct Capabilities {
     /// The stream levels the service serves, best first. Empty when there is nothing to choose
     /// between, so the setting stays hidden.
     pub qualities: &'static [Offer],
-    /// For a service that refuses a burst of downloads, the pause between them once it has refused
-    /// one. Such a service downloads one track at a time, with no pause until it first refuses.
-    /// Zero lets downloads run side by side.
+    /// The initial interval between starting downloads, adjusted according to provider responses.
+    /// A nonzero interval limits downloads to one at a time.
     pub download_gap: Duration,
     /// Set when the library's Songs page comes in the order its songs were added but carries
     /// no date for each, saying which end is newest. The page then sorts by Date added through
@@ -1151,6 +1295,18 @@ pub struct Page<T> {
 /// provider fetching.
 pub type Pages<T> = tokio::sync::mpsc::Receiver<Result<Page<T>>>;
 
+/// The next ordered rows of a playlist and its header.
+pub struct PlaylistPreview {
+    pub playlist: Playlist,
+    pub tracks: Vec<Track>,
+}
+
+/// The independently delivered tracks and albums from a shared collection read.
+pub struct SavedCollectionPages {
+    pub tracks: Pages<Track>,
+    pub albums: Pages<Album>,
+}
+
 /// The home feed arriving a lot at a time: every message is the whole feed so far, arranged
 /// the way the provider wants it drawn, so each one can replace the last on the page. The
 /// channel closes after the last lot, or carries the error one broke on, after which nothing
@@ -1258,6 +1414,15 @@ pub trait MusicProvider: Send + Sync {
     /// looking for one.
     fn reach(&self) -> Option<String> {
         None
+    }
+    /// Makes an unauthenticated reachability check using the provider's transport.
+    fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
+        let host = self.reach()?;
+        Some(Box::pin(async move {
+            tokio::net::TcpStream::connect((host.as_str(), 443))
+                .await
+                .is_ok()
+        }))
     }
     /// What a status calls this provider after "listening to". A service answers with its own
     /// name; one that is only the user's own files says what the files are instead.

@@ -234,6 +234,7 @@ fn playlist_from(stored: Stored, tracks: &[Track]) -> Playlist {
         .cover
         .map(|path| format!("file://{}", path.display()));
     Playlist {
+        revision: None,
         id: stored.id,
         name: stored.name,
         owner: String::new(),
@@ -418,10 +419,6 @@ impl MusicApi for LocalClient {
             .find(|track| track.id.as_deref() == Some(track_id.as_str()))
             .cloned()
             .ok_or_else(|| anyhow!("cannot find local track {track_id}"))
-    }
-
-    async fn track_playcount(&self, _track_id: &str) -> Result<Option<u64>> {
-        Ok(None)
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>> {
@@ -1019,9 +1016,11 @@ mod tests {
             explicit: false,
             track_number: 1,
             disc_number: 1,
+            isrc: None,
             tags: Vec::new(),
             languages: Vec::new(),
             credits: Vec::new(),
+            ..Track::default()
         }
     }
 

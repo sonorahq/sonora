@@ -325,14 +325,21 @@ impl Covers {
             duration: item.duration(),
             added_at: iso_8601_to_epoch(item.date_created.as_deref()),
             added_by: None,
+            release_date: item
+                .premiere_date
+                .as_deref()
+                .and_then(music::ReleaseDate::parse)
+                .or_else(|| music::ReleaseDate::from_parts(item.production_year?, 0, 0)),
             playcount: item.user_data.as_ref().and_then(|data| data.play_count),
             popularity: 0,
             explicit: false,
             track_number: item.index_number.unwrap_or(0),
             disc_number: item.parent_index_number.unwrap_or(1).max(1),
-            tags: item.genres,
+            isrc: None,
+            genres: item.genres,
             languages: Vec::new(),
             credits,
+            ..Track::default()
         }
     }
 
@@ -366,11 +373,8 @@ impl Covers {
                 .as_deref()
                 .and_then(|date| date.get(..10))
                 .filter(|date| !date.ends_with("-01-01"))
-                .map(str::to_owned)
-                .unwrap_or_else(|| match year {
-                    0 => String::new(),
-                    _ => year.to_string(),
-                }),
+                .and_then(music::ReleaseDate::parse)
+                .or_else(|| music::ReleaseDate::from_parts(year, 0, 0)),
             label: item
                 .studios
                 .iter()
@@ -398,6 +402,7 @@ impl Covers {
     /// permissions, which a listing does not carry, so the caller fills those in.
     pub fn playlist(&self, item: Item) -> Playlist {
         Playlist {
+            revision: None,
             cover: self.of(&item, COVER),
             id: item.id,
             name: item.name.unwrap_or_default(),

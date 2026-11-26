@@ -20,6 +20,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
 - `sonora queue remove`, `queue move` and `queue clear` edit the play order from the command line and the control socket, addressing rows by the id shown in `sonora queue --json`.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
+- Song details show more track metadata, including release dates, tempo, moods and ISRCs. Song details and track tables distinguish genres from tags.
+- Spotify artist pages show follower counts and Appears On releases, and album pages show related albums and artists where available.
 - The fullscreen player has the Sessions button at the left of its controls on wide windows too, across from the volume.
 - Cast YouTube Music to a TV or speaker with YouTube on your network from the devices menu. It keeps playing after you close Sonora or your laptop, and you can still pause, skip and seek from Sonora. A speaker plays only while you are signed in.
 - `sonora playlist list`, `create`, `rename`, `public`, `add`, `remove` and `delete` manage playlists from the command line and the control socket.
@@ -56,6 +58,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page lies on a rounded sheet set apart from the sidebars, the title bar and the player bar, which now share one colour.
 - The sidebar fades out under the title bar as you scroll it, and above the player bar when the player bar is not transparent.
 - The volume icon switches at once as you change the volume, instead of popping on every step.
+- Sonora renews the Spotify sign-in automatically and keeps Soloist paired when you sign out.
+- Spotify Browse focuses on music. Home, Browse, large playlists, artist discographies and wide Search can show results as they load.
+- Reopening a Spotify playlist or Browse category fetches its latest contents.
+- Built-in Spotify playback can reuse cached tracks for offline downloads. Spotify downloads adjust their pace when the service asks them to slow down, and the downloads list counts down to when they go on.
+- Pins you add or remove in Sonora stay in Sonora on Spotify, while pins you make in Spotify's own apps still show up.
 - Scrollbars fade in as you scroll and fade out once you stop, instead of popping in and out.
 - The settings search suggests matching settings in a panel under the field as you type, like the Search page does. Pick one with the arrow keys or a click to jump to it and light it up for a moment, or press Enter to list every match.
 - Settings name each group of options in a column beside it, with a thin line between groups instead of headings and wide gaps.
@@ -127,6 +134,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
+- With Soloist off, you can seek ahead in Spotify tracks while they download.
+- Spotify Connect follows Soloist playback and queue changes, keeps your position when switching players, and lets you jump to a specific queue entry on another device, including duplicates. Shuffled albums and playlists keep their context.
+- Spotify Home credits Liked Songs to your account and marks the playlist playing on the active device.
+- Spotify sidebar pins can include items outside the main library. Deleting a playlist no longer reports a false failure, and a Jam stays visible if ending or leaving it fails.
+- Album covers stay visible while higher-resolution artwork loads, and Sonora cleans up its instance socket on normal exit on Unix.
 - The left sidebar's scrollbar can be dragged and clicked again.
 
 ## [0.50.3] - 2026-11-20

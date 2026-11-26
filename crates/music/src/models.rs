@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ReleaseDate;
+
 /// A size of the same cover that a provider can name without fetching anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -54,7 +56,6 @@ impl Contributor {
 #[serde(default)]
 pub struct ArtistRef {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// True when the credit is a plain video channel and not an artist page, as for fan uploads
     /// on YouTube. Search does not offer such a channel as an artist.
@@ -83,7 +84,7 @@ pub struct ScanReport {
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
 /// caller that builds one from `..Default::default()` sets `playable` itself.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Track {
     pub id: Option<String>,
@@ -100,14 +101,32 @@ pub struct Track {
     pub duration: Duration,
     pub added_at: Option<i64>,
     pub added_by: Option<Arc<Contributor>>,
+    #[serde(deserialize_with = "crate::calendar::lenient")]
+    pub release_date: Option<ReleaseDate>,
     pub playcount: Option<u64>,
     pub popularity: u32,
     pub explicit: bool,
     pub track_number: u32,
     pub disc_number: u32,
+    pub isrc: Option<String>,
+    pub genres: Vec<String>,
     pub tags: Vec<String>,
+    pub moods: Vec<String>,
+    pub bpm: Option<f32>,
     pub languages: Vec<String>,
     pub credits: Vec<Credit>,
+}
+
+impl Track {
+    /// Returns the track release date, filling in compatible detail from the album.
+    pub fn release_date_with(&self, album_date: Option<ReleaseDate>) -> Option<ReleaseDate> {
+        album_date
+            .filter(|&album| {
+                self.release_date
+                    .is_none_or(|date| date.is_prefix_of(album))
+            })
+            .or(self.release_date)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +148,9 @@ pub struct Playlist {
     /// The provider chooses the tracks itself, as for a Navidrome smart playlist, so none can
     /// be added, removed or moved by hand even by its owner.
     pub read_only: bool,
+    /// Revision of the provider snapshot used to build this playlist.
+    #[serde(skip)]
+    pub revision: Option<Vec<u8>>,
 }
 
 impl Playlist {
@@ -197,13 +219,24 @@ pub struct Album {
     pub release_type: ReleaseType,
     pub year: i32,
     pub track_count: u32,
-    pub release_date: String,
+    #[serde(deserialize_with = "crate::calendar::lenient")]
+    pub release_date: Option<ReleaseDate>,
     pub label: String,
     pub copyrights: Vec<String>,
     pub added_at: Option<i64>,
 }
 
 impl Album {
+    /// Fills in release dates for tracks loaded alongside this album.
+    pub fn date_tracks(&self, tracks: &mut [Track]) {
+        let date = self
+            .release_date
+            .or_else(|| ReleaseDate::from_parts(self.year, 0, 0));
+        for track in tracks {
+            track.release_date = track.release_date_with(date);
+        }
+    }
+
     /// Credits the album to `artist` when it names no one. A provider calls this on releases
     /// read from an artist's own listing, which often leaves the artist out of each entry.
     pub fn credit(mut self, artist: &ArtistRef) -> Self {
@@ -243,7 +276,7 @@ fn is_no_label(label: &str) -> bool {
     label.eq_ignore_ascii_case(NO_LABEL)
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -275,7 +308,7 @@ pub struct Genre {
 
 /// One card of a browse shelf. A provider's home and genre pages mix whatever the shelf holds,
 /// so a track or an artist sits beside albums and playlists in the same row.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GenreItem {
     Playlist(Playlist),
     Album(Album),
@@ -284,10 +317,18 @@ pub enum GenreItem {
     Artist(SavedArtist),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreSection {
     pub title: String,
     pub items: Vec<GenreItem>,
+}
+
+/// One completed category from a provider search.
+pub enum SearchPart {
+    Tracks(Vec<Track>),
+    Albums(Vec<Album>),
+    Artists(Vec<SavedArtist>),
+    Playlists(Vec<Playlist>),
 }
 
 /// What one search found for every kind it looks for. Each kind keeps its own outcome, so a
@@ -321,7 +362,7 @@ impl Found {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct HomeFeed {
     /// What the user has been playing lately, in every shape the provider lists it: songs and
     /// videos, but also the albums, playlists and artists they came from.
@@ -330,7 +371,7 @@ pub struct HomeFeed {
     pub sections: Vec<GenreSection>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenreDetail {
     pub name: String,
     pub sections: Vec<GenreSection>,
@@ -386,7 +427,7 @@ pub struct TrackTags {
     pub lyrics: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
@@ -428,7 +469,7 @@ pub struct SavedArtist {
     pub added_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Artist {
     pub name: String,
     pub cover_large: Option<String>,
@@ -446,7 +487,7 @@ pub struct Artist {
 
 /// What an artist page fills in once its overview is already on screen. Every list
 /// replaces what `MusicApi::artist` answered with, and an empty one leaves that part alone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArtistCatalogue {
     pub albums: Vec<Album>,
     pub top_tracks: Vec<Track>,
@@ -696,6 +737,8 @@ pub enum PinTargetKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinOutcome {
     Updated,
+    /// The provider accepted the write but its list may omit the pin.
+    Accepted,
     LimitReached,
     Outside,
 }

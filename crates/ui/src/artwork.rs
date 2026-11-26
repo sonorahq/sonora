@@ -92,6 +92,17 @@ struct ArtworkSource {
     edge: u32,
 }
 
+type ArtworkResize = fn(&str, u32) -> Option<String>;
+
+struct ArtworkVariants(ArtworkResize);
+
+impl Global for ArtworkVariants {}
+
+/// Registers a CDN variant selector for artwork that has a known decode size.
+pub fn set_artwork_variants(resize: ArtworkResize, cx: &mut App) {
+    cx.set_global(ArtworkVariants(resize));
+}
+
 #[derive(Clone)]
 enum ArtworkAssetLoader {}
 
@@ -154,7 +165,14 @@ impl Asset for ArtworkAssetLoader {
         cx: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
         let svg_renderer = cx.svg_renderer();
-        let bytes = fetch(source.resource, cx);
+        let resource = match &source.resource {
+            Resource::Uri(uri) if source.edge > 0 && source.edge & WIDE == 0 => cx
+                .try_global::<ArtworkVariants>()
+                .and_then(|variants| (variants.0)(uri.as_ref(), source.edge))
+                .map_or(source.resource, self::resource),
+            _ => source.resource,
+        };
+        let bytes = fetch(resource, cx);
 
         async move {
             let bytes = bytes.await?;

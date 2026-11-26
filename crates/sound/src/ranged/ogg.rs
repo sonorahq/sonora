@@ -24,7 +24,13 @@ const NO_GRANULE: u64 = u64::MAX;
 /// counts samples starts. The identification, comment and setup headers all sit on pages of
 /// granule zero. `Some(None)` when the file is not Ogg or carries more than one stream.
 pub fn head(spool: &Spool) -> Option<Option<usize>> {
-    let mut at = 0usize;
+    head_after(spool, 0)
+}
+
+/// [`head`] for an Ogg file that starts at byte `start` of the spool, behind a header of its
+/// provider's own.
+pub fn head_after(spool: &Spool, start: usize) -> Option<Option<usize>> {
+    let mut at = start;
     let mut serial = None;
     loop {
         let mut header = [0u8; PAGE_HEADER];
@@ -40,7 +46,7 @@ pub fn head(spool: &Spool) -> Option<Option<usize>> {
             Some(serial) if serial != stream => return Some(None),
             Some(_) => {}
         }
-        if at > 0 && granule != 0 && granule != NO_GRANULE {
+        if at > start && granule != 0 && granule != NO_GRANULE {
             return Some(Some(at));
         }
         let mut lacing = [0u8; 255];

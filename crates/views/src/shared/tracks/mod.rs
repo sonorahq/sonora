@@ -49,8 +49,19 @@ pub(crate) type PlaybackStatus = (Option<String>, Option<bool>, Option<Origin>);
 
 pub(crate) fn playback_status(playback: &Entity<Playback>, cx: &App) -> PlaybackStatus {
     let playback = playback.read(cx);
+    let (track, playing) = track_playback(playback, cx);
+    (track, playing, playback.shown_origin(cx))
+}
+
+fn track_playback(playback: &Playback, cx: &App) -> (Option<String>, Option<bool>) {
+    if let Some(remote) = playback.steered(cx) {
+        return (
+            remote.state.track.as_ref().map(|track| track.id.clone()),
+            remote.state.track.as_ref().map(|_| remote.state.playing),
+        );
+    }
     let track = playback.track().and_then(|track| track.id.clone());
-    (track, playback.control(), playback.origin(cx).cloned())
+    (track, playback.control())
 }
 pub(crate) trait Tracks: 'static {
     fn tracks<'a>(&self, cx: &'a App) -> Joined<'a, Track>;
@@ -460,7 +471,11 @@ impl TrackSource {
 
     fn index_cell(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> AnyElement {
         let playing = self.now_playing(cell.row, cx);
-        let playable = self.plays_now(track, cx);
+        let playable = self.plays_now(track, cx)
+            && !self
+                .playlist
+                .as_ref()
+                .is_some_and(|detail| detail.read(cx).previewing_playlist());
         let (preload, press) = match playable {
             false => (None, None),
             true => {
@@ -564,11 +579,10 @@ impl TrackSource {
         )
     }
 
-    /// The row's `Playback::control` when it holds the current track. A track listed twice
-    /// counts only at its first row.
+    /// Whether the current track is playing locally or remotely, for its first row only.
     pub(crate) fn now_playing(&self, row: usize, cx: &App) -> Option<bool> {
-        let playback = self.playback.read(cx);
-        let current = playback.track()?.id.as_deref()?;
+        let (current, playing) = track_playback(self.playback.read(cx), cx);
+        let current = current.as_deref()?;
         let tracks = self.provider.tracks(cx);
         if tracks.get(row)?.id.as_deref() != Some(current) {
             return None;
@@ -577,7 +591,7 @@ impl TrackSource {
             .iter()
             .position(|track| track.id.as_deref() == Some(current))?;
 
-        (sole == row).then(|| playback.control()).flatten()
+        playing.filter(|_| sole == row)
     }
 
     pub(crate) fn at(&self, row: usize, cx: &App) -> Option<Track> {
@@ -624,7 +638,7 @@ impl TableSource for TrackSource {
         match field {
             TrackField::Artists => tracks.iter().any(|track| !track.artists.is_empty()),
             TrackField::Album => tracks.iter().any(|track| !track.album.is_empty()),
-            TrackField::Genre => tracks.iter().any(|track| !track.tags.is_empty()),
+            TrackField::Genre => tracks.iter().any(|track| !track.genres.is_empty()),
             TrackField::AddedAt => tracks
                 .iter()
                 .any(|track| self.provider.added_at(track, cx).is_some()),
@@ -811,7 +825,7 @@ impl TableSource for TrackSource {
             TrackField::Title => self.title_cell(&cell, track, title, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
             TrackField::Album => self.album_cell(&cell, track, detail),
-            TrackField::Genre => cells::dim(&cell, track.tags.join(", "), detail),
+            TrackField::Genre => cells::dim(&cell, track.genres.join(", "), detail),
             TrackField::AddedAt => cells::credited(
                 &cell,
                 track.added_by.as_deref(),

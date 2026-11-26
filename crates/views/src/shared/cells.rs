@@ -375,7 +375,8 @@ fn said(frame: Div, id: impl Into<ElementId>, value: SharedString) -> AnyElement
 pub(crate) fn stamp(seconds: Option<i64>) -> SharedString {
     seconds
         .and_then(|seconds| jiff::Timestamp::new(seconds, 0).ok())
-        .map(|stamp| release_date_label(&stamp.strftime("%Y-%m-%d").to_string()))
+        .and_then(|stamp| music::ReleaseDate::parse(&stamp.strftime("%Y-%m-%d").to_string()))
+        .map(release_date_label)
         .unwrap_or_default()
 }
 
@@ -399,7 +400,9 @@ pub(crate) fn relative_stamp(seconds: Option<i64>) -> SharedString {
             t!("date-yesterday", time = &time)
         }
         _ => {
-            let date = release_date_label(&played.strftime("%Y-%m-%d").to_string());
+            let stamp = played.strftime("%Y-%m-%d").to_string();
+            let date =
+                music::ReleaseDate::parse(&stamp).map_or_else(|| stamp.into(), release_date_label);
             t!("date-time", date = &date, time = &time)
         }
     }

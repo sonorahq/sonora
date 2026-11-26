@@ -98,7 +98,6 @@ impl HttpClient for Client {
                 }
 
                 let mut outgoing = client.request(parts.method, &uri).headers(parts.headers);
-
                 if let Some(body) = body {
                     outgoing = outgoing.body(body);
                 }

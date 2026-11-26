@@ -293,7 +293,10 @@ impl GenreDetails {
     }
 
     pub fn name(&self) -> Option<&str> {
-        self.detail.as_ref().map(|detail| detail.name.as_str())
+        self.detail
+            .as_ref()
+            .map(|detail| detail.name.as_str())
+            .filter(|name| !name.is_empty())
     }
 
     pub fn sections(&self) -> Rc<Vec<GenreSection>> {
@@ -315,32 +318,21 @@ impl GenreDetails {
 
         self.clear();
         self.id = Some(id.to_owned());
-        let Some(catalog) = self.session.read(cx).catalog(id) else {
-            cx.notify();
-            return;
-        };
-        if let Some(detail) = catalog.peek_genre(id) {
-            self.adopt(id, detail, cx);
-            cx.notify();
-            return;
-        }
-        self.load(id.to_owned(), false, cx);
+        self.load(id.to_owned(), cx);
     }
 
-    /// Drops the page and fetches it again from the provider, past the catalog cache, so it
-    /// shows its loading state until the new sections land.
+    /// Drops the page and reads its sections again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.id.clone() else {
             return;
         };
         self.clear();
         self.id = Some(id.clone());
-        self.load(id, true, cx);
+        self.load(id, cx);
     }
 
-    /// Fetches the genre's sections. A `fresh` load drops the cached genre first, so the
-    /// provider is asked again.
-    fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
+    /// Fetches the genre's sections and applies its preview as soon as it arrives.
+    fn load(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(catalog) = self.session.read(cx).catalog(&id) else {
             cx.notify();
             return;
@@ -349,17 +341,34 @@ impl GenreDetails {
         self.loading = true;
         cx.notify();
 
+        let title = self
+            .genres
+            .read(cx)
+            .genres()
+            .iter()
+            .find(|genre| genre.id == id)
+            .map(|genre| genre.name.clone());
+        let (preview, mut updates) = tokio::sync::mpsc::channel(1);
         let request = self.io.spawn({
             let id = id.clone();
             async move {
-                if fresh {
-                    catalog.invalidate_genre(&id).await;
-                }
-                catalog.genre(&id).await
+                catalog
+                    .genre_with_preview(&id, title.as_deref(), preview)
+                    .await
             }
         });
         self.request = Some(request.abort_handle());
         self.task = Some(cx.spawn(async move |this, cx| {
+            if let Some(detail) = updates.recv().await {
+                this.update(cx, |this, cx| {
+                    if this.id.as_deref() == Some(id.as_str()) {
+                        this.sections = Rc::new(detail.sections.clone());
+                        this.detail = Some(Arc::new(detail));
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
             let loaded = join(request).await;
 
             this.update(cx, |this, cx| {
@@ -371,7 +380,8 @@ impl GenreDetails {
                 this.request = None;
                 match crate::settled(loaded, cx) {
                     Ok(detail) => this.adopt(&id, detail, cx),
-                    Err(reason) => this.error = Some(reason),
+                    Err(reason) if this.detail.is_none() => this.error = Some(reason),
+                    Err(reason) => log::warn!("genres: cannot finish loading {id}: {reason}"),
                 }
                 cx.notify();
             })

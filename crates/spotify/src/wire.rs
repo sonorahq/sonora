@@ -1,14 +1,20 @@
 use std::fmt::Write as _;
 
-use librespot_protocol::metadata::Image;
-use librespot_protocol::metadata::image::Size as ImageSize;
-use librespot_protocol::playlist4_external::{ListAttributes, SelectedListContent as RootList};
+use spotifyapis::proto::extended_metadata::Image;
+use spotifyapis::proto::extended_metadata::ImageSize;
 
 pub const UNKNOWN: &str = "Unknown";
-const IMAGE_CDN: &str = "https://i.scdn.co/image/";
+const IMAGE_CDN: &str = "https://image-cdn-fa.spotifycdn.com/image/";
+const IMAGE_PREFIXES: [&str; 3] = [
+    IMAGE_CDN,
+    "https://i.scdn.co/image/",
+    "https://image-cdn-ak.spotifycdn.com/image/",
+];
 const ALBUM_COVER: &str = "ab67616d0000";
+const ARTIST_PORTRAIT: &str = "ab6761610000";
 /// The size codes that follow `ALBUM_COVER` in an album cover id.
 const LARGE: &str = "b273";
+const MEDIUM: &str = "1e02";
 const ORIGINAL: &str = "82c1";
 const BLEND: &str = "blend";
 const BY_SIZE: [&str; 4] = ["xlarge", "large", "default", "small"];
@@ -18,164 +24,200 @@ pub fn image_url(file_id: &[u8]) -> Option<String> {
         return None;
     }
 
-    let hex = file_id.iter().fold(String::new(), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    Some(format!("{IMAGE_CDN}{hex}"))
+    let mut url = String::with_capacity(IMAGE_CDN.len() + file_id.len() * 2);
+    url.push_str(IMAGE_CDN);
+    append_hex(&mut url, file_id);
+    Some(url)
 }
 
-/// An album cover from `image_url` at another size. Album cover ids are `ab67616d0000`, a
-/// two-byte size code and a hash shared by every size, and `82c1` asks the CDN for the original
-/// upload, up to 2000 pixels where the listed sizes stop at 640.
-pub fn cover_at(url: &str, size: music::CoverSize) -> Option<String> {
-    let id = url.strip_prefix(IMAGE_CDN)?;
-    let (album, rest) = id.split_at_checked(ALBUM_COVER.len())?;
-    if album != ALBUM_COVER || rest.len() != 28 {
-        return None;
+/// Appends a lower-case hexadecimal representation without allocating per byte.
+pub(super) fn append_hex(output: &mut String, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
     }
+}
+
+/// Joins credit names directly into the result string.
+pub(super) fn join_names<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
+    let mut joined = names.next().unwrap_or_default().to_owned();
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+    joined
+}
+
+/// Reads a playlist picture URL or Spotify image URI from a projected list.
+pub(super) fn playlist_image(address: &str) -> Option<String> {
+    if let Some(ids) = address.strip_prefix("spotify:mosaic:") {
+        let mut ids = ids.split(':');
+        let images = [ids.next()?, ids.next()?, ids.next()?, ids.next()?];
+        if ids.next().is_some()
+            || !images
+                .iter()
+                .all(|id| id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return None;
+        }
+        let prefix = "https://mosaic.scdn.co/640/";
+        let mut url = String::with_capacity(prefix.len() + 4 * 40);
+        url.push_str(prefix);
+        for image in images {
+            url.push_str(image);
+        }
+        return Some(url);
+    }
+    if let Some(id) = address.strip_prefix("spotify:image:") {
+        return (id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| format!("{IMAGE_CDN}{id}"));
+    }
+    fetchable(address).then(|| address.to_owned())
+}
+
+/// Replaces the cover's size code while preserving its hash.
+pub fn cover_at(url: &str, size: music::CoverSize) -> Option<String> {
     let code = match size {
         music::CoverSize::Large => LARGE,
         music::CoverSize::Full => ORIGINAL,
     };
-    Some(format!(
-        "{IMAGE_CDN}{ALBUM_COVER}{code}{}",
-        &rest[code.len()..]
-    ))
+    let (_, hash) = album_cover_id(url)?;
+    Some(format!("{IMAGE_CDN}{ALBUM_COVER}{code}{hash}"))
 }
 
-/// An image's width in pixels, taken from its size class when the metadata leaves the width
-/// out.
+/// Uses a verified Spotify CDN size that covers the requested physical pixels.
+pub(super) fn thumbnail_at(url: &str, edge: u32) -> Option<String> {
+    if let Some((code, hash)) = album_cover_id(url) {
+        return (code == LARGE && edge <= 300)
+            .then(|| format!("{IMAGE_CDN}{ALBUM_COVER}{MEDIUM}{hash}"));
+    }
+    let (current, hash) = sized_image_id(url, ARTIST_PORTRAIT)?;
+    let (pixels, _) = [(160, "f178"), (320, "5174"), (640, "e5eb")]
+        .into_iter()
+        .find(|&(_, code)| code == current)?;
+    let smaller = match edge {
+        0..=160 if pixels > 160 => "f178",
+        161..=320 if pixels > 320 => "5174",
+        _ => return None,
+    };
+    Some(format!("{IMAGE_CDN}{ARTIST_PORTRAIT}{smaller}{hash}"))
+}
+
+fn album_cover_id(url: &str) -> Option<(&str, &str)> {
+    sized_image_id(url, ALBUM_COVER)
+}
+
+fn sized_image_id<'a>(url: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
+    let id = IMAGE_PREFIXES
+        .iter()
+        .find_map(|prefix| url.strip_prefix(*prefix))?
+        .strip_prefix(kind)?;
+    if id.len() != 28 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(id.split_at(4))
+}
+
+/// Uses the size class when the image has no explicit width.
 pub fn image_width(image: &Image) -> i32 {
     if image.width() > 0 {
         return image.width();
     }
 
     match image.size() {
-        ImageSize::SMALL => 64,
-        ImageSize::DEFAULT => 300,
-        ImageSize::LARGE => 640,
-        ImageSize::XLARGE => 1_000,
+        ImageSize::Small => 64,
+        ImageSize::Default => 300,
+        ImageSize::Large => 640,
+        ImageSize::Xlarge => 1_000,
     }
 }
 
-pub fn blend(attributes: &ListAttributes) -> bool {
-    if attributes.format().to_ascii_lowercase().contains(BLEND) {
-        return true;
-    }
-
-    attributes
-        .format_attributes
-        .iter()
-        .any(|attribute| attribute.key().to_ascii_lowercase().starts_with(BLEND))
+fn blend_format<'a>(format: &str, mut keys: impl Iterator<Item = &'a str>) -> bool {
+    format.to_ascii_lowercase().contains(BLEND)
+        || keys.any(|key| key.to_ascii_lowercase().starts_with(BLEND))
 }
 
 pub fn fetchable(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
-fn playlist_cover(attributes: &ListAttributes) -> Option<String> {
+fn cover_from<'a>(
+    mut sizes: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    picture: &[u8],
+) -> Option<String> {
     for target in BY_SIZE {
-        if let Some(size) = attributes
-            .picture_size
-            .iter()
-            .find(|size| size.target_name() == target)
-            .filter(|size| fetchable(size.url()))
+        if let Some((_, url)) = sizes
+            .clone()
+            .find(|(name, _)| *name == target)
+            .filter(|(_, url)| fetchable(url))
         {
-            return Some(size.url().to_owned());
+            return Some(url.to_owned());
         }
     }
 
-    attributes
-        .picture_size
-        .first()
-        .map(|size| size.url())
+    sizes
+        .next()
+        .map(|(_, url)| url)
         .filter(|url| fetchable(url))
         .map(str::to_owned)
-        .or_else(|| image_url(attributes.picture()))
+        .or_else(|| image_url(picture))
 }
 
-pub fn playlist_from(id: &str, content: &RootList, username: &str) -> music::Playlist {
-    let owner = match content.owner_username() {
-        "" => UNKNOWN,
-        owner => owner,
-    };
-    let name = match content.attributes.name() {
-        "" => UNKNOWN,
-        name => name,
-    };
-
+/// Maps a GetLists summary with the same cover preference as a playlist snapshot.
+pub(super) fn playlist_summary(
+    id: String,
+    attrs: spotifyapis::proto::list_read_service::Attributes,
+    username: &str,
+) -> music::Playlist {
+    let cover = cover_from(
+        attrs
+            .picture_sizes
+            .iter()
+            .flat_map(|sizes| &sizes.picture_size)
+            .map(|size| (size.target_name.as_str(), size.url.as_str())),
+        &attrs.picture_file_id,
+    );
     music::Playlist {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        owner: owner.to_owned(),
-        owner_id: content.owner_username().to_owned(),
-        owned: owner == username,
-        collaborative: content.attributes.collaborative()
-            || content
-                .capabilities
-                .as_ref()
-                .is_some_and(|permissions| permissions.can_edit_items()),
-        blend: blend(&content.attributes),
-        public: false,
-        cover: playlist_cover(&content.attributes),
-        track_count: content.length().max(0) as u32,
-        modified_at: seconds(content.timestamp()),
-        read_only: false,
+        id,
+        name: playlist_label(&attrs.name),
+        owner: playlist_label(&attrs.owner_username),
+        owned: attrs.owner_username == username,
+        owner_id: attrs.owner_username,
+        collaborative: attrs
+            .capabilities
+            .is_some_and(|value| value.can_edit_items()),
+        blend: blend_format(
+            attrs.format.as_deref().unwrap_or_default(),
+            attrs
+                .format_attributes
+                .iter()
+                .flat_map(|attrs| attrs.entries.keys())
+                .map(String::as_str),
+        ),
+        cover,
+        track_count: u32::try_from(
+            attrs
+                .approximate_length
+                .unwrap_or_default()
+                .clamp(0, i64::from(u32::MAX)),
+        )
+        .unwrap_or_default(),
+        modified_at: attrs
+            .updated_at
+            .filter(|stamp| stamp.seconds > 0)
+            .map(|stamp| stamp.seconds),
+        ..Default::default()
     }
 }
 
-pub fn playlists_from(rootlist: &RootList) -> Vec<music::Playlist> {
-    let contents = &rootlist.contents;
-    let meta = &contents.meta_items;
-
-    contents
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            let id = item.uri().strip_prefix("spotify:playlist:")?;
-            let meta = meta.get(index);
-
-            let name = meta
-                .map(|meta| meta.attributes.name())
-                .filter(|name| !name.is_empty())
-                .unwrap_or(UNKNOWN);
-            let owner = meta
-                .map(|meta| meta.owner_username())
-                .filter(|owner| !owner.is_empty())
-                .unwrap_or(UNKNOWN);
-
-            Some(music::Playlist {
-                id: id.to_owned(),
-                name: name.to_owned(),
-                owner: owner.to_owned(),
-                owner_id: meta
-                    .map(|meta| meta.owner_username())
-                    .unwrap_or_default()
-                    .to_owned(),
-                owned: false,
-                collaborative: meta.is_some_and(|meta| {
-                    meta.attributes.collaborative()
-                        || meta
-                            .capabilities
-                            .as_ref()
-                            .is_some_and(|permissions| permissions.can_edit_items())
-                }),
-                blend: meta.is_some_and(|meta| blend(&meta.attributes)),
-                public: item.attributes.public(),
-                cover: meta.and_then(|meta| playlist_cover(&meta.attributes)),
-                track_count: meta.map(|meta| meta.length()).unwrap_or_default().max(0) as u32,
-                modified_at: None,
-                read_only: false,
-            })
-        })
-        .collect()
+fn playlist_label(name: &str) -> String {
+    if name.is_empty() {
+        UNKNOWN.to_owned()
+    } else {
+        name.to_owned()
+    }
 }
 
-/// A copyright line as a release page prints it, led by ℗ for the sound recording or © for
-/// the work. Spotify keeps the symbol out of the text and names the kind beside it, so a
-/// line that already carries a symbol is left as it is.
+/// Adds the recording or work copyright symbol when missing.
 pub fn copyright(recording: bool, text: &str) -> String {
     match text.starts_with(['©', '℗']) {
         true => text.to_owned(),
@@ -184,8 +226,4 @@ pub fn copyright(recording: bool, text: &str) -> String {
             false => format!("© {text}"),
         },
     }
-}
-
-pub fn seconds(millis: i64) -> Option<i64> {
-    (millis > 0).then_some(millis / 1_000)
 }

@@ -245,7 +245,7 @@ struct RowLook {
     drop_line: Option<Edge>,
     /// Whether the row is a song someone queued by hand, which names who did when it is known.
     queued: bool,
-    /// Whether the row is on another device's queue, which this app shows but cannot change.
+    /// Whether the row is on another device, where local queue editing is disabled.
     remote: bool,
     /// Whether the provider mixed the song in as a recommendation.
     recommended: bool,
@@ -871,7 +871,7 @@ impl Aside {
         index: usize,
         position: QueuePosition,
         queue_revision: u64,
-        look: RowLook,
+        (look, listing): (RowLook, &state::QueueView),
         (place, total): (usize, usize),
         cx: &Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -884,12 +884,11 @@ impl Aside {
         } = look;
         let theme = *cx.theme();
         let queue_index = position.upcoming().filter(|_| !remote);
-        let uid = Sonora::global(cx)
-            .queue
-            .read(cx)
-            .uid(position)
-            .map(str::to_owned);
+        let uid = listing.uid(position, cx);
+        let remote_pick = listing.remote_pick(position, cx);
         let play_uid = uid.clone();
+        let press_pick = remote_pick.clone();
+        let can_pick_remote = remote_pick.is_some();
         let press_uid = uid.clone();
         let current = position == QueuePosition::Current;
         let title = match position {
@@ -950,13 +949,18 @@ impl Aside {
         .tint(title)
         .when(track.explicit, Card::explicit)
         .when(recommended, Card::recommended)
-        .when(!remote || current, |card| {
+        .when(!remote || current || can_pick_remote, |card| {
             card.play(
                 playing,
                 cx.listener(move |this, _, _, cx| {
                     this.playback
                         .update(cx, |playback, cx| match (remote, play_uid.as_deref()) {
-                            (true, _) => playback.toggle_play(cx),
+                            (true, _) if current => playback.toggle_play(cx),
+                            (true, _) => {
+                                if let Some(pick) = &remote_pick {
+                                    playback.jump_remote_queue(pick, cx);
+                                }
+                            }
                             (false, Some(uid)) => playback.play_queue(uid, cx),
                             _ => {}
                         });
@@ -972,9 +976,12 @@ impl Aside {
             });
             cx.notify();
         }))
-        .when(!remote && !current, |card| {
+        .when(!current && (!remote || press_pick.is_some()), |card| {
             card.press(cx.listener(move |this, _, _, cx| {
-                if let Some(uid) = press_uid.as_deref() {
+                if let Some(pick) = &press_pick {
+                    this.playback
+                        .update(cx, |playback, cx| playback.jump_remote_queue(pick, cx));
+                } else if let Some(uid) = press_uid.as_deref() {
                     this.playback
                         .update(cx, |playback, cx| playback.play_queue(uid, cx));
                 }
@@ -2318,8 +2325,16 @@ impl Aside {
                             recommended: listing.recommended(position, cx),
                         };
                         let place = track_place(&sections, position);
-                        Self::row(track, index, position, revision, look, place, cx)
-                            .into_any_element()
+                        Self::row(
+                            track,
+                            index,
+                            position,
+                            revision,
+                            (look, &listing),
+                            place,
+                            cx,
+                        )
+                        .into_any_element()
                     }
                 };
                 let rows = range.map(|index| row(index, cx)).collect();

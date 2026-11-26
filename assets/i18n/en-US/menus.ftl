@@ -130,7 +130,10 @@ cover-zoom-fit = Fit to window
 
 # confirm
 confirm-delete-track-files-title = Delete track files?
-confirm-delete-track-files = The file(s) will be permanently deleted from disk. This cannot be undone.
+confirm-delete-track-files = { $count ->
+    [one] The file will be permanently deleted from disk. This cannot be undone.
+   *[other] The { $count } files will be permanently deleted from disk. This cannot be undone.
+    }
 confirm-uninstall-widevine-title = Uninstall the Widevine module?
 confirm-uninstall-widevine = Sonora deletes the copy it downloaded from Google. Apple Music tracks stop playing until it is downloaded again.
 confirm-remove-soloist-title = Remove Soloist?

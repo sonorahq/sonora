@@ -259,6 +259,14 @@ pub fn track(value: &Value) -> Option<Track> {
         cover: cover(&album, 300).or_else(|| cover(value, 300)),
         duration: Duration::from_secs(number(value, &["DURATION", "duration"]).unwrap_or(0)),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
+        release_date: text(value, &["PHYSICAL_RELEASE_DATE", "release_date"])
+            .or_else(|| text(&album, &["release_date"]))
+            .and_then(music::ReleaseDate::parse),
+        bpm: value
+            .get("bpm")
+            .and_then(|bpm| bpm.as_f64().or_else(|| bpm.as_str()?.parse().ok()))
+            .map(|bpm| bpm as f32)
+            .filter(|bpm| bpm.is_finite() && *bpm > 0.),
         added_by: None,
         playcount: None,
         popularity: number(value, &["RANK", "rank", "RANK_SNG"])
@@ -267,9 +275,11 @@ pub fn track(value: &Value) -> Option<Track> {
         explicit: truthy(value, &["explicit_lyrics", "EXPLICIT_LYRICS"]),
         track_number: number(value, &["TRACK_NUMBER", "track_position"]).unwrap_or(0) as u32,
         disc_number: number(value, &["DISK_NUMBER"]).unwrap_or(1) as u32,
+        isrc: None,
         tags: Vec::new(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     })
 }
 
@@ -334,7 +344,7 @@ pub fn album(value: &Value) -> Option<Album> {
         },
         year,
         track_count: number(value, &["NB_TRAK", "nb_tracks"]).unwrap_or(0) as u32,
-        release_date: release.to_owned(),
+        release_date: music::ReleaseDate::parse(release),
         label: plain(value, &["label", "LABEL"]).unwrap_or_default(),
         copyrights: Vec::new(),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
@@ -365,6 +375,7 @@ pub fn playlist(value: &Value, user_id: &str) -> Option<Playlist> {
     let md5 = text(value, &["PLAYLIST_PICTURE", "picture"]);
     let kind = text(value, &["PICTURE_TYPE"]).unwrap_or("playlist");
     Some(Playlist {
+        revision: None,
         id: playlist_id,
         name: plain(value, &["TITLE", "title"]).unwrap_or_default(),
         owner: escape::unescape(owner).into_owned(),
@@ -512,6 +523,7 @@ fn picture(item: &Value, size: u32) -> Option<String> {
 /// A playlist Deezer makes for the listener rather than one a user owns.
 fn made(id: String, name: &str, cover: Option<String>, track_count: u32) -> Playlist {
     Playlist {
+        revision: None,
         id,
         name: escape::unescape(name).into_owned(),
         owner: MAKER.to_owned(),

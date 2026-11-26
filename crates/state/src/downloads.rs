@@ -20,9 +20,9 @@ const AT_ONCE: usize = 2;
 /// refusal in a row doubles it, up to `LONGEST_REST`.
 const FIRST_REST: Duration = Duration::from_secs(15);
 const LONGEST_REST: Duration = Duration::from_secs(60);
-/// How many downloads in a row have to work before the pause between them halves.
-const EASE_AFTER: u32 = 5;
-/// How often the progress of running downloads is redrawn.
+/// Downloads in a row that work before a gap a refusal widened narrows again, never below the
+/// provider's own.
+const SPEED_UP_AFTER: u8 = 8;
 /// How many finished downloads the pace is read from.
 const PACE_WINDOW: usize = 12;
 /// How long after its last download the pace still counts, since a rest in between would
@@ -80,6 +80,8 @@ pub struct Remaining {
     pub share: f32,
     /// How long the rest should take at the pace of the latest downloads.
     pub eta: Option<Duration>,
+    /// How long the queue still waits because the provider asked it to slow down, while it does.
+    pub paused: Option<Duration>,
 }
 
 /// Raised when what a Downloaded filter shows may have changed, which is when a track finished
@@ -213,11 +215,9 @@ pub struct Downloads {
     /// How many downloads in a row the provider refused for asking too much, which sets how
     /// long the queue rests.
     refusals: u32,
-    /// The pause between downloads a provider that refuses bursts is held to. It starts at
-    /// nothing, opens up with each refusal and closes again over a run of downloads that work.
-    gap: Duration,
-    /// Downloads that worked since the gap last changed.
-    streak: u32,
+    /// The current interval and successes since the last pacing change.
+    pace: Option<Duration>,
+    successes: u8,
     /// When the latest downloads finished, for the pace the list of running ones reports.
     finished_at: VecDeque<Instant>,
     /// Starts the queue again once it has rested.
@@ -293,8 +293,8 @@ impl Downloads {
             ticker: None,
             resting: None,
             refusals: 0,
-            gap: Duration::ZERO,
-            streak: 0,
+            pace: None,
+            successes: 0,
             finished_at: VecDeque::new(),
             wake: None,
             failed: HashSet::new(),
@@ -446,7 +446,19 @@ impl Downloads {
             eta: self
                 .pace()
                 .map(|rate| Duration::from_secs_f32(songs as f32 / rate * 60.)),
+            paused: self.paused(),
         })
+    }
+
+    /// How much is left of a rest the provider asked for by refusing a download. The short gap
+    /// a paced provider keeps between downloads does not count.
+    fn paused(&self) -> Option<Duration> {
+        if self.refusals == 0 || !self.running.is_empty() {
+            return None;
+        }
+        self.resting
+            .map(|until| until.saturating_duration_since(Instant::now()))
+            .filter(|left| !left.is_zero())
     }
 
     /// The ids of the tracks of `set` its progress counts: the ones that can be downloaded,
@@ -551,7 +563,10 @@ impl Downloads {
             return None;
         };
         Some(PlaylistDetail {
-            playlist: playlist.clone(),
+            playlist: Playlist {
+                revision: None,
+                ..playlist.clone()
+            },
             tracks: set.tracks.clone(),
             ..Default::default()
         })
@@ -885,12 +900,14 @@ impl Downloads {
             return self.wake_at(until, cx);
         }
         // A provider that refuses bursts gets its downloads one at a time.
-        let bursts = self.session.read(cx).capabilities().download_gap;
-        let at_once = match bursts.is_zero() {
+        let gap = self
+            .pace
+            .unwrap_or_else(|| self.session.read(cx).capabilities().download_gap);
+        let at_once = match gap.is_zero() {
             true => AT_ONCE,
             false => 1,
         };
-        while self.running.len() < at_once {
+        while self.running.len() < at_once && (gap.is_zero() || self.abandoned.is_empty()) {
             let Some(id) = self.queue.pop_front() else {
                 return;
             };
@@ -921,8 +938,8 @@ impl Downloads {
                     task,
                 },
             );
-            if !self.gap.is_zero() {
-                self.resting = Some(Instant::now() + self.gap);
+            if !gap.is_zero() {
+                self.resting = Some(Instant::now() + gap);
             }
             self.tick(cx);
             cx.notify();
@@ -941,7 +958,7 @@ impl Downloads {
                 let going = this
                     .update(cx, |this, cx| {
                         cx.notify();
-                        let going = !this.running.is_empty();
+                        let going = !this.running.is_empty() || this.paused().is_some();
                         if !going {
                             this.ticker = None;
                         }
@@ -962,20 +979,29 @@ impl Downloads {
             if fetched.is_ok() && !self.tracks.contains_key(&id) {
                 self.playback.read(cx).discard(&id);
             }
+            self.pump(cx);
             return;
         }
         if self.running.get(&id).is_none_or(|run| run.serial != serial) {
             return;
         }
         self.running.remove(&id);
+        let initial_gap = self.session.read(cx).capabilities().download_gap;
         match fetched {
             Ok(()) => {
                 self.refusals = 0;
+                if !initial_gap.is_zero() {
+                    self.successes += 1;
+                    if self.successes == SPEED_UP_AFTER {
+                        let gap = self.pace.unwrap_or(initial_gap);
+                        self.pace = Some((gap * 3 / 4).max(initial_gap));
+                        self.successes = 0;
+                    }
+                }
                 self.finished_at.push_back(Instant::now());
                 if self.finished_at.len() > PACE_WINDOW {
                     self.finished_at.pop_front();
                 }
-                self.ease(cx);
                 if let Some(entry) = self.tracks.get_mut(&id)
                     && let Some(provider) = self.provider
                 {
@@ -988,17 +1014,17 @@ impl Downloads {
             Err(error) if error.downcast_ref::<music::Throttled>().is_some() => {
                 self.refusals = self.refusals.saturating_add(1);
                 let wait = rest(self.refusals);
-                let bursts = self.session.read(cx).capabilities().download_gap;
-                // The pause stays at the provider's own, since the long rest is what lets its
-                // limit clear. Widening the pause as well left a quick burst crawling for good.
-                self.gap = bursts;
-                self.streak = 0;
+                self.successes = 0;
+                if !initial_gap.is_zero() {
+                    let gap = self.pace.unwrap_or(initial_gap);
+                    self.pace = Some((gap * 2).clamp(initial_gap, initial_gap * 4));
+                }
                 log::warn!(
-                    "downloads: the provider is refusing {id} for now, resting {}s, then {}s apart",
-                    wait.as_secs(),
-                    self.gap.as_secs()
+                    "downloads: the provider is throttling {id}, retrying after a {}s rest",
+                    wait.as_secs()
                 );
                 self.resting = Some(Instant::now() + wait);
+                self.tick(cx);
                 // The track goes to the back of the line, so one the provider keeps refusing
                 // cannot hold up every other download behind it.
                 if self.tracks.contains_key(&id) {
@@ -1006,6 +1032,7 @@ impl Downloads {
                 }
             }
             Err(error) => {
+                self.successes = 0;
                 let reason = format!("{error:#}");
                 log::warn!("downloads: cannot download {id}: {reason}");
                 crate::noted(&error, cx);
@@ -1019,25 +1046,6 @@ impl Downloads {
         }
         self.pump(cx);
         cx.notify();
-    }
-
-    /// Narrows the pause between downloads after a run of them worked, down to none once it is
-    /// below a quarter of the one the provider starts from.
-    fn ease(&mut self, cx: &mut Context<Self>) {
-        if self.gap.is_zero() {
-            return;
-        }
-        self.streak += 1;
-        if self.streak < EASE_AFTER {
-            return;
-        }
-        self.streak = 0;
-        let bursts = self.session.read(cx).capabilities().download_gap;
-        self.gap /= 2;
-        if self.gap < bursts / 4 {
-            self.gap = Duration::ZERO;
-        }
-        log::debug!("downloads: now {}s apart", self.gap.as_secs_f32());
     }
 
     /// Starts the queue again at `at`, unless something already will.
@@ -1231,8 +1239,8 @@ impl Downloads {
         self.ticker = None;
         self.resting = None;
         self.refusals = 0;
-        self.gap = Duration::ZERO;
-        self.streak = 0;
+        self.pace = None;
+        self.successes = 0;
         self.wake = None;
         self.failed.clear();
         self.stalled.clear();
@@ -1353,7 +1361,13 @@ impl Store {
                     "playlist" => Collection::Playlist,
                     _ => return None,
                 };
-                let set = serde_json::from_str::<Set>(&value).ok()?;
+                let set = serde_json::from_str::<Set>(&value)
+                    .inspect_err(|error| {
+                        log::warn!(
+                            "downloads: cannot restore {provider} download set {id}: {error}"
+                        );
+                    })
+                    .ok()?;
                 Some((kind, id, set))
             })
             .collect();

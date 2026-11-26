@@ -2,7 +2,8 @@ use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Axis, Context, Div, ElementId, Entity, EntityId, Pixels, Point, ScrollEvent,
-    ScrollHandle, SharedString, Stateful, WeakEntity, Window, div, point, px,
+    ScrollHandle, SharedString, Stateful, WeakEntity, Window, div, linear_color_stop,
+    linear_gradient, point, px,
 };
 use std::rc::Rc;
 
@@ -414,6 +415,73 @@ pub(crate) fn grid(
                 .children(cells.map(|cell| div().flex().flex_col().flex_1().min_w_0().child(cell)))
                 .into_any_element()
         })
+        .into_any_element()
+}
+
+/// Category tiles keep their height as the grid changes columns.
+pub(crate) fn category_height(cx: &App) -> Pixels {
+    let metrics = cx.theme().metrics;
+    metrics.row + metrics.pad * 4.
+}
+
+/// Displays the ordered cards of a Browse shelf or directory in a responsive grid.
+pub(crate) fn categories(id: &str, genres: &[music::Genre], width: Pixels, cx: &App) -> AnyElement {
+    let theme = *cx.theme();
+    let gap = theme.metrics.pad;
+    let columns = lanes(width);
+    let tile = (width - gap * columns.saturating_sub(1) as f32) / columns as f32;
+    let mut covers = std::collections::HashMap::new();
+    for cover in genres.iter().filter_map(|genre| genre.cover.as_deref()) {
+        *covers.entry(cover).or_insert(0) += 1;
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap(gap)
+        .children(
+            genres
+                .chunks(columns)
+                .enumerate()
+                .map(|(row, genres_in_row)| {
+                    div()
+                        .flex()
+                        .gap(gap)
+                        .children(genres_in_row.iter().enumerate().map(|(column, genre)| {
+                            let mut tint = theme.primary;
+                            // Spread tints around the theme's accent while keeping titles on the neutral side.
+                            let index = row * columns + column;
+                            tint.h = (tint.h + (index % 5) as f32 * 0.13).fract();
+                            let tint = theme.accent(tint);
+                            let cover = genre.cover.clone().filter(|url| covers[url.as_str()] == 1);
+
+                            cards::genre_card(
+                                SharedString::from(format!("{id}-category-{}", genre.id)),
+                                genre,
+                            )
+                            .cover(cover)
+                            .accent()
+                            .hint()
+                            .aria_position_in_set(index + 1)
+                            .aria_size_of_set(genres.len())
+                            .art(theme.metrics.row)
+                            .art_radius(theme.radius.min(gap))
+                            .size(Text::Heading)
+                            .h(category_height(cx))
+                            .w(tile)
+                            .min_w_0()
+                            .flex_none()
+                            .px(gap * 1.5)
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(linear_gradient(
+                                115.,
+                                linear_color_stop(theme.secondary.blend(tint.opacity(0.46)), 0.),
+                                linear_color_stop(theme.secondary, 0.75),
+                            ))
+                            .hover(|style| style.border_color(tint))
+                        }))
+                }),
+        )
         .into_any_element()
 }
 

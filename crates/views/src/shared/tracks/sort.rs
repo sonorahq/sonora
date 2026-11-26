@@ -23,7 +23,7 @@ pub(super) fn compare(
         TrackField::Title => folded(|track| &track.name),
         TrackField::Artists => folded(|track| &track.artists),
         TrackField::Album => folded(|track| &track.album),
-        TrackField::Genre => genres(tags(tracks, a), tags(tracks, b)),
+        TrackField::Genre => genres(genres_of(tracks, a), genres_of(tracks, b)),
         TrackField::AddedAt | TrackField::PlayedAt => tracks
             .get(a)
             .and_then(|track| track.added_at)
@@ -61,7 +61,7 @@ pub(super) fn group(
         TrackField::Title => Some(initial(&track.name)),
         TrackField::Artists => Some(initial(&track.artists)),
         TrackField::Album => Some(initial(&track.album)),
-        TrackField::Genre => Some(match track.tags.first() {
+        TrackField::Genre => Some(match track.genres.first() {
             Some(genre) => SharedString::from(genre.clone()),
             None => initial(""),
         }),
@@ -70,10 +70,10 @@ pub(super) fn group(
     }
 }
 
-fn tags<'a>(tracks: Joined<'a, Track>, index: usize) -> &'a [String] {
+fn genres_of<'a>(tracks: Joined<'a, Track>, index: usize) -> &'a [String] {
     tracks
         .get(index)
-        .map(|track| track.tags.as_slice())
+        .map(|track| track.genres.as_slice())
         .unwrap_or_default()
 }
 

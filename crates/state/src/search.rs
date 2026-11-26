@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use gpui::{App, Context, Entity, Task};
 use music::link::{self, Linked};
-use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
+use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, SearchPart, Track};
 use serde::{Deserialize, Serialize};
 use tokio::task::AbortHandle;
 
@@ -141,7 +141,7 @@ impl Hit {
 }
 
 /// What the provider answered a search with, before it is ranked against the library.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Catalog {
     pub(crate) tracks: Vec<Track>,
     pub(crate) albums: Vec<Album>,
@@ -199,6 +199,8 @@ pub struct Search {
     catalog: Catalog,
     portraits: HashMap<String, String>,
     hits: Vec<Hit>,
+    preview_hits: Option<Vec<Hit>>,
+    preview_columns: bool,
     loading: bool,
     error: Option<String>,
     session: Entity<Session>,
@@ -244,6 +246,8 @@ impl Search {
             catalog: Catalog::default(),
             portraits: HashMap::new(),
             hits: Vec::new(),
+            preview_hits: None,
+            preview_columns: false,
             loading: false,
             error: None,
             session,
@@ -252,6 +256,12 @@ impl Search {
             task: None,
             faces: None,
         }
+    }
+
+    /// Delivers early provider results to the full search page's columns.
+    pub fn with_column_previews(mut self) -> Self {
+        self.preview_columns = true;
+        self
     }
 
     pub fn query(&self) -> &str {
@@ -265,6 +275,17 @@ impl Search {
 
     pub fn hits(&self) -> &[Hit] {
         &self.hits
+    }
+
+    /// Gives wide-layout columns their early results, excluding a leading hit already shown above.
+    pub fn column_hits(&self) -> &[Hit] {
+        let hits = self.preview_hits.as_deref().unwrap_or(&self.hits);
+        if let Some((first, rest)) = hits.split_first()
+            && self.best().is_some_and(|best| same_hit(first, best))
+        {
+            return rest;
+        }
+        hits
     }
 
     pub fn of(&self, kind: Kind) -> impl Iterator<Item = &Hit> {
@@ -293,6 +314,7 @@ impl Search {
         self.catalog.clear();
         self.portraits.clear();
         self.hits.clear();
+        self.preview_hits = None;
         self.loading = false;
         self.error = None;
     }
@@ -306,6 +328,7 @@ impl Search {
             return;
         }
         self.query = query.clone();
+        self.preview_hits = None;
         self.matching = query.clone();
         self.linked = None;
         self.error = None;
@@ -348,6 +371,7 @@ impl Search {
         cx.notify();
 
         let io = self.io.clone();
+        let preview_columns = self.preview_columns;
         self.task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DEBOUNCE).await;
 
@@ -396,9 +420,43 @@ impl Search {
                 .ok();
             }
 
-            let request = io.spawn(async move { client.search_all(&asked).await });
+            let (preview, mut updates) = tokio::sync::mpsc::channel(4);
+            let request = io.spawn(async move {
+                if preview_columns {
+                    client.search_with_preview(&asked, preview).await
+                } else {
+                    drop(preview);
+                    client.search_all(&asked).await
+                }
+            });
             let _abort =
                 DropGuard::new(request.abort_handle(), |handle: AbortHandle| handle.abort());
+            let mut pending = None;
+            while let Some(part) = updates.recv().await {
+                let current = this.update(cx, |this, cx| {
+                    if this.query != query {
+                        return false;
+                    }
+                    let pending = pending.get_or_insert_with(|| this.catalog.clone());
+                    match part {
+                        SearchPart::Tracks(rows) => pending.tracks = rows,
+                        SearchPart::Albums(rows) => pending.albums = rows,
+                        SearchPart::Artists(rows) => pending.artists = rows,
+                        SearchPart::Playlists(rows) => pending.playlists = rows,
+                    }
+                    let mut hits = this.ranked(pending, cx);
+                    if let Some(linked) = &this.linked {
+                        hits.retain(|hit| !same_hit(hit, linked));
+                        hits.insert(0, linked.clone());
+                    }
+                    this.preview_hits = Some(hits);
+                    cx.notify();
+                    true
+                });
+                if !current.unwrap_or(false) {
+                    return;
+                }
+            }
             let found = request
                 .await
                 .unwrap_or_else(|error| Found::failed(error.into()));
@@ -408,6 +466,7 @@ impl Search {
                     return;
                 }
                 this.loading = false;
+                this.preview_hits = None;
 
                 // a part that failed keeps what it showed before, so a refused request
                 // never blanks the page; the query counts as served only once every part
@@ -491,24 +550,26 @@ impl Search {
             return;
         }
 
-        self.hits = {
-            let held = self.library.read(cx);
-            let state = held.state(self.session.read(cx).primary_shelf());
-            rank(
-                state.tracks(),
-                state.albums(),
-                state.playlists(),
-                &self.catalog,
-                &self.portraits,
-                query,
-            )
-        };
+        self.hits = self.ranked(&self.catalog, cx);
         if let Some(linked) = &self.linked {
             self.hits.retain(|hit| !same_hit(hit, linked));
             self.hits.insert(0, linked.clone());
         }
         self.fetch_portraits(cx);
         cx.notify();
+    }
+
+    fn ranked(&self, catalog: &Catalog, cx: &Context<Self>) -> Vec<Hit> {
+        let held = self.library.read(cx);
+        let state = held.state(self.session.read(cx).primary_shelf());
+        rank(
+            state.tracks(),
+            state.albums(),
+            state.playlists(),
+            catalog,
+            &self.portraits,
+            self.matching.trim(),
+        )
     }
 }
 

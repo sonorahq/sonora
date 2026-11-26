@@ -47,9 +47,11 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
         explicit: source.explicit,
         track_number: index + 1,
         disc_number: 1,
+        isrc: None,
         tags: Vec::new(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     }
 }
 
@@ -78,7 +80,7 @@ pub fn album(source: ytmusic::Album) -> Album {
         release_type: release_type(source.kind),
         year: source.year.unwrap_or(0),
         track_count: source.track_count.unwrap_or(0),
-        release_date: source.year.map(|year| year.to_string()).unwrap_or_default(),
+        release_date: music::ReleaseDate::from_parts(source.year.unwrap_or_default(), 0, 0),
         label: String::new(),
         copyrights: Vec::new(),
         added_at: None,
@@ -86,20 +88,23 @@ pub fn album(source: ytmusic::Album) -> Album {
 }
 
 pub fn album_detail(source: ytmusic::AlbumDetail) -> AlbumDetail {
+    let album = album(source.album);
+    let release_date = music::ReleaseDate::from_parts(album.year, 0, 0);
     let tracks = source
         .tracks
         .into_iter()
         .enumerate()
-        .map(|(index, item)| track(item, index as u32))
+        .map(|(index, item)| Track {
+            release_date,
+            ..track(item, index as u32)
+        })
         .collect();
-    AlbumDetail {
-        album: album(source.album),
-        tracks,
-    }
+    AlbumDetail { album, tracks }
 }
 
 pub fn playlist(source: ytmusic::Playlist, owned: bool, public: bool) -> Playlist {
     Playlist {
+        revision: None,
         id: source.id,
         name: source.title,
         owner: source.author.unwrap_or_default(),

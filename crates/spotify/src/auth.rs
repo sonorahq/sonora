@@ -1,41 +1,23 @@
-use std::io::{BufRead as _, BufReader, Write as _};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::Mutex as SyncMutex;
 
 use anyhow::{Context as _, Result, anyhow};
-use librespot_core::authentication::Credentials;
-use librespot_core::cache::Cache;
-use librespot_core::{FileId, Session, SessionConfig};
-use music::vault::Vault;
-use music::{PromptSink, SignInFailure, SignInProblem, SignInPrompt, credentials};
-use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge, RedirectUrl, Scope,
-    TokenResponse as _, TokenUrl, basic::BasicClient,
-};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use ring::rand::{SecureRandom as _, SystemRandom};
+use serde::Deserialize;
+use spotifyapis::access_point::AudioKeyError;
+use spotifyapis::auth::{AuthError, OAuth};
+use tokio::sync::Mutex;
 
-use crate::offline;
+use music::{PromptSink, SignInFailure, SignInProblem, SignInPrompt, credentials};
+
+use super::session::Session;
 
 pub const DEFAULT_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:8989/login";
-
-const PRODUCT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-const PRODUCT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
-/// The bytes of a Spotify file id, which librespot names its kept files by.
-const FILE_ID: usize = 20;
-
-pub const SCOPES: &[&str] = &[
-    "playlist-read-collaborative",
-    "playlist-read-private",
-    "streaming",
-    "user-follow-read",
-    "user-library-read",
-    "user-read-email",
-    "user-read-playback-state",
-    "user-read-private",
-    "user-read-recently-played",
-    "user-top-read",
-];
+/// librespot's `AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS`, the kind of credential it saved.
+const STORED_CREDENTIALS: i32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
@@ -44,304 +26,260 @@ pub struct AuthConfig {
     pub cache_dir: PathBuf,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
+/// Shares a restored Spotify session across the provider and lyrics lookups.
+pub(super) struct Account {
+    pub(super) config: AuthConfig,
+    restoring: Mutex<()>,
+    cached: SyncMutex<Cached>,
+}
+
+#[derive(Default)]
+struct Cached {
+    session: Option<Session>,
+    generation: u64,
+}
+
+impl Account {
+    pub(super) fn new(config: AuthConfig) -> Self {
         Self {
-            client_id: DEFAULT_CLIENT_ID.to_owned(),
-            redirect_uri: DEFAULT_REDIRECT_URI.to_owned(),
-            cache_dir: credentials::dir("spotify"),
+            config,
+            restoring: Mutex::new(()),
+            cached: SyncMutex::default(),
         }
+    }
+
+    pub(super) async fn login(&self, prompt: PromptSink, success_message: &str) -> Result<Session> {
+        let path = self.config.credential_path()?;
+        let device = device_id(&self.config.cache_dir)?;
+        let (before, login) = {
+            let cached = self.cached.lock().unwrap();
+            let login = OAuth::login(
+                path,
+                &self.config.client_id,
+                &self.config.redirect_uri,
+                success_message,
+                |url| {
+                    prompt(SignInPrompt::Url(url.to_owned()));
+                    open::that_in_background(url);
+                },
+            );
+            (cached.generation, login)
+        };
+        let oauth = login.await.map_err(sign_in_error)?;
+        let mut cached = self.cached.lock().unwrap();
+        if before != cached.generation || !oauth.has_current_grant() {
+            return Err(SignInFailure(SignInProblem::Cancelled).into());
+        }
+        // a fresh sign-in replaces an older build's, which must not come back if this one ends
+        credentials::remove(&self.config.legacy_file());
+        let session = Session::new(oauth, device);
+        cached.session = Some(session.clone());
+        Ok(session)
+    }
+
+    pub(super) async fn session(&self) -> Result<Option<Session>> {
+        let _restore = self.restoring.lock().await;
+        let before = {
+            let mut cached = self.cached.lock().unwrap();
+            if let Some(session) = &cached.session
+                && session.api().has_current_grant()
+            {
+                return Ok(Some(session.clone()));
+            }
+            cached.session = None;
+            cached.generation
+        };
+        let restored = restore(&self.config).await;
+        let mut cached = self.cached.lock().unwrap();
+        // Only publish this restore if no sign-out happened while it was validating.
+        if cached.generation == before && cached.session.is_none() {
+            cached.session = restored?.filter(|session| session.api().has_current_grant());
+        }
+        Ok(cached.session.clone())
+    }
+
+    pub(super) fn forget(&self) {
+        let mut cached = self.cached.lock().unwrap();
+        cached.generation += 1;
+        cached.session = None;
+        OAuth::forget(&self.config.oauth_file());
+        credentials::remove(&self.config.cache_dir.join(credentials::FILE));
+        credentials::remove(&credentials::root().join("spotify").join(credentials::FILE));
+    }
+
+    pub(super) fn cancel_login(&self) {
+        let mut cached = self.cached.lock().unwrap();
+        cached.generation += 1;
+        OAuth::cancel_login(&self.config.oauth_file());
     }
 }
 
 impl AuthConfig {
     pub fn from_env() -> Self {
-        let mut config = Self::default();
-        if let Ok(redirect_uri) = std::env::var("SONORA_REDIRECT_URI") {
-            config.redirect_uri = redirect_uri;
+        Self {
+            client_id: DEFAULT_CLIENT_ID.to_owned(),
+            redirect_uri: std::env::var("SONORA_REDIRECT_URI")
+                .unwrap_or_else(|_| DEFAULT_REDIRECT_URI.to_owned()),
+            cache_dir: credentials::dir("spotify"),
         }
-        config
     }
 
-    /// The stored credential librespot writes after a successful connect.
-    pub fn file(&self) -> PathBuf {
+    /// Whether a Spotify sign-in has been saved, counting one an older Sonora left for
+    /// [`restore`] to carry over.
+    pub fn stored(&self) -> bool {
+        OAuth::stored(&self.oauth_file()) || self.legacy_file().is_file()
+    }
+
+    /// The reusable credential librespot saved, which [`restore`] carries over once.
+    fn legacy_file(&self) -> PathBuf {
         self.cache_dir.join(credentials::FILE)
     }
-}
 
-pub fn release(config: &AuthConfig) {
-    let Some(address) = socket_address(&config.redirect_uri) else {
-        log::warn!(
-            "auth: cannot read a socket address from {}",
-            config.redirect_uri
+    fn oauth_file(&self) -> PathBuf {
+        self.cache_dir.join("spotify-oauth.json")
+    }
+
+    fn credential_path(&self) -> Result<PathBuf> {
+        let private =
+            dirs::data_local_dir().context("cannot find a private folder for credentials")?;
+        let path = self.oauth_file();
+        anyhow::ensure!(
+            path.starts_with(&private),
+            "cannot store credentials outside {}",
+            private.display()
         );
-        return;
-    };
-    let Ok(mut stream) = std::net::TcpStream::connect(address) else {
-        return;
-    };
-    let _ = std::io::Write::write_all(&mut stream, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-}
-
-fn socket_address(uri: &str) -> Option<String> {
-    let rest = uri
-        .strip_prefix("http://")
-        .or_else(|| uri.strip_prefix("https://"))?;
-    let authority = rest.split('/').next().filter(|host| !host.is_empty())?;
-    match authority.rsplit_once(':') {
-        Some((_, port)) if port.chars().all(|digit| digit.is_ascii_digit()) => {
-            Some(authority.to_owned())
-        }
-        _ => Some(format!("{authority}:80")),
+        Ok(path)
     }
 }
 
 pub async fn restore(config: &AuthConfig) -> Result<Option<Session>> {
-    let session = session(config)?;
-    let Some(credentials) = session.cache().and_then(|cache| cache.credentials()) else {
+    if !config.oauth_file().try_exists()? {
+        return carry_over(config).await;
+    }
+    let restored = match OAuth::restore(config.credential_path()?, &config.client_id) {
+        Ok(Some(oauth)) => oauth.validate().await.map(|()| oauth),
+        Ok(None) => return Ok(None),
+        Err(error) => Err(error),
+    };
+    match restored {
+        Ok(oauth) => Ok(Some(Session::new(oauth, device_id(&config.cache_dir)?))),
+        // A grant Spotify rejects gives way to an older credential still on disk.
+        Err(error)
+            if matches!(error.downcast_ref(), Some(AuthError::Credentials))
+                && config.legacy_file().is_file() =>
+        {
+            OAuth::forget(&config.oauth_file());
+            carry_over(config).await
+        }
+        Err(error) => Err(sign_in_error(error)),
+    }
+}
+
+/// The reusable credential librespot kept in `credentials.json`.
+#[derive(Deserialize)]
+struct Legacy {
+    username: String,
+    auth_type: i32,
+    auth_data: String,
+}
+
+/// Signs in with the credential an older Sonora saved through librespot, so updating keeps the
+/// account signed in. The credential stays for an older build to use until signing out removes
+/// it, unless Spotify rejects it, which removes it at once.
+async fn carry_over(config: &AuthConfig) -> Result<Option<Session>> {
+    let legacy_path = config.legacy_file();
+    let body = match std::fs::read(&legacy_path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("cannot read the previous Spotify sign-in"),
+    };
+    let read = serde_json::from_slice::<Legacy>(&body)
+        .ok()
+        .filter(|legacy| legacy.auth_type == STORED_CREDENTIALS && !legacy.username.is_empty())
+        .and_then(|legacy| {
+            let credential = STANDARD.decode(&legacy.auth_data).ok()?;
+            Some((legacy.username, credential))
+        });
+    // a file no build can sign in with would keep the account looking signed in forever
+    let Some((username, credential)) = read else {
+        log::warn!("spotify: removing a previous sign-in that cannot be read");
+        credentials::remove(&legacy_path);
         return Ok(None);
     };
-
-    session.connect(credentials, true).await.map_err(denied)?;
-    credentials::secure(&config.file());
-    premium(&session).await?;
-    Ok(Some(session))
-}
-
-pub async fn login(config: &AuthConfig, prompt: PromptSink) -> Result<Session> {
-    let client_id = config.client_id.clone();
-    let redirect_uri = config.redirect_uri.clone();
-
-    let access_token =
-        tokio::task::spawn_blocking(move || authorize(&client_id, &redirect_uri, prompt)).await??;
-
-    let session = session(config)?;
-    session
-        .connect(Credentials::with_access_token(access_token), true)
-        .await
-        .map_err(denied)?;
-    credentials::secure(&config.file());
-    premium(&session).await?;
-    Ok(session)
-}
-
-fn authorize(client_id: &str, redirect_uri: &str, prompt: PromptSink) -> Result<String> {
-    let client = BasicClient::new(ClientId::new(client_id.to_owned()))
-        .set_auth_uri(AuthUrl::new(
-            "https://accounts.spotify.com/authorize".to_owned(),
-        )?)
-        .set_token_uri(TokenUrl::new(
-            "https://accounts.spotify.com/api/token".to_owned(),
-        )?)
-        .set_redirect_uri(RedirectUrl::new(redirect_uri.to_owned())?);
-    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let scopes = SCOPES.iter().map(|scope| Scope::new((*scope).to_owned()));
-    let (url, _) = client
-        .authorize_url(CsrfToken::new_random)
-        .add_scopes(scopes)
-        .set_pkce_challenge(challenge)
-        .url();
-    prompt(SignInPrompt::Url(url.to_string()));
-    open::that_in_background(url.as_str());
-
-    let address = socket_address(redirect_uri)
-        .with_context(|| format!("redirect URI has no socket address: {redirect_uri}"))?;
-    let listener = TcpListener::bind(&address)
-        .with_context(|| format!("cannot listen for Spotify login at {address}"))?;
-    let mut stream = listener
-        .incoming()
-        .next()
-        .context("Spotify login callback did not arrive")??;
-    let mut request = String::new();
-    BufReader::new(&stream).read_line(&mut request)?;
-    let target = request
-        .split_whitespace()
-        .nth(1)
-        .context("Spotify login callback was malformed")?;
-    let callback = oauth2::url::Url::parse(&format!("http://localhost{target}"))?;
-    let query = callback
-        .query_pairs()
-        .collect::<std::collections::HashMap<_, _>>();
-    let response = "You can return to Sonora.";
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{response}",
-        response.len()
-    )?;
-    if let Some(error) = query.get("error") {
-        let problem = match error.as_ref() {
-            "access_denied" => SignInProblem::Cancelled,
-            _ => SignInProblem::Refused,
-        };
-        return Err(SignInFailure(problem).into());
-    }
-    let code = query
-        .get("code")
-        .context("Spotify login callback had no authorization code")?;
-    let response = client
-        .exchange_code(AuthorizationCode::new(code.to_string()))
-        .set_pkce_verifier(verifier)
-        .request(&exchange)
-        .map_err(|error| anyhow!("failed to exchange Spotify authorization code: {error}"))?;
-    Ok(response.access_token().secret().to_owned())
-}
-
-/// Carries one oauth2 request over reqwest. oauth2 only knows the reqwest it was built against,
-/// so the workspace one is handed in as a plain function instead.
-fn exchange(request: oauth2::HttpRequest) -> Result<oauth2::HttpResponse, reqwest::Error> {
-    let sent = reqwest::blocking::Client::new().execute(request.try_into()?)?;
-    let status = sent.status();
-    let headers = sent.headers().clone();
-    let mut response = http::Response::new(sent.bytes()?.to_vec());
-    *response.status_mut() = status;
-    *response.headers_mut() = headers;
-    Ok(response)
-}
-
-async fn premium(session: &Session) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + PRODUCT_WAIT;
-    loop {
-        if let Some(account) = session.user_data().attributes.get("type") {
-            match account.as_str() {
-                "premium" => return Ok(()),
-                _ => {
-                    session.shutdown();
-                    return Err(anyhow::Error::new(SignInFailure(SignInProblem::Premium)));
-                }
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Ok(());
-        }
-        tokio::time::sleep(PRODUCT_POLL).await;
-    }
-}
-
-fn denied(error: librespot_core::Error) -> anyhow::Error {
-    let problem = classify(&error.to_string());
-    anyhow::Error::new(error).context(SignInFailure(problem))
-}
-
-fn classify(message: &str) -> SignInProblem {
-    let message = message.to_lowercase();
-    if message.contains("travel restriction") {
-        return SignInProblem::Region;
-    }
-    if message.contains("bad credentials") || message.contains("invalid credentials") {
-        return SignInProblem::Credentials;
-    }
-    if message.contains("connection")
-        || message.contains("timed out")
-        || message.contains("dns")
-        || message.contains("network")
-    {
-        return SignInProblem::Network;
-    }
-    SignInProblem::Refused
-}
-
-pub fn forget(config: &AuthConfig) {
-    credentials::remove(&config.file());
-}
-
-pub(crate) fn session(config: &AuthConfig) -> Result<Session> {
-    // librespot keeps each file as the CDN sent it, still under the key Spotify hands out
-    // again on every play, so a kept file is no easier to play than the stream.
-    let audio = Vault::foreign("spotify");
-    let cache = Cache::new(
-        Some(config.cache_dir.as_path()),
-        None,
-        audio.as_ref().map(|(folder, _)| folder.as_path()),
-        audio.as_ref().map(|(_, room)| *room),
+    let device = device_id(&config.cache_dir)?;
+    let adopted = OAuth::adopt(
+        config.credential_path()?,
+        &config.client_id,
+        &device,
+        &username,
+        &credential,
     )
-    .with_context(|| format!("cannot open cache at {}", config.cache_dir.display()))?;
-
-    let session_config = SessionConfig {
-        client_id: config.client_id.clone(),
-        device_id: device_id(&config.cache_dir),
-        ..Default::default()
-    };
-
-    let session = Session::new(session_config, Some(cache));
-    if let Some(((folder, _), cache)) = audio.zip(session.cache()) {
-        let cache = Arc::downgrade(cache);
-        Vault::adopt("spotify", move || {
-            cache
-                .upgrade()
-                .map(|cache| clear(&cache, &folder))
-                .is_some()
-        });
-    }
-    Ok(session)
-}
-
-/// Removes every audio file librespot keeps in `folder` through `cache`, so its count of what
-/// it holds stays true while its session runs. librespot files each one under the first two
-/// hex digits of its id, and anything else in the folder is removed as it is.
-fn clear(cache: &Cache, folder: &Path) {
-    for group in std::fs::read_dir(folder).into_iter().flatten().flatten() {
-        let prefix = group.file_name().to_string_lossy().into_owned();
-        for item in std::fs::read_dir(group.path())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let name = format!("{prefix}{}", item.file_name().to_string_lossy());
-            let removed = match offline::hex(&name).filter(|raw| raw.len() == FILE_ID) {
-                Some(raw) => cache
-                    .remove_file(FileId::from_raw(&raw))
-                    .map_err(anyhow::Error::from),
-                None => std::fs::remove_file(item.path()).map_err(anyhow::Error::from),
-            };
-            if let Err(error) = removed {
-                log::warn!("spotify: cannot remove a kept file: {error:#}");
+    .await;
+    let oauth = match adopted {
+        Ok(oauth) => oauth,
+        Err(error) => {
+            if matches!(error.downcast_ref(), Some(AuthError::Credentials)) {
+                credentials::remove(&legacy_path);
             }
+            return Err(sign_in_error(error));
         }
-        std::fs::remove_dir(group.path()).ok();
-    }
+    };
+    log::info!("spotify: carried the sign-in over from the previous version");
+    Ok(Some(Session::new(oauth, device)))
 }
 
-/// The id this install goes by on Spotify's device list. A new one each launch would leave a
-/// stale Sonora behind every time, so the first one is kept next to the credentials.
-fn device_id(dir: &Path) -> String {
+/// Maps Spotify OAuth failures to the app's existing sign-in outcomes.
+pub(super) fn sign_in_error(error: anyhow::Error) -> anyhow::Error {
+    if let Some(problem) = error.downcast_ref::<AudioKeyError>() {
+        let problem = match problem {
+            AudioKeyError::Throttled => return error.context(music::Throttled),
+            AudioKeyError::Denied => return error,
+            AudioKeyError::Premium => SignInProblem::Premium,
+            AudioKeyError::Region => SignInProblem::Region,
+            AudioKeyError::Credentials => SignInProblem::Credentials,
+            AudioKeyError::Refused => SignInProblem::Refused,
+            AudioKeyError::Network => SignInProblem::Network,
+        };
+        return error.context(SignInFailure(problem));
+    }
+    let problem = match error.downcast_ref::<AuthError>() {
+        Some(AuthError::Cancelled) => SignInProblem::Cancelled,
+        Some(AuthError::Credentials) => SignInProblem::Credentials,
+        Some(AuthError::Network) => SignInProblem::Network,
+        Some(AuthError::Refused) => SignInProblem::Refused,
+        None => return error,
+    };
+    error.context(SignInFailure(problem))
+}
+
+/// Persists the Connect device ID so it survives app restarts.
+fn device_id(dir: &Path) -> Result<String> {
     let file = dir.join("device-id");
     let kept = std::fs::read_to_string(&file)
         .map(|id| id.trim().to_owned())
         .ok()
         .filter(|id| !id.is_empty());
     if let Some(id) = kept {
-        return id;
+        return Ok(id);
     }
 
-    let id = SessionConfig::default().device_id;
+    let mut bytes = [0; 16];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| anyhow!("cannot generate Spotify device ID"))?;
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    let id = format!("{:032x}", u128::from_be_bytes(bytes));
+    let id = format!(
+        "{}-{}-{}-{}-{}",
+        &id[..8],
+        &id[8..12],
+        &id[12..16],
+        &id[16..20],
+        &id[20..]
+    );
     if let Err(error) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, &id)) {
         log::warn!("auth: cannot keep the device id: {error}");
     }
-    id
-}
-
-#[cfg(test)]
-mod tests {
-    use super::socket_address;
-
-    #[test]
-    fn reads_host_and_port() {
-        assert_eq!(
-            socket_address("http://127.0.0.1:8989/login").as_deref(),
-            Some("127.0.0.1:8989")
-        );
-    }
-
-    #[test]
-    fn defaults_a_missing_port() {
-        assert_eq!(
-            socket_address("http://localhost/login").as_deref(),
-            Some("localhost:80")
-        );
-    }
-
-    #[test]
-    fn rejects_a_uri_without_a_scheme() {
-        assert!(socket_address("127.0.0.1:8989/login").is_none());
-    }
+    Ok(id)
 }

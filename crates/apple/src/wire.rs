@@ -943,7 +943,9 @@ pub fn library_song(value: &Resource, root: &str) -> Option<Track> {
 pub fn album(value: &Resource) -> Option<Album> {
     let id = value.id.as_str()?;
     let attributes = value.attributes.as_ref()?;
-    let release = text(&attributes.release_date).unwrap_or_default();
+    let release = text(&attributes.release_date)
+        .as_deref()
+        .and_then(music::ReleaseDate::parse);
     Some(Album {
         id: id.to_owned(),
         name: text(&attributes.name)?,
@@ -952,10 +954,7 @@ pub fn album(value: &Resource) -> Option<Album> {
         cover: artwork(attributes, ART),
         cover_large: artwork(attributes, HERO),
         release_type: release_type(attributes),
-        year: release
-            .get(..4)
-            .and_then(|year| year.parse().ok())
-            .unwrap_or(0),
+        year: release.map_or(0, |date| date.year() as i32),
         track_count: number(&attributes.track_count),
         release_date: release,
         label: text(&attributes.record_label).unwrap_or_default(),
@@ -1016,6 +1015,7 @@ pub fn playlist(value: &Resource) -> Option<Playlist> {
     let attributes = value.attributes.as_ref()?;
     let curator = text(&attributes.curator_name).unwrap_or_else(|| "Apple Music".to_owned());
     Some(Playlist {
+        revision: None,
         id: id.to_owned(),
         name: text(&attributes.name)?,
         owner: curator.clone(),
@@ -1036,6 +1036,7 @@ pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
     let id = value.id.as_str()?;
     let attributes = value.attributes.as_ref()?;
     Some(Playlist {
+        revision: None,
         id: id.to_owned(),
         name: text(&attributes.name)?,
         owner: owner.to_owned(),
@@ -1149,7 +1150,7 @@ pub fn library_artist_page(value: &Resource, root: &str) -> Option<Artist> {
 /// Orders releases by release date, newest first, keeping the order Apple gave for releases on
 /// the same day.
 pub fn newest_first(mut albums: Vec<Album>) -> Vec<Album> {
-    albums.sort_by(|a, b| b.release_date.cmp(&a.release_date));
+    albums.sort_by_key(|album| std::cmp::Reverse(album.release_date));
     albums
 }
 
@@ -1311,12 +1312,17 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
         duration: Duration::from_millis(attributes.duration_in_millis.as_u64().unwrap_or(0)),
         added_at: moment(attributes.date_added.as_str()),
         added_by: None,
+        release_date: attributes
+            .release_date
+            .as_str()
+            .and_then(music::ReleaseDate::parse),
         playcount: None,
         popularity: 0,
         explicit: attributes.content_rating.as_str() == Some("explicit"),
         track_number: number(&attributes.track_number),
         disc_number: number(&attributes.disc_number),
-        tags: attributes
+        isrc: None,
+        genres: attributes
             .genre_names
             .iter()
             .filter_map(Leaf::as_str)
@@ -1325,6 +1331,7 @@ fn song_as(value: &Resource, id: String, root: &str) -> Option<Track> {
             .collect(),
         languages: Vec::new(),
         credits: Vec::new(),
+        ..Track::default()
     })
 }
 
@@ -1428,7 +1435,7 @@ mod tests {
         assert_eq!(track.duration, Duration::from_millis(447_000));
         assert!(track.explicit);
         assert!(track.playable);
-        assert_eq!(track.tags, vec!["Alternative"]);
+        assert_eq!(track.genres, vec!["Alternative"]);
         assert_eq!(
             track.cover.as_deref(),
             Some("https://is1.mzstatic.com/a/600x600bb.jpg")

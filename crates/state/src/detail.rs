@@ -4,8 +4,9 @@ use std::sync::Arc;
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, ArtistRef, Capabilities, Contributor, Playlist,
-    PlaylistDetail, ReleaseType, SavedArtist, Track,
+    PlaylistDetail, PlaylistPreview, ReleaseType, SavedArtist, Track,
 };
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 use crate::{
@@ -69,12 +70,14 @@ pub struct Header {
     pub artist: Option<String>,
     pub artist_refs: Vec<ArtistRef>,
     pub owner: Option<Contributor>,
-    pub release_date: Option<String>,
+    pub release_date: Option<music::ReleaseDate>,
     /// The owner's name when the provider gives no id to link it to.
     pub owner_name: Option<String>,
     /// Zero when the provider does not report a count.
     pub track_count: u32,
     pub cover: Option<String>,
+    /// Artwork already available while this page loads a better image.
+    pub cover_preview: Option<String>,
 }
 
 /// Signals that a local album no longer has a page after the library changes
@@ -91,6 +94,7 @@ pub struct Detail {
     playlist: Option<Playlist>,
     tracks: Vec<Track>,
     continuation: Option<String>,
+    playlist_revision: Option<Vec<u8>>,
     also_like: Vec<Album>,
     similar: Vec<SavedArtist>,
     loading: bool,
@@ -171,14 +175,26 @@ impl Detail {
                 this.clear();
                 cx.notify();
             }
-            LibraryEvent::TrackAdded { playlist } | LibraryEvent::PlaylistChanged(playlist)
+            LibraryEvent::TrackAdded { playlist }
+            | LibraryEvent::PlaylistChanged(playlist)
+            | LibraryEvent::PlaylistChangedRemotely(playlist, _)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
             {
+                if matches!(event, LibraryEvent::PlaylistChangedRemotely(_, Some(revision))
+                    if this.playlist_revision.as_ref() == Some(revision))
+                {
+                    return;
+                }
                 // a load now would show the order the provider kept over the moves still on
                 // their way, so it waits for them
                 match library.read(cx).reordering(playlist) {
                     true => this.reload_after_order = true,
-                    false => this.load(Collection::Playlist, playlist.clone(), false, cx),
+                    false => this.load(
+                        Collection::Playlist,
+                        playlist.clone(),
+                        matches!(event, LibraryEvent::PlaylistChangedRemotely(..)),
+                        cx,
+                    ),
                 }
             }
             LibraryEvent::PlaylistReordered(playlist)
@@ -186,7 +202,7 @@ impl Detail {
                     && this.reload_after_order
                     && !library.read(cx).reordering(playlist) =>
             {
-                this.load(Collection::Playlist, playlist.clone(), false, cx);
+                this.load(Collection::Playlist, playlist.clone(), true, cx);
             }
             LibraryEvent::ReorderFailed(playlist)
                 if this.id.as_deref() == Some(playlist.as_str()) =>
@@ -239,6 +255,7 @@ impl Detail {
             playlist: None,
             tracks: Vec::new(),
             continuation: None,
+            playlist_revision: None,
             also_like: Vec::new(),
             similar: Vec::new(),
             loading: false,
@@ -307,6 +324,21 @@ impl Detail {
         self.loading
     }
 
+    /// Whether the playlist is showing only the first rows of its initial load.
+    pub fn previewing_playlist(&self) -> bool {
+        self.kind == Some(Collection::Playlist) && self.loading && !self.tracks.is_empty()
+    }
+
+    /// Whether all playlist rows are available for edits that rely on the full list.
+    pub fn playlist_tracks_complete(&self) -> bool {
+        self.kind == Some(Collection::Playlist)
+            && self.loaded
+            && !self.loading
+            && !self.loading_more
+            && self.continuation.is_none()
+            && self.error.is_none()
+    }
+
     /// Appends provider pages in sequence while keeping the first page immediately usable.
     fn load_more(&mut self, cx: &mut Context<Self>) {
         if self.loading_more {
@@ -370,11 +402,7 @@ impl Detail {
         }
         let capabilities = self.session.read(cx).capabilities_of(Shelf::of(id));
         let offline = Network::lost(cx) && !music::is_local_id(id);
-        let whole = self.loaded
-            && !self.loading
-            && !self.loading_more
-            && self.continuation.is_none()
-            && !offline;
+        let whole = self.playlist_tracks_complete() && !offline;
         Reorder::of(self.playlist.as_ref(), capabilities, whole)
     }
 
@@ -428,6 +456,10 @@ impl Detail {
             Toasts::show(Outcome::Info, "toast-playlist-ruled", cx);
             return;
         }
+        if !self.playlist_tracks_complete() {
+            Toasts::show(Outcome::Info, "toast-playlist-load-before-removing", cx);
+            return;
+        }
         let named: HashSet<&str> = track_ids.iter().map(String::as_str).collect();
         let mut rows: Vec<String> = self
             .tracks
@@ -456,6 +488,10 @@ impl Detail {
         let (Some(kind), Some(id)) = (self.kind, self.id.clone()) else {
             return;
         };
+        if kind == Collection::Playlist && self.loaded && self.error.is_some() {
+            self.load(kind, id, true, cx);
+            return;
+        }
         match kind {
             Collection::Album => self.open_album(&id, cx),
             Collection::Playlist => self.open_playlist(&id, cx),
@@ -542,7 +578,7 @@ impl Detail {
         };
         let cached = match kind {
             Collection::Album => catalog.peek_album(id).map(Loaded::Album),
-            Collection::Playlist => catalog.peek_playlist(id).map(Loaded::Playlist),
+            Collection::Playlist => None,
         };
         if let Some(cached) = cached {
             self.adopt(cached, cx);
@@ -561,6 +597,11 @@ impl Detail {
             cx.notify();
             return;
         };
+        self.task = None;
+        if let Some(request) = self.request.take() {
+            request.abort();
+        }
+        self.loading_more = false;
         self.reload_after_order = self.library.read(cx).reordering(&id);
 
         self.loading = true;
@@ -570,6 +611,8 @@ impl Detail {
         let local = music::is_local_id(&id)
             .then(|| self.session.read(cx).local_client())
             .flatten();
+        let (preview, mut batches) = mpsc::channel(2);
+        let preview = (kind == Collection::Playlist && self.tracks.is_empty()).then_some(preview);
         let request = self.io.spawn({
             let id = id.clone();
             async move {
@@ -591,10 +634,11 @@ impl Detail {
                         catalog.album(&id).await.map(Loaded::Album).map(Some)
                     }
                     Collection::Playlist => {
-                        if fresh {
-                            catalog.invalidate_playlist(&id).await;
-                        }
-                        catalog.playlist(&id).await.map(Loaded::Playlist).map(Some)
+                        let detail = match preview {
+                            Some(out) => catalog.playlist_with_preview(&id, out).await?,
+                            None => catalog.playlist(&id).await?,
+                        };
+                        Ok(Some(Loaded::Playlist(detail)))
                     }
                 }
             }
@@ -602,6 +646,14 @@ impl Detail {
         self.request = Some(request.abort_handle());
 
         self.task = Some(cx.spawn(async move |this, cx| {
+            while let Some(batch) = batches.recv().await {
+                if this
+                    .update(cx, |this, cx| this.preview_playlist(batch, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
             let loaded = join(request).await;
 
             this.update(cx, |this, cx| {
@@ -615,13 +667,30 @@ impl Detail {
                     }
                     Err(reason) => match kept(kind, &id, cx) {
                         Some(kept) => this.adopt(kept, cx),
-                        None => this.error = Some(reason),
+                        None => {
+                            this.error = Some(reason);
+                            this.load_more(cx);
+                        }
                     },
                 }
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// Adds ready rows while retaining the load in progress until the full snapshot arrives.
+    fn preview_playlist(&mut self, batch: PlaylistPreview, cx: &mut Context<Self>) {
+        if self.tracks.is_empty() {
+            let mut playlist = batch.playlist;
+            if playlist.cover.is_none() {
+                playlist.cover = self.known_mosaic(&playlist, cx);
+            }
+            self.header = Some(playlist_header(&playlist));
+            self.playlist = Some(playlist);
+        }
+        self.tracks.extend(batch.tracks);
+        cx.notify();
     }
 
     fn known_mosaic(&self, playlist: &Playlist, cx: &Context<Self>) -> Option<String> {
@@ -670,7 +739,16 @@ impl Detail {
     fn adopt(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
         match loaded {
             Loaded::Album(detail) => {
-                self.header = Some(album_header(&detail.album));
+                let mut header = album_header(&detail.album);
+                if let Some(previous) = self.header.as_ref().and_then(|header| header.cover.clone())
+                {
+                    if header.cover.is_none() {
+                        header.cover = Some(previous);
+                    } else if header.cover.as_ref() != Some(&previous) {
+                        header.cover_preview = Some(previous);
+                    }
+                }
+                self.header = Some(header);
                 self.album = Some(detail.album.clone());
                 self.tracks = detail
                     .tracks
@@ -698,6 +776,7 @@ impl Detail {
                 self.playlist = Some(playlist);
                 self.tracks = detail.tracks.clone();
                 self.continuation = detail.continuation.clone();
+                self.playlist_revision.clone_from(&detail.playlist.revision);
             }
         }
         self.loaded = true;
@@ -721,6 +800,7 @@ impl Detail {
         self.playlist = None;
         self.tracks.clear();
         self.continuation = None;
+        self.playlist_revision = None;
         self.also_like.clear();
         self.similar.clear();
         self.loading = false;
@@ -801,13 +881,18 @@ fn album_header(album: &Album) -> Header {
         artist: Some(album.artists.clone()),
         artist_refs: album.artist_refs.clone(),
         owner: None,
-        release_date: match album.release_date.is_empty() {
-            true => (album.year > 0).then(|| album.year.to_string()),
-            false => Some(album.release_date.clone()),
-        },
+        release_date: album
+            .release_date
+            .or_else(|| music::ReleaseDate::from_parts(album.year, 0, 0)),
         owner_name: None,
         track_count: album.track_count,
-        cover: album.cover_large.clone(),
+        cover: album.cover_large.clone().or_else(|| album.cover.clone()),
+        cover_preview: album.cover.clone().filter(|cover| {
+            album
+                .cover_large
+                .as_ref()
+                .is_some_and(|large| large != cover)
+        }),
     }
 }
 
@@ -836,6 +921,7 @@ fn playlist_header(playlist: &Playlist) -> Header {
         owner_name,
         track_count: playlist.track_count,
         cover: playlist.cover.clone(),
+        cover_preview: None,
     }
 }
 
@@ -859,6 +945,7 @@ mod tests {
 
     fn playlist(owned: bool) -> Playlist {
         Playlist {
+            revision: None,
             id: "p".into(),
             name: "Mix".into(),
             owner: String::new(),

@@ -632,10 +632,7 @@ impl SubsonicClient {
                 .song_count
                 .map(|count| count.max(0) as u32)
                 .unwrap_or(tracks as u32),
-            release_date: match year {
-                0 => String::new(),
-                _ => year.to_string(),
-            },
+            release_date: wire::release_date(detail.release_date.as_ref(), year),
             label: wire::labels(detail.record_labels.as_deref()),
             copyrights: Vec::new(),
             added_at: iso_8601_to_epoch(detail.created.as_deref()),
@@ -989,13 +986,6 @@ impl MusicApi for SubsonicClient {
             .map_err(bare)
             .with_context(|| format!("cannot load the song {track_id}"))?;
         Ok(self.song(song))
-    }
-
-    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>> {
-        let song = self.client.get_song(track_id).await.ok();
-        Ok(song
-            .and_then(|song| song.play_count)
-            .map(|count| count as u64))
     }
 
     /// Sends the position and state through `reportPlayback`, with scrobbling left to `played`.
@@ -1386,6 +1376,7 @@ impl MusicApi for SubsonicClient {
             .into_iter()
             .map(|song| self.song(song))
             .collect();
+        album.date_tracks(&mut tracks);
         // a server answers in whatever order it keeps; an album is heard in disc and track order
         tracks.sort_by(|a, b| {
             (a.disc_number, a.track_number)

@@ -10,8 +10,9 @@ use ui::{ActiveTheme as _, Mode, Popovers, Scrollbar, Scroller, Skeleton, Text, 
 
 use crate::chrome::{Chrome, Toolbar, Tooled, tools};
 use crate::shared::cells;
-use crate::shared::shelves::Shelves;
+use crate::shared::shelves::{self, Shelves};
 use crate::shared::trouble;
+use music::{Genre, GenreItem, GenreSection};
 
 /// How wide the title skeleton reaches while the genre name is on its way.
 const TITLE_SKELETON: Pixels = px(240.);
@@ -80,9 +81,12 @@ impl Tooled for GenreView {
         self.toolbar.clone()
     }
 
-    fn tools(&self, _cx: &App) -> Vec<AnyElement> {
+    fn tools(&self, cx: &App) -> Vec<AnyElement> {
         let viewed = self.me.clone();
 
+        if category_directory(&self.detail.read(cx).sections()).is_some() {
+            return Vec::new();
+        }
         vec![tools::views(&self.popovers, self.mode, move |mode, cx| {
             viewed.update(cx, |view, cx| view.set_mode(mode, cx)).ok();
         })]
@@ -143,12 +147,20 @@ impl Render for GenreView {
         let sections = detail.sections();
         let empty = !loading && sections.is_empty();
         let (mode, width) = (self.mode, self.width);
-        let shelves = self
-            .shelves
-            .update(cx, |shelves, cx| match loading && sections.is_empty() {
-                true => shelves.pending(width, window, cx),
-                false => vec![shelves.render(sections, mode, width, window, cx)],
-            });
+        let shelves = match category_directory(&sections) {
+            Some(categories) => vec![shelves::categories(
+                "genre-directory",
+                &categories,
+                width,
+                cx,
+            )],
+            None => self
+                .shelves
+                .update(cx, |shelves, cx| match loading && sections.is_empty() {
+                    true => shelves.pending(width, window, cx),
+                    false => vec![shelves.render(sections, mode, width, window, cx)],
+                }),
+        };
 
         div()
             .flex()
@@ -201,4 +213,19 @@ impl Render for GenreView {
             )
             .into_any_element()
     }
+}
+
+/// A directory from See all contains only subcategories, which are easier to scan together.
+fn category_directory(sections: &[GenreSection]) -> Option<Vec<Genre>> {
+    if sections.is_empty() {
+        return None;
+    }
+    sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .map(|item| match item {
+            GenreItem::Genre(genre) => Some(genre.clone()),
+            _ => None,
+        })
+        .collect()
 }

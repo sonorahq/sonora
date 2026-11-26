@@ -396,6 +396,7 @@ impl PlexClient {
             tags: Vec::new(),
             languages: Vec::new(),
             credits: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -423,12 +424,9 @@ impl PlexClient {
             },
             release_date: item
                 .originally_available_at
-                .clone()
-                .filter(|date| !date.is_empty())
-                .unwrap_or_else(|| match year {
-                    0 => String::new(),
-                    _ => year.to_string(),
-                }),
+                .as_deref()
+                .and_then(music::ReleaseDate::parse)
+                .or_else(|| music::ReleaseDate::from_parts(year, 0, 0)),
             label: item.studio.clone().unwrap_or_default(),
             id: item.rating_key,
             name: item.title,
@@ -453,6 +451,7 @@ impl PlexClient {
     fn playlist_card(&self, item: Item) -> Playlist {
         let owner = self.inner.stored.user.name.clone();
         Playlist {
+            revision: None,
             cover: self.image(item.composite.as_deref(), 300),
             id: item.rating_key,
             name: item.title,
@@ -901,14 +900,6 @@ impl MusicApi for PlexClient {
             .await
             .with_context(|| format!("cannot load the song {track_id}"))?;
         Ok(self.track(item))
-    }
-
-    async fn track_playcount(&self, track_id: &str) -> Result<Option<u64>> {
-        Ok(self
-            .metadata(track_id)
-            .await
-            .ok()
-            .and_then(|item| item.view_count))
     }
 
     /// Tells the server where the listener is in the track, which is what shows it as playing on

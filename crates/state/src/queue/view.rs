@@ -20,6 +20,15 @@ enum Source {
     Remote(Entity<Devices>),
 }
 
+/// A specific occurrence selected from another device's queue.
+#[derive(Clone)]
+pub struct RemoteQueuePick {
+    pub(crate) device: String,
+    pub(crate) track: music::connect::QueuedTrack,
+    pub(crate) forward: bool,
+    pub(crate) context: Option<music::connect::Collection>,
+}
+
 impl QueueView {
     pub(crate) fn new(
         queue: Entity<Queue>,
@@ -69,6 +78,21 @@ impl QueueView {
         match &self.source {
             Source::Local(queue) => queue.read(cx).kind(position),
             Source::Remote(_) => self.sections.kind(position),
+        }
+    }
+
+    pub fn remote_pick(&self, position: QueuePosition, cx: &App) -> Option<RemoteQueuePick> {
+        match &self.source {
+            Source::Remote(devices) => devices.read(cx).queue_jump(position),
+            Source::Local(_) => None,
+        }
+    }
+
+    /// Uses the occurrence identity from the queue being shown.
+    pub fn uid(&self, position: QueuePosition, cx: &App) -> Option<String> {
+        match &self.source {
+            Source::Local(queue) => queue.read(cx).uid(position).map(str::to_owned),
+            Source::Remote(devices) => devices.read(cx).queue_uid(position),
         }
     }
 

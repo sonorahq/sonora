@@ -227,8 +227,15 @@ impl Index {
         let connection = self.cache.open()?;
         let mut remembered = Remembered::default();
 
+        // Old rows lack the fields only a fresh tag probe can supply. Retain their paths.
         let mut files = connection
-            .prepare("SELECT path, parent, mtime, size, track FROM local_files")
+            .prepare(
+                "SELECT path, parent, mtime, size,
+                    CASE WHEN json_valid(track) THEN
+                        CASE WHEN json_type(track, '$.track.moods') = 'array' THEN track END
+                    END
+                 FROM local_files",
+            )
             .context("cannot read the file index")?;
         let rows = files
             .query_map([], |row| {
@@ -237,13 +244,13 @@ impl Index {
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })
             .context("cannot read the file index")?;
         // Reading the rows is quick; turning ten thousand of them back into tracks is not, and
         // it is the whole cost of a scan that changed nothing. So it goes over threads.
-        let raw: Vec<(String, String, i64, i64, String)> = rows.filter_map(Result::ok).collect();
+        let raw = rows.filter_map(Result::ok).collect();
         for (path, parent, mtime, size, tagged) in parse(raw) {
             let path = PathBuf::from(path);
             remembered
@@ -451,7 +458,7 @@ fn write_folders(connection: &Connection, folders: &[(PathBuf, Seen)]) -> Result
 /// parses keeps its path with no tags, so its folder still lists it and the file is read again.
 type Parsed = (String, String, i64, i64, Option<Tagged>);
 
-fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
+fn parse(rows: Vec<(String, String, i64, i64, Option<String>)>) -> Vec<Parsed> {
     let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     let chunk = rows.len().div_ceil(threads).max(1);
 
@@ -462,8 +469,9 @@ fn parse(rows: Vec<(String, String, i64, i64, String)>) -> Vec<Parsed> {
                 chunk
                     .iter()
                     .map(|(path, parent, mtime, size, track)| {
-                        let tagged = serde_json::from_str::<Tagged>(track)
-                            .ok()
+                        let tagged = track
+                            .as_deref()
+                            .and_then(|track| serde_json::from_str::<Tagged>(track).ok())
                             .map(Tagged::restored);
                         (path.clone(), parent.clone(), *mtime, *size, tagged)
                     })

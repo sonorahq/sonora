@@ -1,69 +1,71 @@
-//! Spotify, through librespot: the sign-in under Spotify's own client id, the library and
-//! catalog over its spclient, Spotify Connect, and playback through librespot's player or
-//! Soloist.
-
 pub mod auth;
 
 mod albums;
 mod artists;
 mod client;
 mod collection;
-mod collection2;
 mod connect;
+mod feeds;
 mod links;
 mod lyrics;
-mod offline;
-mod pace;
-mod pathfinder;
-mod pb;
 mod playback;
 mod playlists;
 mod profiles;
-mod radio;
 mod search;
-mod sink;
+mod session;
 mod wire;
 
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use music::{
-    Capabilities, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, RadioSeed, Shape,
-    SignInFailure, SignInProblem,
-};
 
 use crate::playback::Factory;
+use music::{
+    Capabilities, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession, RadioSeed, Shape,
+};
+
 pub use auth::AuthConfig;
-pub use client::LibrespotClient;
+pub use client::SpotifyClient;
 pub use lyrics::SpotifyLyrics;
 
 pub struct SpotifyProvider {
-    config: AuthConfig,
+    account: Arc<auth::Account>,
+    browser_confirmation: fn() -> String,
 }
 
 impl SpotifyProvider {
+    /// Selects a smaller Spotify album cover when it fits the physical thumbnail size.
+    pub fn thumbnail_at(cover: &str, edge: u32) -> Option<String> {
+        wire::thumbnail_at(cover, edge)
+    }
+
     pub fn new(config: AuthConfig) -> Self {
-        Self { config }
+        Self {
+            account: Arc::new(auth::Account::new(config)),
+            browser_confirmation: String::new,
+        }
     }
 
     pub fn from_env() -> Self {
         Self::new(AuthConfig::from_env())
     }
 
-    fn drop_free(&self, error: anyhow::Error) -> anyhow::Error {
-        if matches!(
-            error.downcast_ref::<SignInFailure>(),
-            Some(SignInFailure(SignInProblem::Premium))
-        ) {
-            auth::forget(&self.config);
-        }
-        error
+    /// Supplies the browser confirmation in the application's current language.
+    pub fn with_browser_confirmation(mut self, message: fn() -> String) -> Self {
+        self.browser_confirmation = message;
+        self
     }
 
-    async fn session(&self, client: LibrespotClient) -> Result<ProviderSession> {
+    /// Looks up lyrics with the same Spotify session as playback and browsing.
+    pub fn lyrics(&self) -> SpotifyLyrics {
+        SpotifyLyrics::with_account(self.account.clone())
+    }
+
+    async fn session(&self, session: session::Session) -> Result<ProviderSession> {
+        let client = SpotifyClient::new(session.clone());
         let profile = client.profile().await?;
-        let playback = Arc::new(Factory::new(client.session().clone()));
+        let playback = Arc::new(Factory::new(session, client.connect_handle()));
         Ok(ProviderSession {
             profile,
             api: Arc::new(client),
@@ -93,8 +95,8 @@ impl MusicProvider for SpotifyProvider {
         "spotify"
     }
 
-    fn reach(&self) -> Option<String> {
-        Some("apresolve.spotify.com".to_owned())
+    fn network_probe(&self) -> Option<futures::future::BoxFuture<'static, bool>> {
+        Some(Box::pin(spotifyapis::reachable()))
     }
 
     fn public_art(&self) -> bool {
@@ -114,33 +116,26 @@ impl MusicProvider for SpotifyProvider {
     }
 
     fn abandon(&self) {
-        auth::release(&self.config);
+        self.account.cancel_login();
     }
 
     fn stored(&self) -> bool {
-        self.config.file().exists()
+        self.account.config.stored()
     }
 
-    /// A session that never connects, which plays downloads and nothing else. It is built on
-    /// the caller's tokio runtime.
+    /// Plays vault downloads directly through Sonora's shared audio engine.
     fn offline_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
         if !self.stored() {
             return None;
         }
-        let session = auth::session(&self.config)
-            .inspect_err(|error| log::warn!("spotify: cannot open an offline session: {error:#}"))
-            .ok()?;
-        Some(Arc::new(Factory::offline(session)))
+        Some(Arc::new(playback::OfflineFactory))
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        let Some(session) = auth::restore(&self.config)
-            .await
-            .map_err(|error| self.drop_free(error))?
-        else {
+        let Some(session) = self.account.session().await? else {
             return Ok(None);
         };
-        self.session(LibrespotClient::new(session)).await.map(Some)
+        self.session(session).await.map(Some)
     }
 
     async fn sign_in(
@@ -149,18 +144,13 @@ impl MusicProvider for SpotifyProvider {
         prompt: music::PromptSink,
         _input: music::InputSource,
     ) -> Result<ProviderSession> {
-        let session = auth::login(&self.config, prompt)
-            .await
-            .map_err(|error| self.drop_free(error))?;
-        self.session(LibrespotClient::new(session)).await
+        let message = (self.browser_confirmation)();
+        let session = self.account.login(prompt, &message).await?;
+        self.session(session).await
     }
 
-    /// Forgets the account and the Soloist pairing with it, since that pairing is this
-    /// account's sign-in too.
+    /// Clears Sonora's Spotify login. Soloist keeps its separately paired login.
     fn sign_out(&self) {
-        auth::forget(&self.config);
-        if let Err(error) = soloist::forget() {
-            log::warn!("spotify: cannot remove the soloist setup: {error:#}");
-        }
+        self.account.forget();
     }
 }
