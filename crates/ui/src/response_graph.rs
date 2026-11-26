@@ -12,6 +12,8 @@ use crate::{ActiveTheme as _, Text, Theme};
 
 const HAIRLINE: Pixels = px(1.);
 const CURVE_STROKE: Pixels = px(2.);
+/// Caps the spectrum's join offset at four times the half width.
+const SPECTRUM_MITER_LIMIT: f32 = 4.;
 /// The width of a node's ring and of the level bar across a node whose gain is fixed.
 const RING: Pixels = px(2.);
 /// How far a selected or hovered node's halo reaches, as a multiple of the node's radius.
@@ -1068,8 +1070,8 @@ fn area_under(points: &[Point<Pixels>], floor: Pixels) -> Option<Path> {
     path.build().ok()
 }
 
-/// Fills one outline around the polyline, offset by half the width on either side. The mean of the
-/// adjoining segment normals keeps the band even at bends.
+/// Fills one outline around the polyline. At each bend the edges meet at a miter, capped to keep
+/// sharp turns from drawing long spikes.
 fn band(points: &[Point<Pixels>], width: Pixels) -> Option<Path> {
     if points.len() < 2 {
         return None;
@@ -1083,12 +1085,17 @@ fn band(points: &[Point<Pixels>], width: Pixels) -> Option<Path> {
         let before = index.checked_sub(1).and_then(|before| normals[before]);
         let after = normals.get(index).copied().flatten();
         let (x, y) = match (before, after) {
-            (Some(a), Some(b)) => (a.0 + b.0, a.1 + b.1),
+            (Some(a), Some(b)) => ((a.0 + b.0) / 2., (a.1 + b.1) / 2.),
             (Some(normal), None) | (None, Some(normal)) => normal,
             (None, None) => (0., 0.),
         };
-        let length = x.hypot(y).max(f32::EPSILON);
-        let reach = half * side / length;
+        let length = x.hypot(y);
+        // The mean normal's projection onto either segment normal is its squared length.
+        let projection = length * length;
+        let reach = half * side
+            / projection
+                .max(length / SPECTRUM_MITER_LIMIT)
+                .max(f32::EPSILON);
         point(points[index].x + reach * x, points[index].y + reach * y)
     };
     let mut path = PathBuilder::fill();
