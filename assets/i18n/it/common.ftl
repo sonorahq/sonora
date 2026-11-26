@@ -29,6 +29,13 @@ common-not-now = Non ora
 common-not-connected = Non connesso
 common-sonora = Sonora
 common-more-count = +{ $count }
+option-variants = Varianti di { $name }
+table-sorted-ascending = Ordinato in modo crescente
+table-sorted-descending = Ordinato in modo decrescente
+range-from = Da
+range-to = A
+rail-back = Scorri indietro
+rail-forward = Scorri avanti
 number-group = { "\u00A0" }
 
 # units
@@ -36,6 +43,7 @@ unit-percent = { $value }%
 unit-db = { $value } dB
 unit-hz = { $value } Hz
 unit-khz = { $value } kHz
+unit-bpm = { $value } BPM
 unit-kbps = { $value } kbps
 unit-gb = { $value } GB
 unit-mb = { $value } MB
@@ -50,7 +58,9 @@ nav-history = Cronologia
 nav-home = Schermata principale
 nav-search = Cerca
 nav-library = La tua libreria
+sidebar-library = Libreria
 nav-settings = Impostazioni
+account-manage = Gestisci account
 nav-songs = Brani
 nav-albums = Album
 nav-playlists = Playlist
@@ -58,6 +68,7 @@ nav-artists = Artisti
 nav-local = Musica locale
 nav-back = Indietro
 nav-forward = Avanti
+nav-trail = Cronologia di navigazione
 nav-sidebar = Mostra o nascondi la barra laterale
 nav-sidebar-right = Mostra o nascondi testi e coda
 nav-pinned = Fissati
@@ -84,6 +95,18 @@ library-local-unconfigured = Configura la tua libreria locale
 
 # app menu
 app-refresh = Aggiorna
+app-dev-badge = dev
+app-dev-build = Build di sviluppo
+app-dev-build-branch = Build di sviluppo di { $branch }
+downloads-active = Download in corso
+downloads-left = { $count ->
+    [one] { $count } brano rimanente
+   *[other] { $count } brani rimanenti
+}
+downloads-eta = Circa { $minutes } min rimanenti
+downloads-paused = In pausa dal servizio, ripresa tra { $seconds } s
+downloads-cancel = Annulla download
+downloads-cancel-all = Annulla tutti i download
 app-sign-out = Disconnetti
 app-quit = Esci
 app-settings = Impostazioni…
@@ -96,6 +119,8 @@ app-window = Finestra
 app-close-window = Chiudi finestra
 app-minimize = Contrai
 app-zoom = Zoom
+window-maximize = Ingrandisci
+window-restore = Ripristina
 
 # tray menu
 tray-show = Mostra Sonora
@@ -110,6 +135,7 @@ column-artist = Artista
 column-album = Album
 column-genre = Genere
 column-date-added = Data aggiunta
+column-date-liked = Data aggiunta ai preferiti
 column-added-by = Aggiunto da
 column-modified = Modificato
 column-length = Durata
@@ -131,10 +157,13 @@ filter-album = Filtra brani dell'album
 filter-reset = Reimposta filtri
 filter-duration = Durata
 filter-year = Anno
+filter-tracks = Brani
 filter-hide-explicit = Nascondi espliciti
 filter-favorites = Solo preferiti
 filter-downloaded = Scaricati
 filter-owned = Tuoi
+filter-local-only = Solo locali
+filter-streaming-only = Solo streaming
 
 # view
 view-list = Elenco
@@ -143,6 +172,7 @@ view-cards = Griglia
 # toolbar
 tool-sort = Ordina
 tool-filters = Filtri
+tool-account = Account
 
 # release kinds
 release-album = Album
@@ -193,6 +223,7 @@ date-minutes-ago = { $count ->
 date-today = Oggi alle { $time }
 date-yesterday = Ieri alle { $time }
 date-time = { $date }, { $time }
+date-month-year = { $month } { $year }
 date-full = { $day } { $month } { $year }
 month-1 = gen
 month-2 = feb
