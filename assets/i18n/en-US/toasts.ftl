@@ -39,6 +39,7 @@ toast-queued-artist = Artist added to the queue
 toast-next-artist = Artist plays next
 toast-last-artist = Artist plays last
 toast-queue-failed = That could not be added to the queue
+toast-transfer-failed = Could not play on that device
 toast-queue-local-elsewhere = Local files cannot be queued on another device
 toast-queued-tracks = { $count ->
     [one] { $count } track added to the queue

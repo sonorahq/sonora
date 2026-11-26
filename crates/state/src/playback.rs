@@ -310,6 +310,13 @@ pub enum PlaybackEvent {
     Seeked,
 }
 
+/// A drag of the volume slider: the level it is at, and the other device that had playback
+/// when it began, `None` for this app.
+struct Slide {
+    level: f32,
+    device: Option<String>,
+}
+
 /// Remembers the level silenced by a temporary mute, without saving it as a volume preference.
 #[derive(Default)]
 struct MuteMemory {
@@ -603,7 +610,7 @@ pub struct Playback {
     level: f32,
     mute: MuteMemory,
     /// The level the volume slider is being dragged to, heard and shown but not yet saved.
-    sliding: Option<f32>,
+    sliding: Option<Slide>,
     normalisation: bool,
     gapless: bool,
     transcode: Transcode,
@@ -975,8 +982,8 @@ impl Playback {
 
     /// The volume the controls show and change, on the other device while one is steered.
     pub fn shown_volume(&self, cx: &App) -> f32 {
-        if let Some(level) = self.sliding {
-            return level;
+        if let Some(slide) = &self.sliding {
+            return slide.level;
         }
         self.steered(cx)
             .map_or(self.level, |steered| steered.device.volume)
@@ -993,9 +1000,24 @@ impl Playback {
         true
     }
 
+    /// Plays or pauses the other device that has playback, if one does, and says whether it did.
+    /// The device shows the new state at once rather than once it reports it.
+    fn steer_playing(&self, playing: bool, cx: &mut Context<Self>) -> bool {
+        let Some((devices, steered)) = self.steering(cx) else {
+            return false;
+        };
+        devices.update(cx, |devices, cx| {
+            devices.set_playing(&steered.device.id, playing, cx)
+        });
+        cx.notify();
+        true
+    }
+
     /// Has the other device that has playback start the track at `index` of `tracks`, from the
     /// collection `origin` names, and says whether it did. A local file has no place there and
-    /// plays here.
+    /// plays here. The tracks after it go along for a device that cannot read the collection
+    /// itself, such as a cast screen. While the queue shuffles, every other track goes in a
+    /// shuffled order, since a shuffled start may pick any track to begin with.
     fn hand_over(&self, tracks: &[Track], index: usize, origin: Option<&Origin>, cx: &App) -> bool {
         let Some(id) = tracks
             .get(index)
@@ -1004,6 +1026,20 @@ impl Playback {
         else {
             return false;
         };
+        let shuffled = self.queue.read(cx).shuffle();
+        let mut upcoming: Vec<_> = tracks
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| *at > index || shuffled && *at != index)
+            .filter_map(|(_, track)| track.id.clone())
+            .filter(|id| !music::is_local_id(id))
+            .map(|id| connect::QueuedTrack::new(id, false))
+            .collect();
+        // a device that plays these as given would otherwise play them in order while this app
+        // shuffles
+        if shuffled {
+            fastrand::shuffle(&mut upcoming);
+        }
         self.steer(
             |_| {
                 Command::Start(connect::Start {
@@ -1016,6 +1052,7 @@ impl Playback {
                             _ => collection_of(origin),
                         }),
                         track: Some(connect::QueuedTrack::new(id, false)),
+                        upcoming,
                         playing: true,
                         ..Default::default()
                     }),
@@ -2480,7 +2517,7 @@ impl Playback {
     /// Plays on. A restored track the engine does not hold yet, or one paused for longer than
     /// `STALE_PAUSE`, is loaded afresh at its position.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Play, cx) {
+        if self.steer_playing(true, cx) {
             return;
         }
         if self.can_restart_queue(cx) {
@@ -2599,7 +2636,7 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut Context<Self>) {
-        if self.steer(|_| Command::Pause, cx) {
+        if self.steer_playing(false, cx) {
             return;
         }
         self.intent = Intent::Pause;
@@ -2611,11 +2648,8 @@ impl Playback {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
-        let command = |remote: &Elsewhere| match remote.state.playing {
-            true => Command::Pause,
-            false => Command::Play,
-        };
-        if self.steer(command, cx) {
+        if let Some(remote) = self.steered(cx) {
+            self.steer_playing(!remote.state.playing, cx);
             return;
         }
         match self.wants_playing() {
@@ -2966,23 +3000,38 @@ impl Playback {
     /// Follows the volume slider while it is dragged: the level is heard at once, but nothing is
     /// saved and no observer wakes, since nearly every view and the media controls observe
     /// playback. The caller repaints itself, and calls `end_volume_slide` when the slider is let go.
+    /// Another device that has playback is only sent the level the slider is let go at, since each
+    /// change is a request over the network that it takes its time to answer.
     pub fn slide_volume(&mut self, level: f32, cx: &App) {
         let level = level.clamp(0., 1.);
         self.mute.volume_changed();
-        self.sliding = Some(level);
-        if self.steer(|_| Command::Volume(level), cx) {
+        let steered = self.steered(cx).map(|steered| steered.device.id);
+        let device = match self.sliding.take() {
+            Some(slide) => slide.device,
+            None => steered.clone(),
+        };
+        // only a drag that began here and still is here is heard here
+        let here = device.is_none() && steered.is_none();
+        self.sliding = Some(Slide { level, device });
+        if !here {
             return;
         }
         self.level = level;
         self.apply_gain();
     }
 
-    /// Saves the level the slider was let go at and tells every observer, once per drag.
+    /// Saves the level the slider was let go at and tells every observer, once per drag. A drag
+    /// goes only to the device it started on, so one whose playback moved meanwhile is dropped.
     pub fn end_volume_slide(&mut self, cx: &mut Context<Self>) {
-        let Some(level) = self.sliding else {
+        let Some(slide) = self.sliding.take() else {
             return;
         };
-        self.set_volume(level, cx);
+        let steered = self.steered(cx).map(|steered| steered.device.id);
+        if slide.device != steered {
+            cx.notify();
+            return;
+        }
+        self.set_volume(slide.level, cx);
     }
 
     /// Turns the volume by `steps` notches of `VOLUME_STEP` from the level shown, which is the

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, ensure};
 use async_trait::async_trait;
 use futures::{StreamExt as _, stream};
+use music::connect::Connect;
 use music::cover::{self, CoverLimits};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Feed, Genre,
@@ -29,6 +30,9 @@ const EPISODES: &str = "SE";
 pub struct YouTubeClient {
     api: Arc<YtMusic>,
     account: String,
+    /// The handle of the Cast devices playback can be handed to, for a client a session hands
+    /// out.
+    remote: Option<Arc<Connect>>,
 }
 
 impl YouTubeClient {
@@ -36,7 +40,15 @@ impl YouTubeClient {
         Self {
             api,
             account: String::new(),
+            remote: None,
         }
+    }
+
+    /// Hands out `remote` as the devices this client casts to. It must be called on the tokio
+    /// runtime, since the handle's worker is already running.
+    pub(crate) fn with_remote(mut self, remote: Arc<Connect>) -> Self {
+        self.remote = Some(remote);
+        self
     }
 
     pub fn owned_by(mut self, account: impl Into<String>) -> Self {
@@ -66,6 +78,10 @@ impl YouTubeClient {
 
 #[async_trait]
 impl MusicApi for YouTubeClient {
+    fn connect(&self) -> Option<Arc<Connect>> {
+        self.remote.clone()
+    }
+
     fn share_url(&self, kind: MediaKind, id: &str) -> Option<String> {
         let id = escape::component(id);
         let url = match kind {

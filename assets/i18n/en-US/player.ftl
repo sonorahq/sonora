@@ -29,6 +29,7 @@ player-fullscreen-leave = Leave Now playing
 player-time-left = -{ $time }
 player-time-left-spoken = { $time } left
 devices-this-computer = This computer
+devices-connecting = Connecting…
 devices-jam-join = Join a Jam…
 devices-jam-join-title = Join a Jam
 devices-jam-join-detail = Paste the link a friend shared with you

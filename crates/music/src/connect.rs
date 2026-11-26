@@ -261,6 +261,8 @@ pub enum Event {
     Jam(Option<Jam>),
     /// What `Request::Peek` found, or `None` when the link names no group session.
     Invite(Option<Invite>),
+    /// Handing playback to the device with this id failed.
+    TransferFailed(String),
     /// Starting or joining a group session failed.
     JamFailed,
     /// Leaving or ending the group session failed. The session as it stands follows as a `Jam`.
