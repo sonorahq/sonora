@@ -237,16 +237,11 @@ fn install(bytes: &[u8], name: &str, removals: u64) -> Result<Build> {
     let folder = store();
     std::fs::create_dir_all(&folder)
         .with_context(|| format!("cannot create {}", folder.display()))?;
-    let part = folder.join(format!("new-{}", self::program()));
+    let staging = tempfile::tempdir_in(&folder).context("cannot stage the program")?;
+    let part = staging.path().join(self::program());
     std::fs::write(&part, program).with_context(|| format!("cannot write {}", part.display()))?;
-    let checked = runnable(&part).and_then(|()| probe(&part));
-    let build = match checked {
-        Ok(build) => build,
-        Err(error) => {
-            std::fs::remove_file(&part).ok();
-            return Err(error);
-        }
-    };
+    runnable(&part)?;
+    let build = probe(&part)?;
     let path = path();
     std::fs::rename(&part, &path)
         .with_context(|| format!("cannot move the program into {}", path.display()))?;

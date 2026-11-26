@@ -6,6 +6,7 @@
 //! sign-in, so a wrong key shows up after the listener has picked the device, not before.
 
 use std::ffi::OsStr;
+use std::mem::DropGuard;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
@@ -176,12 +177,16 @@ fn adopt(key: &str) -> Result<(), Trouble> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(failed(error)),
     };
-    if let Err(error) = std::fs::rename(pairing(), &data) {
-        if had {
-            std::fs::rename(&aside, &data).ok();
+    let aside = DropGuard::new(aside, |aside: std::path::PathBuf| {
+        if had && let Err(error) = std::fs::rename(&aside, &data) {
+            log::error!(
+                "soloist: cannot restore the old pairing from {}: {error}",
+                aside.display()
+            );
         }
-        return Err(failed(error));
-    }
+    });
+    std::fs::rename(pairing(), &data).map_err(failed)?;
+    let aside = DropGuard::dismiss(aside);
     std::fs::remove_dir_all(&aside).ok();
     // a setup the listener just went through is one they want on
     keep_key(key).and_then(|()| enable(true)).map_err(failed)

@@ -39,6 +39,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::mem::DropGuard;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -50,6 +51,7 @@ use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundK
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hkdf, hmac};
 use sound::stream::Source;
+use tempfile::NamedTempFile;
 use tokio::sync::watch;
 
 /// How much of a track one sealed chunk holds. Big enough that the tags cost nothing, small
@@ -80,8 +82,6 @@ const HEAD: usize = 64;
 /// milliseconds, so this only runs out while the keychain is prompting or stuck.
 const UNLOCK_WAIT: Duration = Duration::from_secs(5);
 
-/// Tells apart the temporary files of two recordings running at once in one process.
-static WRITES: AtomicU64 = AtomicU64::new(0);
 /// Whether keeping played tracks is on, for a player that keeps its own files and is set up
 /// before any engine starts. Spotify reads it when its session opens.
 static KEEPING: AtomicBool = AtomicBool::new(false);
@@ -816,12 +816,7 @@ impl Shelf {
             .fill(&mut salt)
             .map_err(|_| anyhow!("cannot draw a salt"))?;
         let key = self.key(prk, &salt)?;
-        let temporary = folder.join(format!(
-            ".{name}.{}.{}",
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut file = private_file(&temporary)?;
+        let mut file = NamedTempFile::new_in(&folder).context("cannot stage the entry")?;
         file.write_all(&salt).context("cannot start the entry")?;
         let (cache, ceiling) = match place {
             Place::Cache => (Some(self.vault.clone()), self.vault.limit() / SHARE),
@@ -830,7 +825,6 @@ impl Shelf {
         Ok(Some(Pending {
             cache,
             path,
-            temporary,
             name,
             file,
             key: Some(key),
@@ -855,12 +849,7 @@ impl Shelf {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let temporary = folder.join(format!(
-            ".{name}.{}.{}",
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let file = private_file(&temporary)?;
+        let file = NamedTempFile::new_in(&folder).context("cannot stage the download")?;
         let label = self
             .vault
             .wanted()
@@ -870,7 +859,6 @@ impl Shelf {
         Ok(Pending {
             cache: None,
             path: folder,
-            temporary,
             name,
             file,
             key: None,
@@ -1133,9 +1121,8 @@ struct Pending {
     cache: Option<Arc<Vault>>,
     /// Where a sealed entry goes, or the folder a plain download goes into.
     path: PathBuf,
-    temporary: PathBuf,
     name: String,
-    file: File,
+    file: NamedTempFile,
     /// Seals every chunk and the facts, or `None` for a plain download.
     key: Option<LessSafeKey>,
     /// What only a plain download needs.
@@ -1227,8 +1214,11 @@ impl Pending {
         self.file.write_all(&facts)?;
         self.file.write_all(&sealed.to_le_bytes())?;
         self.file.flush()?;
-        let size = self.file.metadata()?.len();
-        fs::rename(&self.temporary, &self.path).context("cannot move the entry into place")?;
+        let size = self.file.as_file().metadata()?.len();
+        self.file
+            .persist(&self.path)
+            .map_err(io::Error::from)
+            .context("cannot move the entry into place")?;
         log::debug!(
             "vault: kept a track, {:.1} MiB",
             size as f64 / (1024.0 * 1024.0)
@@ -1253,14 +1243,29 @@ impl Pending {
             let at = read.iter().position(|byte| *byte == b'\n')?;
             String::from_utf8(read[..at].to_vec()).ok()
         });
-        let path = (1..)
-            .map(|count| match count {
-                1 => self.path.join(format!("{stem}.{extension}")),
-                _ => self.path.join(format!("{stem} ({count}).{extension}")),
-            })
-            .find(|path| !path.exists())
-            .context("there is no free name for the download")?;
-        fs::rename(&self.temporary, &path).context("cannot move the download into place")?;
+        let mut file = self.file;
+        let mut names = (1..).map(|count| match count {
+            1 => self.path.join(format!("{stem}.{extension}")),
+            _ => self.path.join(format!("{stem} ({count}).{extension}")),
+        });
+        let path = loop {
+            let candidate = names
+                .find(|path| !path.exists())
+                .context("there is no free name for the download")?;
+            match file.persist_noclobber(&candidate) {
+                Ok(_) => break candidate,
+                Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+                    file = error.file
+                }
+                Err(error) => {
+                    return Err(io::Error::from(error))
+                        .context("cannot move the download into place");
+                }
+            }
+        };
+        let path = DropGuard::new(path, |path| {
+            fs::remove_file(path).ok();
+        });
         let file_name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -1269,21 +1274,13 @@ impl Pending {
         index.extend_from_slice(file_name.as_bytes());
         index.push(b'\n');
         index.extend_from_slice(&told);
-        let temporary = plain.index.with_extension(format!(
-            "{}.{}",
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let written = private_file(&temporary)
-            .and_then(|mut file| file.write_all(&index).context("cannot write the index"))
-            .and_then(|()| {
-                fs::rename(&temporary, &plain.index).context("cannot move the index into place")
-            });
-        if let Err(error) = written {
-            fs::remove_file(&temporary).ok();
-            fs::remove_file(&path).ok();
-            return Err(error);
-        }
+        let directory = plain.index.parent().context("the index has no folder")?;
+        let mut file = NamedTempFile::new_in(directory).context("cannot stage the index")?;
+        file.write_all(&index).context("cannot write the index")?;
+        file.persist(&plain.index)
+            .map_err(io::Error::from)
+            .context("cannot move the index into place")?;
+        DropGuard::dismiss(path);
         if let Some(older) = older.filter(|older| *older != file_name && !older.contains('/')) {
             fs::remove_file(self.path.join(older)).ok();
         }
@@ -1310,13 +1307,6 @@ impl Pending {
         self.buffer.clear();
         self.index += 1;
         Ok(())
-    }
-}
-
-impl Drop for Pending {
-    fn drop(&mut self) {
-        // Once the entry is in place the temporary name is gone and this finds nothing.
-        fs::remove_file(&self.temporary).ok();
     }
 }
 
@@ -1487,17 +1477,6 @@ fn evict(root: &Path, room: u64) -> u64 {
         }
     }
     total
-}
-
-/// A new file readable and writable by the owner alone.
-fn private_file(path: &Path) -> Result<File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options
-        .open(path)
-        .with_context(|| format!("cannot create {}", path.display()))
 }
 
 /// Sonora's vault folder, `$XDG_CACHE_HOME/sonora/vault`.

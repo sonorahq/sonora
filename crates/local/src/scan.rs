@@ -965,12 +965,11 @@ mod tests {
     }
 
     /// An empty folder and an index of its own, so one test never sees another's rows.
-    fn scratch(name: &str) -> (PathBuf, Index) {
-        let dir = std::env::temp_dir().join(name);
-        let database = std::env::temp_dir().join(format!("{name}-index.sqlite"));
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::remove_file(&database);
-        (dir, Index::new(storage::Cache::at(database)))
+    fn scratch() -> (tempfile::TempDir, PathBuf, Index) {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("music");
+        let index = Index::new(storage::Cache::at(root.path().join("index.sqlite")));
+        (root, dir, index)
     }
 
     #[test]
@@ -992,8 +991,7 @@ mod tests {
     #[test]
     fn scans_ignore_new_and_previously_indexed_appledouble_files() {
         let _scanning = alone();
-        let name = "sonora-scan-test-appledouble";
-        let (dir, index) = scratch(name);
+        let (root, dir, index) = scratch();
         let track = dir.join("track.flac");
         let sidecar = dir.join("._track.flac");
         touch(&sidecar);
@@ -1006,7 +1004,7 @@ mod tests {
         assert!(!index.load().files.contains_key(&sidecar));
 
         // Seed a row from the old scanner without changing the folder's modification time.
-        let database = std::env::temp_dir().join(format!("{name}-index.sqlite"));
+        let database = root.path().join("index.sqlite");
         let connection = rusqlite::Connection::open(&database).unwrap();
         connection
             .execute(
@@ -1031,23 +1029,21 @@ mod tests {
         assert_eq!(rescanned.tracks.len(), 1);
         assert_eq!(rescanned.tracks[0].id, first.tracks[0].id);
         assert!(sidecar.exists());
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn ignores_non_audio_files() {
         let _scanning = alone();
-        let (dir, index) = scratch("sonora-scan-test-ignore");
+        let (_root, dir, index) = scratch();
         touch(&dir.join("notes.txt"));
         let scanned = scan(std::slice::from_ref(&dir), &dir, &index);
         assert!(scanned.tracks.is_empty());
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn empty_root_yields_nothing() {
         let _scanning = alone();
-        let (dir, index) = scratch("sonora-scan-test-missing");
+        let (_root, dir, index) = scratch();
         let scanned = scan(std::slice::from_ref(&dir), &dir, &index);
         assert!(scanned.tracks.is_empty());
         assert!(scanned.albums.is_empty());
@@ -1068,7 +1064,7 @@ mod tests {
     #[test]
     fn walks_nested_folders_for_stray_audio_files() {
         let _scanning = alone();
-        let (dir, _) = scratch("sonora-scan-test-stragglers");
+        let (_root, dir, _) = scratch();
         touch(&dir.join("top.mp3"));
         touch(&dir.join("a/b/c/deep.flac"));
         touch(&dir.join("a/b/c/notes.txt"));
@@ -1100,7 +1096,6 @@ mod tests {
                 dir.join("a/b/c")
             ]
         );
-        fs::remove_dir_all(&dir).ok();
     }
 
     /// Gives a FLAC written by `flac` a front cover of `art` in its tags.
@@ -1118,10 +1113,9 @@ mod tests {
     /// Scans one album of two tracks in `Artist/Album`. The first track carries embedded front
     /// art, and the album folder holds a `cover.jpg` when `folder_cover` is set. Returns the scan,
     /// the album folder and the cache the embedded art went into.
-    fn scan_album(name: &str, folder_cover: bool) -> (Scanned, PathBuf, PathBuf) {
-        let (dir, index) = scratch(name);
-        let cache = std::env::temp_dir().join(format!("{name}-cache"));
-        let _ = fs::remove_dir_all(&cache);
+    fn scan_album(folder_cover: bool) -> (tempfile::TempDir, Scanned, PathBuf, PathBuf) {
+        let (root, dir, index) = scratch();
+        let cache = root.path().join("cache");
         let album = dir.join("Artist").join("Album");
         fs::create_dir_all(&album).unwrap();
         let first = album.join("01.flac");
@@ -1149,7 +1143,7 @@ mod tests {
         }
 
         let scanned = scan(std::slice::from_ref(&dir), &cache, &index);
-        (scanned, album, cache)
+        (root, scanned, album, cache)
     }
 
     /// The track of `scanned` that carries `number` as its track number.
@@ -1164,7 +1158,7 @@ mod tests {
     #[test]
     fn a_folder_cover_wins_over_the_first_tracks_embedded_art() {
         let _scanning = alone();
-        let (scanned, album, _) = scan_album("sonora-scan-test-folder-cover-wins", true);
+        let (_root, scanned, album, _) = scan_album(true);
         let folder = format!("file://{}", album.join("cover.jpg").display());
 
         assert_eq!(scanned.albums.len(), 1);
@@ -1178,7 +1172,7 @@ mod tests {
     #[test]
     fn an_album_without_a_folder_cover_takes_the_first_tracks_embedded_art() {
         let _scanning = alone();
-        let (scanned, _, cache) = scan_album("sonora-scan-test-folder-cover-absent", false);
+        let (_root, scanned, _, cache) = scan_album(false);
         let embedded = numbered(&scanned, 1).cover.clone().expect("embedded art");
 
         assert!(wire::is_embedded(&embedded, &cache));
@@ -1188,7 +1182,7 @@ mod tests {
     #[test]
     fn a_folder_cover_leaves_each_tracks_own_art_alone() {
         let _scanning = alone();
-        let (scanned, album, cache) = scan_album("sonora-scan-test-folder-cover-tracks", true);
+        let (_root, scanned, album, cache) = scan_album(true);
         let folder = format!("file://{}", album.join("cover.jpg").display());
 
         let first = numbered(&scanned, 1).cover.clone().expect("embedded art");
@@ -1202,8 +1196,7 @@ mod tests {
     #[test]
     fn an_album_keeps_its_release_type_across_an_index_from_before_it() {
         let _scanning = alone();
-        let name = "sonora-scan-test-release-type";
-        let (dir, index) = scratch(name);
+        let (root, dir, index) = scratch();
         let album = dir.join("Sylosis/The Path");
         fs::create_dir_all(&album).unwrap();
         for number in 1..=5 {
@@ -1223,7 +1216,7 @@ mod tests {
         assert_eq!(first.albums.len(), 1);
         assert_eq!(first.albums[0].release_type, ReleaseType::Ep);
 
-        let database = std::env::temp_dir().join(format!("{name}-index.sqlite"));
+        let database = root.path().join("index.sqlite");
         rusqlite::Connection::open(&database)
             .unwrap()
             .execute("UPDATE local_files SET track = '[null, null, null]'", [])
@@ -1232,6 +1225,5 @@ mod tests {
 
         assert_eq!(second.tracks.len(), 5);
         assert_eq!(second.albums[0].release_type, ReleaseType::Ep);
-        fs::remove_dir_all(&dir).ok();
     }
 }

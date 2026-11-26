@@ -17,6 +17,7 @@
 //! Loudness normalisation lives here too. A provider only reports how loud a track is, and the
 //! engine decides what gain that earns.
 
+use std::mem::DropGuard;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -381,12 +382,15 @@ impl PlaybackEvents for Events {
     }
 }
 
+/// Cancels a fetch or download watch when the engine stops waiting for it.
+type AbortOnDrop = DropGuard<tokio::task::AbortHandle, fn(tokio::task::AbortHandle)>;
+
 /// Owns the next track's load and cancels it when it is replaced or the engine ends.
 struct Preload {
     id: String,
     request: u64,
     segue: bool,
-    task: tokio::task::AbortHandle,
+    _task: AbortOnDrop,
 }
 
 impl Preload {
@@ -409,7 +413,7 @@ impl Preload {
             id,
             request: *sequence,
             segue,
-            task: start(*sequence),
+            _task: abort_on_drop(start(*sequence)),
         });
     }
 
@@ -420,10 +424,9 @@ impl Preload {
     }
 }
 
-impl Drop for Preload {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
+/// Wraps a task's abort handle so the task is cancelled when the guard is dropped.
+fn abort_on_drop(handle: tokio::task::AbortHandle) -> AbortOnDrop {
+    DropGuard::new(handle, |handle| handle.abort())
 }
 
 /// What the fetch of one track came back with, and whether anything still wants it.
@@ -523,8 +526,7 @@ async fn engine_loop<F: Fetch>(
     // what the next admitted write means, held until the audio actually reaches the output
     let mut announcing: Option<PlaybackEvent> = None;
     let mut epoch = 0u64;
-    let mut awaited: Option<u64> = None;
-    let mut inflight: Option<tokio::task::AbortHandle> = None;
+    let mut inflight: Option<AbortOnDrop> = None;
     let mut ahead: Option<(String, F::Loaded)> = None;
     let mut preloading: Option<Preload> = None;
     let mut preload_sequence = 0u64;
@@ -545,7 +547,7 @@ async fn engine_loop<F: Fetch>(
     let mut hold = Duration::ZERO;
     let (fetched, mut arrivals) = unbounded_channel::<Fetched<F>>();
     // the wait on the current track's download, so the state hears when all of it is in
-    let mut watching: Option<tokio::task::AbortHandle> = None;
+    let mut watching = None;
     let (downloads, mut downloaded) = unbounded_channel::<String>();
 
     loop {
@@ -557,11 +559,14 @@ async fn engine_loop<F: Fetch>(
                         let joined = segued.as_deref() == Some(id.as_str());
                         // Only an engine that is still sounding can be carried on from. A
                         // silenced one holds a track paused where it stopped, and resuming it
-                        // would play that track instead of this one.
+                        // would play that track instead of this one. A join lined up while the
+                        // current track is still being fetched never happened, since nothing
+                        // is decoding yet, so that load starts the joined track afresh.
                         if seamless
                             && wanted
                             && at.is_none()
-                            && (current.as_deref() == Some(id.as_str()) || joined)
+                            && (current.as_deref() == Some(id.as_str())
+                                || (joined && inflight.is_none()))
                         {
                             // already decoding, either still or through a gapless join
                             if joined {
@@ -575,18 +580,14 @@ async fn engine_loop<F: Fetch>(
                         waiting = None;
                         epoch += 1;
                         preloading = None;
-                        if let Some(handle) = inflight.take() {
-                            handle.abort();
-                        }
+                        inflight = None;
                         cue.clear();
                         // The audio thread is still decoding the track this replaces. Clearing
                         // the queue only silences what is in it; without this the old decoder
                         // keeps running, and anything that arms the cue before the fetch lands
                         // puts it back on the output.
                         jobs.send(Job::Stop).ok();
-                        if let Some(handle) = watching.take() {
-                            handle.abort();
-                        }
+                        watching = None;
                         current = Some(id.clone());
                         let position = at.unwrap_or_default();
                         hold = position;
@@ -619,8 +620,7 @@ async fn engine_loop<F: Fetch>(
                             }
                             None => {
                                 ahead = None;
-                                awaited = Some(epoch);
-                                inflight = Some(spawn(&fetch, id, epoch, None, &fetched));
+                                inflight = Some(abort_on_drop(spawn(&fetch, id, epoch, None, &fetched)));
                             }
                         }
                     }
@@ -641,9 +641,9 @@ async fn engine_loop<F: Fetch>(
                                     continue;
                                 }
                                 segued = Some(id.clone());
-                                match awaited {
-                                    Some(_) => waiting = Some((id, loaded)),
-                                    None => {
+                                match inflight.is_some() {
+                                    true => waiting = Some((id, loaded)),
+                                    false => {
                                         jobs.send(Job::Queue { id, loaded }).ok();
                                     }
                                 }
@@ -671,7 +671,7 @@ async fn engine_loop<F: Fetch>(
                         // nothing to move: what a seek changes is where it will open. Sending
                         // the audio thread a seek here would land on the track this load
                         // replaced, which is the one that still holds a decoder.
-                        if awaited.is_some() {
+                        if inflight.is_some() {
                             hold = position;
                             announcing = announcing.map(|event| moved(event, position));
                             continue;
@@ -706,7 +706,10 @@ async fn engine_loop<F: Fetch>(
                 if at != epoch {
                     continue;
                 }
-                let current_load = preload.is_none() && awaited == Some(at) && current.as_deref() == Some(id.as_str());
+                let current_load = preload.is_none() && inflight.is_some() && current.as_deref() == Some(id.as_str());
+                if current_load {
+                    drop(inflight.take().map(DropGuard::dismiss));
+                }
                 let segue = match current_load {
                     true => false,
                     false => {
@@ -721,8 +724,6 @@ async fn engine_loop<F: Fetch>(
                     Err(error) => {
                         log::warn!("playback: cannot load {id}: {error:#}");
                         if current_load {
-                            awaited = None;
-                            inflight = None;
                             announcing = None;
                             let refusal = match (fetch.gated(&error), fetch.blocked(&error)) {
                                 (true, _) => PlaybackEvent::Gated,
@@ -738,8 +739,6 @@ async fn engine_loop<F: Fetch>(
                     }
                 };
                 if current_load {
-                    awaited = None;
-                    inflight = None;
                     announce_length(&events, &id, fetch.length(&loaded));
                     watching = Some(watch(&fetch, &id, &loaded, &downloads));
                     jobs.send(Job::Play {
@@ -755,11 +754,11 @@ async fn engine_loop<F: Fetch>(
                 if segue {
                     segued = Some(id.clone());
                     let held = (id.clone(), loaded.clone());
-                    match awaited {
+                    match inflight.is_some() {
                         // The track this follows has not started decoding yet, and its `Play`
                         // will clear the queue. Hold the join back until then.
-                        Some(_) => waiting = Some(held),
-                        None => {
+                        true => waiting = Some(held),
+                        false => {
                             let (id, loaded) = held;
                             jobs.send(Job::Queue { id, loaded }).ok();
                         }
@@ -788,7 +787,10 @@ async fn engine_loop<F: Fetch>(
                     break;
                 };
                 let before = current.clone();
-                settle(&mut current, join);
+                // A join heard while a load is fetching comes from the decoder that load stopped.
+                if inflight.is_none() {
+                    settle(&mut current, join);
+                }
                 if current != before {
                     watch_ahead(&fetch, &current, &ahead, &downloads, &mut watching);
                 }
@@ -870,18 +872,18 @@ fn watch<F: Fetch>(
     id: &str,
     loaded: &F::Loaded,
     downloads: &UnboundedSender<String>,
-) -> tokio::task::AbortHandle {
+) -> AbortOnDrop {
     let (fetch, id, loaded, downloads) = (
         fetch.clone(),
         id.to_owned(),
         loaded.clone(),
         downloads.clone(),
     );
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         fetch.downloaded(&loaded).await;
         downloads.send(id).ok();
-    })
-    .abort_handle()
+    });
+    abort_on_drop(task.abort_handle())
 }
 
 /// Moves the download watch onto `current` after a gapless join, when its fetch is still held
@@ -892,17 +894,13 @@ fn watch_ahead<F: Fetch>(
     current: &Option<String>,
     ahead: &Option<(String, F::Loaded)>,
     downloads: &UnboundedSender<String>,
-    watching: &mut Option<tokio::task::AbortHandle>,
+    watching: &mut Option<AbortOnDrop>,
 ) {
-    if let Some(handle) = watching.take() {
-        handle.abort();
-    }
-    let Some(id) = current.as_deref() else {
-        return;
-    };
-    if let Some((_, loaded)) = ahead.as_ref().filter(|(cached, _)| cached == id) {
-        *watching = Some(watch(fetch, id, loaded, downloads));
-    }
+    drop(watching.take());
+    *watching = ahead
+        .as_ref()
+        .filter(|(id, _)| Some(id) == current.as_ref())
+        .map(|(id, loaded)| watch(fetch, id, loaded, downloads));
 }
 
 /// Hands the audio thread a join that was waiting for the track it follows to start.

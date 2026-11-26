@@ -967,13 +967,6 @@ mod tests {
     }
     use lofty::tag::{ItemValue, TagItem, TagType};
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     #[test]
     fn infer_stem_with_title_and_artist() {
         let (title, artist) = infer_from_stem("Chann Vi Gawah - Madhav Mahajan");
@@ -1059,24 +1052,17 @@ mod tests {
 
     #[test]
     fn cache_image_data_deduplication_and_empty() {
-        let temp = std::env::temp_dir().join(format!(
-            "sonora-img-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = tempfile::tempdir().unwrap();
+        let temp = root.path();
 
-        assert!(cache_image_data(&[], "jpg", &temp).is_none());
+        assert!(cache_image_data(&[], "jpg", temp).is_none());
 
-        let pic1 = cache_image_data(&[1, 2, 3], "image/jpeg", &temp);
-        let pic2 = cache_image_data(&[1, 2, 3], "jpg", &temp);
-        let pic3 = cache_image_data(&[4, 5, 6], "png", &temp);
+        let pic1 = cache_image_data(&[1, 2, 3], "image/jpeg", temp);
+        let pic2 = cache_image_data(&[1, 2, 3], "jpg", temp);
+        let pic3 = cache_image_data(&[4, 5, 6], "png", temp);
 
         assert_eq!(pic1, pic2);
         assert_ne!(pic1, pic3);
-
-        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]
@@ -1085,21 +1071,15 @@ mod tests {
         if !path.exists() {
             return;
         }
-        let temp = std::env::temp_dir().join(format!(
-            "sonora-webm-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let track = track_from_file(path, None, None, &temp)
+        let root = tempfile::tempdir().unwrap();
+        let temp = root.path();
+        let track = track_from_file(path, None, None, temp)
             .expect("track parsed")
             .track;
         assert!(track.playable);
         assert_eq!(track.name, "Chann Vi Gawah");
         assert_eq!(track.artists, "Madhav Mahajan");
         assert_eq!(track.duration.as_secs(), 252);
-        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]
@@ -1118,26 +1098,27 @@ mod tests {
 
     #[test]
     fn a_track_is_dated_by_the_file_it_came_from() {
-        let dir = scratch("sonora-wire-test-dated");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let path = dir.join("song.mp3");
         std::fs::write(&path, []).unwrap();
 
         let stamped = modified_at(&path).expect("a file just written has a modified time");
-        let track = track_from_file(&path, None, None, &dir)
+        let track = track_from_file(&path, None, None, dir)
             .expect("a track")
             .track;
 
         assert_eq!(track.added_at, Some(stamped));
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn an_album_is_dated_by_its_newest_track() {
-        let dir = scratch("sonora-wire-test-album-dated");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let path = dir.join("song.mp3");
         std::fs::write(&path, []).unwrap();
 
-        let mut older = track_from_file(&path, None, None, &dir)
+        let mut older = track_from_file(&path, None, None, dir)
             .expect("a track")
             .track;
         let mut newer = older.clone();
@@ -1155,14 +1136,13 @@ mod tests {
         );
 
         assert_eq!(album.added_at, Some(2_000));
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_missing_file_has_no_date() {
-        let dir = scratch("sonora-wire-test-missing");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         assert_eq!(modified_at(&dir.join("gone.mp3")), None);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[cfg(windows)]
@@ -1171,18 +1151,19 @@ mod tests {
         use std::os::windows::ffi::OsStringExt;
 
         log::set_max_level(log::LevelFilter::Warn);
-        let dir = scratch("sonora-wire-test-not-unicode");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let name = std::ffi::OsString::from_wide(&[0xd800, 0x2e, 0x6d, 0x70, 0x33]);
         let path = dir.join(name);
         std::fs::write(&path, b"ID3\x04\x00\x00\x00\x00\x00\x00").unwrap();
 
-        assert!(track_from_file(&path, None, None, &dir).is_some());
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(track_from_file(&path, None, None, dir).is_some());
     }
 
     #[test]
     fn the_release_type_comes_from_the_tags() {
-        let dir = scratch("sonora-wire-test-release-type");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
         let cases = [
             (
                 "ep.flac",
@@ -1215,10 +1196,9 @@ mod tests {
             let path = dir.join(name);
             super::super::tags::tests::flac(&path, comments);
 
-            let tagged = track_from_file(&path, None, None, &dir).expect("a track");
+            let tagged = track_from_file(&path, None, None, dir).expect("a track");
 
             assert_eq!(tagged.release, expected, "{name}");
         }
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

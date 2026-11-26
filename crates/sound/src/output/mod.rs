@@ -720,47 +720,6 @@ pub fn raise_decoder_priority() {
     }
 }
 
-/// Holds the calling thread in COM's multithreaded apartment until it exits. Every cpal call goes
-/// through `host` first, so a thread joins it before cpal would put it in a single-threaded one.
-///
-/// From a single-threaded apartment WASAPI now and then fails to open the default device just
-/// after the system switches it, with `RPC_E_CHANGED_MODE`. A bare cpal program does not hit that,
-/// so something else in Sonora that uses COM plays a part, but from the multithreaded apartment
-/// the new default opens every time. A thread already in an apartment, such as the UI thread,
-/// stays in it.
-#[cfg(windows)]
-struct Apartment {
-    /// Whether this thread's call initialized COM, so it has to uninitialize it on exit.
-    entered: bool,
-}
-
-#[cfg(windows)]
-impl Apartment {
-    fn enter() {
-        thread_local! {
-            static APARTMENT: Apartment = Apartment {
-                entered: unsafe {
-                    windows::Win32::System::Com::CoInitializeEx(
-                        None,
-                        windows::Win32::System::Com::COINIT_MULTITHREADED,
-                    )
-                }
-                .is_ok(),
-            };
-        }
-        APARTMENT.with(|_| {});
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Apartment {
-    fn drop(&mut self) {
-        if self.entered {
-            unsafe { windows::Win32::System::Com::CoUninitialize() };
-        }
-    }
-}
-
 impl Sample {
     fn of(format: cpal::SampleFormat) -> Self {
         use cpal::SampleFormat::*;
@@ -1464,11 +1423,32 @@ fn forget_gone(host: &cpal::Host) {
 }
 
 /// The host Sonora plays through. On Windows the calling thread joins COM's multithreaded
-/// apartment first, see `Apartment`.
+/// apartment first and stays in it until it exits.
 #[cfg(not(target_os = "linux"))]
 fn host() -> cpal::Host {
+    // Every cpal call goes through here first, so a thread joins the multithreaded apartment
+    // before cpal would put it in a single-threaded one. From a single-threaded apartment WASAPI
+    // now and then fails to open the default device just after the system switches it, with
+    // `RPC_E_CHANGED_MODE`. A bare cpal program does not hit that, so something else in Sonora
+    // that uses COM plays a part, but from the multithreaded apartment the new default opens
+    // every time. A thread already in an apartment, such as the UI thread, stays in it.
     #[cfg(windows)]
-    Apartment::enter();
+    {
+        use std::mem::DropGuard;
+        use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+
+        thread_local! {
+            static APARTMENT: DropGuard<bool, fn(bool)> = DropGuard::new(
+                unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok(),
+                |entered| {
+                    if entered {
+                        unsafe { CoUninitialize() };
+                    }
+                },
+            );
+        }
+        APARTMENT.with(|_| {});
+    }
     cpal::default_host()
 }
 

@@ -3,7 +3,7 @@ mod install;
 mod staged;
 
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::mem::DropGuard;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -13,6 +13,7 @@ use gpui::{Context, Entity, SharedString, Subscription, Task};
 use i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use tokio::task::AbortHandle;
 
 use crate::{AppSettings, Io, Outcome, Toast, Toasts, join};
 use install::Install;
@@ -397,20 +398,21 @@ impl Updates {
 
         let http = self.http.clone();
         let io = self.io.clone();
-        // A fresh counter, so a download the listener closed earlier and that still runs on
-        // tokio writes where nothing reads.
+        // A fresh counter, so an abandoned download that has not stopped yet writes where
+        // nothing reads.
         let progress = Arc::new(AtomicU32::new(0));
         self.progress = progress.clone();
         self.task = Some(cx.spawn(async move |this, cx| {
-            let fetched =
-                join(io.spawn(async move {
-                    download(&http, &package, &sums, &version, &progress).await
-                }))
-                .await;
-            let applied = match fetched {
-                Ok(path) => join(io.spawn_blocking(move || Install::current().apply(&path))).await,
-                Err(error) => Err(error),
-            };
+            let install = io.spawn(async move {
+                let _staging = STAGING.lock().await;
+                let path = download(&http, &package, &sums, &version, &progress).await?;
+                tokio::task::spawn_blocking(move || Install::current().apply(path)).await?
+            });
+            // Dropping this task abandons the install, so the tokio side stops with it rather
+            // than putting in a release the listener walked away from.
+            let _abandon =
+                DropGuard::new(install.abort_handle(), |handle: AbortHandle| handle.abort());
+            let applied = join(install).await;
             this.update(cx, |this, cx| this.finish(applied, cx)).ok();
         }));
     }
@@ -680,7 +682,7 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
         .as_deref()
         .context("the release has no checksums")?;
     let path = download(http, package, sums, &release.version, &AtomicU32::new(0)).await?;
-    let prepared = tokio::task::spawn_blocking(move || Install::current().prepare(&path)).await??;
+    let prepared = tokio::task::spawn_blocking(move || Install::current().prepare(path)).await??;
     Ok(Staged {
         version: release.version.clone(),
         channel,
@@ -690,7 +692,7 @@ async fn stage(http: &reqwest::Client, release: &Release, channel: Channel) -> R
 }
 
 /// Streams the asset into the update folder while hashing it, and keeps it only when the hash
-/// matches the one the release lists. How far it has got goes into `progress` in
+/// matches the one the release lists. The file is deleted when the returned path is dropped. How far it has got goes into `progress` in
 /// [`PROGRESS_STEPS`] whenever the server says how large the asset is.
 async fn download(
     http: &reqwest::Client,
@@ -698,7 +700,7 @@ async fn download(
     sums: &str,
     version: &str,
     progress: &AtomicU32,
-) -> Result<PathBuf> {
+) -> Result<tempfile::TempPath> {
     let listed = http
         .get(sums)
         .header("User-Agent", AGENT)
@@ -728,8 +730,11 @@ async fn download(
 
     let folder = staged::folder().unwrap_or_else(std::env::temp_dir);
     std::fs::create_dir_all(&folder).context("cannot make the update folder")?;
-    let path = folder.join(format!("sonora-{version}-{}", package.name));
-    let mut file = std::fs::File::create(&path).context("cannot keep the update")?;
+    let mut file = tempfile::Builder::new()
+        .prefix(&format!("sonora-{version}-"))
+        .suffix(&format!("-{}", package.name))
+        .tempfile_in(&folder)
+        .context("cannot keep the update")?;
     let total = response.content_length().filter(|total| *total > 0);
     let mut received = 0_u64;
     let mut hasher = Sha256::new();
@@ -742,18 +747,15 @@ async fn download(
             progress.store((done * PROGRESS_STEPS) as u32, Ordering::Relaxed);
         }
     }
-    drop(file);
-
     let checksum: String = hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
     if checksum != expected {
-        std::fs::remove_file(&path).ok();
         anyhow::bail!("the update does not match its checksum");
     }
-    Ok(path)
+    Ok(file.into_temp_path())
 }
 
 /// Whether `offered` on `channel` should replace the running build. Within the running build's
