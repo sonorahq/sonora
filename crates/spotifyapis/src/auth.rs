@@ -297,8 +297,8 @@ impl OAuth {
 
     /// Signs `username` in with the reusable `credential` librespot saved, and saves it at `path`
     /// as a login5 grant so later renewals go the same way. It refuses when a sign-in was saved
-    /// there meanwhile, and fails with [`AuthError::Credentials`] once Spotify stops accepting the
-    /// credential.
+    /// there or a sign-out happened meanwhile, and fails with [`AuthError::Credentials`] once
+    /// Spotify stops accepting the credential.
     pub async fn adopt(
         path: PathBuf,
         client_id: &str,
@@ -307,6 +307,7 @@ impl OAuth {
         credential: &[u8],
     ) -> Result<Arc<Self>> {
         anyhow::ensure!(!username.is_empty(), AuthError::Credentials);
+        let login = begin_login(path)?;
         let granted = login5::login(client_id, device_id, username, credential).await?;
         let kept = match granted.credential.is_empty() {
             true => credential,
@@ -319,11 +320,18 @@ impl OAuth {
             renewal: Renewal::Login5,
             device_id: device_id.to_owned(),
         };
-        let _file = lock_file()?;
-        anyhow::ensure!(saved(&path)?.is_none(), AuthError::Cancelled);
-        write(&path, &stored)?;
+        let mut file = lock_file()?;
+        // a sign-out while login5 ran revoked this attempt, and its grant is not written
+        let ticket = Arc::downgrade(&login);
+        let index = file
+            .iter()
+            .position(|active| active.ptr_eq(&ticket))
+            .context(AuthError::Cancelled)?;
+        file.swap_remove(index);
+        anyhow::ensure!(saved(&login)?.is_none(), AuthError::Cancelled);
+        write(&login, &stored)?;
         let token = Token::lasting(granted.access_token, granted.lifetime);
-        Ok(Self::new(path, stored, Some(token)))
+        Ok(Self::new(login.as_ref().clone(), stored, Some(token)))
     }
 
     /// Authorizes in a browser and saves the refresh grant at the caller's credential path.

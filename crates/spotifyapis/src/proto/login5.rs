@@ -15,6 +15,9 @@ const ENDPOINT: &str = "https://login5.spotify.com/v3/login";
 const TIMEOUT: Duration = Duration::from_secs(20);
 /// How many challenge rounds one login answers before it gives up.
 const ROUNDS: usize = 3;
+/// The most zero bits a proof-of-work challenge may ask for. Spotify asks for about ten, and
+/// each bit more doubles the work, so a larger ask is refused rather than solved.
+const HARDEST: u32 = 24;
 /// `LoginError` values that mean the credential itself is no longer accepted.
 const INVALID_CREDENTIALS: i32 = 1;
 const UNKNOWN_IDENTIFIER: i32 = 5;
@@ -167,21 +170,12 @@ pub(crate) async fn login(
             });
         }
         if let Some(challenges) = reply.challenges {
-            let solutions = challenges
-                .challenges
-                .iter()
-                .map(|challenge| ChallengeSolution {
-                    hashcash: challenge
-                        .hashcash
-                        .as_ref()
-                        .map(|hashcash| HashcashSolution {
-                            suffix: hashcash_suffix(&reply.login_context, hashcash),
-                            duration: None,
-                        }),
-                })
-                .collect();
+            let context = reply.login_context.clone();
+            let solutions = tokio::task::spawn_blocking(move || solve(&context, &challenges))
+                .await
+                .context("the login challenge stopped")??;
             request.login_context = reply.login_context;
-            request.challenge_solutions = Some(ChallengeSolutions { solutions });
+            request.challenge_solutions = Some(solutions);
             continue;
         }
         return Err(match reply.error {
@@ -193,22 +187,44 @@ pub(crate) async fn login(
     Err(AuthError::Refused.into())
 }
 
+/// Answers every proof-of-work challenge of a login, refusing one that asks for more work than
+/// [`HARDEST`] allows.
+fn solve(context: &[u8], challenges: &Challenges) -> Result<ChallengeSolutions> {
+    let solutions = challenges
+        .challenges
+        .iter()
+        .map(|challenge| {
+            let hashcash = match &challenge.hashcash {
+                Some(hashcash) => Some(HashcashSolution {
+                    suffix: hashcash_suffix(context, hashcash)?,
+                    duration: None,
+                }),
+                None => None,
+            };
+            Ok(ChallengeSolution { hashcash })
+        })
+        .collect::<Result<_>>()?;
+    Ok(ChallengeSolutions { solutions })
+}
+
 /// Finds the suffix whose SHA-1 after the challenge's prefix ends in as many zero bits as it
 /// asks for, counting up from a start the login context fixes, as Spotify's own clients do.
-fn hashcash_suffix(context: &[u8], challenge: &HashcashChallenge) -> Vec<u8> {
+fn hashcash_suffix(context: &[u8], challenge: &HashcashChallenge) -> Result<Vec<u8>> {
+    let wanted = u32::try_from(challenge.length)
+        .ok()
+        .filter(|wanted| *wanted <= HARDEST)
+        .ok_or(AuthError::Refused)?;
     let start = tail(digest(&SHA1_FOR_LEGACY_USE_ONLY, context).as_ref());
-    let wanted = u32::try_from(challenge.length).unwrap_or_default();
-    let mut counter: i64 = 0;
-    loop {
+    for counter in 0..1_i64 << (HARDEST + 8) {
         let mut suffix = start.wrapping_add(counter).to_be_bytes().to_vec();
         suffix.extend_from_slice(&counter.to_be_bytes());
         let mut input = challenge.prefix.clone();
         input.extend_from_slice(&suffix);
         if tail(digest(&SHA1_FOR_LEGACY_USE_ONLY, &input).as_ref()).trailing_zeros() >= wanted {
-            return suffix;
+            return Ok(suffix);
         }
-        counter += 1;
     }
+    Err(AuthError::Refused.into())
 }
 
 /// Bytes 12 to 20 of a SHA-1 digest as a big-endian number.

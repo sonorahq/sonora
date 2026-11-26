@@ -70,6 +70,8 @@ impl Account {
         if before != cached.generation || !oauth.has_current_grant() {
             return Err(SignInFailure(SignInProblem::Cancelled).into());
         }
+        // a fresh sign-in replaces an older build's, which must not come back if this one ends
+        credentials::remove(&self.config.legacy_file());
         let session = Session::new(oauth, device);
         cached.session = Some(session.clone());
         Ok(session)
@@ -191,25 +193,25 @@ async fn carry_over(config: &AuthConfig) -> Result<Option<Session>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("cannot read the previous Spotify sign-in"),
     };
-    let legacy = match serde_json::from_slice::<Legacy>(&body) {
-        Ok(legacy) if legacy.auth_type == STORED_CREDENTIALS && !legacy.username.is_empty() => {
-            legacy
-        }
-        Ok(_) => return Ok(None),
-        Err(error) => {
-            log::warn!("spotify: cannot read the previous sign-in: {error}");
-            return Ok(None);
-        }
+    let read = serde_json::from_slice::<Legacy>(&body)
+        .ok()
+        .filter(|legacy| legacy.auth_type == STORED_CREDENTIALS && !legacy.username.is_empty())
+        .and_then(|legacy| {
+            let credential = STANDARD.decode(&legacy.auth_data).ok()?;
+            Some((legacy.username, credential))
+        });
+    // a file no build can sign in with would keep the account looking signed in forever
+    let Some((username, credential)) = read else {
+        log::warn!("spotify: removing a previous sign-in that cannot be read");
+        credentials::remove(&legacy_path);
+        return Ok(None);
     };
-    let credential = STANDARD
-        .decode(&legacy.auth_data)
-        .context("the previous Spotify sign-in is damaged")?;
     let device = device_id(&config.cache_dir)?;
     let adopted = OAuth::adopt(
         config.credential_path()?,
         &config.client_id,
         &device,
-        &legacy.username,
+        &username,
         &credential,
     )
     .await;
