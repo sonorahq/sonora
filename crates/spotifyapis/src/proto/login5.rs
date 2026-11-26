@@ -18,6 +18,8 @@ const ROUNDS: usize = 3;
 /// The most zero bits a proof-of-work challenge may ask for. Spotify asks for about ten, and
 /// each bit more doubles the work, so a larger ask is refused rather than solved.
 const HARDEST: u32 = 24;
+/// The most challenges one login answers. Spotify sets one.
+const MOST_CHALLENGES: usize = 4;
 /// `LoginError` values that mean the credential itself is no longer accepted.
 const INVALID_CREDENTIALS: i32 = 1;
 const UNKNOWN_IDENTIFIER: i32 = 5;
@@ -190,6 +192,10 @@ pub(crate) async fn login(
 /// Answers every proof-of-work challenge of a login, refusing one that asks for more work than
 /// [`HARDEST`] allows.
 fn solve(context: &[u8], challenges: &Challenges) -> Result<ChallengeSolutions> {
+    anyhow::ensure!(
+        challenges.challenges.len() <= MOST_CHALLENGES,
+        AuthError::Refused
+    );
     let solutions = challenges
         .challenges
         .iter()
@@ -215,7 +221,8 @@ fn hashcash_suffix(context: &[u8], challenge: &HashcashChallenge) -> Result<Vec<
         .filter(|wanted| *wanted <= HARDEST)
         .ok_or(AuthError::Refused)?;
     let start = tail(digest(&SHA1_FOR_LEGACY_USE_ONLY, context).as_ref());
-    for counter in 0..1_i64 << (HARDEST + 8) {
+    // a suffix turns up after about 2^wanted tries, so 256 times that is never reached in practice
+    for counter in 0..1_i64 << (wanted + 8) {
         let mut suffix = start.wrapping_add(counter).to_be_bytes().to_vec();
         suffix.extend_from_slice(&counter.to_be_bytes());
         let mut input = challenge.prefix.clone();
