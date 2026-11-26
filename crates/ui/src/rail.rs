@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Div, ElementId, Pixels, ScrollHandle,
-    ScrollWheelEvent, SharedString, StyleRefinement, Window, div, point, px, relative, svg,
+    Animation, AnimationExt as _, AnyElement, App, Div, ElementId, Pixels, ScrollEvent,
+    ScrollHandle, SharedString, StyleRefinement, Window, div, point, px, relative, svg,
 };
 
 use std::time::Duration;
@@ -137,7 +137,7 @@ impl RenderOnce for Rail {
             .track_scroll(&scroll)
             // A touchpad already moves smoothly. A wheel jumps a whole step, which the glide
             // eases out.
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
                 crate::hold_swipe(event, &wheeled, cx);
                 match event.delta.precise() {
                     true => gliding.jump(&wheeled, wheeled.offset()),

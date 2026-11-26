@@ -1918,7 +1918,7 @@ impl Render for SettingsView {
         )
         .track_focus(&self.focus)
         // the user taking the page in hand lets go of whatever it was holding in view
-        .on_scroll_wheel(cx.listener(|this, _, _, _| this.reveal = None))
+        .on_scroll(cx.listener(|this, _, _, _| this.reveal = None))
         .capture_any_mouse_down(cx.listener(|this, _, _, _| this.reveal = None))
         // an action stops where it is handled unless told to go on, so an escape with nothing
         // to close here goes on to the workspace

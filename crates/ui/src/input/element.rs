@@ -41,14 +41,6 @@ struct Painted {
     selection: Option<PaintQuad>,
 }
 
-impl IntoElement for Text {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Text {
     type RequestLayoutState = ();
     type PrepaintState = Painted;

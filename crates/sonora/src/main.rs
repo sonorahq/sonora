@@ -425,6 +425,8 @@ fn open_window(cx: &mut App) {
                 traffic_light_position: Some(traffic_lights),
             }),
             inactive_frame_interval: saver.interval(),
+            // Low Power Mode and power-saver profiles would otherwise cap every frame at 30 fps.
+            low_power_frame_interval: None,
             is_movable: true,
             is_resizable: true,
             app_owns_titlebar_drag: true,

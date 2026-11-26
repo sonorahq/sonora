@@ -118,14 +118,6 @@ impl Styled for Deck {
     }
 }
 
-impl IntoElement for Deck {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Deck {
     type RequestLayoutState = Option<Run>;
     type PrepaintState = Vec<AnyElement>;

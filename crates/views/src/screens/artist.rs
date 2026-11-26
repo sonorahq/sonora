@@ -4,9 +4,9 @@ use std::rc::Rc;
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FontWeight, Pixels, Point, Render, ScrollHandle,
-    ScrollWheelEvent, SharedString, WeakEntity, Window, div, linear_color_stop, linear_gradient,
-    point, px, relative,
+    AnyElement, App, ClickEvent, Context, Entity, FontWeight, Pixels, Point, Render, ScrollEvent,
+    ScrollHandle, SharedString, WeakEntity, Window, div, linear_color_stop, linear_gradient, point,
+    px, relative,
 };
 
 use crate::chrome::Chrome;
@@ -667,12 +667,7 @@ impl ArtistView {
         self.release_padding_offset = offset;
     }
 
-    fn release_scroll(
-        &mut self,
-        event: &ScrollWheelEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn release_scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         let upward = event.delta.pixel_delta(window.line_height()).y;
         if upward <= Pixels::ZERO || self.release_padding <= Pixels::ZERO {
             return;
@@ -1387,7 +1382,7 @@ impl Render for ArtistView {
             .px(inset)
             .pt(inset)
             .pb(inset)
-            .on_scroll_wheel(cx.listener(Self::release_scroll))
+            .on_scroll(cx.listener(Self::release_scroll))
             .child(
                 div()
                     .relative()

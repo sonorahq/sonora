@@ -844,14 +844,6 @@ impl Prefetch {
     }
 }
 
-impl IntoElement for Prefetch {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Prefetch {
     type RequestLayoutState = ();
     type PrepaintState = ();

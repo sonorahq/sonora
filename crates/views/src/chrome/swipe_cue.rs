@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    Context, NavigationDirection, Pixels, Render, ScrollWheelEvent, SpringState, Window, div,
-    point, px, svg,
+    Context, NavigationDirection, Pixels, Render, ScrollEvent, SpringState, Window, div, point, px,
+    svg,
 };
 use ui::{ActiveTheme as _, Springs, ease_out_cubic, mix, motion, paced};
 
@@ -62,12 +62,7 @@ impl SwipeCue {
 
     /// Follows a wheel event over the page: turns the page when a swipe completes, and redraws
     /// the arrow while one is under the fingers.
-    pub fn follow(
-        &mut self,
-        event: &ScrollWheelEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn follow(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(direction) = ui::swiped(event, cx) {
             match direction {
                 NavigationDirection::Back => router::back(cx),

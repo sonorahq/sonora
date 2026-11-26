@@ -80,11 +80,3 @@ impl Element for Rooted {
         self.child.paint(window, cx);
     }
 }
-
-impl IntoElement for Rooted {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}

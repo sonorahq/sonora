@@ -200,14 +200,6 @@ pub(crate) fn mark_run(id: &ElementId, run: &Run, lead: Pixels, across: bool, cx
     }
 }
 
-impl IntoElement for Hold {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl gpui::Element for Hold {
     type RequestLayoutState = ();
     type PrepaintState = ();
@@ -309,14 +301,6 @@ impl gpui::Element for Hold {
         cx: &mut App,
     ) {
         self.child.paint(window, cx);
-    }
-}
-
-impl IntoElement for Held {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
