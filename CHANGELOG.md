@@ -91,6 +91,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A see-through window keeps its theme: the sidebars and bars stay their own colour beside the page, and buttons and the player bar no longer change shade the moment opacity drops below 100%.
 - The bottom edge of the fullscreen player no longer lets the desktop show through on a see-through window with the ambient background.
 - Opening and closing the fullscreen player on a see-through window no longer turns the window clearer halfway through, and the blur under its controls fades in instead of snapping on.
+- When a queue ends without repeat, its last song moves to history instead of staying as now playing. Play button starts the queue over and Previous button brings that song back.
 
 ### Fixed
 

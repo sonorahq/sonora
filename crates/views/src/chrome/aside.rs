@@ -421,6 +421,13 @@ impl Aside {
         let scrollbar =
             cx.new(|_| Scrollbar::new(scroll.0.borrow().base_handle.clone()).watching(me));
         let playlist_scrollbar = cx.new(|_| Scrollbar::inset().watching(me));
+        let library = Sonora::global(cx).library.clone();
+        cx.observe(&library, |this, _, cx| {
+            if this.context_menu.is_some() {
+                cx.notify();
+            }
+        })
+        .detach();
         let lyrics = Sonora::global(cx).lyrics.clone();
         cx.observe(&lyrics, |_, _, cx| cx.notify()).detach();
         let settings = Sonora::global(cx).settings.clone();

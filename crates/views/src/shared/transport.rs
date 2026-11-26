@@ -184,7 +184,7 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
     let playing = steered
         .as_ref()
         .map_or_else(|| held.wants_playing(), |remote| remote.state.playing);
-    let idle = held.track().is_none() && steered.is_none();
+    let idle = held.track().is_none() && steered.is_none() && !held.can_restart_queue(cx);
     let playback = playback.clone();
 
     let (icon, tooltip) = match playing {
