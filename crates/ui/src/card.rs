@@ -804,6 +804,9 @@ impl RenderOnce for Card {
             return card;
         };
         let rest = solid_fill(&overrides);
+        // A card with a fill of its own tints it under the pointer rather than trading it for
+        // the translucent hover colour.
+        let fill = rest.map_or(fill, |rest| rest.blend(fill));
         let lit = lit.is_some_and(|(lit, _)| lit);
         let (card, level) = glowing(card, &id, lit, 1., window, cx);
         match glow_fill(rest, fill, level) {
