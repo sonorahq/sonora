@@ -17,6 +17,7 @@ pub(crate) mod menus;
 pub(crate) mod nav;
 pub(crate) mod now_playing;
 pub(crate) mod page;
+pub(crate) mod part;
 pub(crate) mod picks;
 pub(crate) mod pins;
 pub(crate) mod playlist_editor;
