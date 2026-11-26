@@ -576,6 +576,16 @@ impl Worker {
     async fn publish(&mut self, now: Option<Arc<Snapshot>>) {
         self.confirmed_transfer_state = None;
         let before = std::mem::replace(&mut self.now, now);
+        if let Some(now) = self.now.clone() {
+            // smart shuffle is a kind of shuffle, and it holds for its own playlist alone
+            if now.shuffle == Some(false) {
+                self.smart_mode = false;
+                self.smart = None;
+                self.smart_read = None;
+            } else if self.smart.is_some() && self.playing(&now) != self.smart {
+                self.smart = None;
+            }
+        }
         self.identify(before.as_deref());
         if self.mode == Mode::Publish {
             self.read_uids();
@@ -1006,7 +1016,7 @@ impl Worker {
             .as_ref()
             .and_then(|session| session.context.as_ref())
             .and_then(|context| context.uri.clone())
-            .filter(|_| self.smart_mode);
+            .filter(|uri| self.smart_mode && uri.starts_with(PLAYLIST_PREFIX));
         let now = (unix_millis() as i64).saturating_add(self.clock_offset_ms);
         let recent = self
             .playback
@@ -1152,7 +1162,7 @@ impl Worker {
             let session = self.session.clone();
             let read = async move {
                 match sequence::resolve(&session, &format!("{uri}{LENS}")).await {
-                    Ok(rows) => (started_by_play(&play, &rows), Some(uri)),
+                    Ok(rows) => (started_smart(&play, &rows), Some(uri)),
                     Err(error) => {
                         log::warn!("connect: cannot read {uri} for smart shuffle: {error:#}");
                         (supplied, None)
@@ -2151,6 +2161,59 @@ fn started_by_play(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start>
             ..Default::default()
         }),
         preserve_queue: false,
+        restart: true,
+    })
+}
+
+/// A smart shuffle start from a playlist read through the lens: the song asked for, or the first
+/// the shuffle picks, and then the rest of the enhanced playlist in shuffled order. The queue
+/// goes along whole, since the playlist the app reads itself has no recommendations in it.
+fn started_smart(play: &PlayCommand, rows: &ResolvedSequence) -> Option<Start> {
+    let asked = started_by_play(play, rows);
+    let mut rest: Vec<QueuedTrack> = rows
+        .tracks
+        .iter()
+        .filter_map(|track| context_entry(track, false))
+        .collect();
+    fastrand::shuffle(&mut rest);
+    let base = match &asked {
+        Some(start) => (*start.state).clone(),
+        None => {
+            let overrides = play.options.player_options_override.as_ref();
+            Snapshot {
+                context: play.context.uri.as_deref().and_then(collection),
+                position: Duration::from_millis(play.options.seek_to.unwrap_or_default()),
+                playing: !play.options.initially_paused.unwrap_or_default(),
+                repeat: overrides.and_then(|options| {
+                    repeat_mode(options.repeating_track, options.repeating_context)
+                }),
+                ..Default::default()
+            }
+        }
+    };
+    let track = match base.track.clone() {
+        Some(track) => {
+            let same = |row: &QueuedTrack| match track.uid.is_empty() {
+                true => row.id == track.id,
+                false => row.uid == track.uid,
+            };
+            if let Some(at) = rest.iter().position(same) {
+                rest.remove(at);
+            }
+            track
+        }
+        None if rest.is_empty() => return None,
+        None => rest.remove(0),
+    };
+    Some(Start {
+        state: Arc::new(Snapshot {
+            track: Some(track),
+            index: base.index.filter(|_| asked.is_some()),
+            upcoming: rest,
+            shuffle: Some(true),
+            ..base
+        }),
+        preserve_queue: true,
         restart: true,
     })
 }
