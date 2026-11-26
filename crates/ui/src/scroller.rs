@@ -1,11 +1,12 @@
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Axis, Div, ElementId, Entity, Interactivity, MouseButton, MouseMoveEvent,
-    Pixels, ScrollWheelEvent, StyleRefinement, Window, div, px,
+    Pixels, ScrollEvent, StyleRefinement, Window, div, px,
 };
 
 use crate::button::Button;
 use crate::glass::{blurring, glass};
+use crate::glide::mark_scrolling;
 use crate::hold::{Hold, held};
 use crate::scrollbar::{Scrollbar, activate_middle_scroll, cancel_middle_scroll};
 use crate::theme::ActiveTheme as _;
@@ -33,6 +34,10 @@ pub struct Scroller {
     fade_ends: Pixels,
     /// How tall the band along the top grows, as the content scrolls up, where it fades out.
     fade_scrolled: Pixels,
+    /// How tall the band along the bottom is, while more lies below, where content fades out.
+    fade_remaining: Pixels,
+    /// How tall the band along the bottom is where content always fades out.
+    fade_bottom: Pixels,
     /// Whether the region holds what is at its top when it changes width, and whether that hold
     /// is active right now.
     hold: Option<bool>,
@@ -57,6 +62,8 @@ impl Scroller {
             fade_top: Pixels::ZERO,
             fade_ends: Pixels::ZERO,
             fade_scrolled: Pixels::ZERO,
+            fade_remaining: Pixels::ZERO,
+            fade_bottom: Pixels::ZERO,
             hold: None,
             reflowed: false,
             keep: None,
@@ -146,6 +153,21 @@ impl Scroller {
         self.fade_scrolled = height.max(Pixels::ZERO);
         self
     }
+
+    /// The bottom's counterpart of [`Self::fade_scrolled`]: fades content out along the bottom
+    /// while more lies below, across a band that shrinks from `height` to nothing as the end
+    /// comes into view, so nothing fades once the content is scrolled all the way down.
+    pub fn fade_remaining(mut self, height: Pixels) -> Self {
+        self.fade_remaining = height.max(Pixels::ZERO);
+        self
+    }
+
+    /// Fades content out across a band of `height` along the bottom whether or not there is more
+    /// to scroll to, for a region whose foot lies under chrome floating over the window's edge.
+    pub fn fade_bottom(mut self, height: Pixels) -> Self {
+        self.fade_bottom = height.max(Pixels::ZERO);
+        self
+    }
 }
 
 impl Styled for Scroller {
@@ -180,6 +202,8 @@ impl RenderOnce for Scroller {
             fade_top,
             fade_ends,
             fade_scrolled,
+            fade_remaining,
+            fade_bottom,
             hold,
             reflowed,
             keep,
@@ -204,16 +228,25 @@ impl RenderOnce for Scroller {
         let scroll = bar.read(cx).scroll().clone();
         // The offset runs negative as the content moves up, so it sits between minus the furthest
         // it can go and zero. Half a pixel of slack keeps a rounded offset from fading an end.
-        let (above, below, scrolled) = {
+        let (above, below, scrolled, remaining) = {
             let (at, end) = (-scroll.offset().y, scroll.max_offset().y);
-            (at > px(0.5), end - at > px(0.5), at.max(Pixels::ZERO))
+            (
+                at > px(0.5),
+                end - at > px(0.5),
+                at.max(Pixels::ZERO),
+                (end - at).max(Pixels::ZERO),
+            )
         };
         let end = |more: bool| match more {
             true => fade_ends,
             false => Pixels::ZERO,
         };
-        let (fade_top_end, fade_bottom_end) =
-            (end(above).max(scrolled.min(fade_scrolled)), end(below));
+        let (fade_top_end, fade_bottom_end) = (
+            end(above).max(scrolled.min(fade_scrolled)),
+            end(below)
+                .max(remaining.min(fade_remaining))
+                .max(fade_bottom),
+        );
         let overrides = std::mem::take(base.style());
         bar.read(cx).sync();
         let presentation = bar.read(cx).presentation();
@@ -228,7 +261,8 @@ impl RenderOnce for Scroller {
                     .restrict_scroll_to_axis()
                     .track_scroll(&scroll)
             })
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
+                mark_scrolling(cx);
                 match event.delta.precise() {
                     true => gliding.update(cx, |bar, _| bar.stirred()),
                     false => gliding.update(cx, |bar, _| bar.nudge(window)),

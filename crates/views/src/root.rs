@@ -33,7 +33,7 @@ use crate::shared::smart_playlist::SmartPlaylistEditor;
 use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
 use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
-use crate::shared::transport::{CoverAway, CoverFade, CoverRoom, ShellSwap};
+use crate::shared::transport::{Backdrops, CoverAway, CoverFade, CoverRoom, ShellSwap};
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
@@ -158,6 +158,9 @@ enum Focus {
 enum Ground {
     /// The page colour of the theme it wore.
     Page,
+    /// The chrome's colour along the title bar's strip, for a workspace on a see-through window,
+    /// which paints the rest of its ground itself.
+    Bar,
     /// The ambient field fullscreen was drawn over.
     Field(Entity<Ambient>),
 }
@@ -365,6 +368,15 @@ impl Root {
             .detach();
         update_focus_for_wake(window, cx);
 
+        // A focused element that leaves the page takes the focus with it, and the shell takes it
+        // up again.
+        cx.on_focus_lost(window, |_, window, cx| {
+            if let Some(fallback) = ui::focus_fallback(cx) {
+                window.focus(&fallback, cx);
+            }
+        })
+        .detach();
+
         ui::WindowBlur::update(window, cx);
         window
             .observe_window_appearance(|window, cx| {
@@ -545,6 +557,8 @@ impl Root {
         (view, detail)
     }
 
+    /// Opens the search page with the keyboard in its field. The shortcut and the sidebar's
+    /// Search entry come here, and nothing else focuses the field on its own.
     fn open_search(&mut self, cx: &mut Context<Self>) {
         navigate(Destination::Search, cx);
         self.pending = Some(Focus::Search);
@@ -619,6 +633,18 @@ impl Root {
                 }
             }
         }
+    }
+
+    /// Points the keyboard's fallback at the shell on show, or at nothing under the sign-in
+    /// screen. Without focus, every shortcut and every action a button dispatches stops at the
+    /// window's root and never reaches the handlers on this view.
+    fn follow_focus_fallback(&self, cx: &mut App) {
+        let fallback = match (self.signing_in, &self.view) {
+            (true, _) => None,
+            (false, RootView::Workspace) => Some(self.shells.workspace.read(cx).focus_handle()),
+            (false, RootView::Fullscreen) => Some(self.shells.fullscreen.read(cx).focus_handle()),
+        };
+        ui::set_focus_fallback(fallback, cx);
     }
 
     fn toggle_fullscreen(&mut self, cx: &mut Context<Self>) {
@@ -1011,8 +1037,10 @@ impl Root {
         }
         self.announce_fullscreen(false, cx);
         self.view = RootView::Workspace;
-        self.pending = Some(match destination {
-            Destination::Search => Focus::Search,
+        // Only `open_search` hands the search field the keyboard, so coming back to the page from
+        // fullscreen or through history leaves the field alone.
+        self.pending = Some(match (&destination, self.pending.take()) {
+            (Destination::Search, Some(Focus::Search)) => Focus::Search,
             _ => Focus::Workspace,
         });
 
@@ -1097,8 +1125,12 @@ impl Root {
 }
 
 const UI_FONT: &str = "Inter";
+/// The embedded Hangul-only font that draws Korean. It has no Latin, so it is never offered as
+/// the interface font.
+pub(crate) const HANGUL_FONT: &str = "Sonora Hangul";
 
-const SCRIPTS: [&str; 18] = [
+const SCRIPTS: [&str; 19] = [
+    HANGUL_FONT,
     "Source Han Sans",
     "Noto Sans CJK JP",
     "Noto Sans CJK SC",
@@ -1151,6 +1183,14 @@ fn update_focus_for_wake(window: &Window, cx: &mut App) {
     wake.update(cx, |wake, cx| wake.set_focused(focused, cx));
 }
 
+/// How much of the see-through shell underneath has to show while the one over it shows `over`
+/// of itself, so the two let the desktop through exactly as much as one shell alone whose ground
+/// keeps `ground` of the desktop out, and their colours blend in step with `over`. Fading both
+/// linearly would leave the window clearer than either halfway through.
+fn stacked(over: f32, ground: f32) -> f32 {
+    ((1. - over) / (1. - ground * over).max(f32::EPSILON)).clamp(0., 1.)
+}
+
 /// The shell on its way out, in the `theme` it wore and on its `ground` when it had one, since
 /// neither shell paints a background of its own. It fills its box and keeps the top `bar` free
 /// for the title bar, so the caller places it to cover the bar's strip or to sit under it.
@@ -1161,10 +1201,11 @@ fn parting(
     ground: Option<Ground>,
     shell: impl IntoElement,
 ) -> impl IntoElement {
-    let (page, field) = match ground {
-        Some(Ground::Page) => (true, None),
-        Some(Ground::Field(field)) => (false, Some(field)),
-        None => (false, None),
+    let (page, strip, field) = match ground {
+        Some(Ground::Page) => (true, false, None),
+        Some(Ground::Bar) => (false, true, None),
+        Some(Ground::Field(field)) => (false, false, Some(field)),
+        None => (false, false, None),
     };
     Themed::new(
         *theme,
@@ -1177,6 +1218,18 @@ fn parting(
             .when(page, |this| {
                 this.bg(theme.background)
                     .when_some(radius, |this, radius| this.rounded(radius))
+            })
+            .when(strip, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(bar)
+                        .bg(theme.sidebar)
+                        .when_some(radius, |this, radius| this.rounded_t(radius)),
+                )
             })
             .text_color(theme.foreground)
             .children(field)
@@ -1195,6 +1248,7 @@ impl Render for Root {
             SessionState::Authorizing(_) => self.signing_in,
         };
         self.signing_in = show_sign_in;
+        self.follow_focus_fallback(cx);
 
         match self.pending.take() {
             Some(Focus::Search) => self
@@ -1298,7 +1352,7 @@ impl Render for Root {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(Sonora::global(cx).settings.read(cx), cx, window);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        window.set_window_corner_radius(radius.unwrap_or_default());
+        window.set_client_corner_radii(gpui::Corners::all(radius.unwrap_or_default()));
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
         let radius: Option<gpui::Pixels> = None;
 
@@ -1309,12 +1363,16 @@ impl Render for Root {
 
         // The shell enters the way a page enters the workspace. An opaque window fades it
         // under a scrim of the page colour, which leaves the workspace's cached views alone,
-        // and a see-through one fades the shell itself. The scrim reaches the bottom corners
-        // of the window, so it rounds them. No shell takes the veil. The renderer drops a
-        // backdrop inside a filtered layer, so fullscreen's frosted controls would show flat
-        // until the veil lifted.
+        // and a see-through one fades the shell itself in under the player leaving, at the pace
+        // `stacked` gives so the window stays as see-through as it is. The scrim reaches the
+        // bottom corners of the window, so it rounds them. No shell takes the veil. The renderer
+        // drops a backdrop inside a filtered layer, so fullscreen's frosted controls would show
+        // flat until the veil lifted.
         let hidden = self.shell_hidden(window, cx);
         let dissolving = theme.transparent;
+        // A see-through workspace paints its chrome and its sheet itself, each once, and the
+        // page colour under them would stack a second alpha beneath both.
+        let grounded = dissolving && !show_sign_in && matches!(self.view, RootView::Workspace);
         // Opening fullscreen fades the player in while it zooms up from a little smaller. The zoom is a paint filter, which drops the backdrop
         // blurs inside it, so it lets go as soon as what is left of it is under half a pixel and
         // the frosted controls get their blur back while the fade finishes.
@@ -1327,8 +1385,10 @@ impl Render for Root {
         }
         // A player opening on its artwork tab below `Room::Wide` tucks the bar's cover away as
         // it fades in, and one closing from there brings it back as it fades out, so the player
-        // bar under the fade moves along with the player's.
-        let room = match self.shells.fullscreen.read(cx).tucks_cover(window) {
+        // bar under the fade moves along with the player's. The player is read only while it is
+        // drawn, so a closed one redraws nothing when it changes.
+        let drawn = matches!(self.view, RootView::Fullscreen) || left.is_some();
+        let room = match drawn && self.shells.fullscreen.read(cx).tucks_cover(window) {
             false => 1.,
             true => match self.view {
                 RootView::Fullscreen => zooming,
@@ -1357,10 +1417,33 @@ impl Render for Root {
         // Below `Room::Wide` the player keeps its controls where the player bar has them, so it
         // only fades in, since a zoom would slide them off the bar's under the fade.
         let grows = ui::Room::of(viewport.width).fits(ui::Room::Wide);
-        let zoom = (grows && zooming * SHELL_ZOOM * reach / 2. >= 0.5)
-            .then_some(1. - SHELL_ZOOM * zooming);
+        // How many pixels the zoom still takes off the window's longer side. It lets go once
+        // that is under one, half a pixel at each edge, and the backdrops it dropped rise from
+        // there.
+        let spread = zooming * SHELL_ZOOM * reach;
+        let zoom = (grows && spread / 2. >= 0.5).then_some(1. - SHELL_ZOOM * zooming);
+        let backdrops = match grows {
+            true => (1. - spread).clamp(0., 1.),
+            false => 1.,
+        };
+        if cx
+            .try_global::<Backdrops>()
+            .is_none_or(|was| was.0 != backdrops)
+        {
+            cx.set_global(Backdrops(backdrops));
+        }
+        // A settled player replays while the ambient field under it drifts. Every move between
+        // the shells renders it whole, since a cached view would replay the opacity and zoom it
+        // was cached under.
+        let settled = zooming == 0. && hidden == 0. && left.is_none();
         let shell = match self.view {
             RootView::Workspace => self.shells.workspace.clone().into_any_element(),
+            RootView::Fullscreen if settled => self
+                .shells
+                .fullscreen
+                .clone()
+                .cached(StyleRefinement::default().flex_1().min_h_0().w_full())
+                .into_any_element(),
             RootView::Fullscreen => self.shells.fullscreen.clone().into_any_element(),
         };
         // How far above the bottom of the window the toasts hang.
@@ -1376,19 +1459,25 @@ impl Render for Root {
         // player's ground fades in over it. gpui fades each primitive on its own rather than a
         // subtree as one, so fading the workspace out instead would keep its stacked panels
         // opaque while the page between them is already gone. A see-through window has nothing
-        // solid to cover, so there the workspace fades out as the ground comes in. Nothing in it
+        // solid to cover, so there the workspace fades out under the ground coming in, at the
+        // pace that keeps the two together exactly as see-through as either. Nothing in it
         // answers the pointer, since the player above it occludes the window.
         let opening = zooming > 0. && matches!(self.view, RootView::Fullscreen);
         let leaving = opening.then(|| {
             div()
                 .absolute()
                 .inset_0()
-                .when(dissolving, |this| this.opacity(zooming))
+                .when(dissolving, |this| {
+                    this.opacity(stacked(1. - zooming, theme.background.a))
+                })
                 .child(parting(
                     &parted,
                     bar,
                     radius,
-                    Some(Ground::Page),
+                    Some(match parted.transparent {
+                        true => Ground::Bar,
+                        false => Ground::Page,
+                    }),
                     self.shells.workspace.clone(),
                 ))
         });
@@ -1416,7 +1505,9 @@ impl Render for Root {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .when(hidden > 0. && dissolving, |this| this.opacity(1. - hidden))
+                    .when(hidden > 0. && dissolving, |this| {
+                        this.opacity(stacked(hidden, parted.background.a))
+                    })
                     .when(zooming > 0., |this| this.opacity(1. - zooming).occlude())
                     .when_some(zoom, |this, zoom| this.layer_scale(zoom))
                     .child(shell),
@@ -1436,7 +1527,8 @@ impl Render for Root {
                 )
             })
             // The fullscreen player fades out over the workspace it gives way to.
-            // Its cover draws above the fade and flies down onto the player bar's.
+            // Its cover draws above the fade and flies down onto the player bar's. Over a
+            // see-through workspace it fades out with that workspace's entrance instead.
             .when_some(left, |this, left| {
                 this.child(
                     div()
@@ -1445,12 +1537,20 @@ impl Render for Root {
                         .right_0()
                         .bottom_0()
                         .top(-bar)
-                        .opacity(left * left)
+                        .opacity(match grounded {
+                            true => hidden,
+                            false => left * left,
+                        })
                         .child(parting(
                             &parted,
                             bar,
                             radius,
-                            ambient::shown(cx).then(|| Ground::Field(self.ambient.clone())),
+                            match ambient::shown(cx) {
+                                true => Some(Ground::Field(self.ambient.clone())),
+                                // The root lays no page colour under a see-through workspace,
+                                // so the player brings its own as it fades.
+                                false => grounded.then_some(Ground::Page),
+                            },
                             self.shells.fullscreen.clone(),
                         )),
                 )
@@ -1480,7 +1580,9 @@ impl Render for Root {
             .when_some(radius, |this, radius| {
                 this.rounded(radius).overflow_hidden()
             })
-            .when(!ambient && !opening, |this| this.bg(theme.background))
+            .when(!ambient && !opening && !grounded, |this| {
+                this.bg(theme.background)
+            })
             .text_color(theme.foreground)
             .capture_any_mouse_down(|_, window, cx| {
                 if ui::cancel_middle_scroll(cx) {
@@ -1555,12 +1657,23 @@ impl Render for Root {
             // The bar only changes when it is told to, so a frame drawn for the lyrics or the
             // progress bar replays it rather than building it again.
             .child(
-                self.title_bar.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(ui::snapped(theme.metrics.title_bar, window))
-                        .flex_none(),
-                ),
+                div()
+                    .w_full()
+                    .flex_none()
+                    // A see-through workspace's bar paints its own ground, so it fades in with
+                    // the rest of the workspace rather than standing whole under the player
+                    // leaving.
+                    .when(hidden > 0. && grounded, |this| {
+                        this.opacity(stacked(hidden, parted.background.a))
+                    })
+                    .child(
+                        self.title_bar.clone().cached(
+                            StyleRefinement::default()
+                                .w_full()
+                                .h(ui::snapped(theme.metrics.title_bar, window))
+                                .flex_none(),
+                        ),
+                    ),
             )
             .when(!show_sign_in, |this| this.child(shell));
         // A closed menu or dialog fades out here, over everything else in the window.

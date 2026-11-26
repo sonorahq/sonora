@@ -1,8 +1,8 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Axis, Context, Div, ElementId, Entity, EntityId, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, div, linear_color_stop,
+    AnyElement, App, Axis, Context, Div, ElementId, Entity, EntityId, Pixels, Point, ScrollEvent,
+    ScrollHandle, SharedString, Stateful, WeakEntity, Window, div, linear_color_stop,
     linear_gradient, point, px,
 };
 use std::rc::Rc;
@@ -50,9 +50,9 @@ impl Shelves {
     }
 
     /// Draws loading rows through the page edges, with their headings inside the content inset.
-    pub(crate) fn pending(&self, width: Pixels, cx: &App) -> Vec<AnyElement> {
+    pub(crate) fn pending(&self, width: Pixels, window: &Window, cx: &App) -> Vec<AnyElement> {
         let theme = *cx.theme();
-        let layout = CardGrid::layout(width);
+        let layout = CardGrid::layout(width, window);
 
         (0..PENDING)
             .map(|shelf| {
@@ -151,7 +151,7 @@ impl Shelves {
         let theme = *cx.theme();
         let head = head(window, cx) + HEADING_GAP;
         let body = match mode {
-            Mode::Grid => Card::tile_height(CardGrid::layout(width).card, window, cx),
+            Mode::Grid => Card::tile_height(CardGrid::layout(width, window).card, window, cx),
             Mode::List => {
                 let lanes = lanes(width);
                 let rows = section.items.len().min(lanes * ROWS).div_ceil(lanes);
@@ -222,7 +222,7 @@ impl Shelves {
         let Some(section) = sections.get(place) else {
             return div().into_any_element();
         };
-        let layout = CardGrid::layout(width);
+        let layout = CardGrid::layout(width, window);
         let (handle, glide) = self.rails[place].clone();
         let crowded = section.items.len() > layout.columns;
         let feed = sections.clone();
@@ -270,9 +270,9 @@ impl Shelves {
                     .overflow_x_scroll()
                     .restrict_scroll_to_axis()
                     .track_scroll(&handle)
-                    .on_scroll_wheel({
+                    .on_scroll({
                         let scroll = handle.clone();
-                        move |event: &ScrollWheelEvent, window, cx| {
+                        move |event: &ScrollEvent, window, cx| {
                             ui::hold_swipe(event, &scroll, cx);
                             if !sideways(event) {
                                 return;
@@ -657,7 +657,7 @@ impl Rail {
                     .overflow_x_scroll()
                     .restrict_scroll_to_axis()
                     .track_scroll(&self.scroll)
-                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                    .on_scroll(move |event: &ScrollEvent, window, cx| {
                         ui::hold_swipe(event, &scrolled, cx);
                         if !sideways(event) {
                             return;
@@ -808,7 +808,7 @@ fn slot(kind: &'static str, place: usize) -> ElementId {
 
 /// Whether a wheel event should glide a rail. Only a notched wheel moving sideways does, since a
 /// trackpad scrolls the rail itself and a vertical notch belongs to the page.
-fn sideways(event: &ScrollWheelEvent) -> bool {
+fn sideways(event: &ScrollEvent) -> bool {
     !event.delta.precise() && event.delta.pixel_delta(px(1.)).x != Pixels::ZERO
 }
 

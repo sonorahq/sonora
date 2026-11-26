@@ -1,0 +1,29 @@
+[package]
+name = "subsonic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+engine.workspace = true
+fastrand.workspace = true
+futures.workspace = true
+jiff.workspace = true
+log.workspace = true
+lyrics.workspace = true
+music.workspace = true
+opensubsonic.workspace = true
+reqwest.workspace = true
+rodio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sound.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+rustls.workspace = true
+
+[lints]
+workspace = true

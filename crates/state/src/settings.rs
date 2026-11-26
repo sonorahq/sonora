@@ -26,11 +26,11 @@ use gpui::{
     App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
     WindowBounds, point, px, size,
 };
-use music::lyrics::LOCAL;
-use music::scrobble::Account;
+use lyrics::LOCAL;
 use music::{Codec, Quality, Transcode, WritingSystem};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use rusqlite::{OptionalExtension, params};
+use scrobble::Account;
 use serde::{Deserialize, Serialize};
 use storage::Database;
 use ui::{
@@ -566,16 +566,19 @@ pub enum PlayerBarLayout {
     Classic,
     Centered,
     Compact,
+    /// A rounded pill that floats over the page instead of a bar across the window's foot.
+    Island,
 }
 
 impl PlayerBarLayout {
-    pub const ALL: [Self; 3] = [Self::Classic, Self::Centered, Self::Compact];
+    pub const ALL: [Self; 4] = [Self::Classic, Self::Centered, Self::Compact, Self::Island];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Classic => "classic",
             Self::Centered => "centered",
             Self::Compact => "compact",
+            Self::Island => "island",
         }
     }
 
@@ -585,6 +588,7 @@ impl PlayerBarLayout {
             Self::Classic => "settings-player-bar-classic",
             Self::Centered => "settings-player-bar-centered",
             Self::Compact => "settings-player-bar-compact",
+            Self::Island => "settings-player-bar-island",
         }
     }
 
@@ -593,6 +597,7 @@ impl PlayerBarLayout {
         match id {
             "centered" => Self::Centered,
             "compact" => Self::Compact,
+            "island" => Self::Island,
             _ => Self::Classic,
         }
     }
@@ -3459,8 +3464,6 @@ fn place_lyrics_provider(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use super::*;
     use crate::queue::Stub;
     use ui::PinKind;
@@ -3470,11 +3473,10 @@ mod tests {
         let values: Values = serde_json::from_str("{}").unwrap();
         assert!(values.taskbar_progress);
 
-        let root = scratch("taskbar-progress");
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("settings.json");
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
         fs::write(&path, r#"{"taskbar_progress": false}"#).unwrap();
-        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let store = StateStore::new(Database::at(root.path().join("state.sqlite")));
         let settings = AppSettings::load_from(path, store);
         assert!(!settings.taskbar_progress());
     }
@@ -3487,10 +3489,9 @@ mod tests {
             PageWidth::Centered
         );
 
-        let root = scratch("page-width-default");
-        fs::create_dir_all(&root).unwrap();
-        let store = StateStore::new(Database::at(root.join("state.sqlite")));
-        let settings = AppSettings::load_from(root.join("settings.json"), store);
+        let root = tempfile::tempdir().unwrap();
+        let store = StateStore::new(Database::at(root.path().join("state.sqlite")));
+        let settings = AppSettings::load_from(root.path().join("settings.json"), store);
         assert_eq!(settings.page_width(), PageWidth::Centered);
     }
 
@@ -3499,29 +3500,27 @@ mod tests {
         assert_eq!(PageWidth::from_id("wide"), PageWidth::Wide);
         assert_eq!(PageWidth::from_id("bogus"), PageWidth::Centered);
 
-        let root = scratch("page-width-wide");
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("settings.json");
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
         fs::write(&path, r#"{"appearance": {"page_width": "wide"}}"#).unwrap();
-        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let store = StateStore::new(Database::at(root.path().join("state.sqlite")));
         let settings = AppSettings::load_from(path, store);
         assert_eq!(settings.page_width(), PageWidth::Wide);
     }
 
     #[test]
     fn page_width_survives_a_restart() {
-        let root = scratch("page-width-restart");
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("settings.json");
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
         fs::write(&path, r#"{"appearance": {"page_width": "wide"}}"#).unwrap();
-        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let store = StateStore::new(Database::at(root.path().join("state.sqlite")));
         let before = AppSettings::load_from(path.clone(), store);
         assert_eq!(before.page_width(), PageWidth::Wide);
 
         // Write what a save would write, then load again as a fresh launch does.
         let saved = serde_json::to_vec(&before.values).unwrap();
         fs::write(&path, saved).unwrap();
-        let store = StateStore::new(Database::at(root.join("state.sqlite")));
+        let store = StateStore::new(Database::at(root.path().join("state.sqlite")));
         let after = AppSettings::load_from(path, store);
         assert_eq!(after.page_width(), PageWidth::Wide);
     }
@@ -3727,20 +3726,11 @@ mod tests {
         }
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        std::env::temp_dir().join(format!(
-            "sonora-{name}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ))
-    }
-
     #[test]
     fn runtime_state_round_trips_through_sqlite() {
-        let root = scratch("state");
-        let path = root.join("state.sqlite");
-        let store = StateStore::new(Database::at(path.clone()));
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.sqlite");
+        let store = StateStore::new(Database::at(path));
         let state = StateValues {
             volume: 0.2,
             provider: "youtube".to_owned(),
@@ -3756,10 +3746,6 @@ mod tests {
         assert_eq!(loaded.provider, "youtube");
         assert!(loaded.sidebar_right_open);
         assert_eq!(loaded.pinned.len(), 1);
-
-        drop(store);
-        fs::remove_file(path).expect("test database is removed");
-        fs::remove_dir(root).expect("test directory is removed");
     }
 
     fn ids(pinned: &[Held]) -> Vec<&str> {

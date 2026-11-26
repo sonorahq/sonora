@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "THIRD-PARTY.md"
+OUTPUT = ROOT / "docs" / "THIRD-PARTY.md"
 
 COPYRIGHT = re.compile(r"^\s*(?:#\s*)?Copyright\b.*$", re.MULTILINE)
 
@@ -22,11 +22,14 @@ pinned in `Cargo.lock`.
 The binary embeds:
 
 - Inter — SIL Open Font License 1.1, `assets/fonts/LICENSE.txt`
+- Sonora Hangul, cut from Pretendard — SIL Open Font License 1.1, `assets/fonts/LICENSE.txt`
 - Lucide icons — ISC License, `assets/icons/lucide/LICENSE`
 - Iconoir — MIT License, `assets/icons/iconoir/LICENSE`
 - Remix Icon 4.8.0 — Apache License 2.0, `assets/icons/remix/LICENSE`
 - Solar Icon Set, Linear style — CC BY 4.0 by 480 Design, `assets/icons/solar/LICENSE`
 - Simple Icons brand marks — CC0 1.0, `assets/icons/common/LICENSE`
+- ListenBrainz mark — CC BY-SA 4.0 by the MetaBrainz Foundation, `assets/icons/common/LICENSE`
+- Libre.fm, Maloja and teal.fm marks — redrawn from each project's own logo, `assets/icons/common/LICENSE`
 
 Several dependencies are covered by the Mozilla Public License 2.0 — notably the
 Symphonia decoders, `option-ext` and `priority-queue`. They are used unmodified;
@@ -48,7 +51,7 @@ def harvest():
         sys.exit("notices: cargo-about missing, run `cargo install cargo-about`")
 
     done = subprocess.run(
-        ["cargo", "about", "generate", "--format", "json"],
+        ["cargo", "about", "generate", "--config", "packaging/about.toml", "--format", "json"],
         cwd=ROOT,
         capture_output=True,
         text=True,

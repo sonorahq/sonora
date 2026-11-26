@@ -42,7 +42,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          # The nightly branch sits one commit above the main it built, the one that adds nix/nightly.json.
+          # The nightly branch sits one commit above the main it built, the one that adds packaging/nix/nightly.json.
           built="$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq '.parents[0].sha' 2> /dev/null || true)"
           if [ "$EVENT" = schedule ] && [ "$built" = "$GITHUB_SHA" ]; then
             echo "::notice::main is still at ${GITHUB_SHA:0:7}, which the current nightly was built from"
@@ -88,11 +88,12 @@ jobs:
     with:
       nightly: ${{ needs.gate.outputs.number }}
       reuse: ${{ needs.gate.outputs.reuse }}
-    # Only nix.yml reads a secret when release.yml runs for a nightly. The other secrets it names
-    # belong to jobs that run for tags alone.
+    # Only nix.yml and the Apple signing and notarization of the macOS bundle read a secret when
+    # release.yml runs for a nightly. The other secrets it names belong to jobs that run for tags
+    # alone.
     secrets: inherit
 
-  # sonora-nightly-bin is rendered from aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
+  # sonora-nightly-bin is rendered from packaging/aur/sonora-nightly-bin/PKGBUILD every night, so the AUR
   # repository only ever holds what this job pushed. It needs AUR_SSH_KEY, a private key whose
   # public half is registered on the AUR account that maintains the package.
   aur:
@@ -133,7 +134,7 @@ jobs:
             -e "s/@SHA256_X86_64@/$x86_64/" \
             -e "s/@SHA256_AARCH64@/$aarch64/" \
             -e "s/@SHA256_METADATA@/$metadata/" \
-            aur/sonora-nightly-bin/PKGBUILD > package/PKGBUILD
+            packaging/aur/sonora-nightly-bin/PKGBUILD > package/PKGBUILD
           if grep -n '@[A-Z0-9_]*@' package/PKGBUILD; then exit 1; fi
 
           # makepkg refuses to run as root, even only to print the metadata.

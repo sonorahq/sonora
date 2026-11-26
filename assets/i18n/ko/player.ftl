@@ -12,7 +12,7 @@ queue-added-by = { $name }님이 추가함
 queue-empty = 재생 목록이 비어 있습니다.
 queue-similar = 비슷한 트랙
 queue-radio = 비슷한 트랙 자동 재생
-queue-return-playing = 지금 재생 중인 화면으로 돌아가기
+queue-return-playing = 지금 재생 중인 곡으로 돌아가기
 
 # player bar
 player-nothing-playing = 재생 중인 곡 없음
@@ -24,8 +24,8 @@ player-mute = 음소거
 player-unmute = 음소거 해제
 player-previous = 이전 트랙
 player-next = 다음 트랙
-player-fullscreen = 지금 재생 중
-player-fullscreen-leave = 지금 재생 중 화면 나가기
+player-fullscreen = 전체 화면 플레이어
+player-fullscreen-leave = 전체 화면 플레이어 나가기
 player-time-left = -{ $time }
 player-time-left-spoken = { $time } 남음
 devices-this-computer = 이 컴퓨터
@@ -76,8 +76,8 @@ devices-session-people = { $count ->
     [one] 이 세션에 { $count }명 참여 중
    *[other] 이 세션에 { $count }명 참여 중
     }
-fullscreen-artwork = 아트워크
-fullscreen-panels = 지금 재생 중 보기
+fullscreen-artwork = 앨범 아트
+fullscreen-panels = 재생 화면 보기
 
 # play button
 play-pause = 일시정지
@@ -97,4 +97,5 @@ lyrics-follow = 곡 진행에 맞춰 가사 따라가기
 lyrics-source = 가사 제공: { $source }
 lyrics-source-local = 로컬 파일의 가사
 lyrics-writers = 작사: { $writers }
+lyrics-via = { $service } 경유
 lyrics-instrumental-break = 간주 중

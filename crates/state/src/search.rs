@@ -1,14 +1,15 @@
-use music::SearchPart;
 use std::collections::HashMap;
+use std::mem::DropGuard;
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{App, Context, Entity, Task};
 use music::link::{self, Linked};
-use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, Track};
+use music::{Album, ArtistRef, Found, MusicApi, Playlist, SavedArtist, SearchPart, Track};
 use serde::{Deserialize, Serialize};
+use tokio::task::AbortHandle;
 
-use crate::{Abort, Io, Library, Network, Session, SessionEvent, Shelf, Sonora, join};
+use crate::{Io, Library, Network, Session, SessionEvent, Sonora, join};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 const LIMIT: usize = 20;
@@ -226,6 +227,11 @@ impl Search {
                 this.query.clear();
                 this.ask(&pending, cx);
             }
+            SessionEvent::LocalChanged if this.session.read(cx).local_only() => {
+                let pending = this.query.clone();
+                this.forget_results();
+                this.ask(&pending, cx);
+            }
             SessionEvent::Reconnected | SessionEvent::WentOffline | SessionEvent::LocalChanged => {}
         })
         .detach();
@@ -346,11 +352,13 @@ impl Search {
 
         self.rank(cx);
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             self.loading = false;
             cx.notify();
             return;
         };
+        // an offline run searches the local files, which say nothing about the network
+        let local = self.session.read(cx).local_only();
 
         if let Some((slug, _)) = &linked
             && self.session.read(cx).provider_slug() != Some(*slug)
@@ -421,7 +429,8 @@ impl Search {
                     client.search_all(&asked).await
                 }
             });
-            let _abort = Abort(request.abort_handle());
+            let _abort =
+                DropGuard::new(request.abort_handle(), |handle: AbortHandle| handle.abort());
             let mut pending = None;
             while let Some(part) = updates.recv().await {
                 let current = this.update(cx, |this, cx| {
@@ -476,9 +485,12 @@ impl Search {
                     artists: salvaged(found.artists, kept_artists, &mut trouble),
                 };
                 match trouble.first() {
-                    Some(reason) => Network::failed(reason, cx),
+                    Some(reason) if !local => Network::failed(reason, cx),
+                    Some(_) => {}
                     None => {
-                        Network::reached(cx);
+                        if !local {
+                            Network::reached(cx);
+                        }
                         this.served = Some(query);
                     }
                 }
@@ -507,7 +519,7 @@ impl Search {
             return;
         }
 
-        let Some(client) = self.session.read(cx).client() else {
+        let Some(client) = self.session.read(cx).browsing_client() else {
             return;
         };
 
@@ -549,7 +561,7 @@ impl Search {
 
     fn ranked(&self, catalog: &Catalog, cx: &Context<Self>) -> Vec<Hit> {
         let held = self.library.read(cx);
-        let state = held.state(Shelf::Streaming);
+        let state = held.state(self.session.read(cx).primary_shelf());
         rank(
             state.tracks(),
             state.albums(),

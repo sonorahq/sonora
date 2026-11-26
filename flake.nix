@@ -77,21 +77,27 @@
           path = root;
           filter =
             path: _:
-            builtins.elem (lib.head (lib.splitString "/" (lib.removePrefix "${toString root}/" path))) [
+            let
+              relative = lib.removePrefix "${toString root}/" path;
+            in
+            builtins.elem (lib.head (lib.splitString "/" relative)) [
               ".cargo"
               "Cargo.toml"
               "Cargo.lock"
               "crates"
               "assets"
               "COPYING"
-              "THIRD-PARTY.md"
+            ]
+            || builtins.elem relative [
+              "docs"
+              "docs/THIRD-PARTY.md"
             ];
         };
 
       # The nightly's version. Only the commit the nightly workflow puts on the `nightly` branch
       # carries this file, and its presence makes the package a nightly build.
-      nightly = lib.optionalAttrs (builtins.pathExists ./nix/nightly.json) (
-        lib.importJSON ./nix/nightly.json
+      nightly = lib.optionalAttrs (builtins.pathExists ./packaging/nix/nightly.json) (
+        lib.importJSON ./packaging/nix/nightly.json
       );
       toolchainChannel = (lib.importTOML ./rust-toolchain.toml).toolchain.channel;
     in
@@ -135,6 +141,19 @@
             ]
           );
 
+          # WebKit reads its font settings from org.gnome.desktop.interface, and a session without
+          # GNOME lists no schema for it. The defaults it falls back on mismeasure text, which on
+          # Google's sign-in page collapsed the whole layout into one narrow column.
+          gsettingsSchemas = lib.concatMapStringsSep ":" (
+            package: "${package}/share/gsettings-schemas/${package.name}"
+          ) (
+            with pkgs;
+            [
+              gsettings-desktop-schemas
+              gtk3
+            ]
+          );
+
           alsaPluginDirectory = pkgs.symlinkJoin {
             name = "sonora-alsa-plugins";
             paths = [
@@ -158,7 +177,8 @@
             wrapProgram "$out/bin/sonora" \
               --set ALSA_PLUGIN_DIR ${alsaPluginDirectory} \
               --prefix GIO_EXTRA_MODULES : ${pkgs.glib-networking}/lib/gio/modules \
-              --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath}
+              --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${gstPluginPath} \
+              --prefix XDG_DATA_DIRS : ${gsettingsSchemas}
           '';
 
           src = cargoSource ./.;
@@ -300,7 +320,7 @@
                     ''
                 }
                 install -Dm444 "$src/COPYING" "$LICENSE_DIR/LICENSE"
-                install -Dm444 "$src/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
+                install -Dm444 "$src/docs/THIRD-PARTY.md" "$LICENSE_DIR/THIRD-PARTY.md"
                 install -Dm444 "$src/assets/fonts/LICENSE.txt" \
                   "$LICENSE_DIR/sonora/LICENSE.Inter"
                 for licence in "$src/assets/icons"/*/LICENSE; do
@@ -457,7 +477,7 @@
         default =
           { pkgs, lib, ... }:
           {
-            imports = [ ./nix/home-manager.nix ];
+            imports = [ ./packaging/nix/home-manager.nix ];
             programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         sonora = self.homeManagerModules.default;
@@ -469,7 +489,7 @@
         default =
           { pkgs, lib, ... }:
           {
-            imports = [ ./nix/nixos.nix ];
+            imports = [ ./packaging/nix/nixos.nix ];
             programs.sonora.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         sonora = self.nixosModules.default;

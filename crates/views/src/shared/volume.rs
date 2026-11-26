@@ -1,7 +1,7 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    Context, Entity, MouseUpEvent, Pixels, ScrollWheelEvent, Window, deferred, div, px, relative,
+    Context, Entity, MouseUpEvent, Pixels, ScrollEvent, Window, deferred, div, px, relative,
 };
 use i18n::t;
 use state::Playback;
@@ -70,7 +70,7 @@ pub(crate) trait VolumeHost: Sized + 'static {
 /// Turns the volume by one notch for each step of the wheel, and keeps the wheel from the page.
 pub(crate) fn turn_volume<V: VolumeHost>(
     host: &mut V,
-    event: &ScrollWheelEvent,
+    event: &ScrollEvent,
     window: &mut Window,
     cx: &mut Context<V>,
 ) {
@@ -90,8 +90,8 @@ pub(crate) fn turn_volume<V: VolumeHost>(
 }
 
 /// The mute button with a horizontal slider `width` wide beside it, for a place with room for
-/// one. `slider` is the host's own, `over` is where the pointer hovers the slider if it does,
-/// and the drag shares `RisingVolume::held` with the slider that rises.
+/// one. `slider` is the host's own, `over` is where the pointer hovers the slider if it does and
+/// places the level bubble, and the drag shares `RisingVolume::held` with the slider that rises.
 pub(crate) fn volume_slider<V: VolumeHost>(
     slider: &ScrubberState,
     over: Option<f32>,
@@ -104,7 +104,13 @@ pub(crate) fn volume_slider<V: VolumeHost>(
     let empty = theme.muted_foreground.opacity(0.3);
     let level = playback.read(cx).shown_volume(cx);
     let muted = playback.read(cx).muted(cx);
-    let bubble = (over.is_some() || held).then(|| (level, percent(level)));
+    // A drag shows the level it sets. Otherwise the bubble follows the pointer and reads the
+    // level a click there would set, the way the seek bar reads a time.
+    let bubble = match held {
+        true => Some(level),
+        false => over,
+    }
+    .map(|at| (at, percent(at)));
 
     div()
         .id("player-volume")
@@ -114,7 +120,7 @@ pub(crate) fn volume_slider<V: VolumeHost>(
         .flex_none()
         .items_center()
         .gap_1()
-        .on_scroll_wheel(cx.listener(turn_volume))
+        .on_scroll(cx.listener(turn_volume))
         .child(
             Button::new("volume")
                 .ghost()
@@ -182,7 +188,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
         .relative()
         .flex()
         .flex_none()
-        .on_scroll_wheel(cx.listener(turn_volume))
+        .on_scroll(cx.listener(turn_volume))
         .child(
             div()
                 .id("volume-hover")
@@ -233,7 +239,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                     true => this.bg(theme.popover.opacity(GLASS_FILL)),
                     false => this.bg(theme.popover),
                 })
-                .on_scroll_wheel(cx.listener(turn_volume))
+                .on_scroll(cx.listener(turn_volume))
                 .on_hover(cx.listener(|this: &mut V, hovering: &bool, _, cx| {
                     this.volume().over_panel = *hovering;
                     cx.notify();
@@ -275,7 +281,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                     .pb(theme.metrics.control_small + px(GAP) * 2.)
                     .flex()
                     .justify_center()
-                    .on_scroll_wheel(cx.listener(turn_volume))
+                    .on_scroll(cx.listener(turn_volume))
                     .on_hover(cx.listener(|this: &mut V, hovering: &bool, _, cx| {
                         this.volume().over_zone = *hovering;
                         cx.notify();

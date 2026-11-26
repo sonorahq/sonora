@@ -1,7 +1,10 @@
 //! A replica of the activity card Discord shows in a profile for the status Sonora sets, in
 //! Discord's own dark theme, sizes and type. It follows every setting on the page and draws the
-//! status the way `state::discord` would send it for a track from listening history. Screen
-//! readers hear it as a named group of its text lines, buttons and provider badge.
+//! status the way `state::discord` would send it for a track from listening history. It is also
+//! where those settings change: the status name opens a menu of names, and the provider badge
+//! and the buttons turn on and off where they stand, drawn as dashed outlines with a plus while
+//! off. Screen readers hear it as a named group of its text lines, the name's picker and a
+//! toggle button for the badge and for each button.
 
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -9,14 +12,14 @@ use std::time::{Duration, Instant};
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, Hsla, Pixels, SharedString, Window, div, px, relative,
-    rgb, svg,
+    AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, Pixels, SharedString, Window, div,
+    px, relative, rgb, rgba, svg,
 };
 use i18n::t;
 use state::DiscordName;
 use ui::ActiveTheme as _;
 use ui::Glowing as _;
-use ui::{Artwork, tabular};
+use ui::{Artwork, Menu, MenuItem, Picker, Popover, Text, tabular};
 
 use super::Tick;
 use crate::screens::settings::SettingsView;
@@ -85,6 +88,20 @@ const BUTTON_GAP: Pixels = px(8.);
 const START_SHARE: f32 = 0.3;
 /// What the status calls itself when the setting names Sonora, Discord's name for the app.
 const SONORA: &str = "Sonora";
+/// The dashed outline and the plus of a badge or button that is off, white at low strength
+/// over the card.
+const GHOST_EDGE: u32 = 0xffffff4d;
+const GHOST_TEXT: u32 = 0xffffff8c;
+/// How large the plus on a badge or button that is off draws.
+const PLUS: Pixels = px(14.);
+/// The popover key of the status name's menu, how far the header's hover fill reaches past
+/// its text, and the fill itself, white at low strength over the card.
+const NAME_MENU: &str = "discord-name";
+const NAME_INSET: Pixels = px(4.);
+const NAME_HOVER: u32 = 0xffffff14;
+
+/// What a click on a part of the card does.
+type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 /// What the Discord page's preview keeps between frames.
 pub(in crate::screens::settings) struct DiscordPreview {
@@ -116,15 +133,18 @@ impl DiscordPreview {
     }
 }
 
-/// The Discord page's preview, the card Discord shows for the status Sonora sets. It shows a
+/// The Discord page's card, the one Discord shows for the status Sonora sets. It shows a
 /// track picked from listening history, playing while Sonora plays or has nothing loaded and
-/// paused while Sonora is paused, and dims only while Discord presence is disabled.
+/// paused while Sonora is paused. While the status is on its name, badge and buttons change
+/// where they stand, and a line under the card says so. While it is off the card dims and
+/// shows only what the status would.
 pub(in crate::screens::settings) fn preview(
     state: &DiscordPreview,
     view: &SettingsView,
-    window: &mut Window,
+    window: &Window,
     cx: &mut Context<SettingsView>,
-) -> Option<AnyElement> {
+) -> AnyElement {
+    let theme = *cx.theme();
     let sample = view.previews.picked(cx);
     let settings = view.settings.read(cx);
     let playback = view.playback.read(cx);
@@ -149,6 +169,12 @@ pub(in crate::screens::settings) fn preview(
             Some((slug, name, name))
         });
     let local = sample.id.as_deref().is_some_and(music::is_local_id);
+    // a local track belongs to the local files, so the button it would have stood for is the
+    // one of the service in use, and there is none to offer while no service is
+    let listen_on = match local {
+        true => session.provider_name(),
+        false => provider.map(|(_, name, _)| name),
+    };
 
     let listening: SharedString = match name {
         DiscordName::Sonora => SONORA.into(),
@@ -187,21 +213,107 @@ pub(in crate::screens::settings) fn preview(
         true => None,
         false => sample.large_cover(cx),
     };
-    let badge = badge
-        .then_some(provider)
-        .flatten()
-        .map(|(slug, name, _)| (slug, name));
+    let badge = provider.map(|(slug, name, _)| Badge {
+        slug,
+        name,
+        brand: provider_brand(slug, cx),
+        on: badge,
+        press: on.then(|| -> Press {
+            Box::new(cx.listener(move |this, _, _, cx| {
+                this.settings
+                    .update(cx, |settings, cx| settings.set_discord_badge(!badge, cx));
+            }))
+        }),
+    });
+    // the provider's button never goes out with hidden details or a local file, so the card
+    // leaves it out for them, except that a local track picked for the card still offers it
+    // while the card can be changed, as the card is the one place it is turned on and off
     let mut buttons = Vec::new();
-    if provider_button
-        && !hidden
-        && !local
-        && let Some((_, name, _)) = provider
+    if !hidden
+        && (!local || on)
+        && let Some(name) = listen_on
     {
-        buttons.push(t!("settings-discord-preview-listen-on", provider = name));
+        buttons.push(Link {
+            id: "discord-preview-provider-button",
+            label: t!("settings-discord-preview-listen-on", provider = name),
+            on: provider_button,
+            press: on.then(|| -> Press {
+                Box::new(cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_discord_provider_button(!provider_button, cx)
+                    });
+                }))
+            }),
+        });
     }
-    if sonora_button {
-        buttons.push(t!("get-sonora"));
-    }
+    buttons.push(Link {
+        id: "discord-preview-sonora-button",
+        label: t!("get-sonora"),
+        on: sonora_button,
+        press: on.then(|| -> Press {
+            Box::new(cx.listener(move |this, _, _, cx| {
+                this.settings.update(cx, |settings, cx| {
+                    settings.set_discord_sonora_button(!sonora_button, cx)
+                });
+            }))
+        }),
+    });
+    // with the status off the card shows only what the status would
+    buttons.retain(|link| link.on || link.press.is_some());
+
+    // the header names the status the way Discord does, cut short within the card, and opens
+    // the menu of names while the card can be changed
+    let header = ui::spoken(
+        "discord-preview-header",
+        t!("settings-discord-preview-listening", name = &listening),
+    )
+    .min_w_0()
+    .text_size(HEADER_SIZE)
+    .text_color(rgb(HEADER))
+    .truncate();
+    let header = match on {
+        true => Popover::new(NAME_MENU, view.popovers.clone())
+            .name(t!("settings-discord-name"))
+            .face(
+                div()
+                    .id("discord-preview-name")
+                    .flex()
+                    .items_center()
+                    .gap(NAME_INSET)
+                    .min_w_0()
+                    .mx(-NAME_INSET)
+                    .px(NAME_INSET)
+                    .rounded(BUTTON_RADIUS)
+                    .hover(|style| style.bg(rgba(NAME_HOVER)))
+                    .child(header)
+                    .child(
+                        svg()
+                            .path(icons::path("icons/chevron-down.svg"))
+                            .size(PLUS)
+                            .flex_none()
+                            .text_color(rgb(HEADER)),
+                    ),
+            )
+            .menu(
+                Menu::new("discord-name-menu")
+                    .name(t!("settings-discord-name"))
+                    .w(Picker::NARROW)
+                    .left_0()
+                    .items(DiscordName::ALL.map(|choice| {
+                        MenuItem::new(choice.id(), i18n::lookup(choice.key(), None))
+                            .selected(choice == name)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.set_discord_name(choice, cx)
+                                });
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .commands()
+            .into_any_element(),
+        false => header.into_any_element(),
+    };
 
     let (title, artist, album) = match hidden {
         true => (t!("discord-listening"), None, None),
@@ -223,65 +335,126 @@ pub(in crate::screens::settings) fn preview(
         .rounded(CARD_RADIUS)
         .bg(rgb(CARD))
         .font_family(FONT)
-        .child(
-            ui::spoken(
-                "discord-preview-header",
-                t!("settings-discord-preview-listening", name = &listening),
-            )
-            .text_size(HEADER_SIZE)
-            .text_color(rgb(HEADER))
-            .truncate(),
-        )
+        .child(header)
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(ART_GAP)
-                .child(image(art, badge, cx))
+                .child(image(art, badge))
                 .child(details(title, artist, album, timing)),
         )
         .when(!buttons.is_empty(), |card| {
-            card.child(div().flex().flex_col().gap(BUTTON_GAP).children(
-                buttons.into_iter().enumerate().map(|(index, label)| {
-                    div()
-                        .id(("discord-preview-button", index))
-                        .role(Role::Button)
-                        .aria_label(label.clone())
-                        .h(BUTTON_HEIGHT)
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(BUTTON_RADIUS)
-                        .bg(rgb(BUTTON))
-                        .text_size(BUTTON_SIZE)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(BUTTON_TEXT))
-                        .child(label)
-                        .glowed(rgb(BUTTON_HOVER).into())
-                }),
-            ))
+            card.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(BUTTON_GAP)
+                    .children(buttons.into_iter().map(link)),
+            )
         });
 
-    Some(
-        super::framed(
-            div()
-                .w_full()
-                .flex()
-                .justify_center()
-                .p(SURFACE_PAD)
-                .bg(cx.theme().background)
-                .child(card.when(!on, |card| card.opacity(super::DIMMED))),
-            cx,
-        )
-        .into_any_element(),
+    super::framed(
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(CARD_PAD)
+            .p(SURFACE_PAD)
+            .bg(theme.background)
+            .child(card.when(!on, |card| card.opacity(super::DIMMED)))
+            .when(on, |surface| {
+                surface.child(
+                    ui::spoken("discord-preview-hint", t!("settings-discord-preview-hint"))
+                        .text_size(theme.text(Text::Small))
+                        .text_color(theme.muted_foreground),
+                )
+            }),
+        cx,
     )
+    .into_any_element()
+}
+
+/// The provider's badge on the large image: the provider by slug and name, whether the status
+/// carries it, and what a click on it does while the card can be changed.
+struct Badge {
+    slug: &'static str,
+    name: &'static str,
+    /// The provider's own colour, which the badge's disc is filled with.
+    brand: Hsla,
+    on: bool,
+    press: Option<Press>,
+}
+
+/// One button under the status: its id, its label, whether the status carries it, and what a
+/// click on it does while the card can be changed.
+struct Link {
+    id: &'static str,
+    label: SharedString,
+    on: bool,
+    press: Option<Press>,
+}
+
+/// A button under the status the way Discord draws it while `on`, or a dashed outline with a
+/// plus while off. One that can be changed is a toggle button to screen readers, and a plain
+/// button otherwise.
+fn link(link: Link) -> impl IntoElement {
+    let Link {
+        id,
+        label,
+        on,
+        press,
+    } = link;
+    let editable = press.is_some();
+
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .when(editable, |this| {
+            this.aria_toggled(gpui::accesskit::Toggled::from(on))
+        })
+        .h(BUTTON_HEIGHT)
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .rounded(BUTTON_RADIUS)
+        .text_size(BUTTON_SIZE)
+        .font_weight(FontWeight::MEDIUM)
+        .map(|this| match on {
+            true => this.bg(rgb(BUTTON)).text_color(rgb(BUTTON_TEXT)),
+            false => this
+                .border_1()
+                .border_dashed()
+                .border_color(rgba(GHOST_EDGE))
+                .text_color(rgba(GHOST_TEXT))
+                .child(
+                    svg()
+                        .path(icons::path("icons/plus.svg"))
+                        .size(PLUS)
+                        .flex_none()
+                        .text_color(rgba(GHOST_TEXT)),
+                ),
+        })
+        .child(label)
+        .when_some(press, |this, press| {
+            this.cursor_pointer()
+                .on_click(move |event, window, cx| press(event, window, cx))
+        })
+        .glowed(match on {
+            true => rgb(BUTTON_HOVER).into(),
+            false => rgb(BUTTON).into(),
+        })
 }
 
 /// The large image with the provider's badge at its bottom right, or Sonora's application
-/// icon when the status carries no art, as Discord falls back to it. The badge, given as the
-/// provider's slug and name, reads to screen readers as an image named after the provider.
-fn image(art: Option<String>, badge: Option<(&'static str, &'static str)>, cx: &gpui::App) -> Div {
+/// icon when the status carries no art, as Discord falls back to it. A badge the status leaves
+/// out is drawn as a dashed circle with a plus while it can be changed, and not at all
+/// otherwise.
+fn image(art: Option<String>, badge: Option<Badge>) -> Div {
     let picture = match art {
         Some(url) => Artwork::new(Some(url))
             .size(ART)
@@ -302,20 +475,64 @@ fn image(art: Option<String>, badge: Option<(&'static str, &'static str)>, cx: &
             )
             .into_any_element(),
     };
+    let badge = badge.filter(|badge| badge.on || badge.press.is_some());
 
     div()
         .relative()
         .flex_none()
         .size(ART)
         .child(picture)
-        .when_some(badge, |this, (slug, name)| {
-            let brand: Hsla = provider_brand(slug, cx);
+        .when_some(badge, |this, badge| {
+            let Badge {
+                slug,
+                name,
+                brand,
+                on,
+                press,
+            } = badge;
+            let editable = press.is_some();
             let outer = BADGE_SIZE + BADGE_RING * 2.;
+            let disc = match on {
+                true => div()
+                    .size(BADGE_SIZE)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(brand)
+                    .child(
+                        svg()
+                            .path(icons::path(provider_logo(slug)))
+                            .size(BADGE_SIZE * BADGE_MARK_SHARE)
+                            .text_color(rgb(BADGE_MARK)),
+                    ),
+                false => div()
+                    .size(BADGE_SIZE)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(rgba(GHOST_EDGE))
+                    .child(
+                        svg()
+                            .path(icons::path("icons/plus.svg"))
+                            .size(PLUS)
+                            .text_color(rgba(GHOST_TEXT)),
+                    ),
+            };
             this.child(
                 div()
                     .id("discord-preview-badge")
-                    .role(Role::Image)
-                    .aria_label(name)
+                    .map(|this| match editable {
+                        true => this
+                            .role(Role::Button)
+                            .aria_label(t!("settings-discord-badge"))
+                            .aria_description(name)
+                            .aria_toggled(gpui::accesskit::Toggled::from(on)),
+                        false => this.role(Role::Image).aria_label(name),
+                    })
                     .absolute()
                     .right(-BADGE_OVERHANG)
                     .bottom(-BADGE_OVERHANG)
@@ -323,21 +540,11 @@ fn image(art: Option<String>, badge: Option<(&'static str, &'static str)>, cx: &
                     .p(BADGE_RING)
                     .rounded_full()
                     .bg(rgb(CARD))
-                    .child(
-                        div()
-                            .size(BADGE_SIZE)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(brand)
-                            .child(
-                                svg()
-                                    .path(icons::path(provider_logo(slug)))
-                                    .size(BADGE_SIZE * BADGE_MARK_SHARE)
-                                    .text_color(rgb(BADGE_MARK)),
-                            ),
-                    ),
+                    .child(disc)
+                    .when_some(press, |this, press| {
+                        this.cursor_pointer()
+                            .on_click(move |event, window, cx| press(event, window, cx))
+                    }),
             )
         })
 }

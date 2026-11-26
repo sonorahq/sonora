@@ -157,7 +157,7 @@ impl Render for GenreView {
             None => self
                 .shelves
                 .update(cx, |shelves, cx| match loading && sections.is_empty() {
-                    true => shelves.pending(width, cx),
+                    true => shelves.pending(width, window, cx),
                     false => vec![shelves.render(sections, mode, width, window, cx)],
                 }),
         };
@@ -169,7 +169,7 @@ impl Render for GenreView {
             .child(
                 Scroller::new("genre", &self.scrollbar)
                     .hold()
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                     .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .py(pad)
                     .px(pad + crate::chrome::Chrome::margin(window, cx))

@@ -1525,7 +1525,7 @@ impl<S: TableSource> TableState<S> {
                             this.delegate.pick(
                                 row,
                                 event.modifiers.shift,
-                                event.modifiers.secondary() && !event.modifiers.shift,
+                                event.modifiers.secondary(cx) && !event.modifiers.shift,
                             );
                             if event.click_count >= 2 {
                                 cx.emit(TableEvent::DoubleClicked(display));

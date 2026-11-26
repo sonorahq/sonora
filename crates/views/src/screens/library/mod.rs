@@ -27,7 +27,7 @@ use state::{
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pin, Pinnable, Popovers,
     Popup, Scrollbar, Scroller, Sort, SortAxis, TableDelegate, TableEvent, TableSource, TableState,
-    Text, Vacancy, Viewport, heading, quantize, runtime, scrolled, snapped, table,
+    Text, Vacancy, Viewport, heading, runtime, scrolled, snapped, table,
 };
 
 use crate::shared::album_grid::{AlbumTiles, CardGrid, TileLook};
@@ -687,8 +687,15 @@ impl LibraryView {
 
     /// The viewport of a table that opens the page with no header above it. `lead` is the space
     /// the page leaves above the table.
-    fn viewport(scroll: &ScrollHandle, lead: Pixels, window: &Window, cx: &App) -> Viewport {
-        quantize(scroll, window);
+    fn viewport(
+        scrollbar: &Entity<Scrollbar>,
+        lead: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Viewport {
+        let scrollbar = scrollbar.read(cx);
+        scrollbar.quantize(window);
+        let scroll = scrollbar.scroll();
         let visible = scroll.bounds().size.height;
 
         Viewport::measured(scrolled(scroll) - lead, visible, window).covered(Chrome::bottom(cx))
@@ -935,7 +942,7 @@ impl LibraryView {
     fn pending_cards(&self, window: &Window, cx: &App) -> AnyElement {
         let inset = cx.theme().metrics.inset;
         let room = cells::content_width(window, page::reserved(inset), cx);
-        let layout = CardGrid::layout(room);
+        let layout = CardGrid::layout(room, window);
         let gap = deck_gap(window);
         let tile = Card::tile_height(layout.card, window, cx);
         let rows = (window.viewport_size().height / (tile + gap))
@@ -944,7 +951,7 @@ impl LibraryView {
         let circle = self.section == Section::Artists;
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
             .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .py(inset)
@@ -955,7 +962,7 @@ impl LibraryView {
                     .px(inset)
                     .gap(gap)
                     .children((0..rows).map(|row| {
-                        CardGrid::new(room).children((0..layout.columns).map(move |column| {
+                        CardGrid::new(layout).children((0..layout.columns).map(move |column| {
                             Card::skeleton(("library-pending", row * layout.columns + column))
                                 .tile(layout.card)
                                 .when(circle, Card::circle)
@@ -970,7 +977,7 @@ impl LibraryView {
         let theme = *cx.theme();
         let inset = theme.metrics.inset;
         let room = cells::content_width(window, page::reserved(inset), cx);
-        let layout = CardGrid::layout(room);
+        let layout = CardGrid::layout(room, window);
         let columns = layout.columns;
         let card = layout.card;
 
@@ -978,17 +985,13 @@ impl LibraryView {
         let gap = deck_gap(window);
         let tile = Card::tile_height(card, window, cx);
         let heading = head_height(window, cx);
-        // A letter heading brings room of its own above its title, so a deck that opens on one
-        // starts that much higher and the title lines up with the cards' side inset.
-        let lead = match self.card_rows.first() {
-            Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
-            _ => inset,
-        };
-        let depth = (scrolled(&scroll) - lead).max(Pixels::ZERO);
+        let depth =
+            (scrolled(&scroll) - deck_lead(&self.card_rows, inset, window)).max(Pixels::ZERO);
 
-        let repacked = self.card_columns != columns
-            || (self.card_tile - tile).abs() >= px(0.5)
-            || (self.card_heading - heading).abs() >= px(0.5);
+        // Any change in a row's height counts, since a slow resize grows every row above the
+        // top by less than a pixel per frame and the deck would drift by their sum.
+        let repacked =
+            self.card_columns != columns || self.card_tile != tile || self.card_heading != heading;
         // A deck still at its top stays there, since only a row scrolled into needs holding.
         let anchor =
             (repacked && self.card_columns != 0 && !self.cards_dirty && depth > Pixels::ZERO)
@@ -1019,6 +1022,7 @@ impl LibraryView {
         }
         self.card_tile = tile;
         self.card_heading = heading;
+        let lead = deck_lead(&self.card_rows, inset, window);
 
         let heights = deck_heights(&self.card_rows, tile, heading);
         if let Some((index, share)) =
@@ -1039,7 +1043,7 @@ impl LibraryView {
         let playback = self.playback.clone();
 
         Scroller::new("library-cards", &self.card_scrollbar)
-            .bottom_inset(crate::chrome::Chrome::bottom(cx))
+            .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
             .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
             .px(crate::chrome::Chrome::margin(window, cx))
             .pt(lead)
@@ -1081,7 +1085,7 @@ impl LibraryView {
                             }
                             DeckRow::Cards(cards) => {
                                 let row = match section {
-                                    Section::Songs => CardGrid::new(room)
+                                    Section::Songs => CardGrid::new(layout)
                                         .children(cards.iter().filter_map(|&(display, row)| {
                                             view.read(cx).track_card(display, row, card, cx)
                                         }))
@@ -1090,15 +1094,15 @@ impl LibraryView {
                                         let looks = view.read(cx).album_looks(cards, card, cx);
                                         tiles
                                             .borrow_mut()
-                                            .row(room, tile, looks, &playback, cx)
+                                            .row(layout, tile, looks, &playback, cx)
                                             .into_any_element()
                                     }
-                                    Section::Playlists => CardGrid::new(room)
+                                    Section::Playlists => CardGrid::new(layout)
                                         .children(cards.iter().filter_map(|&(display, row)| {
                                             view.read(cx).playlist_card(display, row, card, cx)
                                         }))
                                         .into_any_element(),
-                                    Section::Artists => CardGrid::new(room)
+                                    Section::Artists => CardGrid::new(layout)
                                         .children(cards.iter().filter_map(|&(display, row)| {
                                             view.read(cx).artist_card(display, row, card, cx)
                                         }))
@@ -1266,12 +1270,12 @@ impl Render for LibraryView {
         let framed = page::framed(window, cx);
         if mode == Mode::List {
             self.table(self.section).claim(cx);
-            let scroll = self.scrollbar.read(cx).scroll().clone();
+            let bar = &self.scrollbar;
             let viewport = match (self.section.listing(), framed) {
-                (true, true) => page::past_border(page::viewport(&scroll, inset, window, cx)),
-                (true, false) => page::viewport(&scroll, inset, window, cx),
-                (false, true) => page::past_border(Self::viewport(&scroll, inset, window, cx)),
-                (false, false) => Self::viewport(&scroll, Pixels::ZERO, window, cx),
+                (true, true) => page::past_border(page::viewport(bar, inset, window, cx)),
+                (true, false) => page::viewport(bar, inset, window, cx),
+                (false, true) => page::past_border(Self::viewport(bar, inset, window, cx)),
+                (false, false) => Self::viewport(bar, Pixels::ZERO, window, cx),
             };
             self.table(self.section).set_viewport(viewport, cx);
         }
@@ -1308,7 +1312,7 @@ impl Render for LibraryView {
                 .into_any_element(),
             (section, Mode::List) if section.listing() => {
                 Scroller::new("library-page", &self.scrollbar)
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                     .top_inset(page::below_head(window, cx))
                     .px(crate::chrome::Chrome::margin(window, cx))
                     .pt(inset)
@@ -1319,7 +1323,7 @@ impl Render for LibraryView {
                     .into_any_element()
             }
             (_, Mode::List) => Scroller::new("library-page", &self.scrollbar)
-                .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                 .top_inset(page::below_head(window, cx))
                 .px(crate::chrome::Chrome::margin(window, cx))
                 .when(framed, |this| this.pt(inset))
@@ -1541,6 +1545,17 @@ fn head_height(window: &Window, cx: &App) -> Pixels {
 /// The room a letter heading keeps above its title, which `head` pads with `pt_2`.
 fn head_lead(window: &Window) -> Pixels {
     snapped(window.rem_size() * 0.5, window)
+}
+
+/// The room above the first row of a deck. A letter heading brings room of its own above its
+/// title, so a deck that opens on one starts that much higher and the title lines up with the
+/// cards' side inset. Pass the rows the deck draws this frame, or it stays shifted until the
+/// next redraw.
+fn deck_lead(rows: &[DeckRow], inset: Pixels, window: &Window) -> Pixels {
+    match rows.first() {
+        Some(DeckRow::Heading(_)) => (inset - head_lead(window)).max(Pixels::ZERO),
+        _ => inset,
+    }
 }
 
 fn deck_gap(window: &Window) -> Pixels {

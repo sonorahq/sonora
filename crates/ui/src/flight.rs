@@ -410,14 +410,6 @@ impl Element for Flight {
     }
 }
 
-impl IntoElement for Flight {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Posed {
     type RequestLayoutState = ();
     type PrepaintState = ();
@@ -475,14 +467,6 @@ impl Element for Posed {
         window.with_filter(bounds, filter, self.reach.get(), |window| {
             self.child.paint(window, cx)
         });
-    }
-}
-
-impl IntoElement for Posed {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

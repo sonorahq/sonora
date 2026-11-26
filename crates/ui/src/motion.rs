@@ -629,9 +629,29 @@ pub fn glow_fill(rest: Option<Hsla>, fill: Hsla, level: f32) -> Option<Hsla> {
         return None;
     }
     Some(match rest.filter(|rest| rest.a > 0.) {
-        Some(rest) => mix(rest, fill, level),
+        Some(rest) => crossfade(rest, fill, level),
         None => fill.opacity(level),
     })
+}
+
+/// The colour that paints like `from` and `to` drawn over the same backdrop and dissolved into
+/// each other at `t`. Unlike [`mix`] it weighs each colour by its alpha, so a translucent `to`
+/// never shows its own colour stronger than its alpha allows midway.
+fn crossfade(from: Hsla, to: Hsla, t: f32) -> Hsla {
+    let (from, to) = (Rgba::from(from), Rgba::from(to));
+    let step = t.clamp(0., 1.);
+    let a = from.a + (to.a - from.a) * step;
+    if a <= 0. {
+        return to.into();
+    }
+    let channel = |x: f32, y: f32| (x * from.a * (1. - step) + y * to.a * step) / a;
+    Rgba {
+        r: channel(from.r, to.r),
+        g: channel(from.g, to.g),
+        b: channel(from.b, to.b),
+        a,
+    }
+    .into()
 }
 
 /// The solid colour `style` fills its element with, if it sets one.
@@ -792,6 +812,17 @@ impl Sprung {
     /// Where the spring stands now.
     pub fn position(&self) -> f32 {
         self.state.position
+    }
+
+    /// How fast the spring moves now, in units a second.
+    pub fn velocity(&self) -> f32 {
+        self.state.velocity
+    }
+
+    /// Sets how fast the spring moves, in units a second, keeping where it stands and its clock,
+    /// so a motion turned mid-flight carries on without a stalled frame.
+    pub fn set_velocity(&mut self, velocity: f32) {
+        self.state.velocity = velocity;
     }
 
     /// Whether the spring has come to rest where it was last sent, rather than moving.

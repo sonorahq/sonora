@@ -68,7 +68,7 @@ nav-local = 로컬 음악
 nav-back = 뒤로
 nav-forward = 앞으로
 nav-trail = 탐색 기록
-nav-sidebar = 사이드바 전환
+nav-sidebar = 사이드바 표시/숨기기
 nav-sidebar-right = 가사 및 재생 목록 표시/숨기기
 nav-pinned = 고정됨
 nav-unpin = 고정 해제
@@ -96,6 +96,7 @@ library-local-unconfigured = 로컬 라이브러리 구성
 app-refresh = 새로고침
 app-dev-badge = 개발
 app-dev-build = 개발 빌드
+app-dev-build-branch = { $branch }의 개발 빌드
 downloads-active = 다운로드 중
 downloads-left = { $count ->
     [one] { $count }곡 남음
@@ -164,7 +165,7 @@ filter-streaming-only = 스트리밍만
 
 # view
 view-list = 목록
-view-cards = 그리드
+view-cards = 바둑판식
 
 # toolbar
 tool-sort = 정렬

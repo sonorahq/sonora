@@ -5,13 +5,13 @@
 //! through three steps in order: consent
 //! to downloading the program from Spotify, the listener's API key, and pairing the program with
 //! the account from one of Spotify's apps. Once all three are done the playback engine is rebuilt
-//! on Soloist. `music::soloist` runs the pairing, and
-//! this entity keeps track of where it stands.
+//! on Soloist. The `soloist` crate runs the pairing, and this entity keeps track of where it
+//! stands.
 
 use std::time::Duration;
 
 use gpui::{App, Context, Entity, EventEmitter, Task};
-use music::soloist::{self, Build, Trouble};
+use soloist::{self, Build, Trouble};
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 

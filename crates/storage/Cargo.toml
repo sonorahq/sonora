@@ -7,7 +7,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 dirs.workspace = true
-log.workspace = true
 rusqlite.workspace = true
 
 [lints]

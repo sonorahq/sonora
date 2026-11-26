@@ -6,8 +6,8 @@ use gpui::prelude::*;
 use gpui::{
     AbsoluteLength, Anchor, AnyElement, AnyWindowHandle, App, Bounds, ClickEvent, DefiniteLength,
     Div, ElementId, Entity, FocusHandle, Focusable as _, Global, Interactivity, Length,
-    MouseButton, MouseClickEvent, MouseDownEvent, Pixels, Point, ScrollWheelEvent, SharedString,
-    Size, Stateful, StyleRefinement, Window, anchored, deferred, div, phi, point, px, svg,
+    MouseButton, MouseClickEvent, MouseDownEvent, Pixels, Point, ScrollEvent, SharedString, Size,
+    Stateful, StyleRefinement, Window, anchored, deferred, div, phi, point, px, svg,
 };
 
 use crate::Artwork;
@@ -44,6 +44,9 @@ const HOLD_REACH: f64 = 8.;
 const SAFE_X: Pixels = px(6.);
 const SAFE_Y: Pixels = px(12.);
 const NEAR: usize = Near::InnerBar as usize + 1;
+/// Paints a menu over a `Dropdown` panel, so a context menu opened from a field or from a row in
+/// the panel is never drawn under it.
+const PRIORITY: usize = 2;
 
 type Close = Rc<dyn Fn(&(), &mut Window, &mut App) + 'static>;
 type Action = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -311,7 +314,7 @@ impl MenuSearch {
         }
         match restore {
             Some(focus) => window.focus(&focus, cx),
-            None => window.blur(cx),
+            None => crate::release_focus(window, cx),
         }
     }
 
@@ -607,7 +610,7 @@ impl Menu {
             name: None,
             dismiss: None,
             action: None,
-            priority: 1,
+            priority: PRIORITY,
             deferred: true,
             scrollbar: None,
             header: None,
@@ -1133,7 +1136,7 @@ impl RenderOnce for Menu {
                     .flex_col()
                     .overflow_y_scroll()
                     .track_scroll(scrollbar.read(cx).scroll())
-                    .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                    .on_scroll(move |event: &ScrollEvent, window, cx| {
                         if event.delta.precise() {
                             return;
                         }
@@ -1286,6 +1289,9 @@ impl RenderOnce for Menu {
                 })
             })
             .occlude()
+            // A press on the panel leaves the keyboard in the field it was in, so a context menu
+            // opened from a row in a field's dropdown does not put the dropdown away.
+            .capture_any_mouse_down(|_, window, cx| crate::input::keep_focus(window, cx))
             .child(body);
         if let Some(dismiss) = dismiss.clone().filter(|_| shielded) {
             arm(dismiss, cx);

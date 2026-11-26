@@ -1,0 +1,229 @@
+use std::fmt::Write as _;
+
+use spotifyapis::proto::extended_metadata::Image;
+use spotifyapis::proto::extended_metadata::ImageSize;
+
+pub const UNKNOWN: &str = "Unknown";
+const IMAGE_CDN: &str = "https://image-cdn-fa.spotifycdn.com/image/";
+const IMAGE_PREFIXES: [&str; 3] = [
+    IMAGE_CDN,
+    "https://i.scdn.co/image/",
+    "https://image-cdn-ak.spotifycdn.com/image/",
+];
+const ALBUM_COVER: &str = "ab67616d0000";
+const ARTIST_PORTRAIT: &str = "ab6761610000";
+/// The size codes that follow `ALBUM_COVER` in an album cover id.
+const LARGE: &str = "b273";
+const MEDIUM: &str = "1e02";
+const ORIGINAL: &str = "82c1";
+const BLEND: &str = "blend";
+const BY_SIZE: [&str; 4] = ["xlarge", "large", "default", "small"];
+
+pub fn image_url(file_id: &[u8]) -> Option<String> {
+    if file_id.is_empty() {
+        return None;
+    }
+
+    let mut url = String::with_capacity(IMAGE_CDN.len() + file_id.len() * 2);
+    url.push_str(IMAGE_CDN);
+    append_hex(&mut url, file_id);
+    Some(url)
+}
+
+/// Appends a lower-case hexadecimal representation without allocating per byte.
+pub(super) fn append_hex(output: &mut String, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+}
+
+/// Joins credit names directly into the result string.
+pub(super) fn join_names<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
+    let mut joined = names.next().unwrap_or_default().to_owned();
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+    joined
+}
+
+/// Reads a playlist picture URL or Spotify image URI from a projected list.
+pub(super) fn playlist_image(address: &str) -> Option<String> {
+    if let Some(ids) = address.strip_prefix("spotify:mosaic:") {
+        let mut ids = ids.split(':');
+        let images = [ids.next()?, ids.next()?, ids.next()?, ids.next()?];
+        if ids.next().is_some()
+            || !images
+                .iter()
+                .all(|id| id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return None;
+        }
+        let prefix = "https://mosaic.scdn.co/640/";
+        let mut url = String::with_capacity(prefix.len() + 4 * 40);
+        url.push_str(prefix);
+        for image in images {
+            url.push_str(image);
+        }
+        return Some(url);
+    }
+    if let Some(id) = address.strip_prefix("spotify:image:") {
+        return (id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| format!("{IMAGE_CDN}{id}"));
+    }
+    fetchable(address).then(|| address.to_owned())
+}
+
+/// Replaces the cover's size code while preserving its hash.
+pub fn cover_at(url: &str, size: music::CoverSize) -> Option<String> {
+    let code = match size {
+        music::CoverSize::Large => LARGE,
+        music::CoverSize::Full => ORIGINAL,
+    };
+    let (_, hash) = album_cover_id(url)?;
+    Some(format!("{IMAGE_CDN}{ALBUM_COVER}{code}{hash}"))
+}
+
+/// Uses a verified Spotify CDN size that covers the requested physical pixels.
+pub(super) fn thumbnail_at(url: &str, edge: u32) -> Option<String> {
+    if let Some((code, hash)) = album_cover_id(url) {
+        return (code == LARGE && edge <= 300)
+            .then(|| format!("{IMAGE_CDN}{ALBUM_COVER}{MEDIUM}{hash}"));
+    }
+    let (current, hash) = sized_image_id(url, ARTIST_PORTRAIT)?;
+    let (pixels, _) = [(160, "f178"), (320, "5174"), (640, "e5eb")]
+        .into_iter()
+        .find(|&(_, code)| code == current)?;
+    let smaller = match edge {
+        0..=160 if pixels > 160 => "f178",
+        161..=320 if pixels > 320 => "5174",
+        _ => return None,
+    };
+    Some(format!("{IMAGE_CDN}{ARTIST_PORTRAIT}{smaller}{hash}"))
+}
+
+fn album_cover_id(url: &str) -> Option<(&str, &str)> {
+    sized_image_id(url, ALBUM_COVER)
+}
+
+fn sized_image_id<'a>(url: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
+    let id = IMAGE_PREFIXES
+        .iter()
+        .find_map(|prefix| url.strip_prefix(*prefix))?
+        .strip_prefix(kind)?;
+    if id.len() != 28 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(id.split_at(4))
+}
+
+/// Uses the size class when the image has no explicit width.
+pub fn image_width(image: &Image) -> i32 {
+    if image.width() > 0 {
+        return image.width();
+    }
+
+    match image.size() {
+        ImageSize::Small => 64,
+        ImageSize::Default => 300,
+        ImageSize::Large => 640,
+        ImageSize::Xlarge => 1_000,
+    }
+}
+
+fn blend_format<'a>(format: &str, mut keys: impl Iterator<Item = &'a str>) -> bool {
+    format.to_ascii_lowercase().contains(BLEND)
+        || keys.any(|key| key.to_ascii_lowercase().starts_with(BLEND))
+}
+
+pub fn fetchable(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn cover_from<'a>(
+    mut sizes: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    picture: &[u8],
+) -> Option<String> {
+    for target in BY_SIZE {
+        if let Some((_, url)) = sizes
+            .clone()
+            .find(|(name, _)| *name == target)
+            .filter(|(_, url)| fetchable(url))
+        {
+            return Some(url.to_owned());
+        }
+    }
+
+    sizes
+        .next()
+        .map(|(_, url)| url)
+        .filter(|url| fetchable(url))
+        .map(str::to_owned)
+        .or_else(|| image_url(picture))
+}
+
+/// Maps a GetLists summary with the same cover preference as a playlist snapshot.
+pub(super) fn playlist_summary(
+    id: String,
+    attrs: spotifyapis::proto::list_read_service::Attributes,
+    username: &str,
+) -> music::Playlist {
+    let cover = cover_from(
+        attrs
+            .picture_sizes
+            .iter()
+            .flat_map(|sizes| &sizes.picture_size)
+            .map(|size| (size.target_name.as_str(), size.url.as_str())),
+        &attrs.picture_file_id,
+    );
+    music::Playlist {
+        id,
+        name: playlist_label(&attrs.name),
+        owner: playlist_label(&attrs.owner_username),
+        owned: attrs.owner_username == username,
+        owner_id: attrs.owner_username,
+        collaborative: attrs
+            .capabilities
+            .is_some_and(|value| value.can_edit_items()),
+        blend: blend_format(
+            attrs.format.as_deref().unwrap_or_default(),
+            attrs
+                .format_attributes
+                .iter()
+                .flat_map(|attrs| attrs.entries.keys())
+                .map(String::as_str),
+        ),
+        cover,
+        track_count: u32::try_from(
+            attrs
+                .approximate_length
+                .unwrap_or_default()
+                .clamp(0, i64::from(u32::MAX)),
+        )
+        .unwrap_or_default(),
+        modified_at: attrs
+            .updated_at
+            .filter(|stamp| stamp.seconds > 0)
+            .map(|stamp| stamp.seconds),
+        ..Default::default()
+    }
+}
+
+fn playlist_label(name: &str) -> String {
+    if name.is_empty() {
+        UNKNOWN.to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Adds the recording or work copyright symbol when missing.
+pub fn copyright(recording: bool, text: &str) -> String {
+    match text.starts_with(['©', '℗']) {
+        true => text.to_owned(),
+        false => match recording {
+            true => format!("℗ {text}"),
+            false => format!("© {text}"),
+        },
+    }
+}

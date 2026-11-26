@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use artwork::{ArtworkQuery, ArtworkSearch};
 use discord_rich_presence::{DiscordIpc, activity};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
-use music::artwork::{ArtworkQuery, ArtworkSearch};
 use music::{MediaKind, MusicProvider, Track};
 use tokio::sync::watch;
 
@@ -290,26 +290,41 @@ impl Discord {
     fn shown(&mut self, cx: &App) -> Shown {
         self.wanted = None;
         let playback = self.playback.read(cx);
-        let Some(track) = playback.track() else {
+        // while another device has playback, the status is what plays there
+        let (track, playing, position) = match playback.steered(cx) {
+            Some(steered) => (
+                playback.shown_track(cx),
+                steered.state.playing,
+                playback.shown_time(cx).0,
+            ),
+            None => (
+                playback.track().cloned(),
+                playback.wants_playing(),
+                playback.live_position(),
+            ),
+        };
+        let Some(track) = &track else {
             self.timing.reset();
             return Shown::Off;
         };
         // a paused status stays up when enabled, but without the timestamps, so nothing keeps counting
-        let playing = playback.wants_playing();
 
         let since = self.timing.listening_since();
         let settings = self.settings.read(cx);
         if !settings.discord_presence() || !playing && !settings.discord_show_paused() {
             return Shown::Off;
         }
+        // Spotify shows its own status on Discord while Connect plays, which a cast screen or a
+        // Jellyfin session does not, and the setting is offered for Spotify alone
+        let session = self.session.read(cx);
         let devices = self.devices.read(cx);
         if settings.discord_hide_on_connect()
+            && session.provider_slug() == Some("spotify")
             && (devices.publishing() || devices.steered().is_some())
         {
             return Shown::Off;
         }
 
-        let session = self.session.read(cx);
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
             badge: settings.discord_badge().then(|| provider.slug()),
@@ -329,10 +344,7 @@ impl Discord {
             }));
         }
 
-        let started_at = playing.then(|| {
-            self.timing
-                .track_started_at(track, playback.live_position())
-        });
+        let started_at = playing.then(|| self.timing.track_started_at(track, position));
         let duration = track.duration.as_secs() as i64;
         let public_art = provider.is_some_and(|provider| provider.public_art());
         let lookup = !track.id.as_deref().is_some_and(music::is_local_id)

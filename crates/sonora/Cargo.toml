@@ -7,7 +7,7 @@ license.workspace = true
 [features]
 # the gpui frame overlay and repaint wash, off in normal builds
 profiler = ["gpui/profiler"]
-# patch running debug builds from `dx serve --hot-patch`, see CONTRIBUTING.md
+# patch running debug builds from `dx serve --hot-patch`, see .github/CONTRIBUTING.md
 hot-reload = ["gpui/hot-reload"]
 # compile the Metal shaders at launch, so a build needs no Xcode, as the Nix package on macOS does
 runtime-shaders = ["gpui_platform/runtime_shaders"]
@@ -24,6 +24,16 @@ gpui_platform.workspace = true
 i18n.workspace = true
 icons.workspace = true
 music = { workspace = true, features = ["widevine"] }
+apple.workspace = true
+deezer.workspace = true
+jellyfin.workspace = true
+local.workspace = true
+lyric-sources.workspace = true
+plex.workspace = true
+spotify.workspace = true
+subsonic.workspace = true
+tidal.workspace = true
+youtube.workspace = true
 state.workspace = true
 storage.workspace = true
 input.workspace = true
@@ -34,6 +44,7 @@ webview.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 interprocess.workspace = true
 image.workspace = true

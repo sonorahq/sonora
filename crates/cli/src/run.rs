@@ -12,6 +12,7 @@ const NOT_RUNNING: u8 = 3;
 /// The headers of `sonora providers` and `sonora search`.
 const PROVIDERS: [&str; 2] = ["provider", "status"];
 const HITS: [&str; 5] = ["type", "title", "by", "length", "link"];
+const PLAYLISTS: [&str; 3] = ["id", "name", "visibility"];
 
 /// Carries out a command that needs no running Sonora.
 pub fn local(local: Local) -> ExitCode {
@@ -145,6 +146,21 @@ fn show(value: &Value) -> String {
             }),
         ),
         Value::Queue(queue) => show_queue(queue),
+        Value::Playlists(playlists) if playlists.is_empty() => String::new(),
+        Value::Playlists(playlists) => table(
+            PLAYLISTS,
+            playlists.iter().map(|playlist| {
+                [
+                    playlist.id.clone(),
+                    playlist.name.clone(),
+                    match playlist.public {
+                        true => "public",
+                        false => "private",
+                    }
+                    .to_owned(),
+                ]
+            }),
+        ),
         Value::Lyrics(lyrics) => show_lyrics(lyrics),
         Value::Liked(liked) => match liked {
             true => "on".to_owned(),
@@ -259,6 +275,7 @@ fn json(value: &Value) -> String {
         Value::Queue(queue) => serde_json::to_string(queue),
         Value::Lyrics(lyrics) => serde_json::to_string(lyrics),
         Value::Liked(liked) => serde_json::to_string(liked),
+        Value::Playlists(playlists) => serde_json::to_string(playlists),
     };
     printed.unwrap_or_default()
 }
@@ -326,8 +343,13 @@ fn describe(failure: &Failure) -> String {
         }
         Failure::NothingFound(query) => format!("nothing found for '{query}'"),
         Failure::SteeredReadOnly => {
-            "another device has playback; its queue cannot be placed at a position".to_owned()
+            "another device has playback; its queue cannot be edited here".to_owned()
         }
+        Failure::AccountChanged => "the account changed while the command was waiting".to_owned(),
+        Failure::ReadOnlyPlaylist => {
+            "the provider picks this playlist's tracks, so they cannot be changed".to_owned()
+        }
+        Failure::UnknownQueueEntry(uid) => format!("no upcoming queue row with id '{uid}'"),
     }
 }
 
@@ -347,6 +369,7 @@ mod tests {
                 duration: 125,
             },
             kind,
+            uid: None,
         }
     }
 

@@ -4,15 +4,17 @@ use router::{Destination, SettingsPage, SettingsTab, navigate};
 use ui::{ActiveTheme as _, Button, Room, TabBar, VeilEdge, effects, veil};
 
 use super::{Layout, SettingsView};
+use crate::chrome::Chrome;
 use crate::screens::equalizer::EqualizerView;
 
 /// How far the rows are blurred where they pass under the header. One blur pass serves every
 /// strip, so this is also the widest the haze gets.
 const BLUR: Pixels = px(1.);
 
-/// The search field and the pill bar of tabs that float over every settings page in the
-/// workspace. The workspace lays it over the content outside the page's transition, so a page
-/// change fades the rows and nothing else. It measures itself so the pages start below it.
+/// The search field, with its panel of suggested settings, and the pill bar of tabs that float
+/// over every settings page in the workspace. The workspace lays it over the content outside the
+/// page's transition, so a page change fades the rows and nothing else. It measures itself so the
+/// pages start below it.
 pub struct SettingsHeader {
     view: Entity<SettingsView>,
     /// The equalizer page, which starts below the header too and has to hear when it moves.
@@ -43,8 +45,10 @@ impl Render for SettingsHeader {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let layout = Layout::of(window, cx);
         let theme = *cx.theme();
+        let search = self
+            .view
+            .update(cx, |view, cx| view.search_field(window, cx));
         let view = self.view.read(cx);
-        let search = view.search();
         // a search lights no tab, since its results come from all of them
         let chosen = match view.searching() {
             true => None,
@@ -111,14 +115,15 @@ impl Render for SettingsHeader {
             })
             // A see-through page has content of its own passing under the header and reads
             // worse without the haze, so only the flat fallback is dropped there, since a solid
-            // band over a see-through page is a slab.
+            // band over a see-through page is a slab. The haze stops at the sheet's top corners,
+            // where a see-through window would show it through the chrome's colour.
             .when(effects() || !theme.transparent, |header| {
                 header.child(veil(
                     VeilEdge::Top,
                     layout.top,
                     BLUR,
                     theme.background,
-                    None,
+                    Chrome::sheet_corners(cx),
                     window,
                 ))
             })

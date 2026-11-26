@@ -81,11 +81,11 @@ impl UserView {
             .meta(strip)
     }
 
-    fn playlists(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn playlists(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let profile = self.profile.read(cx);
         let loading = profile.is_loading();
         let listed = profile.playlists();
-        let layout = CardGrid::layout(self.width);
+        let layout = CardGrid::layout(self.width, window);
 
         let total = listed.len();
         let cards = match loading {
@@ -203,7 +203,7 @@ impl Render for UserView {
             .child(
                 Scroller::new("user-page", &self.scrollbar)
                     .hold()
-                    .bottom_inset(crate::chrome::Chrome::bottom(cx))
+                    .bottom_inset(crate::chrome::Chrome::track_bottom(cx))
                     .top_inset(crate::chrome::Chrome::sheet_corners(cx).top_right)
                     .py(pad)
                     .px(pad + crate::chrome::Chrome::margin(window, cx))
@@ -213,7 +213,7 @@ impl Render for UserView {
                             .flex_col()
                             .gap_8()
                             .child(self.header(cx))
-                            .child(self.playlists(cx)),
+                            .child(self.playlists(window, cx)),
                     ),
             )
             .into_any_element()

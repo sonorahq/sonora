@@ -46,6 +46,8 @@ pub enum Request {
     Watch(Watch),
     /// Commands serving Sonora Session, listening together with other Sonora apps
     Session(SessionCommand),
+    /// Commands serving the listener's playlists. Stands for `sonora playlist ...`
+    Playlists(PlaylistCommand),
     /// The lyrics of the current track, as already held, without looking any up. Stands for
     /// `sonora lyrics`
     Lyrics,
@@ -59,6 +61,31 @@ impl Request {
     pub fn streams(&self) -> bool {
         matches!(self, Self::Watch(_))
     }
+}
+
+/// Commands serving playlist management
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlaylistCommand {
+    /// Lists the playlists in the library. Stands for `sonora playlist list`
+    List,
+    /// Creates a playlist, optionally filled with track ids. Stands for
+    /// `sonora playlist create <name>`
+    Create {
+        name: String,
+        tracks: Vec<String>,
+        local: bool,
+    },
+    /// Renames a playlist. Stands for `sonora playlist rename <id> <name>`
+    Rename { id: String, name: String },
+    /// Sets whether a playlist is public. Stands for `sonora playlist public <id> on|off`
+    Visibility { id: String, public: bool },
+    /// Adds track ids to a playlist. Stands for `sonora playlist add <id> <track>...`
+    AddTracks { id: String, tracks: Vec<String> },
+    /// Drops track ids from a playlist. Stands for `sonora playlist remove <id> <track>...`
+    RemoveTracks { id: String, tracks: Vec<String> },
+    /// Deletes a playlist. Stands for `sonora playlist delete <id>`
+    Delete { id: String },
 }
 
 /// How `sonora watch` follows what plays.
@@ -162,6 +189,13 @@ pub enum QueueCommand {
     /// Plays items at once, right after the current track so the rest of the queue follows
     /// them. Stands for `sonora play <items>`
     Play(Vec<Item>),
+    /// Removes the upcoming queue row with this occurrence id. Stands for `sonora queue remove <uid>`
+    Remove { uid: String },
+    /// Moves an upcoming row to a gap in the upcoming queue. Stands for
+    /// `sonora queue move <uid> <gap>`
+    Move { uid: String, gap: usize },
+    /// Drops everything queued after the current track. Stands for `sonora queue clear`
+    ClearUpcoming,
 }
 
 /// Something to queue: a link of the current provider, or a file the running Sonora reads.

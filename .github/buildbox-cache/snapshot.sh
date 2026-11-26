@@ -32,7 +32,6 @@ rsync -rlpc --delete --exclude=/.git /checkout/ "$snap/src/"
 
 cd "$snap/src"
 rustup toolchain install
-touch /tmp/build-start
 # The JSON messages name every unit the build used, which the pruning below keeps. A plain check
 # resolves other features than the --all-targets runs, so its units are built too.
 for build in "build --locked -p sonora" "check --locked --workspace" \
@@ -40,21 +39,24 @@ for build in "build --locked -p sonora" "check --locked --workspace" \
   cargo $build --message-format=json-render-diagnostics >> /tmp/units.jsonl
 done
 
-cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
-python - "$snap" /tmp/metadata.json /tmp/build-start /tmp/units.jsonl <<'PY'
-import json, os, re, shutil, sys
-from collections import defaultdict
+python - "$snap" /tmp/units.jsonl <<'PY'
+import hashlib, json, os, re, shutil, sys
 
-snap, meta = sys.argv[1], json.load(open(sys.argv[2]))
-start = os.stat(sys.argv[3]).st_mtime
-debug = os.path.join(snap, "target/debug")
-deps = os.path.join(debug, "deps")
+snap = sys.argv[1]
+units_root = os.path.join(snap, "target/debug/build")
 
-# Drops units this build no longer uses, found by the hash in their names or, for a binary copied
-# up without one, by the inode it shares with its unit.
-unit_hash = re.compile(r"-([0-9a-f]{16})(?=\.|$)")
-used, inodes = set(), set()
-for line in open(sys.argv[4]):
+
+def unit_of(path):
+    """Returns the unit folder that holds path, as `<package>/<hash>` under target/debug/build, or None."""
+    parts = os.path.relpath(path, units_root).split(os.sep)
+    return "/".join(parts[:2]) if len(parts) > 2 and parts[0] != ".." else None
+
+
+# Cargo keeps each unit in target/debug/build/<package>/<hash> and names in its JSON messages every
+# unit this build used. A bin or an example is named only by its copy uplifted out of the unit,
+# which shares an inode with the file inside it. Units of path packages are the workspace's own.
+used, workspace, uplifted = set(), set(), {}
+for line in open(sys.argv[2]):
     if not line.startswith("{"):
         continue
     msg = json.loads(line)
@@ -64,59 +66,42 @@ for line in open(sys.argv[4]):
         paths = [msg["out_dir"]]
     else:
         continue
+    local = msg["package_id"].startswith("path+")
     for path in paths:
-        for part in path.rstrip("/").split("/")[-2:]:
-            if found := unit_hash.search(part):
-                used.add(found.group(1))
-        if os.path.exists(path):
-            inodes.add(os.stat(path).st_ino)
-for folder in ("deps", "examples"):
-    folder = os.path.join(debug, folder)
-    for name in os.listdir(folder) if os.path.isdir(folder) else []:
-        if (found := unit_hash.search(name)) and os.lstat(os.path.join(folder, name)).st_ino in inodes:
-            used.add(found.group(1))
+        if unit := unit_of(path):
+            used.add(unit)
+            if local:
+                workspace.add(unit)
+        elif os.path.exists(path):
+            uplifted[os.stat(path).st_ino] = local
+unit_hash = re.compile(r"[0-9a-f]{16}")
+units = [
+    f"{package.name}/{unit.name}"
+    for package in os.scandir(units_root)
+    if package.is_dir(follow_symlinks=False)
+    for unit in os.scandir(package.path)
+    if unit.is_dir(follow_symlinks=False) and unit_hash.fullmatch(unit.name)
+]
+for unit in units:
+    out = os.path.join(units_root, unit, "out")
+    if unit in used or not os.path.isdir(out):
+        continue
+    for entry in os.scandir(out):
+        if entry.is_file(follow_symlinks=False) and (local := uplifted.get(entry.inode())) is not None:
+            used.add(unit)
+            if local:
+                workspace.add(unit)
+            break
 if len(used) < 100:
     sys.exit(f"snapshot: cargo named only {len(used)} units, refusing to prune")
-pruned = 0
-for folder in ("deps", ".fingerprint", "build", "examples"):
-    if not os.path.isdir(os.path.join(debug, folder)):
-        continue
-    for name in os.listdir(os.path.join(debug, folder)):
-        found = unit_hash.search(name)
-        if not found or found.group(1) in used:
-            continue
-        path = os.path.join(debug, folder, name)
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
-        pruned += 1
-print(f"snapshot: kept {len(used)} units, removed {pruned} entries of units no longer built")
+pruned = [unit for unit in units if unit not in used]
+for unit in pruned:
+    shutil.rmtree(os.path.join(units_root, unit))
+for package in {unit.split("/")[0] for unit in pruned}:
+    if not os.listdir(os.path.join(units_root, package)):
+        os.rmdir(os.path.join(units_root, package))
+print(f"snapshot: kept {len(used)} units, removed {len(pruned)} units no longer built")
 
-# A recompiled unit leaves old split debuginfo under other codegen unit names behind.
-units = defaultdict(list)
-for name in os.listdir(deps):
-    unit = re.match(r"^(?:lib)?([A-Za-z0-9_]+-[0-9a-f]{16})", name)
-    if unit:
-        units[unit.group(1)].append(os.path.join(deps, name))
-stale = 0
-for files in units.values():
-    times = {f: os.lstat(f).st_mtime for f in files}
-    if max(times.values()) >= start:
-        for f, t in times.items():
-            if t < start:
-                os.remove(f)
-                stale += 1
-print(f"snapshot: removed {stale} files left from earlier compiles")
-
-names = set()
-for pkg in meta["packages"]:
-    for name in [pkg["name"]] + [t["name"] for t in pkg["targets"]]:
-        names.update({name, name.replace("-", "_")})
-alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-workspace_unit = re.compile(
-    rf"^target/debug/(?:deps|\.fingerprint|build|examples)/(?:lib)?(?:{alt})-[0-9a-f]{{16}}(?:[./].*)?$"
-)
 layers = {"deps": [], "ws": []}
 for root, dirs, files in os.walk(snap):
     rel_root = os.path.relpath(root, snap)
@@ -128,22 +113,18 @@ for root, dirs, files in os.walk(snap):
         layers["ws"].append(rel_root)
     for name in files + [d for d in dirs if os.path.islink(os.path.join(root, d))]:
         rel = os.path.normpath(os.path.join(rel_root, name))
+        # Split debuginfo is read only by a debugger.
         if rel.endswith(".dwo"):
             continue
-        top_level = os.path.dirname(rel) in ("target", "target/debug")
-        # Only workspace crates have examples, and `cargo test` relinks every one that is missing.
-        example = rel.startswith("target/debug/examples/")
-        if rel.startswith("src/") or top_level or example or workspace_unit.match(rel):
-            layers["ws"].append(rel)
-        else:
-            layers["deps"].append(rel)
+        # The sources, the uplifted bins and examples, and the workspace units go with the workspace.
+        unit = unit_of(os.path.join(snap, rel))
+        layers["ws" if unit is None or unit in workspace else "deps"].append(rel)
 for layer, paths in layers.items():
     with open(f"/tmp/{layer}.list", "wb") as f:
         f.write(b"".join(p.encode() + b"\0" for p in sorted(paths)))
     print(f"snapshot: {layer} layer has {len(paths)} files")
 
 # When this sum matches the previous snapshot's, its third-party archive is reused as it is.
-import hashlib
 digest = hashlib.sha256()
 for rel in sorted(layers["deps"]):
     info = os.lstat(os.path.join(snap, rel))
@@ -160,10 +141,11 @@ else
   layers="deps ws"
 fi
 # Deterministic archives, so an unchanged layer keeps its digest and is neither pushed nor pulled.
+# Level 9 packs the 3.3 GB workspace layer in 60% of the time level 12 takes, for 3% more bytes.
 for layer in $layers; do
   tar -C "$snap" -c --format=posix --no-recursion --null -T "/tmp/$layer.list" \
     --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
     --owner=0 --group=0 --numeric-owner \
-    | zstd -q -T4 -12 --long=27 -o "/work/out/$layer.tar.zst"
+    | zstd -q -T4 -9 --long=27 -o "/work/out/$layer.tar.zst"
 done
 ls -la /work/out

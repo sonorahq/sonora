@@ -72,6 +72,9 @@ pub struct Stub {
     /// Provenance survives saving and replaying history.
     #[serde(skip_serializing_if = "QueueKind::is_context")]
     pub kind: QueueKind,
+    /// Whether the provider mixed the song in as a recommendation, as smart shuffle does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub recommended: bool,
 }
 
 impl<O> Default for Resume<O> {
@@ -97,6 +100,8 @@ struct Entry<O> {
     track: Arc<Track>,
     origin: Option<O>,
     kind: QueueKind,
+    /// Whether the provider mixed the song in as a recommendation, as smart shuffle does.
+    recommended: bool,
 }
 
 /// Where fetched tracks go in the queue.
@@ -157,6 +162,16 @@ impl QueueKind {
             Self::Suggested => "queue-similar",
         }
     }
+
+    /// Why another device lists `row` in its play order: queued by hand, picked by the provider
+    /// to follow the collection, or part of the collection itself.
+    pub fn of(row: &QueuedTrack) -> Self {
+        match (row.queued, row.suggested) {
+            (true, _) => Self::Queued,
+            (false, true) => Self::Suggested,
+            (false, false) => Self::Context,
+        }
+    }
 }
 
 impl<O> Entry<O> {
@@ -170,6 +185,7 @@ impl<O> Entry<O> {
             track: Arc::new(track),
             origin,
             kind,
+            recommended: false,
         }
     }
 
@@ -212,6 +228,7 @@ fn stub(track: &Track) -> Option<Stub> {
         explicit: track.explicit,
         from: None,
         kind: QueueKind::Context,
+        recommended: false,
     })
 }
 
@@ -243,6 +260,7 @@ fn record<'a, O: Clone + PartialEq + 'a>(
     let mut save = |entry: &Entry<O>| {
         let mut stub = stub(&entry.track)?;
         stub.kind = entry.kind;
+        stub.recommended = entry.recommended;
         stub.from = entry.origin.as_ref().map(|origin| {
             match origins.iter().position(|known| known == origin) {
                 Some(index) => index,
@@ -419,7 +437,7 @@ fn tagged<O: Clone>(
 fn source_of<O>(entries: impl IntoIterator<Item = Entry<O>>) -> Vec<Entry<O>> {
     entries
         .into_iter()
-        .filter(|entry| entry.kind == QueueKind::Context)
+        .filter(|entry| entry.kind == QueueKind::Context && !entry.recommended)
         .collect()
 }
 
@@ -469,12 +487,16 @@ impl<O: Clone + PartialEq> Order<O> {
         self.shuffle
     }
 
+    /// Turns shuffle on or off and reorders what is ahead. A finished queue keeps its history as
+    /// it is, since starting it over applies the new order.
     pub fn set_shuffle(&mut self, on: bool) {
         if self.shuffle == on {
             return;
         }
         self.shuffle = on;
-        self.reorder();
+        if self.current.is_some() || self.past.is_empty() {
+            self.reorder();
+        }
         self.changed();
     }
 
@@ -488,6 +510,8 @@ impl<O: Clone + PartialEq> Order<O> {
         let mut suggested = VecDeque::new();
         let mut manual = VecDeque::new();
         self.upcoming.retain(|entry| match entry.kind {
+            // smart shuffle mixes its picks into a shuffled collection only
+            _ if entry.recommended && !shuffle => false,
             QueueKind::Context if shuffle || known.contains(entry.uid.as_str()) => true,
             QueueKind::Queued if shuffle => true,
             QueueKind::Context | QueueKind::Queued => {
@@ -548,8 +572,12 @@ impl<O: Clone + PartialEq> Order<O> {
         let origins = resume.origins;
         let entry = |stub: Stub| {
             let kind = stub.kind;
+            let recommended = stub.recommended;
             let origin = stub.from.and_then(|index| origins.get(index).cloned());
-            Entry::new(hydrate(stub), origin, kind)
+            Entry {
+                recommended,
+                ..Entry::new(hydrate(stub), origin, kind)
+            }
         };
         self.past = resume.past.into_iter().map(entry).collect();
         self.current = resume.current.map(entry);
@@ -599,6 +627,31 @@ impl<O: Clone + PartialEq> Order<O> {
         if suggested || sifted {
             self.changed();
         }
+    }
+
+    /// Swaps in a newer copy of each track `fresh` knows, keeping every entry's place, kind and
+    /// origin. Returns whether anything changed.
+    pub fn refresh<'a>(&mut self, fresh: impl Fn(&str) -> Option<&'a Track>) -> bool {
+        let mut changed = false;
+        for entry in self
+            .past
+            .iter_mut()
+            .chain(self.current.iter_mut())
+            .chain(self.upcoming.iter_mut())
+            .chain(self.source.iter_mut())
+        {
+            let Some(track) = entry.track.id.as_deref().and_then(&fresh) else {
+                continue;
+            };
+            if entry.track.as_ref() != track {
+                entry.track = Arc::new(track.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.changed();
+        }
+        changed
     }
 
     pub fn revision(&self) -> u64 {
@@ -686,6 +739,11 @@ impl<O: Clone + PartialEq> Order<O> {
 
     pub fn kind(&self, position: QueuePosition) -> Option<QueueKind> {
         self.entry(position).map(|entry| entry.kind)
+    }
+
+    /// Whether the provider mixed the song at `position` in as a recommendation.
+    pub fn recommended(&self, position: QueuePosition) -> bool {
+        self.entry(position).is_some_and(|entry| entry.recommended)
     }
 
     fn entry(&self, position: QueuePosition) -> Option<&Entry<O>> {
@@ -815,7 +873,12 @@ impl<O: Clone + PartialEq> Order<O> {
         removed
     }
 
+    /// Whether the play order differs from the collection's, which is what Reset undoes. A
+    /// finished queue answers false, since nothing is playing that Reset could keep.
     pub fn reordered(&self) -> bool {
+        if self.current.is_none() {
+            return false;
+        }
         let sequence = self
             .past
             .iter()
@@ -866,9 +929,9 @@ impl<O: Clone + PartialEq> Order<O> {
     /// gone like any other too.
     pub fn replace_remote(
         &mut self,
-        past: Vec<(Track, QueueKind)>,
-        current: QueueKind,
-        upcoming: Vec<(Track, QueueKind)>,
+        past: Vec<(Track, QueuedTrack)>,
+        current: Option<QueuedTrack>,
+        upcoming: Vec<(Track, QueuedTrack)>,
         reach: Reach,
     ) {
         let origin = self.origin().or_else(|| self.context_origin()).cloned();
@@ -922,7 +985,8 @@ impl<O: Clone + PartialEq> Order<O> {
         let mut entries: Vec<_> = past
             .into_iter()
             .chain(upcoming)
-            .map(|(track, kind)| {
+            .map(|(track, listed)| {
+                let kind = QueueKind::of(&listed);
                 let before = matched(&track);
                 let from = match kind {
                     QueueKind::Queued => None,
@@ -936,7 +1000,10 @@ impl<O: Clone + PartialEq> Order<O> {
                         .or_else(|| origin.clone()),
                 };
                 let uid = before.map_or_else(queue_uid, |before| before.uid);
-                Entry::with_uid(uid, track, from, kind)
+                Entry {
+                    recommended: listed.recommended,
+                    ..Entry::with_uid(uid, track, from, kind)
+                }
             })
             .collect();
         let window: Vec<_> = entries.split_off(past_len);
@@ -951,16 +1018,17 @@ impl<O: Clone + PartialEq> Order<O> {
             .chain(beyond)
             .collect();
         if let Some(entry) = self.current.as_mut() {
-            entry.kind = current;
+            entry.kind = current.as_ref().map_or(QueueKind::Context, QueueKind::of);
+            entry.recommended = current.is_some_and(|listed| listed.recommended);
         }
-        // only the collection's own songs belong in its order, or a shuffle would deal a queued
-        // or a suggested one in a second time
+        // only the collection's own songs belong in its order, or a shuffle would deal a queued,
+        // a suggested or a recommended one in a second time
         let apart: HashSet<_> = self
             .past
             .iter()
             .chain(&self.current)
             .chain(&self.upcoming)
-            .filter(|entry| entry.kind != QueueKind::Context)
+            .filter(|entry| entry.kind != QueueKind::Context || entry.recommended)
             .map(|entry| &entry.uid)
             .collect();
         self.source.retain(|entry| !apart.contains(&entry.uid));
@@ -1191,6 +1259,15 @@ impl<O: Clone + PartialEq> Order<O> {
         self.current().cloned()
     }
 
+    /// Ends a queue that has run out. Its last song moves to the queue history.
+    pub fn finish(&mut self) {
+        let Some(last) = self.current.take() else {
+            return;
+        };
+        self.past.push(last);
+        self.changed();
+    }
+
     /// Starts the queue over from its first song, for repeat all. What was queued by hand joins
     /// the collection it played in, so the next loop has no stale hand-queued run.
     pub fn rewind(&mut self) -> Option<Track> {
@@ -1315,6 +1392,7 @@ fn connect_entry<O>(entry: &Entry<O>) -> Option<QueuedTrack> {
         uid: entry.uid.clone(),
         queued: entry.kind == QueueKind::Queued,
         suggested: entry.kind == QueueKind::Suggested,
+        recommended: entry.recommended,
         added_by: entry
             .track
             .added_by
@@ -1352,6 +1430,7 @@ mod tests {
             track: Arc::new(track(id)),
             origin: None,
             kind: super::QueueKind::Context,
+            recommended: false,
         }
     }
 

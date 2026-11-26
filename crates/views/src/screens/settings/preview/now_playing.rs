@@ -2,18 +2,25 @@
 //! artist. The visualizer draws random levels rather than the spectrum, so it moves whether or
 //! not anything plays.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Bounds, Context, EntityId, FontWeight, Pixels, Window, canvas, div};
-use ui::{ActiveTheme as _, Artwork, Levels, Text, Visualizer};
+use gpui::{Bounds, Context, EntityId, FontWeight, Pixels, Render, Window, canvas, div};
+use state::Sonora;
+use ui::{ActiveTheme as _, Artwork, Levels, Room, Text, Visualizer};
 
-use crate::screens::settings::{Layout, SettingsView};
+use super::Stage;
+use crate::screens::settings::Layout;
+use crate::shared::ambient::Landed;
 
 /// How tall the miniature stands for its width, the shape of a window.
 const ASPECT: f32 = 0.5;
+/// How much of the column the miniature takes when it stands beside the settings, and how tall
+/// it stands there for its width, about as tall as the settings beside it.
+const SIDE_SHARE: f32 = 0.38;
+const SIDE_ASPECT: f32 = 1.35;
 /// How much of the miniature's height the cover takes.
 const COVER: f32 = 0.46;
 /// How much of the miniature's width the title and artist may take.
@@ -36,11 +43,14 @@ const SWELL: f32 = 0.8;
 /// How much of its randomness a band shares between the two channels.
 const SHARED: f32 = 0.75;
 
-/// What the Now playing page's preview keeps between frames.
+/// The Now playing page's preview, a miniature of the Now playing view for the track playing,
+/// or for one from history while nothing is loaded. It asks for its own frames, so the page
+/// around it renders without building its groups again.
 pub(in crate::screens::settings) struct NowPlayingPreview {
-    levels: RefCell<Wander>,
+    stage: Rc<Stage>,
+    levels: Wander,
     /// Whether a redraw for the next frame is already on its way.
-    armed: Cell<bool>,
+    armed: bool,
     /// Where the miniature and its title and artist landed last frame, which bounds how tall
     /// the visualizer may reach. A move redraws the preview, so a still one catches up too.
     frame: Rc<Cell<Bounds<Pixels>>>,
@@ -57,10 +67,15 @@ struct Wander {
 }
 
 impl NowPlayingPreview {
-    pub(in crate::screens::settings) fn new(_cx: &mut Context<SettingsView>) -> Self {
+    pub(in crate::screens::settings) fn new(stage: Rc<Stage>, cx: &mut Context<Self>) -> Self {
+        // over the field the miniature wears the colours sampled off the cover, so it redraws
+        // once they land
+        cx.subscribe(&stage.ambient, |_, _, _: &Landed, cx| cx.notify())
+            .detach();
         Self {
-            levels: RefCell::new(Wander::new(super::random())),
-            armed: Cell::new(false),
+            stage,
+            levels: Wander::new(super::random()),
+            armed: false,
             frame: Rc::default(),
             meta: Rc::default(),
         }
@@ -133,53 +148,52 @@ impl Wander {
     }
 }
 
-/// The Now playing page's preview, a miniature of the Now playing view for the track playing,
-/// or for one from history while nothing is loaded.
-pub(in crate::screens::settings) fn preview(
-    state: &NowPlayingPreview,
-    view: &SettingsView,
-    window: &mut Window,
-    cx: &mut Context<SettingsView>,
-) -> Option<AnyElement> {
-    let width = Layout::of(window, cx).width;
-    let height = (width * ASPECT).round();
-    let sample = view.previews.playing_or_picked(cx);
-    let cover = sample.large_cover(cx);
-    let settings = view.settings.read(cx);
-    let ambient = settings.ambient();
-    let style = settings.visualizer_style();
+impl Render for NowPlayingPreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (width, height) = match beside(window, cx) {
+            Some(width) => (width, (width * SIDE_ASPECT).round()),
+            None => {
+                let width = Layout::of(window, cx).width;
+                (width, (width * ASPECT).round())
+            }
+        };
+        let sample = self.stage.playing_or_picked(cx);
+        let cover = sample.large_cover(cx);
+        let settings = Sonora::global(cx).settings.read(cx);
+        let ambient = settings.ambient();
+        let style = settings.visualizer_style();
 
-    let field = ambient.then(|| view.previews.ambient(cover.clone(), cx));
-    // over the field the miniature wears what fullscreen would, not the theme around it
-    let theme = match &field {
-        Some(field) => field.read(cx).theme(cx),
-        None => *cx.theme(),
-    };
-    let side = (height * COVER).round();
+        let field = ambient.then(|| self.stage.ambient(cover.clone(), cx));
+        // over the field the miniature wears what fullscreen would, not the theme around it
+        let theme = match &field {
+            Some(field) => field.read(cx).theme(cx),
+            None => *cx.theme(),
+        };
+        let side = (height * COVER).round();
 
-    let still = cx.reduce_motion();
-    let levels = style
-        .shown()
-        .then(|| state.levels.borrow_mut().step(Instant::now(), still));
-    if levels.is_some() && !still && !state.armed.replace(true) {
-        cx.on_next_frame(window, |this, _, cx| {
-            this.previews.now_playing.armed.set(false);
-            cx.notify();
-        });
-    }
-    // the peaks stop short of the artist line as in fullscreen, by a pad to suit the miniature
-    let bottom = |bounds: Bounds<Pixels>| bounds.origin.y + bounds.size.height;
-    let reach = (bottom(state.frame.get()) - bottom(state.meta.get()) - theme.metrics.pad)
-        .max(Pixels::ZERO);
-    let tint = match &field {
-        Some(_) => theme
-            .tint
-            .map_or(theme.primary, |tint| theme.primary_of(tint)),
-        None => theme.primary,
-    };
-    let owner = cx.entity_id();
+        let still = cx.reduce_motion();
+        let levels = style
+            .shown()
+            .then(|| self.levels.step(Instant::now(), still));
+        if levels.is_some() && !still && !std::mem::replace(&mut self.armed, true) {
+            cx.on_next_frame(window, |this, _, cx| {
+                this.armed = false;
+                cx.notify();
+            });
+        }
+        // the peaks stop short of the artist line as in fullscreen, by a pad to suit the
+        // miniature
+        let bottom = |bounds: Bounds<Pixels>| bounds.origin.y + bounds.size.height;
+        let reach = (bottom(self.frame.get()) - bottom(self.meta.get()) - theme.metrics.pad)
+            .max(Pixels::ZERO);
+        let tint = match &field {
+            Some(_) => theme
+                .tint
+                .map_or(theme.primary, |tint| theme.primary_of(tint)),
+            None => theme.primary,
+        };
+        let owner = cx.entity_id();
 
-    Some(
         super::framed(
             div()
                 .relative()
@@ -188,7 +202,7 @@ pub(in crate::screens::settings) fn preview(
                 .overflow_hidden()
                 .bg(theme.background)
                 .text_color(theme.foreground)
-                .child(measure(state.frame.clone(), owner))
+                .child(measure(self.frame.clone(), owner))
                 .children(field)
                 .when_some(levels, |this, levels| {
                     this.child(
@@ -220,7 +234,7 @@ pub(in crate::screens::settings) fn preview(
                                 .flex_col()
                                 .items_center()
                                 .gap_1()
-                                .child(measure(state.meta.clone(), owner))
+                                .child(measure(self.meta.clone(), owner))
                                 .child(
                                     div()
                                         .max_w(width * META)
@@ -241,8 +255,17 @@ pub(in crate::screens::settings) fn preview(
                 ),
             cx,
         )
-        .into_any_element(),
-    )
+    }
+}
+
+/// How wide the miniature stands beside the page's settings, or `None` where the column has no
+/// room for both and the miniature stands over them, as wide as the column.
+pub(in crate::screens::settings) fn beside(window: &Window, cx: &gpui::App) -> Option<Pixels> {
+    let layout = Layout::of(window, cx);
+    layout
+        .room()
+        .fits(Room::Roomy)
+        .then(|| (layout.width * SIDE_SHARE).round())
 }
 
 /// Fills its parent and keeps the parent's bounds in `cell`, redrawing `owner` next frame when

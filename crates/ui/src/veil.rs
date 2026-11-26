@@ -1,15 +1,15 @@
 use gpui::prelude::*;
-use gpui::{Div, Hsla, Pixels, Window, div};
+use gpui::{Corners, Div, Hsla, Pixels, Window, div};
 
 use crate::snapped;
 
 /// How many strips the blur fades in through. They cost nothing beyond a quad each, so more of
 /// them only make the crossfade smoother.
 const STRIPS: usize = 64;
-/// The curve of the crossfade: the exponent on a strip's distance from the solid edge. One is
-/// linear, above one starts slower, below one starts faster. Kept well below one so the haze
-/// reaches working strength quickly and only the far edge reads as clear.
-const HAZE: f32 = 0.4;
+/// How steeply the haze rises from the clear edge, as the exponent in `1 - (1 - t)^RISE`. The
+/// first strip starts near zero, so no line shows where the blur begins, and the haze still
+/// reaches working strength within the first half of the band.
+const RISE: f32 = 2.5;
 
 /// Which side of a veil holds the full blur. The other one is clear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,25 +37,31 @@ pub fn effects() -> bool {
 /// setting never reaches it: a band is there to keep what floats over it readable, not for the
 /// look of it.
 ///
-/// `corner` rounds the two corners along `edge`, for a band flush with a rounded window.
+/// The two of `corners` along `edge` round the band, so one lying under a rounded window or sheet
+/// stops at its curve rather than blurring what a see-through corner lets show.
 pub fn veil(
     edge: VeilEdge,
     height: Pixels,
     blur: Pixels,
     background: Hsla,
-    corner: Option<Pixels>,
+    corners: Corners<Pixels>,
     window: &Window,
 ) -> Div {
-    let round = move |strip: Div, radius: Pixels| match edge {
-        VeilEdge::Top => strip.rounded_t(radius),
-        VeilEdge::Bottom => strip.rounded_b(radius),
+    let (lead, trail) = match edge {
+        VeilEdge::Top => (corners.top_left, corners.top_right),
+        VeilEdge::Bottom => (corners.bottom_left, corners.bottom_right),
     };
+    let round = move |strip: Div| match edge {
+        VeilEdge::Top => strip.rounded_tl(lead).rounded_tr(trail),
+        VeilEdge::Bottom => strip.rounded_bl(lead).rounded_br(trail),
+    };
+    let radius = lead.max(trail);
     let mut edges: Vec<Pixels> = (0..=STRIPS)
         .map(|slice| snapped(height * (slice as f32 / STRIPS as f32), window))
         .collect();
     // A strip clamps its radius to half its own height, so the strips along the edge merge
     // into one tall enough to carry the corner.
-    if let Some(radius) = corner {
+    if radius > Pixels::ZERO {
         let end = edges[STRIPS];
         let merged = snapped(radius * 2., window).min(end);
         match edge {
@@ -88,8 +94,8 @@ pub fn veil(
                     .flex_none()
                     .w_full()
                     .h(cut)
-                    .when_some(corner.filter(|_| slice == rounded), round)
-                    .opacity(held.powf(HAZE))
+                    .when(slice == rounded, round)
+                    .opacity(1. - (1. - held).powf(RISE))
                     .backdrop_blur(blur)
             })
         })
@@ -102,10 +108,6 @@ pub fn veil(
             .flex()
             .flex_col()
             .children(strips),
-        false => div()
-            .absolute()
-            .inset_0()
-            .when_some(corner, round)
-            .bg(background),
+        false => div().absolute().inset_0().map(round).bg(background),
     }
 }

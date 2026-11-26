@@ -1,33 +1,29 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
 
 /// The file every provider keeps its sign-in under, inside its own accounts folder.
-pub(crate) const FILE: &str = "credentials.json";
+pub const FILE: &str = "credentials.json";
 
 /// What each provider used to keep beside its sign-in in the cache folder, by slug. These files
 /// move into the accounts folder on the first launch that finds them there.
 const MOVED: &[(&str, &[&str])] = &[
     ("apple", &[FILE, "bearer.json"]),
     ("deezer", &[FILE]),
-    ("spotify", &["device-id"]),
+    ("spotify", &[FILE, "device-id"]),
     ("subsonic", &[FILE]),
     ("tidal", &[FILE]),
     ("youtube", &[FILE, "cookies.json"]),
 ];
-
-/// Tells apart the temporary files of two writes running at once in one process.
-static WRITES: AtomicU64 = AtomicU64::new(0);
 
 /// Runs the move out of the cache folder once per process, before the first provider looks.
 static MIGRATION: Once = Once::new();
 
 /// Sonora's cache root, `$XDG_CACHE_HOME/sonora`, falling back to the temp dir. It holds only
 /// what Sonora can fetch again, since cleaners and the system are free to empty it.
-pub(crate) fn root() -> PathBuf {
+pub fn root() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("sonora")
@@ -35,7 +31,7 @@ pub(crate) fn root() -> PathBuf {
 
 /// A provider's own accounts folder, named by its slug, under `$XDG_DATA_HOME/sonora/accounts`.
 /// The first call in a process moves the sign-ins an older Sonora left in the cache folder.
-pub(crate) fn dir(slug: &str) -> PathBuf {
+pub fn dir(slug: &str) -> PathBuf {
     MIGRATION.call_once(migrate);
     accounts().join(slug)
 }
@@ -44,7 +40,7 @@ pub(crate) fn dir(slug: &str) -> PathBuf {
 /// go to a temporary file beside it that is synced and then renamed over the old one, so a
 /// crash leaves either the old sign-in or the new one and never half of either. It fails when
 /// the system names no data folder, rather than leaving credentials in the shared temp dir.
-pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
     let private = dirs::data_local_dir().context("cannot find a private folder for credentials")?;
     if !path.starts_with(&private) {
         anyhow::bail!(
@@ -57,29 +53,37 @@ pub(crate) fn write(path: &Path, contents: &[u8]) -> Result<()> {
         .parent()
         .with_context(|| format!("cannot find the folder of {}", path.display()))?;
     create_private(parent)?;
-    let name = path
-        .file_name()
-        .with_context(|| format!("cannot name a temporary file for {}", path.display()))?
-        .to_string_lossy();
-    let temporary = parent.join(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        WRITES.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = write_synced(&temporary, contents).and_then(|()| {
-        std::fs::rename(&temporary, path)
-            .with_context(|| format!("cannot move credentials into {}", path.display()))
-    });
-    if written.is_err() {
-        remove(&temporary);
-        return written;
-    }
+    let mut file = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("cannot stage credentials for {}", path.display()))?;
+    file.write_all(contents)
+        .with_context(|| format!("cannot write credentials for {}", path.display()))?;
+    file.as_file()
+        .sync_all()
+        .with_context(|| format!("cannot sync credentials for {}", path.display()))?;
+    file.persist(path)
+        .map_err(std::io::Error::from)
+        .with_context(|| format!("cannot move credentials into {}", path.display()))?;
     sync_folder(parent);
     Ok(())
 }
 
+/// Restricts an existing credential file to its owner. A missing file is left alone.
+pub fn secure(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("credentials: cannot restrict {}: {error}", path.display());
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 /// Deletes a credential file, treating one that is already gone as success.
-pub(crate) fn remove(path: &Path) {
+pub fn remove(path: &Path) {
     if let Err(error) = std::fs::remove_file(path)
         && error.kind() != std::io::ErrorKind::NotFound
     {
@@ -148,24 +152,6 @@ fn create_private(folder: &Path) -> Result<()> {
         .create(folder)
         .with_context(|| format!("cannot create {}", folder.display()))?;
     Ok(())
-}
-
-/// Writes a new file that only its owner can read on unix and syncs it to disk.
-fn write_synced(path: &Path, contents: &[u8]) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("cannot create {}", path.display()))?;
-    file.write_all(contents)
-        .with_context(|| format!("cannot write {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("cannot sync {}", path.display()))
 }
 
 /// Syncs a folder so a rename inside it survives a crash. Only unix can open a folder for this,

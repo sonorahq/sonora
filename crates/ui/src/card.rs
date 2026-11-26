@@ -8,9 +8,8 @@ use gpui::{
     svg,
 };
 
-use crate::Badge;
 use crate::artwork::cover_palette;
-use crate::artwork::{Artwork, Avatar, ROUNDED};
+use crate::artwork::{Artwork, Avatar};
 use crate::button::Button;
 use crate::glass::{GLASS_BLUR, blurring};
 use crate::label::Tails as _;
@@ -19,6 +18,7 @@ use crate::motion::{PRESS_SCALE, PRESS_SCALE_CARD, glow_fill, glowing, pressing,
 use crate::skeleton::Skeleton;
 use crate::theme::ActiveTheme as _;
 use crate::tooltip::{Perch, Tipped as _};
+use crate::{Badge, Sparkle};
 
 const BAR_TITLE: (Pixels, Pixels) = (px(140.), px(11.));
 const BAR_META: (Pixels, Pixels) = (px(90.), px(9.));
@@ -60,6 +60,7 @@ pub struct Card {
     circle: bool,
     tint: Option<Hsla>,
     explicit: bool,
+    recommended: bool,
     /// A badge after the title and the words it is read as, as `(icon, label)`.
     mark: Option<(SharedString, SharedString)>,
     fill: bool,
@@ -107,6 +108,7 @@ impl Card {
             circle: false,
             tint: None,
             explicit: false,
+            recommended: false,
             mark: None,
             fill: true,
             hovered: None,
@@ -151,8 +153,10 @@ impl Card {
         let rem = window.rem_size();
         let line = |step: Text| px((theme.text(step) / px(1.) * LEADING).round());
 
-        snapped(
-            art + rem * 0.5 + line(Text::Body) + TIGHT + line(Text::Small),
+        // The cover is added unsnapped, so a cover that grows smoothly grows the tile with it
+        // instead of in whole steps that move every row under it.
+        art + snapped(
+            rem * 0.5 + line(Text::Body) + TIGHT + line(Text::Small),
             window,
         )
     }
@@ -278,6 +282,12 @@ impl Card {
         self
     }
 
+    /// Puts a sparkle ahead of the title, for a song the provider mixed in as a recommendation.
+    pub fn recommended(mut self) -> Self {
+        self.recommended = true;
+        self
+    }
+
     /// Sets a badge showing `icon` after the title, after the explicit one, which screen readers
     /// hear as `label`.
     pub fn mark(mut self, icon: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
@@ -381,6 +391,7 @@ impl RenderOnce for Card {
             circle,
             tint,
             explicit,
+            recommended,
             mark,
             fill,
             hovered,
@@ -414,6 +425,12 @@ impl RenderOnce for Card {
         let art = art
             .or(tile)
             .unwrap_or_else(|| snapped(height - inset * 2., window));
+        // How round the cover is, which the scrim over it and a glance card around it follow.
+        let corner = match (circle, art_radius) {
+            (true, _) => art / 2.,
+            (false, Some(radius)) => radius,
+            (false, None) => Artwork::rounding(cx),
+        };
         let mut hovered = match (hovered, fill) {
             (Some(style), _) => Some(style),
             (None, true) => Some(StyleRefinement::default().bg(theme.table_hover)),
@@ -501,11 +518,6 @@ impl RenderOnce for Card {
                             .into_any_element()
                     }
                     None => {
-                        let corner = match (circle, art_radius) {
-                            (true, _) => art / 2.,
-                            (false, Some(radius)) => radius,
-                            (false, None) => theme.radius.min(ROUNDED),
-                        };
                         let size = px((art / px(1.) * SCRIM_RATIO).round()).max(SCRIM_MIN);
 
                         div()
@@ -612,13 +624,14 @@ impl RenderOnce for Card {
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
             .child(title);
-        let heading = match explicit || mark.is_some() {
+        let heading = match explicit || recommended || mark.is_some() {
             false => title.into_any_element(),
             true => div()
                 .flex()
                 .items_center()
                 .gap(px(3.))
                 .min_w_0()
+                .when(recommended, |this| this.child(Sparkle::new()))
                 .child(title)
                 .when(explicit, |this| {
                     this.child(div().flex_none().child(Badge::explicit()))
@@ -662,9 +675,12 @@ impl RenderOnce for Card {
                     })
                 },
             )
-            .rounded(match tucked {
-                true => crate::metrics::tucked(theme.radius, window),
-                false => theme.radius,
+            .rounded(match (tucked, glance) {
+                (true, _) => crate::metrics::tucked(theme.radius, window),
+                // A glance card is its cover with half the inset round it, so its corners run
+                // alongside the cover's.
+                (false, true) => corner + inset / 2.,
+                (false, false) => theme.radius,
             })
             .when(listed && !glance, |this| {
                 this.flex_none().h(height).py(inset).w_full().min_w_0()
@@ -788,6 +804,9 @@ impl RenderOnce for Card {
             return card;
         };
         let rest = solid_fill(&overrides);
+        // A card with a fill of its own tints it under the pointer rather than trading it for
+        // the translucent hover colour.
+        let fill = rest.map_or(fill, |rest| rest.blend(fill));
         let lit = lit.is_some_and(|(lit, _)| lit);
         let (card, level) = glowing(card, &id, lit, 1., window, cx);
         match glow_fill(rest, fill, level) {
