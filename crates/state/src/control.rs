@@ -365,6 +365,15 @@ impl Control {
                     reply.send(Reply::Failed(Failure::Malformed)).ok();
                     return;
                 }
+                if self
+                    .library
+                    .read(cx)
+                    .playlist(id)
+                    .is_some_and(|playlist| playlist.read_only)
+                {
+                    reply.send(Reply::Failed(Failure::ReadOnlyPlaylist)).ok();
+                    return;
+                }
                 (Shelf::of(id), Some(id.clone()))
             }
             PlaylistCommand::List => unreachable!(),
@@ -374,11 +383,7 @@ impl Control {
         // busy rather than claiming an edit that never started.
         let blocked = {
             let library = self.library.read(cx);
-            library.playlist_busy()
-                || id.as_deref().is_some_and(|id| library.reordering(id))
-                || id
-                    .as_deref()
-                    .is_some_and(|id| library.playlist(id).is_some_and(|item| item.read_only))
+            library.playlist_busy() || id.as_deref().is_some_and(|id| library.reordering(id))
         };
         let client = self.session.read(cx).client_of(shelf);
         let answer = if blocked {

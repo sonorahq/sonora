@@ -377,6 +377,8 @@ pub enum Failure {
     SteeredReadOnly,
     /// The account changed while the command was waiting, so it was not applied.
     AccountChanged,
+    /// The provider picks this playlist's tracks, so none can be added or removed by hand.
+    ReadOnlyPlaylist,
 }
 
 /// Why a line could not be read off the socket.

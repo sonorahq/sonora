@@ -346,6 +346,9 @@ fn describe(failure: &Failure) -> String {
             "another device has playback; its queue cannot be placed at a position".to_owned()
         }
         Failure::AccountChanged => "the account changed while the command was waiting".to_owned(),
+        Failure::ReadOnlyPlaylist => {
+            "the provider picks this playlist's tracks, so they cannot be changed".to_owned()
+        }
     }
 }
 
