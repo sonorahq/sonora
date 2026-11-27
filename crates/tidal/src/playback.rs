@@ -741,7 +741,7 @@ fn landing(stream: &Stream<Long>, timeline: &Mutex<Timeline>, at: Duration) -> O
 }
 
 /// A seekable decoder over the whole of a track that is one file.
-fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<Media>> {
+fn file_decoder(id: &str, stream: &Stream<Long>) -> Option<rodio::Decoder<'static, Media>> {
     let builder = rodio::Decoder::builder()
         .with_symphonia_decoder::<Aac>()
         .with_data(Media::new(stream.reader()))

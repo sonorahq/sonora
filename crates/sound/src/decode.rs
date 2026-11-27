@@ -70,19 +70,23 @@ impl Seek for Media {
 pub struct Decoded(Inner);
 
 enum Inner {
-    Whole(rodio::Decoder<Media>),
-    Trimmed(Trimmed<rodio::Decoder<Media>>),
+    Whole(rodio::Decoder<'static, Media>),
+    Trimmed(Trimmed<rodio::Decoder<'static, Media>>),
 }
 
 impl Decoded {
     /// Every sample `decoder` yields.
-    pub fn new(decoder: rodio::Decoder<Media>) -> Self {
+    pub fn new(decoder: rodio::Decoder<'static, Media>) -> Self {
         Self(Inner::Whole(decoder))
     }
 
     /// The samples of `decoder` from `skip` on, and only the `take` that follow when it is
     /// given, as [`Trimmed`] cuts them.
-    pub fn trimmed(decoder: rodio::Decoder<Media>, skip: Duration, take: Option<Duration>) -> Self {
+    pub fn trimmed(
+        decoder: rodio::Decoder<'static, Media>,
+        skip: Duration,
+        take: Option<Duration>,
+    ) -> Self {
         Self(Inner::Trimmed(Trimmed::new(decoder, skip, take)))
     }
 
