@@ -35,7 +35,7 @@ const ROW_SIZE: &str = "row-size";
 impl SettingsView {
     /// The Appearance page: the theme, the icons and corners as cards, then how the interface
     /// reads and moves, and how the window looks on the desktop.
-    pub(super) fn appearance_groups(&self, cx: &App) -> Vec<Group> {
+    pub(super) fn appearance_groups(&self) -> Vec<Group> {
         vec![
             Group::new("settings-theme")
                 .cards(Slot::Theme)
@@ -52,7 +52,7 @@ impl SettingsView {
             Group::new("settings-group-window").rows(
                 [Slot::Opacity, Slot::Blur]
                     .into_iter()
-                    .chain(self.decoration_slots(cx)),
+                    .chain(Self::decoration_slots()),
             ),
         ]
     }
@@ -511,23 +511,13 @@ impl SettingsView {
     }
 
     /// The rows about the window's own frame, which differ by platform.
-    #[allow(
-        unused_variables,
-        reason = "cx is only read on Linux and FreeBSD, where rounding follows the decorations"
-    )]
-    fn decoration_slots(&self, cx: &App) -> Vec<Slot> {
+    fn decoration_slots() -> Vec<Slot> {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let mut slots = vec![Slot::ServerSideDecorations, Slot::Side];
-        // Server-side decorations put the compositor in charge of the frame, so window
-        // rounding is only ever this app's call with client-side ones.
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        if !self.settings.read(cx).server_side_decorations() {
-            slots.push(Slot::WindowRounding);
-        }
+        let slots = vec![Slot::ServerSideDecorations, Slot::Side];
         #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
-        let slots = vec![Slot::Decorations, Slot::Side, Slot::WindowRounding];
+        let slots = vec![Slot::Decorations, Slot::Side];
         #[cfg(target_os = "macos")]
-        let slots = vec![Slot::Decorations, Slot::WindowRounding];
+        let slots = vec![Slot::Decorations];
         slots
     }
 
@@ -632,48 +622,6 @@ impl SettingsView {
             self.settings.read(cx).window_controls()
         };
         shown
-    }
-
-    /// The window's corners as one card per rounding, each showing a corner at that radius.
-    /// AppKit has no square window, so macOS offers only the corners it can draw.
-    #[cfg(any(
-        target_os = "windows",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "macos"
-    ))]
-    pub(super) fn window_rounding_row(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let current = self.settings.read(cx).window_rounding();
-        let offered = Rounding::ALL
-            .into_iter()
-            .filter(|rounding| cfg!(not(target_os = "macos")) || *rounding != Rounding::Square)
-            .collect::<Vec<_>>();
-
-        let cards = grid(offered.len() as u16, window, cx).children(
-            offered
-                .iter()
-                .copied()
-                .enumerate()
-                .map(|(place, rounding)| {
-                    OptionCard::new(SharedString::from(format!("window-{}", rounding.id())))
-                        .choice(rounding.label(), current == rounding, place, offered.len())
-                        .thumb(corner(rounding, cx))
-                        .label(rounding.label())
-                        .selected(current == rounding)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.settings.update(cx, |settings, cx| {
-                                settings.set_window_rounding(rounding, cx)
-                            });
-                            cx.notify();
-                        }))
-                }),
-        );
-
-        self.stacked(t!("settings-window-rounding"), cards)
     }
 
     #[cfg(not(target_os = "macos"))]

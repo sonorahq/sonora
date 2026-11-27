@@ -170,13 +170,6 @@ enum Slot {
     Decorations,
     #[cfg(not(target_os = "macos"))]
     Side,
-    #[cfg(any(
-        target_os = "windows",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "macos"
-    ))]
-    WindowRounding,
     Motion,
     Pace,
     Saver,
@@ -813,7 +806,7 @@ impl SettingsView {
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
             SettingsPage::Providers => self.accounts_groups(),
-            SettingsPage::Appearance => self.appearance_groups(cx),
+            SettingsPage::Appearance => self.appearance_groups(),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
             SettingsPage::Lyrics => self.lyrics_groups(cx),
@@ -1120,16 +1113,6 @@ impl SettingsView {
                 t!("settings-controls-side"),
                 t!("settings-controls-side-detail"),
             ),
-            #[cfg(any(
-                target_os = "windows",
-                target_os = "linux",
-                target_os = "freebsd",
-                target_os = "macos"
-            ))]
-            Slot::WindowRounding => (
-                t!("settings-window-rounding"),
-                t!("settings-window-rounding-detail"),
-            ),
             Slot::AdaptiveMenu => (
                 t!("settings-adaptive-menu"),
                 t!("settings-adaptive-menu-detail"),
@@ -1351,13 +1334,6 @@ impl SettingsView {
             Slot::Decorations => self.decorations_row(cx),
             #[cfg(not(target_os = "macos"))]
             Slot::Side => self.side_row(window, cx),
-            #[cfg(any(
-                target_os = "windows",
-                target_os = "linux",
-                target_os = "freebsd",
-                target_os = "macos"
-            ))]
-            Slot::WindowRounding => self.window_rounding_row(window, cx),
             Slot::AdaptiveMenu => self.adaptive_menu_row(cx),
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),
