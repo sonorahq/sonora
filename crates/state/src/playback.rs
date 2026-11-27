@@ -1355,7 +1355,8 @@ impl Playback {
     }
 
     /// Replaces the queue with `tracks` and plays the one at `index` here from `at`, as another
-    /// device handed it over. A seek after `start` would be lost while the track loads.
+    /// device handed it over. A seek after `start` would be lost while the track loads. A
+    /// station handed over plays on here as it did there.
     pub(crate) fn start_at(
         &mut self,
         tracks: Vec<Track>,
@@ -1365,6 +1366,9 @@ impl Playback {
         cx: &mut Context<Self>,
     ) {
         self.fetch = None;
+        let station = origin
+            .as_ref()
+            .and_then(|origin| self.endless_station(origin, cx));
         let Some(track) = self
             .queue
             .update(cx, |queue, cx| queue.start(tracks, index, origin, cx))
@@ -1372,6 +1376,7 @@ impl Playback {
             return;
         };
         self.leave_station();
+        self.station = station;
         self.load_from(&track, at, Start::Pick, cx);
     }
 
@@ -2775,6 +2780,12 @@ impl Playback {
         let Some(track) = self.queue.update(cx, |queue, cx| queue.revive(resume, cx)) else {
             return;
         };
+        // The saved queue keeps no continuation, but a station needs none to go on: it
+        // continues from its own id, so it is found again from the origin it was saved with.
+        self.station = self
+            .origin(cx)
+            .cloned()
+            .and_then(|origin| self.endless_station(&origin, cx));
         self.track = Some(track);
         self.state = PlaybackState::Paused;
         self.position = at;
