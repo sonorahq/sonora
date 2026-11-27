@@ -2815,12 +2815,12 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    /// Lays `image` behind the whole window, or takes the image away with none. An image
-    /// whose transparency was dragged down to nothing would not show, so it starts over at
-    /// `ui::WALLPAPER_TRANSPARENCY`.
+    /// Lays `image` behind the whole window, or takes the image away with none. A window that
+    /// had no image starts at `ui::WALLPAPER_TRANSPARENCY`, wherever the slider was left the last
+    /// time one was shown. Swapping one image for another keeps the slider where it is.
     pub fn set_background_image(&mut self, image: Option<PathBuf>, cx: &mut Context<Self>) {
         let appearance = &mut self.values.appearance;
-        if image.is_some() && appearance.background_image_transparency <= 0. {
+        if image.is_some() && appearance.background_image.is_none() {
             appearance.background_image_transparency = ui::WALLPAPER_TRANSPARENCY;
         }
         appearance.background_image = image;
