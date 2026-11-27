@@ -262,8 +262,9 @@ pub trait MusicApi: Send + Sync {
     }
 
     /// Tells the provider a track has started playing, so the play counts on the provider's
-    /// own side. A provider that keeps no history keeps the default and makes no request.
-    async fn report_play(&self, _track_id: &str) -> Result<()> {
+    /// own side. `playlist_id` names the playlist it came from, when there is one. A provider
+    /// that keeps no history keeps the default and makes no request.
+    async fn report_play(&self, _track_id: &str, _playlist_id: Option<&str>) -> Result<()> {
         Ok(())
     }
 

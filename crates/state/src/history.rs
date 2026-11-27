@@ -9,7 +9,9 @@ use rusqlite::{Connection, params, params_from_iter};
 use storage::Database;
 
 use crate::playback::PlaybackEvent;
-use crate::{Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, join};
+use crate::{
+    Io, Outcome, Playback, Session, SessionEvent, SessionState, Toast, Toasts, Whence, join,
+};
 
 /// How many plays of one account the history keeps, on disk and in the list.
 const LOCAL_LIMIT: usize = 5000;
@@ -610,8 +612,14 @@ impl History {
             return;
         };
         let track_id = track_id.to_owned();
+        let playlist_id = self
+            .playback
+            .read(cx)
+            .origin(cx)
+            .filter(|origin| origin.whence == Whence::Playlist)
+            .map(|origin| origin.id.clone());
         self.io.spawn(async move {
-            if let Err(error) = client.report_play(&track_id).await {
+            if let Err(error) = client.report_play(&track_id, playlist_id.as_deref()).await {
                 log::warn!("history: cannot report the play to the provider: {error:#}");
             }
         });
