@@ -18,7 +18,7 @@ use crate::{auth::sign_in_error, feeds, wire};
 use music::{
     ArtistRef, Credit, GenreItem, Page, PinTarget, PinTargetKind, SavedCollectionPages, Track,
 };
-use spotifyapis::proto::collection::{CollectionItem, PageRequest, WriteRequest};
+use spotifyapis::proto::collection::{CollectionItem, DeltaRequest, PageRequest, WriteRequest};
 use spotifyapis::proto::extended_metadata::{
     AudioAttributes, ExtensionKind, MetadataKey, Reputation, TrackDescriptors,
 };
@@ -38,6 +38,8 @@ pub(crate) const COLLECTION: &str = "collection";
 pub(crate) const ARTISTS: &str = "artist";
 pub(super) const PINS: &str = "ylpin";
 const PAGE: i32 = 300;
+/// How far back a delta read of the pins reaches, a day short of the 90 days Spotify answers for.
+const PIN_DELTA_REACH: Duration = Duration::from_secs(89 * 24 * 60 * 60);
 // Main collection pages contain both tracks and albums.
 const COLLECTION_PAGE: i32 = 2_000;
 
@@ -458,6 +460,17 @@ fn cover_url(album: &AlbumMessage) -> Option<String> {
     wire::image_url(smallest.file_id())
 }
 
+/// Pins or unpins an item in the set Spotify's own apps keep library pins in.
+pub(super) async fn set_pinned(session: &Session, uri: &str, pinned: bool) -> Result<()> {
+    let uri = match uri {
+        LIKED_TRACKS => "spotify:collection",
+        uri => uri,
+    };
+    set_saved(session, PINS, uri, pinned)
+        .await
+        .context("cannot update the Spotify library pin")
+}
+
 /// Writes an entity to its collection set, or removes it.
 pub(super) async fn set_saved(session: &Session, set: &str, uri: &str, saved: bool) -> Result<()> {
     let now = SystemTime::now()
@@ -542,10 +555,41 @@ pub(super) fn pin_uri(kind: PinTargetKind, id: &str) -> Option<String> {
     Some(format!("{prefix}{id}"))
 }
 
+/// Reads the pin set as it stands now. A paging read can come from a regional copy that lags
+/// minutes or more behind a pin made through another region, so the changes of the last 89 days,
+/// which a delta read reports current from every region, are laid over it.
+async fn current_pins(session: &Session) -> Result<Vec<CollectionItem>> {
+    let mut items = saved_items(session, PINS, "spotify:").await?;
+    let since = SystemTime::now()
+        .checked_sub(PIN_DELTA_REACH)
+        .and_then(|since| since.duration_since(UNIX_EPOCH).ok())
+        .context("cannot read the current time")?;
+    let delta = session
+        .api()
+        .collection_delta(&DeltaRequest {
+            username: session.username().to_owned(),
+            set: PINS.to_owned(),
+            last_sync_token: since.as_millis().to_string(),
+        })
+        .await
+        .map_err(sign_in_error)
+        .context("cannot read the latest Spotify pins")?;
+    if !delta.delta_update_possible {
+        return Ok(items);
+    }
+    for change in delta.items {
+        items.retain(|item| item.uri != change.uri);
+        if !change.is_removed && change.uri.starts_with("spotify:") {
+            items.push(change);
+        }
+    }
+    Ok(items)
+}
+
 /// Reads the dedicated pin set and decorates supported pins with catalogue cards.
 pub(super) async fn pins(session: &Session) -> Result<Vec<PinTarget>> {
     let mut seen = HashSet::new();
-    let mut items = saved_items(session, PINS, "spotify:").await?;
+    let mut items = current_pins(session).await?;
     items.sort_by_key(|item| std::cmp::Reverse(item.added_at));
     let pins: Vec<_> = items
         .into_iter()
