@@ -49,6 +49,9 @@ pub(crate) struct Timeline {
     /// How far the slim seek line has opened, from 0 for a thin bare line to 1 for a thick one
     /// with both clocks above it. `None` for the full seek bar, with the clocks at either end.
     spread: Option<f32>,
+    /// Whether the row leaves no room over the line for the bubble's usual height, so it rests
+    /// on the thumb instead.
+    low: bool,
 }
 
 /// Tells that a drag on the seek bar has let go and sought, with where the pointer was.
@@ -88,14 +91,17 @@ impl Timeline {
             scale: 1.,
             drawn: None,
             spread: None,
+            low: false,
         }
     }
 
     /// Draws the slim seek line opened as far as `spread` says, or the full seek bar for `None`.
-    /// It redraws only when that changes.
-    pub fn spread(&mut self, spread: Option<f32>, cx: &mut Context<Self>) {
-        if self.spread != spread {
+    /// `low` rests the bubble on the thumb, for a row with no room over the line. It redraws
+    /// only when either changes.
+    pub fn spread(&mut self, spread: Option<f32>, low: bool, cx: &mut Context<Self>) {
+        if self.spread != spread || self.low != low {
             self.spread = spread;
+            self.low = low;
             cx.notify();
         }
     }
@@ -248,6 +254,11 @@ impl Render for Timeline {
             }
             None => (1., theme.foreground, 1., false),
         };
+        // In a low row the bubble's bottom meets the thumb's top, as low as it goes without
+        // covering it, which keeps it clear of the row's top edge.
+        let lift = self
+            .low
+            .then(|| theme.metrics.pad * (TRACK * thickness + THUMB * dot) / 2.);
 
         div()
             .id("player-seek")
@@ -293,6 +304,7 @@ impl Render for Timeline {
                         )
                         .enabled(seekable)
                         .when_some(bubble, |this, (at, text)| this.bubble(at, text))
+                        .when_some(lift, |this, lift| this.lift(lift))
                         .on_move(cx.listener(|this, fraction: &f32, _, cx| {
                             this.pending = Some(*fraction);
                             cx.notify();

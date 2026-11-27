@@ -93,7 +93,8 @@ impl SettingsView {
     }
 
     /// Miniature layouts share the saved choice with the actual workspace player bar, and float
-    /// as islands while the bar may.
+    /// as islands while the bar may. Compact cannot be chosen then, since the bar draws it as
+    /// classic, and its card shows the bar along the window's foot that it comes back as.
     pub(super) fn player_bar_cards(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.settings.read(cx).player_bar_layout();
         let transparent = self.settings.read(cx).player_bar_translucent();
@@ -105,6 +106,7 @@ impl SettingsView {
                     .into_iter()
                     .enumerate()
                     .map(|(place, layout)| {
+                        let held = island && layout == PlayerBarLayout::Compact;
                         OptionCard::new(layout.id())
                             .choice(
                                 i18n::lookup(layout.key(), None),
@@ -113,9 +115,13 @@ impl SettingsView {
                                 PlayerBarLayout::ALL.len(),
                             )
                             .thumb_height(height)
-                            .thumb(sketch(layout, island, transparent, height, cx))
+                            .thumb(sketch(layout, island && !held, transparent, height, cx))
                             .label(i18n::lookup(layout.key(), None))
                             .selected(layout == chosen)
+                            .disabled(held)
+                            .when(held, |card| {
+                                card.tooltip("settings-player-bar-compact-needs-bar")
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.settings.update(cx, |settings, cx| {
                                     settings.set_player_bar_layout(layout, cx);
