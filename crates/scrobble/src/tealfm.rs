@@ -1,12 +1,12 @@
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service};
+use super::{Account, Link, Play, Rejected, Secret, Service};
 
 /// The record each listen becomes in the user's repository.
 const PLAY: &str = "fm.teal.feed.play";
@@ -17,6 +17,8 @@ const STATUS_KEY: &str = "self";
 const STATUS_FALLBACK: Duration = Duration::from_secs(600);
 /// The longest string, in bytes, the play lexicon accepts for a name.
 const NAME_LIMIT: usize = 256;
+/// The alphabet of the sortable base32 that record keys of the TID form are written in.
+const TID_ALPHABET: &[u8; 32] = b"234567abcdefghijklmnopqrstuvwxyz";
 const APP_PASSWORDS: &str = "https://bsky.app/settings/app-passwords";
 /// The directory that resolves `did:plc` identities to their documents.
 const PLC: &str = "https://plc.directory";
@@ -221,12 +223,16 @@ impl Service for TealFm {
                 kind: PLAY,
                 view: View::of(play, &agent, Some(datetime(play.at)?)),
             };
+            // the key comes from the play, so a retry after a lost answer rewrites the same record
+            // rather than adding a second listen
+            let rkey = tid(play.at);
             self.write(
                 account,
-                "com.atproto.repo.createRecord",
-                &Create {
+                "com.atproto.repo.putRecord",
+                &Put {
                     repo: &account.key,
                     collection: PLAY,
+                    rkey: &rkey,
                     record: &record,
                 },
             )
@@ -297,13 +303,6 @@ struct Endpoint {
     kind: String,
     #[serde(rename = "serviceEndpoint")]
     endpoint: serde_json::Value,
-}
-
-#[derive(Serialize)]
-struct Create<'a, T> {
-    repo: &'a str,
-    collection: &'a str,
-    record: &'a T,
 }
 
 #[derive(Serialize)]
@@ -400,6 +399,13 @@ async fn post(
         || matches!(refusal.error.as_str(), "ExpiredToken" | "InvalidToken")
     {
         return Ok(Sent::Expired);
+    }
+    if status == StatusCode::BAD_REQUEST {
+        return Err(Rejected(format!(
+            "{method} ({status}): {} {}",
+            refusal.error, refusal.message
+        ))
+        .into());
     }
     bail!(
         "the atproto server refused {method} ({status}): {} {}",
@@ -552,4 +558,19 @@ fn clip(text: &str) -> &str {
         .find(|&end| text.is_char_boundary(end))
         .unwrap_or(0);
     &text[..end]
+}
+
+/// The record key of a play, a TID made from the moment the play started. The microseconds give
+/// its time and the nanoseconds within that microsecond its clock id, so the same play always
+/// gets the same key.
+fn tid(at: SystemTime) -> String {
+    let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let micros = u64::try_from(since.as_micros()).unwrap_or(u64::MAX) & ((1 << 53) - 1);
+    let mut value = (micros << 10) | u64::from(since.subsec_nanos() % 1000);
+    let mut key = [TID_ALPHABET[0]; 13];
+    for slot in key.iter_mut().rev() {
+        *slot = TID_ALPHABET[(value & 31) as usize];
+        value >>= 5;
+    }
+    key.iter().map(|&byte| char::from(byte)).collect()
 }

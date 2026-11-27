@@ -1,8 +1,9 @@
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service, host, root};
+use super::{Account, Link, Play, Rejected, Secret, Service, host, root};
 
 /// Where the native API lives under a Maloja server's root.
 const API: &str = "/apis/mlj_1";
@@ -53,7 +54,7 @@ impl Service for Maloja {
 
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
         for play in plays {
-            let answer: Answer = super::http()
+            let answer = super::http()
                 .post(format!("{}{API}/newscrobble", account.server))
                 .json(&New {
                     key: &account.session,
@@ -65,17 +66,29 @@ impl Service for Maloja {
                 })
                 .send()
                 .await
-                .context("cannot reach the maloja server")?
+                .context("cannot reach the maloja server")?;
+            let status = answer.status();
+            let answer: Answer = answer
                 .json()
                 .await
-                .context("cannot read the maloja answer")?;
+                .with_context(|| format!("cannot read the maloja answer ({status})"))?;
 
             if answer.status != "success" && answer.status != "ok" {
                 let reason = answer
                     .error
                     .map(|error| error.desc)
                     .unwrap_or_else(|| answer.status.clone());
-                bail!("the maloja server refused the scrobble: {reason}");
+                // a client error other than a refused key, a timeout or a rate limit names a
+                // listen the server never takes
+                if status.is_client_error()
+                    && status != StatusCode::UNAUTHORIZED
+                    && status != StatusCode::FORBIDDEN
+                    && status != StatusCode::REQUEST_TIMEOUT
+                    && status != StatusCode::TOO_MANY_REQUESTS
+                {
+                    return Err(Rejected(format!("maloja ({status}): {reason}")).into());
+                }
+                bail!("the maloja server refused the scrobble ({status}): {reason}");
             }
         }
         Ok(())

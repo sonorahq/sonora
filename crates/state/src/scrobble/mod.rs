@@ -3,7 +3,8 @@
 //! One entity drives every service at once. [`Scrobbling`] holds a [`ScrobbleRow`] per service, follows
 //! [`Playback`] and fans the same listen out to whichever rows are linked and turned on. The
 //! provider the track came from hears about it too, so a server such as Navidrome keeps its own
-//! play counts and now-playing list.
+//! play counts and now-playing list. A listen waits in a backlog until its service takes it, so
+//! one made offline is sent once the service can be reached.
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -15,8 +16,16 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
+use storage::Database;
+
 use crate::playback::PlaybackEvent;
-use crate::{AppSettings, Io, Outcome, Playback, PlaybackState, Session, Toast, Toasts, join};
+use crate::{
+    AppSettings, Io, Network, Outcome, Playback, PlaybackState, Reconnected, Session, Toast,
+    Toasts, join,
+};
+use backlog::{Backlog, Submit};
+
+mod backlog;
 
 /// What the settings row says when a link did not go through. The failure itself is in the log.
 const FAILED: &str = "settings-scrobble-failed";
@@ -75,6 +84,10 @@ pub struct ScrobbleRow {
     /// Whether the service was last told that something plays, so a pause, an end or a quit
     /// has a status to take back.
     shown: bool,
+    /// Keeps this service's listens and sends them.
+    submit: backlog::Sender,
+    /// The account the sender was last handed, `None` while it holds the listens back.
+    handed: Option<Account>,
 }
 
 impl ScrobbleRow {
@@ -129,6 +142,21 @@ impl ScrobbleRow {
             self.tell(Now::Stopped);
         }
     }
+
+    /// Hands the sender the account while the service is live, or holds the listens back while
+    /// it is not. The sender hears only a change, unless `again` asks it to try what waits now.
+    fn hand(&mut self, again: bool) {
+        let account = self.live().then(|| self.account.clone());
+        if !again && account == self.handed {
+            return;
+        }
+        self.handed = account.clone();
+        let submit = match account {
+            Some(account) => Submit::Account(account),
+            None => Submit::Hold,
+        };
+        self.submit.ask(submit);
+    }
 }
 
 pub struct Scrobbling {
@@ -152,8 +180,8 @@ pub struct Scrobbling {
     /// The queue that sends state reports one at a time. A segue puts a stop and the next start
     /// back to back, and the start has to land last or the server forgets the new track.
     reports: mpsc::UnboundedSender<Reported>,
-    /// Where submissions say whether the service took the key, which `_hearing` applies.
-    verdicts: mpsc::UnboundedSender<Verdict>,
+    /// Applies what the services' answers say about the stored key. The row tasks hold the
+    /// senders, so it runs as long as they do.
     _hearing: Task<()>,
     link: Option<Task<()>>,
     waiting: Option<AbortHandle>,
@@ -164,9 +192,16 @@ impl Scrobbling {
         playback: Entity<Playback>,
         session: Entity<Session>,
         settings: Entity<AppSettings>,
+        network: &Entity<Network>,
+        database: Database,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
+        // the network coming back is the likeliest moment for waiting listens to get through
+        cx.subscribe(network, |this, _, _: &Reconnected, _| {
+            this.rows.iter_mut().for_each(|row| row.hand(true))
+        })
+        .detach();
         cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::StartedPlayback => this.begin(cx),
             PlaybackEvent::EndedPlayback => this.end(cx),
@@ -189,10 +224,18 @@ impl Scrobbling {
             }
         });
 
+        let backlog = Backlog::new(database);
         let rows = scrobble::services()
             .into_iter()
             .map(|service| ScrobbleRow {
                 now: tell(&io, service.clone(), verdicts.clone()),
+                submit: backlog::Sender::new(
+                    &io,
+                    service.clone(),
+                    backlog.clone(),
+                    verdicts.clone(),
+                ),
+                handed: None,
                 service,
                 account: Account::default(),
                 enabled: true,
@@ -217,7 +260,6 @@ impl Scrobbling {
             reported: false,
             position: Duration::ZERO,
             reports: send_reports(&io),
-            verdicts,
             _hearing: hearing,
             link: None,
             waiting: None,
@@ -303,13 +345,15 @@ impl Scrobbling {
         }));
     }
 
-    /// Forgets one service's account, taking back its status first while the account can still
-    /// sign the request. A link still running is dropped first.
+    /// Forgets one service's account and the listens still waiting for it, taking back its status
+    /// first while the account can still sign the request. A link still running is dropped first.
     pub fn disconnect(&mut self, service: &str, cx: &mut Context<Self>) {
         self.stop();
         scrobble::forget(service);
         if let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
             row.hide();
+            row.submit.ask(Submit::Forget);
+            row.handed = None;
             row.account = Account::default();
             row.refused = false;
         }
@@ -375,6 +419,7 @@ impl Scrobbling {
 
         for row in &mut self.rows {
             row.enabled = settings.scrobbling_on(row.id());
+            row.hand(false);
             if row.linking() {
                 continue;
             }
@@ -574,21 +619,7 @@ impl Scrobbling {
                 continue;
             }
             row.sent = true;
-
-            let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
-            let verdicts = self.verdicts.clone();
-            self.io.spawn(async move {
-                let answer = service
-                    .scrobble(&account, std::slice::from_ref(&play))
-                    .await;
-                if let Err(error) = &answer {
-                    log::warn!(
-                        "scrobble: cannot submit the track to {}: {error:#}",
-                        service.id()
-                    );
-                }
-                judge(&verdicts, service.id(), &account, &answer);
-            });
+            row.submit.play(row.account.clone(), play.clone());
         }
     }
 

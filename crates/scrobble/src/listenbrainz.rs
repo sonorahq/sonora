@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service, host, root};
+use super::{Account, Link, Play, Rejected, Secret, Service, host, root};
 
 /// The public instance, used whenever the account names no `server` of its own.
 const API: &str = "https://api.listenbrainz.org";
@@ -30,6 +30,10 @@ impl Service for ListenBrainz {
 
     fn signup(&self) -> Option<&'static str> {
         Some(SETTINGS)
+    }
+
+    fn batch(&self) -> usize {
+        BATCH
     }
 
     async fn connect(&self, secret: Secret) -> Result<Account> {
@@ -127,6 +131,11 @@ async fn submit(account: &Account, kind: &str, payload: &[Listen<'_>]) -> Result
     }
     let status = answer.status();
     let body = answer.text().await.unwrap_or_default();
+    // a bad request names a listen the server will never take, unlike a refused token or an
+    // outage
+    if status == reqwest::StatusCode::BAD_REQUEST {
+        return Err(Rejected(format!("listenbrainz ({status}): {body}")).into());
+    }
     bail!("listenbrainz refused the request ({status}): {body}");
 }
 

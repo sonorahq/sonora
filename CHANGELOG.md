@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
+- Scrobbles made offline or while Last.fm, Libre.fm, ListenBrainz, Maloja or teal.fm is down are kept and sent once the service can be reached again, even after a restart.
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
 - `sonora queue remove`, `queue move` and `queue clear` edit the play order from the command line and the control socket, addressing rows by the id shown in `sonora queue --json`.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.

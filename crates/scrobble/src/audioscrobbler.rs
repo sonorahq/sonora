@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-use super::{Account, KeyRefused, Link, Play, Secret, Service};
+use super::{Account, KeyRefused, Link, Play, Rejected, Secret, Service};
 
 /// The loopback address the browser hands the token back on.
 const PORT: u16 = 8990;
@@ -20,6 +20,9 @@ const WAIT: Duration = Duration::from_secs(300);
 const LASTFM_BATCH: usize = 50;
 /// The error codes that refuse the key rather than the request: invalid, then suspended.
 const KEY_REFUSED: [u32; 2] = [10, 26];
+/// The error codes that refuse the listens themselves: invalid parameters, then an invalid
+/// resource. Sending them again cannot help.
+const REJECTED: [u32; 2] = [6, 7];
 
 const PAGE: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
     <html><body>Sonora is connected. You can close this window.</body></html>";
@@ -71,6 +74,10 @@ impl Service for AudioScrobbler {
 
     fn signup(&self) -> Option<&'static str> {
         self.signup
+    }
+
+    fn batch(&self) -> usize {
+        self.batch
     }
 
     async fn connect(&self, secret: Secret) -> Result<Account> {
@@ -251,6 +258,9 @@ async fn post(endpoint: &str, secret: &str, mut form: Vec<(String, String)>) -> 
         let message = answer.message.unwrap_or_default();
         if KEY_REFUSED.contains(&code) {
             return Err(KeyRefused { code, message }.into());
+        }
+        if REJECTED.contains(&code) {
+            return Err(Rejected(format!("({code}) {message}")).into());
         }
         bail!("the scrobbling service refused the request ({code}): {message}");
     }
