@@ -258,8 +258,9 @@ pub(crate) fn transport<F>(cell: &Cell<F>, resting: AnyElement, hover: Transport
         .into_any_element()
 }
 
-/// A cell that opens `to` when clicked. With a `menu` item it hauls that item when dragged and
-/// opens the item's menu when right-clicked, in place of the row's.
+/// A cell whose text opens `to` when clicked. With a `menu` item the text hauls that item when
+/// dragged and opens the item's menu when right-clicked, in place of the row's. The rest of the
+/// cell stays the row's.
 pub(crate) fn link<F>(
     cell: &Cell<F>,
     id: &'static str,
@@ -269,8 +270,10 @@ pub(crate) fn link<F>(
     menu: Option<Item>,
 ) -> AnyElement {
     let value = value.into();
-    line(cell, Some(color))
+    let text = div()
         .id((id, cell.row))
+        .min_w_0()
+        .truncate()
         .role(Role::Link)
         .aria_label(value.clone())
         .hover(|style| style.underline())
@@ -284,7 +287,12 @@ pub(crate) fn link<F>(
                 CardMenu::opener(item.clone(), playback)(event, window, cx);
             })
         })
-        .child(value)
+        .child(value);
+
+    line(cell, Some(color))
+        .flex()
+        .items_center()
+        .child(text)
         .into_any_element()
 }
 
@@ -304,9 +312,11 @@ pub(crate) fn artist_links(
     )
     .on_click(|id, cx| navigate(Destination::Artist(id), cx))
     .on_secondary(artist_menu_at)
-    .pin_with(|link| {
+    .pin_with(|link, cx| {
         let id = link.value.as_deref()?;
-        Some(Pin::new(PinKind::Artist, id, link.label.as_ref()))
+        let library = Sonora::global(cx).library.read(cx);
+        let cover = library.artist(id).and_then(|artist| artist.cover.clone());
+        Some(Pin::new(PinKind::Artist, id, link.label.as_ref()).cover(cover))
     })
 }
 

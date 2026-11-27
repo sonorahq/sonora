@@ -573,12 +573,11 @@ impl TrackSource {
     /// and names them only on a track whose artists differ from the album's. Any other table names
     /// them once it folded its artist column, unless they are the artist whose page it is.
     fn names_artists(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> bool {
-        match self.album.is_some() {
-            true => !track.artists.is_empty() && !self.credits_page_artists(track, cx),
-            false => {
-                cell.carries == Some(TrackField::Artists) && !self.credits_page_artists(track, cx)
-            }
-        }
+        let shown = match self.album.is_some() {
+            true => true,
+            false => cell.carries == Some(TrackField::Artists),
+        };
+        shown && !track.artists.is_empty() && !self.credits_page_artists(track, cx)
     }
 
     /// Whether a track credits exactly the artists its page is about, an album's own artists or the

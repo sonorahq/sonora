@@ -349,12 +349,18 @@ fn crowd<F: 'static>(
                 .map(|(at, _)| at)
         };
 
-        let evicted = match wanted(1.) > available {
-            true => lowest(&|_| true),
-            false if wanted(STACKED_COMFORT) > available => lowest(&|spec| {
-                spec.width.fills() && host.is_none_or(|host| !std::ptr::eq(host, spec))
-            }),
-            false => None,
+        // a text column beside a host short of its room goes before any column of lower rank
+        let crowded_text = (host.is_some() && wanted(STACKED_COMFORT) > available)
+            .then(|| {
+                lowest(&|spec| {
+                    spec.width.fills() && host.is_none_or(|host| !std::ptr::eq(host, spec))
+                })
+            })
+            .flatten();
+        let evicted = match crowded_text {
+            Some(at) => Some(at),
+            None if wanted(1.) > available => lowest(&|_| true),
+            None => None,
         };
         let Some(evicted) = evicted else {
             break;

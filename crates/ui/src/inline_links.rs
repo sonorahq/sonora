@@ -37,7 +37,7 @@ impl InlineLink {
 
 type ClickHandler = Rc<dyn Fn(SharedString, &mut App) + 'static>;
 type SecondaryHandler = Rc<dyn Fn(&InlineLink, &MouseDownEvent, &mut Window, &mut App) + 'static>;
-type PinFor = Rc<dyn Fn(&InlineLink) -> Option<Pin> + 'static>;
+type PinFor = Rc<dyn Fn(&InlineLink, &App) -> Option<Pin> + 'static>;
 
 /// What a link does when it is clicked, right-clicked and dragged.
 #[derive(Clone, Default)]
@@ -45,6 +45,8 @@ struct Handlers {
     click: Option<ClickHandler>,
     secondary: Option<SecondaryHandler>,
     pin: Option<PinFor>,
+    /// The pin of each link, by its place in the line, resolved from `pin` once a render.
+    pins: Rc<[Option<Pin>]>,
 }
 
 /// A comma-separated line of links, such as a track's artists. A truncated line shows the leading
@@ -107,7 +109,7 @@ impl InlineLinks {
     }
 
     /// The pin a link with a value hauls when it is dragged, in place of whatever holds the line.
-    pub fn pin_with(mut self, pin: impl Fn(&InlineLink) -> Option<Pin> + 'static) -> Self {
+    pub fn pin_with(mut self, pin: impl Fn(&InlineLink, &App) -> Option<Pin> + 'static) -> Self {
         self.handlers.pin = Some(Rc::new(pin));
         self
     }
@@ -120,7 +122,7 @@ impl Styled for InlineLinks {
 }
 
 impl RenderOnce for InlineLinks {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             mut base,
             id,
@@ -131,6 +133,13 @@ impl RenderOnce for InlineLinks {
             clip,
             handlers,
         } = self;
+        let handlers = Handlers {
+            pins: items
+                .iter()
+                .map(|item| handlers.pin.as_ref().and_then(|pin| pin(item, cx)))
+                .collect(),
+            ..handlers
+        };
         let overrides = std::mem::take(base.style());
 
         // A clipped list ellipsizes its text rather than hiding overflow, so a text shadow
@@ -417,12 +426,7 @@ fn link(
             })
             .hover(|style| style.underline())
             .cursor_pointer()
-            .when_some(
-                handlers
-                    .pin
-                    .and_then(|pin| pin(&InlineLink::new(label.clone(), Some(value.clone())))),
-                Pinnable::pin,
-            )
+            .when_some(handlers.pins.get(index).cloned().flatten(), Pinnable::pin)
             .when_some(handlers.secondary, |this, handler| {
                 let link = InlineLink::new(label.clone(), Some(value.clone()));
                 this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
