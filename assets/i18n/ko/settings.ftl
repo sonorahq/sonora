@@ -520,8 +520,8 @@ corners-rounded = 둥글게
 corners-round = 매우 둥글게
 
 # row height
-row-size-standard = 기본
-row-size-comfortable = 보통
+row-size-compact = 좁게
+row-size-regular = 보통
 row-size-spacious = 넓게
 
 # motion

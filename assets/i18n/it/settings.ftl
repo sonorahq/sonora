@@ -520,8 +520,8 @@ corners-rounded = Arrotondato
 corners-round = Rotondo
 
 # row height
-row-size-standard = Standard
-row-size-comfortable = Comoda
+row-size-compact = Compatta
+row-size-regular = Normale
 row-size-spacious = Ampia
 
 # motion
