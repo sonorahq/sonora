@@ -233,8 +233,8 @@ impl Render for Timeline {
         // thumb is part of the line rather than a dot of its own: at rest it is as thick as the
         // line and its colour, and it grows and lightens to a full thumb as the line opens. The
         // line and thumb follow the spring past either end, while colours stay within it. While
-        // the spring moves they are laid out off the pixel grid, so they swell smoothly rather
-        // than a pixel at a time.
+        // the spring moves the line is laid out off the pixel grid and the thumb grows as a
+        // scaled layer, so both swell smoothly rather than a pixel at a time.
         let (thickness, pin, dot, moving) = match self.spread {
             Some(spread) => {
                 let thickness = ISLAND_THIN + (ISLAND_THICK - ISLAND_THIN) * spread;
