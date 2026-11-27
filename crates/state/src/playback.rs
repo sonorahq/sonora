@@ -1817,19 +1817,25 @@ impl Playback {
         self.enqueue = Some(Io::global(cx).load(
             async move {
                 match from {
-                    Some(origin) => origin
-                        .load(&*client, capabilities)
-                        .await
-                        .map(|(tracks, _)| tracks),
-                    None => client.track(&id).await.map(|track| vec![track]),
+                    Some(origin) => origin.load(&*client, capabilities).await,
+                    None => client.track(&id).await.map(|track| (vec![track], None)),
                 }
             },
             move |this, loaded, cx| {
                 this.enqueue = None;
                 match loaded {
-                    Ok(tracks) => {
+                    Ok((tracks, next)) => {
                         let count = tracks.len();
-                        let placed = this.place(tracks, origin, placement, cx);
+                        let starts = this.queue.read(cx).current().is_none();
+                        let placed = this.place(tracks, origin.clone(), placement, cx);
+                        // Placed into an empty queue, a station starts it and plays on, as
+                        // it would from its Play button. Placed behind other tracks, it is
+                        // only the stretch it brought.
+                        if let (true, Some(origin), Some(next)) = (starts, origin, next)
+                            && this.origin(cx) == Some(&origin)
+                        {
+                            this.station = Some(Station::of(origin, next));
+                        }
                         if let Some(key) = placed.and_then(|placed| placed.toast(source)) {
                             Toasts::post(Toast::new(Outcome::Done, key).count(count), cx);
                         }
