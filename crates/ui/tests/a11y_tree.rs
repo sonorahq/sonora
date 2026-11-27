@@ -770,6 +770,22 @@ async fn silent_radio_stays_out_of_the_tree(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn silent_checkbox_stays_out_of_the_tree(cx: &mut TestAppContext) {
+    let lines = open_probe(cx, |window, cx| {
+        let element = Checkbox::new("library-mark", true)
+            .silent()
+            .render(window, cx)
+            .into_element();
+        snapshot("silent-checkbox", &element)
+    });
+    let lines = rendered(&lines, "silent-checkbox");
+    assert!(
+        lines.iter().all(|line| line.contains("NO NODE")),
+        "a silent checkbox still adds a nameless checkbox beside the row that names it: {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn glowed_row_keeps_its_role_and_name(cx: &mut TestAppContext) {
     let lines = open_probe(cx, |window, cx| {
         let fill = cx.global::<Theme>().secondary_hover;

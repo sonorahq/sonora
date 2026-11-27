@@ -333,8 +333,12 @@ pub struct SettingsView {
     library_cursor: Option<usize>,
     /// The option list's scroll position, moved to follow the cursor.
     library_scroll: ScrollHandle,
-    /// The library the stored account reads, held so a render never reads the stored account.
-    selected_library: Option<music::Library>,
+    /// The libraries the stored account reads, empty for the whole server, held so a render
+    /// never reads the stored account.
+    selected_libraries: Vec<music::Library>,
+    /// The libraries ticked in the open picker of a server that reads several at once, kept
+    /// only once the picker is saved.
+    library_draft: Vec<music::Library>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -380,7 +384,7 @@ impl SettingsView {
             .detach();
         cx.observe(&session, |this, session, cx| {
             // the library row follows the account in use, which may switch under the page
-            this.selected_library = session.read(cx).library();
+            this.selected_libraries = session.read(cx).chosen_libraries();
             this.remeasure(cx);
         })
         .detach();
@@ -486,7 +490,7 @@ impl SettingsView {
         let output_picker = cx.new(|cx| OutputPicker::new(outputs.clone(), popovers.clone(), cx));
         let previews = preview::Previews::new(cx);
 
-        let selected_library = session.read(cx).library();
+        let selected_libraries = session.read(cx).chosen_libraries();
         Self {
             session,
             updates,
@@ -535,7 +539,8 @@ impl SettingsView {
             library_picker: false,
             library_cursor: None,
             library_scroll: ScrollHandle::new(),
-            selected_library,
+            selected_libraries,
+            library_draft: Vec::new(),
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("common-api-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
@@ -611,7 +616,7 @@ impl SettingsView {
             self.outputs.update(cx, |outputs, cx| outputs.refresh(cx));
         }
         if page.tab() == SettingsPage::Providers.tab() {
-            self.selected_library = self.session.read(cx).library();
+            self.selected_libraries = self.session.read(cx).chosen_libraries();
         }
         if !std::mem::take(&mut self.keep_search) {
             self.clear_search(cx);

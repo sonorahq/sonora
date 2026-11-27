@@ -233,7 +233,8 @@ prost = "0.14"
 prost-types = "0.14"
 pulseaudio = "0.3.2"
 # Without a provider of its own, so reqwest stops compiling aws-lc-rs beside the ring every client
-# uses. The fork adds the feature (sonorahq/opensubsonic-rs, branch tls-features).
+# uses. The fork's sonora branch adds the feature, which upstream PR #12 (branch tls-features)
+# proposes, and several music folders per request (sonorahq/opensubsonic-rs, branch sonora).
 opensubsonic = { version = "0.7", default-features = false, features = ["rustls-no-provider"] }
 tokio = { version = "1.54", features = [
     "rt-multi-thread",
@@ -255,7 +256,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 
 [patch.crates-io]
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "880aaba54b00aead53651ed1ccbdb672d1375a95" }
-opensubsonic = { git = "https://github.com/sonorahq/opensubsonic-rs", rev = "486fe6bec8eb7464e084c21e251d776d6ee48db0" }
+opensubsonic = { git = "https://github.com/sonorahq/opensubsonic-rs", rev = "addaa7a4a17b796cc3b6d4bcdea2aa9559d6132c" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

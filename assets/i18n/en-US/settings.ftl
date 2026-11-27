@@ -294,6 +294,10 @@ settings-stream-bitrate-hourly = About { $megabytes } MB an hour
 settings-stream-bitrate-unlimited-detail = Each file at its own bitrate
 settings-subsonic-library = Library
 settings-subsonic-library-all = All libraries
+settings-subsonic-library-several = { $count ->
+    [one] { $count } library
+   *[other] { $count } libraries
+}
 settings-subsonic-library-unnamed = Library { $id }
 settings-subsonic-library-unavailable = Not on this server anymore
 settings-output-device = Output device

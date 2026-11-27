@@ -12,8 +12,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use music::{
-    Capabilities, Catalog, Library, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession,
-    RadioSeed, Shape, SignIn, credentials,
+    Capabilities, Catalog, Libraries, Library, MusicApi as _, MusicProvider, PlaybackFactory,
+    ProviderSession, RadioSeed, Shape, SignIn, credentials,
 };
 
 use crate::playback::Factory;
@@ -59,7 +59,7 @@ impl SubsonicProvider {
             username.clone(),
             password.clone(),
             &signature,
-            None,
+            Vec::new(),
         )?;
         let profile = client
             .profile()
@@ -74,8 +74,9 @@ impl SubsonicProvider {
                 username,
                 password,
                 signature: Some(signature),
-                // a fresh sign-in starts on the whole server; a library is chosen afterwards
+                // a fresh sign-in starts on the whole server; libraries are chosen afterwards
                 library: None,
+                libraries: Vec::new(),
             },
         )?;
         Ok(ProviderSession {
@@ -112,7 +113,11 @@ impl SubsonicProvider {
             remembered.username.clone(),
             remembered.password.clone(),
             &signature,
-            remembered.library.as_ref().map(|library| library.id),
+            remembered
+                .libraries
+                .iter()
+                .map(|library| library.id)
+                .collect(),
         )?;
         match client.profile().await {
             Ok(profile) => Ok(Some(ProviderSession {
@@ -140,14 +145,15 @@ impl SubsonicProvider {
     }
 }
 
-/// The library the stored account reads, when it is scoped to one. The picker names the
-/// choice from this before the server is asked anything.
-fn selected_library(slug: &str) -> Option<Library> {
-    auth::load(slug).and_then(|remembered| remembered.library)
+/// The libraries the stored account reads, empty when it reads the whole server. The picker
+/// names the choice from this before the server is asked anything.
+fn selected_libraries(slug: &str) -> Vec<Library> {
+    auth::load(slug).map_or_else(Vec::new, |remembered| remembered.libraries)
 }
 
-/// Every library the stored server offers the account, for the settings picker.
-async fn libraries(slug: &str) -> Result<Vec<Library>> {
+/// Every library the stored server offers the account, for the settings picker, and whether
+/// the server reads several of them at once.
+async fn libraries(slug: &str) -> Result<Libraries> {
     let remembered = auth::load(slug).context("no subsonic account is stored")?;
     let signature = remembered
         .signature
@@ -158,17 +164,18 @@ async fn libraries(slug: &str) -> Result<Vec<Library>> {
         remembered.username,
         remembered.password,
         &signature,
-        None,
+        Vec::new(),
     )?;
-    client.music_folders().await
+    let (all, several) = tokio::join!(client.music_folders(), client.reads_several_folders());
+    Ok(Libraries { all: all?, several })
 }
 
-/// Points the stored account at one library, or back at the whole server with `None`. This
-/// only persists the choice: the live session rebuilds itself to apply it, so no request in
-/// flight changes scope under the user.
-fn select_library(slug: &str, library: Option<Library>) -> Result<()> {
+/// Points the stored account at some libraries, or back at the whole server when `libraries`
+/// is empty. This only persists the choice: the live session rebuilds itself to apply it, so no
+/// request in flight changes scope under the user.
+fn select_libraries(slug: &str, libraries: Vec<Library>) -> Result<()> {
     let mut remembered = auth::load(slug).context("no subsonic account is stored")?;
-    remembered.library = library;
+    remembered.libraries = libraries;
     auth::store(slug, &remembered)
 }
 
@@ -210,16 +217,16 @@ impl MusicProvider for SubsonicProvider {
         true
     }
 
-    fn library(&self) -> Option<Library> {
-        selected_library(self.slug)
+    fn chosen_libraries(&self) -> Vec<Library> {
+        selected_libraries(self.slug)
     }
 
-    async fn libraries(&self) -> Result<Vec<Library>> {
+    async fn libraries(&self) -> Result<Libraries> {
         libraries(self.slug).await
     }
 
-    fn choose_library(&self, library: Option<Library>) -> Result<()> {
-        select_library(self.slug, library)
+    fn choose_libraries(&self, libraries: Vec<Library>) -> Result<()> {
+        select_libraries(self.slug, libraries)
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
@@ -265,7 +272,11 @@ impl MusicProvider for SubsonicProvider {
             remembered.username,
             remembered.password,
             &signature,
-            remembered.library.as_ref().map(|library| library.id),
+            remembered
+                .libraries
+                .iter()
+                .map(|library| library.id)
+                .collect(),
         )
         .inspect_err(|error| log::warn!("subsonic: cannot build an offline client: {error:#}"))
         .ok()?;

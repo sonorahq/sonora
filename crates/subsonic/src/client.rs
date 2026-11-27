@@ -51,6 +51,9 @@ const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "sonora";
 /// The first Navidrome that takes a playlist picture through its own API.
 const NAVIDROME_COVERS: (u32, u32) = (0, 61);
+/// The first Navidrome that keeps several libraries and reads every `musicFolderId` a request
+/// names together.
+const NAVIDROME_LIBRARIES: (u32, u32) = (0, 58);
 /// The first Navidrome declared to take smart playlists through its own API. The create,
 /// edit and read contract is the same across the 0.64 releases (their playlist REST adapters
 /// differ only in delete error mapping, which these calls do not use), and the live exercise
@@ -95,10 +98,11 @@ pub struct SubsonicClient {
     /// The OpenSubsonic extensions the server lists, asked the first time one matters. A plain
     /// Subsonic server lists none.
     extensions: Arc<OnceCell<HashSet<String>>>,
-    /// The library every scoped request is limited to, chosen in settings. `None` reads the
-    /// whole server. It is fixed for the client's life, because a change rebuilds the session.
-    library: Option<i64>,
-    /// The chosen library's album ids and when they were read, shared by every clone so one
+    /// The libraries every scoped request is limited to, chosen in settings, as the
+    /// `musicFolderId` values requests carry. Empty reads the whole server. It is fixed for the
+    /// client's life, because a change rebuilds the session.
+    folders: Vec<String>,
+    /// The chosen libraries' album ids and when they were read, shared by every clone so one
     /// walk serves every artist page until `SCOPE_TTL` runs out.
     scope: Arc<Mutex<Option<Membership>>>,
     /// The server's Navidrome release, asked the first time a Navidrome-only call needs it.
@@ -110,26 +114,26 @@ pub struct SubsonicClient {
 }
 
 /// The request options that take a `musicFolderId`, so `SubsonicClient::scoped` can limit any
-/// of them to the chosen library.
+/// of them to the chosen libraries.
 trait InFolder {
-    fn in_folder(self, folder: String) -> Self;
+    fn in_folders(self, folders: Vec<String>) -> Self;
 }
 
 impl InFolder for Search3Options {
-    fn in_folder(self, folder: String) -> Self {
-        self.music_folder_id(folder)
+    fn in_folders(self, folders: Vec<String>) -> Self {
+        self.music_folder_ids(folders)
     }
 }
 
 impl InFolder for AlbumListOptions {
-    fn in_folder(self, folder: String) -> Self {
-        self.music_folder_id(folder)
+    fn in_folders(self, folders: Vec<String>) -> Self {
+        self.music_folder_ids(folders)
     }
 }
 
 impl InFolder for RandomSongsOptions {
-    fn in_folder(self, folder: String) -> Self {
-        self.music_folder_id(folder)
+    fn in_folders(self, folders: Vec<String>) -> Self {
+        self.music_folder_ids(folders)
     }
 }
 
@@ -186,7 +190,7 @@ impl SubsonicClient {
         username: String,
         password: String,
         signature: &Signature,
-        library: Option<i64>,
+        libraries: Vec<i64>,
     ) -> Result<Self> {
         let server = server.trim_end_matches('/').to_owned();
         let client = Client::new(&server, Auth::token(&username, password.clone()))
@@ -208,42 +212,39 @@ impl SubsonicClient {
             http: reqwest::Client::new(),
             covers,
             extensions: Arc::default(),
-            library,
+            folders: libraries.iter().map(i64::to_string).collect(),
             scope: Arc::default(),
             navidrome: Arc::default(),
             token: Arc::default(),
         })
     }
 
-    /// The library scope as the query value the API takes, for the calls that take it.
-    fn folder(&self) -> Option<String> {
-        self.library.map(|id| id.to_string())
+    /// The library scope as the calls that take a list of `musicFolderId` values want it.
+    fn folder_refs(&self) -> Vec<&str> {
+        self.folders.iter().map(String::as_str).collect()
     }
 
-    /// Limits a request's options to the chosen library, or leaves them alone when the account
-    /// reads the whole server.
+    /// Limits a request's options to the chosen libraries, or leaves them alone when the
+    /// account reads the whole server.
     fn scoped<O: InFolder>(&self, options: O) -> O {
-        match self.folder() {
-            Some(folder) => options.in_folder(folder),
-            None => options,
-        }
+        options.in_folders(self.folders.clone())
     }
 
-    /// The album ids of the chosen library, or `None` for an account that reads the whole
+    /// The album ids of the chosen libraries, or `None` for an account that reads the whole
     /// server. `getArtist` and `getTopSongs` take no library, so their answers are filtered
     /// against this set. The read is cached for `SCOPE_TTL`, and concurrent callers wait for the
     /// one walk in flight. A failed read is not cached.
     async fn library_albums(&self) -> Result<Option<Arc<HashSet<String>>>> {
-        let Some(folder) = self.folder() else {
+        if self.folders.is_empty() {
             return Ok(None);
-        };
+        }
         let mut scope = self.scope.lock().await;
         if let Some((read, albums)) = scope.as_ref()
             && read.elapsed() < SCOPE_TTL
         {
             return Ok(Some(albums.clone()));
         }
-        let albums = Arc::new(self.scoped_album_ids(&folder).await?);
+        let albums = Arc::new(self.scoped_album_ids(&self.folders).await?);
         *scope = Some((Instant::now(), albums.clone()));
         Ok(Some(albums))
     }
@@ -268,13 +269,13 @@ impl SubsonicClient {
         )
     }
 
-    /// Every album id in the given library, paged through the empty-query search that every
+    /// Every album id in the given libraries, paged through the empty-query search that every
     /// OpenSubsonic server must answer with all of its data. Only an empty page ends the walk,
     /// since a short page can be a server cap rather than the end. A page that adds nothing
     /// means the server ignores offsets, and more than `SCOPE_PAGES` pages means the library is
     /// too large to verify. Both fail, because partial membership would hide albums the library
     /// holds.
-    async fn scoped_album_ids(&self, folder: &str) -> Result<HashSet<String>> {
+    async fn scoped_album_ids(&self, folders: &[String]) -> Result<HashSet<String>> {
         let mut ids = HashSet::new();
         let mut offset = 0;
         for _ in 0..SCOPE_PAGES {
@@ -287,7 +288,7 @@ impl SubsonicClient {
                         .album_count(SCOPE_PAGE)
                         .album_offset(offset)
                         .song_count(0)
-                        .music_folder_id(folder),
+                        .music_folder_ids(folders.iter().cloned()),
                 )
                 .await
                 .map_err(bare)
@@ -345,6 +346,14 @@ impl SubsonicClient {
                 }
             })
             .await
+    }
+
+    /// Whether the server is a Navidrome that reads several libraries in one request, so an
+    /// account can be limited to more than one. Any other server reads only the first.
+    pub async fn reads_several_folders(&self) -> bool {
+        self.navidrome_release()
+            .await
+            .is_some_and(|version| version >= NAVIDROME_LIBRARIES)
     }
 
     /// Whether the server is a Navidrome that takes playlist pictures. Only its own API does,
@@ -925,7 +934,7 @@ impl MusicApi for SubsonicClient {
     async fn saved_tracks(&self) -> Result<Vec<Track>> {
         let starred = self
             .client
-            .get_starred2(self.folder().as_deref())
+            .get_starred2_in(&self.folder_refs())
             .await
             .map_err(bare)
             .context("cannot load the starred songs")?;
@@ -1266,7 +1275,7 @@ impl MusicApi for SubsonicClient {
     async fn saved_albums(&self) -> Result<Vec<Album>> {
         let starred = self
             .client
-            .get_starred2(self.folder().as_deref())
+            .get_starred2_in(&self.folder_refs())
             .await
             .map_err(bare)
             .context("cannot load the starred albums")?;
@@ -1314,7 +1323,7 @@ impl MusicApi for SubsonicClient {
     async fn saved_artists(&self) -> Result<Vec<SavedArtist>> {
         let starred = self
             .client
-            .get_starred2(self.folder().as_deref())
+            .get_starred2_in(&self.folder_refs())
             .await
             .map_err(bare)
             .context("cannot load the starred artists")?;
@@ -1338,7 +1347,7 @@ impl MusicApi for SubsonicClient {
     async fn all_artists(&self) -> Result<Vec<SavedArtist>> {
         let artists = self
             .client
-            .get_artists(self.folder().as_deref())
+            .get_artists_in(&self.folder_refs())
             .await
             .map_err(bare)
             .context("cannot load the artists")?;
@@ -1840,7 +1849,7 @@ impl SubsonicClient {
             self.signed,
             escape::component(genre_id),
         );
-        if let Some(folder) = self.folder() {
+        for folder in &self.folders {
             url.push_str(&format!("&musicFolderId={folder}"));
         }
         let answer: serde_json::Value = self
@@ -2194,7 +2203,7 @@ mod tests {
                 "ada".to_owned(),
                 "secret".to_owned(),
                 &Signature::default(),
-                library,
+                library.into_iter().collect(),
             )
             .unwrap()
         }
@@ -2505,7 +2514,7 @@ mod tests {
     async fn scoped_membership_advances_by_rows_returned_when_the_server_caps_pages() {
         let stub = Stub::start().await;
         let client = stub.client(Some(8));
-        let ids = client.scoped_album_ids("8").await.unwrap();
+        let ids = client.scoped_album_ids(&["8".to_owned()]).await.unwrap();
         assert_eq!(ids.len(), 2);
         assert!(ids.contains("al-in"));
         let asked = stub.asked();
@@ -2752,7 +2761,7 @@ mod smart_tests {
                 "judith".into(),
                 "secret".into(),
                 &signature,
-                None,
+                Vec::new(),
             )
             .expect("a client")
         }
@@ -3107,7 +3116,7 @@ mod smart_tests {
             "judith".into(),
             "wrong".into(),
             &signature,
-            None,
+            Vec::new(),
         )
         .expect("a client");
         let error = client

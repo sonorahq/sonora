@@ -9,9 +9,9 @@ use gpui::{Context, Entity, EventEmitter, Task};
 use i18n::t;
 use music::link::Linked;
 use music::{
-    Capabilities, Catalog, Library, MusicApi, MusicProvider, PlaybackFactory, PromptSink,
-    ProviderSession, ScanReport, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt, Track,
-    UserProfile,
+    Capabilities, Catalog, Libraries, Library, MusicApi, MusicProvider, PlaybackFactory,
+    PromptSink, ProviderSession, ScanReport, Shape, SignIn, SignInFailure, SignInProblem,
+    SignInPrompt, Track, UserProfile,
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::AbortHandle;
@@ -174,7 +174,7 @@ pub struct Session {
     attempt: usize,
     /// The server libraries the library picker lists, or why they could not be read. `None`
     /// while a read is under way or when none was asked for.
-    libraries: Option<Result<Vec<Library>, String>>,
+    libraries: Option<Result<Libraries, String>>,
     libraries_task: Option<Task<()>>,
 }
 
@@ -713,8 +713,9 @@ impl Session {
         self.restore(cx);
     }
 
-    /// The provider whose stored account can be limited to one library of its server: the one in
-    /// use when it can, otherwise the first such account. A guest session has no account to limit.
+    /// The provider whose stored account can be limited to some libraries of its server: the one
+    /// in use when it can, otherwise the first such account. A guest session has no account to
+    /// limit.
     fn library_provider(&self) -> Option<&Arc<dyn MusicProvider>> {
         let scoped = |provider: &&Arc<dyn MusicProvider>| {
             provider.has_libraries() && provider.stored() && !provider.stored_guest()
@@ -725,19 +726,20 @@ impl Session {
             .or_else(|| self.providers.iter().find(scoped))
     }
 
-    /// Whether a stored account can be limited to one library of its server.
+    /// Whether a stored account can be limited to some libraries of its server.
     pub fn offers_libraries(&self) -> bool {
         self.library_provider().is_some()
     }
 
-    /// The library the stored account reads, or `None` for the whole server. It reads what is
+    /// The libraries the stored account reads, empty for the whole server. It reads what is
     /// stored and asks the server nothing.
-    pub fn library(&self) -> Option<Library> {
-        self.library_provider()?.library()
+    pub fn chosen_libraries(&self) -> Vec<Library> {
+        self.library_provider()
+            .map_or_else(Vec::new, |provider| provider.chosen_libraries())
     }
 
     /// The libraries the last read found, or why it failed. `None` while the read is under way.
-    pub fn libraries(&self) -> Option<&Result<Vec<Library>, String>> {
+    pub fn libraries(&self) -> Option<&Result<Libraries, String>> {
         self.libraries.as_ref()
     }
 
@@ -768,18 +770,19 @@ impl Session {
         cx.notify();
     }
 
-    /// Keeps the stored account's library choice, or the whole server with `None`, and rebuilds
-    /// the session around it when that account is the one in use. A stored account that is not
-    /// in use picks the choice up when it next signs in. Fails when the choice cannot be kept.
-    pub fn choose_library(
+    /// Keeps the stored account's library choice, the whole server when `libraries` is empty,
+    /// and rebuilds the session around it when that account is the one in use. A stored account
+    /// that is not in use picks the choice up when it next signs in. Fails when the choice
+    /// cannot be kept.
+    pub fn choose_libraries(
         &mut self,
-        library: Option<Library>,
+        libraries: Vec<Library>,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let Some(provider) = self.library_provider().cloned() else {
             anyhow::bail!("no stored account can be limited to a library");
         };
-        provider.choose_library(library)?;
+        provider.choose_libraries(libraries)?;
         if self.provider_slug() == Some(provider.slug()) {
             self.reload(cx);
         }

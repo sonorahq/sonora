@@ -1359,6 +1359,15 @@ pub struct Library {
     pub name: Option<String>,
 }
 
+/// The libraries a self-hosted server offers an account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Libraries {
+    pub all: Vec<Library>,
+    /// Whether the server reads several of them together, so an account can be limited to more
+    /// than one. A server that cannot reads only the first library a request names.
+    pub several: bool,
+}
+
 #[async_trait]
 pub trait MusicProvider: Send + Sync {
     fn name(&self) -> &'static str;
@@ -1382,23 +1391,23 @@ pub trait MusicProvider: Send + Sync {
         Vec::new()
     }
 
-    /// Whether a stored account can be limited to one library of its server. Only such a
+    /// Whether a stored account can be limited to some libraries of its server. Only such a
     /// provider answers the other library calls.
     fn has_libraries(&self) -> bool {
         false
     }
-    /// The library the stored account is limited to, or `None` when it reads the whole server.
-    /// It reads what is stored and asks the server nothing.
-    fn library(&self) -> Option<Library> {
-        None
+    /// The libraries the stored account is limited to, empty when it reads the whole server. It
+    /// reads what is stored and asks the server nothing.
+    fn chosen_libraries(&self) -> Vec<Library> {
+        Vec::new()
     }
-    /// Every library the stored account's server offers.
-    async fn libraries(&self) -> Result<Vec<Library>> {
+    /// Every library the stored account's server offers, and whether it reads several at once.
+    async fn libraries(&self) -> Result<Libraries> {
         anyhow::bail!("this provider has no libraries")
     }
-    /// Keeps the library the stored account reads, or the whole server with `None`. It only
-    /// stores the choice, so a live session applies it once it is rebuilt.
-    fn choose_library(&self, _library: Option<Library>) -> Result<()> {
+    /// Keeps the libraries the stored account reads, or the whole server when `libraries` is
+    /// empty. It only stores the choice, so a live session applies it once it is rebuilt.
+    fn choose_libraries(&self, _libraries: Vec<Library>) -> Result<()> {
         anyhow::bail!("this provider has no libraries")
     }
 

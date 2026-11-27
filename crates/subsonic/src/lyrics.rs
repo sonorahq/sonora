@@ -56,7 +56,7 @@ impl SubsonicLyrics {
             stored.username,
             stored.password,
             &signature,
-            stored.library.as_ref().map(|library| library.id),
+            stored.libraries.iter().map(|library| library.id).collect(),
         )?;
         *held = Some((identity, client.clone()));
         Ok(Some(client))
