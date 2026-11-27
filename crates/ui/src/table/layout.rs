@@ -67,6 +67,7 @@ pub struct Sorting {
     pub order: Sort,
 }
 
+#[derive(Clone, Copy)]
 pub struct ColumnSpec<F: 'static> {
     pub field: F,
     pub key: &'static str,

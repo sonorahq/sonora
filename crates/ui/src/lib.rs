@@ -85,7 +85,8 @@ pub use deck::Deck;
 pub use drag::{Edge, Ghost, drop_gap, drop_into, drop_marker, grip};
 pub use dropdown::Dropdown;
 pub use filters::{
-    Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
+    Choice, ChoiceAxis, Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState,
+    SortAxis, Unit,
 };
 pub use flight::{Flight, Zoom};
 pub use form::{FORM_CONTEXT, Field, Form, NextField, PreviousField, Submit, step_focus};

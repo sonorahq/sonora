@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
+use ui::{ActiveTheme as _, Filter, FilterChange, RangeAxis, Unit};
 
 use gpui::{AnyElement, App, Entity, TextAlign};
 use i18n::t;
@@ -11,6 +11,7 @@ use state::{
 use ui::rank::{ESSENTIAL, HANDY, NICE, SPARE};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
+use crate::chrome::tools;
 use crate::shared::blend::{self, Joined, Reach};
 use crate::shared::cells::{self, DATE, NUMBER, TRAILING};
 use crate::shared::menus::playlist_menu;
@@ -184,24 +185,16 @@ impl TableSource for PlaylistSource {
                     bounds,
                     value,
                     unit: Unit::Plain,
-                    values: Some(counts),
+                    values: Some(counts.into()),
                 }
                 .clamped(),
             ));
         }
-        axes.push(Filter::Flag(FlagAxis {
-            key: "filter-owned",
-            label: t!("filter-owned"),
-            on: self.owned,
-        }));
+        axes.push(tools::flag("filter-owned", self.owned));
         // Offline mode already keeps the shelf to its downloads, so the filter would do nothing.
         let offered = self.downloaded || !Sonora::global(cx).downloads.read(cx).is_empty();
         if offered && !self.downloads_only(cx) {
-            axes.push(Filter::Flag(FlagAxis {
-                key: "filter-downloaded",
-                label: t!("filter-downloaded"),
-                on: self.downloaded,
-            }));
+            axes.push(tools::flag("filter-downloaded", self.downloaded));
         }
         axes.extend(self.reach.axes(self.playlists(cx).mixed()));
         axes
@@ -213,7 +206,7 @@ impl TableSource for PlaylistSource {
         }
         match change {
             FilterChange::Range("filter-tracks", value) => {
-                self.tracks_span = Some(value);
+                self.tracks_span = value;
                 true
             }
             FilterChange::Flag("filter-owned", value) => {

@@ -32,7 +32,7 @@ use crate::shared::powerbar::{Powerbar, PowerbarEvent};
 use crate::shared::smart_playlist::SmartPlaylistEditor;
 use crate::shared::soloist::SoloistSetup;
 use crate::shared::tag_editor::TagEditor;
-use crate::shared::tracks::{LIBRARY_COLUMNS, album_columns};
+use crate::shared::tracks::{ALBUM_COLUMNS, LIBRARY_COLUMNS};
 use crate::shared::transport::{Backdrops, CoverAway, CoverFade, CoverRoom, ShellSwap};
 use crate::shared::widevine::WidevinePrompt;
 use crate::shells::Shell;
@@ -505,7 +505,6 @@ impl Root {
         if let (Some(view), Some(detail)) = (&self.screens.album, &self.screens.album_detail) {
             return (view.clone(), detail.clone());
         }
-        let playcounts = self.session.read(cx).capabilities().playcounts;
         let detail = cx.new(|cx| {
             Detail::new(
                 self.session.clone(),
@@ -518,7 +517,7 @@ impl Root {
             DetailView::new(
                 detail.clone(),
                 self.playback.clone(),
-                album_columns(playcounts),
+                ALBUM_COLUMNS,
                 true,
                 "album",
                 cx,
@@ -703,7 +702,15 @@ impl Root {
     }
 
     fn options(&self, cx: &Context<Self>) -> TitleBarOptions {
-        let content = self.toolbar.clone().map(Into::into);
+        let content = match router::trail(cx).read(cx).current() {
+            Destination::Album(_)
+            | Destination::Playlist(_)
+            | Destination::History
+            | Destination::Library(_)
+            | Destination::Artist(_)
+            | Destination::Genre(_) => None,
+            _ => self.toolbar.clone().map(Into::into),
+        };
 
         match self.view {
             RootView::Workspace => self.shells.workspace.read(cx).title_bar(content, cx),

@@ -5,11 +5,12 @@ use gpui::prelude::*;
 use gpui::{App, ClickEvent, Entity, MouseDownEvent, Pixels, SharedString, Window, div};
 use music::{GenreItem, Track};
 use state::Playback;
-use ui::{ActiveTheme as _, Button, Card, heading, snapped, vacant};
+use ui::{ActiveTheme as _, Card, heading, snapped, vacant};
 
-use crate::shared::cards;
 use crate::shared::shelves::heading_line;
+
 use crate::shared::track_card::{ContextHandler, StartHandler, TrackCard};
+use crate::shared::{cards, page};
 
 const ROWS: usize = 5;
 const MAX_COLUMNS: usize = 3;
@@ -70,6 +71,7 @@ pub(crate) struct Picks {
     width: Pixels,
     page: usize,
     detailed: bool,
+    show_header: bool,
     loading: bool,
     on_previous: Option<ClickHandler>,
     on_next: Option<ClickHandler>,
@@ -94,6 +96,7 @@ impl Picks {
             width,
             page,
             detailed: false,
+            show_header: true,
             loading: false,
             on_previous: None,
             on_next: None,
@@ -120,6 +123,7 @@ impl Picks {
             width,
             page,
             detailed: false,
+            show_header: true,
             loading: false,
             on_previous: None,
             on_next: None,
@@ -140,6 +144,12 @@ impl Picks {
 
     pub(crate) fn detailed(mut self) -> Self {
         self.detailed = true;
+        self
+    }
+
+    /// Hides the deck heading when its parent supplies the section heading and controls.
+    pub(crate) fn without_header(mut self) -> Self {
+        self.show_header = false;
         self
     }
 
@@ -189,6 +199,7 @@ impl RenderOnce for Picks {
         let empty = rows.len() == 0;
         let barren = empty && !self.loading;
         let id = self.id;
+        let show_header = self.show_header;
         let on_previous = self.on_previous;
         let on_next = self.on_next;
         let on_context_menu = self.on_context_menu;
@@ -198,7 +209,7 @@ impl RenderOnce for Picks {
             .w_full()
             .flex()
             .flex_col()
-            .child(
+            .children(show_header.then(|| {
                 div()
                     .flex()
                     .items_end()
@@ -218,37 +229,34 @@ impl RenderOnce for Picks {
                             .flex()
                             .items_center()
                             .gap_1()
-                            // As tall as the title's line and at the bottom of the header with
-                            // it, so the arrows centre on the title.
                             .h(heading_line(window, cx))
-                            .child(
-                                Button::new(SharedString::from(format!("{id}-previous")))
-                                    .small()
-                                    .outline()
-                                    .icon("icons/chevron-left.svg")
-                                    .tooltip("common-previous")
-                                    .disabled(empty || page == 0)
-                                    .when_some(on_previous, |button, handler| {
-                                        button.on_click(move |event, window, cx| {
-                                            handler(event, window, cx)
-                                        })
-                                    }),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("{id}-next")))
-                                    .small()
-                                    .outline()
-                                    .icon("icons/chevron-right.svg")
-                                    .tooltip("common-next")
-                                    .disabled(empty || page + 1 >= shape.pages)
-                                    .when_some(on_next, |button, handler| {
-                                        button.on_click(move |event, window, cx| {
-                                            handler(event, window, cx)
-                                        })
-                                    }),
+                            .children(
+                                [("previous", true, on_previous), ("next", false, on_next)].map(
+                                    |(suffix, previous, handler)| {
+                                        page::arrow_button(
+                                            SharedString::from(format!("{id}-{suffix}")),
+                                            previous,
+                                        )
+                                        .disabled(
+                                            empty
+                                                || match previous {
+                                                    true => page == 0,
+                                                    false => page + 1 >= shape.pages,
+                                                },
+                                        )
+                                        .when_some(
+                                            handler,
+                                            |button, handler| {
+                                                button.on_click(move |event, window, cx| {
+                                                    handler(event, window, cx)
+                                                })
+                                            },
+                                        )
+                                    },
+                                ),
                             ),
-                    ),
-            )
+                    )
+            }))
             .when(barren, |this| {
                 let vacancy = i18n::lookup(self.vacancy, None);
                 this.child(

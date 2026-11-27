@@ -15,6 +15,8 @@ common-previous = Previous
 common-next = Next
 common-dismiss = Dismiss
 common-clear = Clear
+common-bpm = BPM
+common-mood = Mood
 common-undo = Undo
 common-redo = Redo
 common-cut = Cut
@@ -134,6 +136,7 @@ column-title = Title
 column-artist = Artist
 column-album = Album
 column-genre = Genre
+column-tags = Tags
 column-date-added = Date added
 column-date-liked = Date liked
 column-added-by = Added by
@@ -143,6 +146,7 @@ column-plays = Plays
 column-name = Name
 column-owner = Owner
 column-year = Year
+column-popularity = Popularity
 column-tracks = Tracks
 
 # filters
@@ -154,10 +158,14 @@ history-clear-title = Clear listening history
 history-clear-confirm = Every play is removed from this device. This cannot be undone.
 filter-library = Filter your library
 filter-album = Filter album tracks
+filter-track-list = Filter tracks
 filter-reset = Reset filters
 filter-duration = Duration
 filter-year = Year
 filter-tracks = Tracks
+filter-collaborations = Collaborations
+filter-play-count = Play count
+filter-tag = Tag
 filter-hide-explicit = Hide explicit
 filter-favorites = Favorites only
 filter-downloaded = Downloaded
@@ -185,6 +193,16 @@ kind-song = Song
 kind-artist = Artist
 kind-album = Album
 kind-playlist = Playlist
+
+# track moods
+mood-energetic = Energetic
+mood-danceable = Danceable
+mood-positive = Positive
+mood-negative = Negative
+mood-sad = Sad
+mood-calming = Calming
+mood-instrumental = Instrumental
+mood-acoustic = Acoustic
 
 # song languages
 language-ar = Arabic

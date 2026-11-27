@@ -826,12 +826,14 @@ impl Values {
     }
 }
 
-/// One narrowed filter axis as stored per table: a flag that is on, or a range the user
-/// shrank. Whole ranges and flags that are off read as untouched and take no space.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// A nonempty table filter stored in settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FilterValue {
     Flag(bool),
     Range(f32, f32),
+    /// The ids of the options picked on a choice filter.
+    Choice(Vec<String>),
+    Text(String),
 }
 
 /// Everything `state.sqlite` holds under the `runtime` key: values the app changes on its own
@@ -2153,7 +2155,8 @@ impl AppSettings {
     }
 
     /// Stores the narrowed filter axes of a table. An empty map drops the entry, so resetting
-    /// a table clears its stored filters on the next store.
+    /// a table clears its stored filters on the next store. It saves without waking settings
+    /// observers, since a slider drag stores on every step and nothing reads filters reactively.
     pub fn set_filters(
         &mut self,
         table: &str,
@@ -2170,7 +2173,7 @@ impl AppSettings {
             }
             self.state.filters.insert(table.to_owned(), filters);
         }
-        self.schedule_state_save(cx);
+        self.save_state_quietly(cx);
     }
 
     pub fn pinned(&self, slugs: &[&str]) -> Vec<Pin> {

@@ -32,7 +32,7 @@ impl Unit {
     pub fn say(self, value: f32) -> SharedString {
         match self {
             Unit::Clock => clock(std::time::Duration::from_secs_f32(value.max(0.))),
-            Unit::Plain => SharedString::from(format!("{}", value.round() as i64)),
+            Unit::Plain => i18n::grouped_number(value.round() as i128, 10_000),
         }
     }
 }
@@ -41,6 +41,7 @@ impl Unit {
 pub enum Filter {
     Range(RangeAxis),
     Flag(FlagAxis),
+    Choice(ChoiceAxis),
 }
 
 impl Filter {
@@ -48,14 +49,41 @@ impl Filter {
         match self {
             Self::Range(axis) => !axis.whole(),
             Self::Flag(axis) => axis.on,
+            Self::Choice(axis) => axis.picked().next().is_some(),
         }
     }
 }
 
 pub enum FilterChange {
-    Range(&'static str, (f32, f32)),
+    /// A range set to `None` is back at its full span, which narrows nothing.
+    Range(&'static str, Option<(f32, f32)>),
     Flag(&'static str, bool),
+    /// Turns one option of a choice axis on or off, by the option's id.
+    Choice(&'static str, SharedString, bool),
     Reset,
+}
+
+/// A choice filter option. Its id is independent of its display label.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub on: bool,
+}
+
+/// Matches any selected option. No selection disables the filter.
+#[derive(Clone)]
+pub struct ChoiceAxis {
+    pub key: &'static str,
+    pub label: SharedString,
+    pub options: Rc<Vec<Choice>>,
+}
+
+impl ChoiceAxis {
+    /// The options picked, in the order the axis lists them.
+    pub fn picked(&self) -> impl Iterator<Item = &Choice> {
+        self.options.iter().filter(|option| option.on)
+    }
 }
 
 #[derive(Clone)]
@@ -65,7 +93,8 @@ pub struct RangeAxis {
     pub bounds: (f32, f32),
     pub value: (f32, f32),
     pub unit: Unit,
-    pub values: Option<Vec<f32>>,
+    /// Ascending stops for a snapped axis; absent for a continuous slider.
+    pub values: Option<Rc<[f32]>>,
 }
 
 impl RangeAxis {
@@ -85,12 +114,14 @@ impl RangeAxis {
             return ((value - self.bounds.0) / self.span()).clamp(0., 1.);
         };
         let last = (steps.len() - 1) as f32;
-        steps
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| (*a - value).abs().total_cmp(&(*b - value).abs()))
-            .map(|(index, _)| index as f32 / last)
-            .unwrap_or(0.)
+        let upper = steps
+            .partition_point(|step| *step < value)
+            .min(steps.len() - 1);
+        let index = match upper > 0 && value - steps[upper - 1] <= steps[upper] - value {
+            true => upper - 1,
+            false => upper,
+        };
+        index as f32 / last
     }
 
     pub fn share(&self) -> (f32, f32) {
@@ -112,6 +143,12 @@ impl RangeAxis {
         (pick(share.0), pick(share.1))
     }
 
+    /// Converts handle positions to a range; `None` represents the full span.
+    pub fn narrowing(&self, share: (f32, f32)) -> Option<(f32, f32)> {
+        let value = self.at(share);
+        (!self.covers(value)).then_some(value)
+    }
+
     pub fn stops(&self) -> Vec<f32> {
         let Some(steps) = self.steps() else {
             return Vec::new();
@@ -129,7 +166,15 @@ impl RangeAxis {
     }
 
     pub fn whole(&self) -> bool {
-        let (low, high) = self.share();
+        self.covers(self.value)
+    }
+
+    /// Whether the given selection covers the full axis, including a constant-valued axis.
+    fn covers(&self, value: (f32, f32)) -> bool {
+        if self.bounds.1 - self.bounds.0 <= f32::EPSILON {
+            return true;
+        }
+        let (low, high) = (self.seat(value.0), self.seat(value.1));
         low <= f32::EPSILON && high >= 1. - f32::EPSILON
     }
 }
@@ -486,7 +531,7 @@ mod tests {
 
     fn sparse() -> RangeAxis {
         RangeAxis {
-            values: Some(vec![1967., 1977., 1989., 2020.]),
+            values: Some(vec![1967., 1977., 1989., 2020.].into()),
             ..axis((1967., 2020.), (1967., 2020.))
         }
     }
@@ -524,7 +569,7 @@ mod tests {
     #[test]
     fn a_selection_round_trips_through_its_seat() {
         let axis = RangeAxis {
-            values: Some(vec![1967., 1977., 1989., 2020.]),
+            values: Some(vec![1967., 1977., 1989., 2020.].into()),
             ..axis((1967., 2020.), (1977., 1989.))
         };
 

@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
+- Filter tracks by release year, play count, popularity, collaborations and tags, with genre, mood and BPM filters where available.
 
 ### Changed
 
@@ -79,6 +80,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
 - Karaoke lyrics, the fullscreen player and scrolling long lists use less CPU.
 - Guest mode for YouTube Music is in its sign-in dialog, next to signing in and connecting manually.
+- Page controls sit beside their content, and the filter button shows active filters.
+- Turn on release year and popularity columns in any track list.
 
 ### Fixed
 

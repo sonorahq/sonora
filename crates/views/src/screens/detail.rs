@@ -11,16 +11,15 @@ use i18n::t;
 use music::{Album, AlbumDetail, Arrival, Playlist, ReleaseType, Track};
 use router::{Destination, navigate};
 use state::{
-    AppSettings, Collection, Detail, DownloadsChanged, LibraryEvent, Origin, Outcome, Playback,
-    Progress, Reorder, Shelf, Sonora, Toasts,
+    AppSettings, Collection, Detail, DownloadsChanged, FilterValue, LibraryEvent, Origin, Outcome,
+    Playback, Progress, Reorder, Shelf, Sonora, Toasts,
 };
 use ui::{
     ActiveTheme as _, ArrowRing, Button, InlineLink, InlineLinks, Menu, Picker, Popovers, Popup,
-    SortAxis,
 };
 use ui::{
     ColumnSpec, FilterChange, Listing as _, MIN_CONTENT, Pending, Pin, PinKind, Scrollbar,
-    Scroller, TableDelegate, TableEvent, TableState, Text, runtime, table,
+    Scroller, TableDelegate, TableEvent, TableState, Text, table,
 };
 
 use crate::shared::menus::{album_menu, playlist_menu};
@@ -41,6 +40,7 @@ use crate::shared::tracks::{
 };
 use crate::shared::{cells, page};
 
+const SEARCH_FILTER: &str = "search-query";
 const PINNED: [&str; 3] = ["cover", "title", "name"];
 
 enum Saveable {
@@ -203,6 +203,7 @@ impl DetailView {
             if this.shown != shown {
                 this.shown = shown;
                 this.moved = None;
+                this.restore_search(cx);
                 this.rails.clear();
                 this.rail_tab = RailTab::Albums;
                 this.scrollbar
@@ -212,10 +213,12 @@ impl DetailView {
                 this.restore_sorting(cx);
                 // The rows belong to another detail now, so its filters must not leak across.
                 this.table.filter(FilterChange::Reset, cx);
-                this.restore_filters(cx);
             }
             this.retune(cx);
             this.rebuild(cx);
+            if !detail.read(cx).is_loading() {
+                this.restore_filters(cx);
+            }
             cx.notify();
         })
         .detach();
@@ -317,8 +320,12 @@ impl DetailView {
         // The hero cover hides while the viewer shows it, until the cover lands back on it.
         cx.observe(&cover_viewer, |_, _, cx| cx.notify()).detach();
 
+        let shown = detail.read(cx).id().map(str::to_owned);
         let me = cx.entity();
         let toolbar = Toolbar::searchable(&me, cx);
+        if section == "playlist" {
+            toolbar.update(cx, |toolbar, cx| toolbar.set_hint("filter-track-list", cx));
+        }
 
         let mut view = Self {
             detail,
@@ -331,18 +338,42 @@ impl DetailView {
             section,
             sorted: None,
             moved: None,
-            shown: None,
+            shown,
             context_menu: None,
             cover_viewer,
             toolbar,
             popovers: Popovers::default(),
-            sliders: Sliders::default(),
+            sliders: Sliders::for_tracks(id, cx),
             me: me.downgrade(),
             rails: Vec::new(),
             rail_tab: RailTab::Albums,
         };
-        view.restore_filters(cx);
+        view.restore_search(cx);
+        view.table.update(cx, |table, cx| table.refresh(cx));
+        if !view.detail.read(cx).is_loading() {
+            view.restore_filters(cx);
+        }
         view
+    }
+
+    /// Restores the playlist's saved query without treating it as an edit.
+    fn restore_search(&mut self, cx: &mut Context<Self>) {
+        let query = match (self.section, self.detail.read(cx).id()) {
+            ("playlist", Some(id)) => self
+                .settings
+                .read(cx)
+                .filters(&format!("playlist:{id}"))
+                .and_then(|filters| match filters.get(SEARCH_FILTER) {
+                    Some(FilterValue::Text(query)) => Some(query.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        self.table
+            .update(cx, |table, cx| table.delegate_mut().set_query(&query, cx));
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.switch_query(&query, cx));
     }
 
     fn retune(&mut self, cx: &mut Context<Self>) {
@@ -433,7 +464,7 @@ impl DetailView {
     }
 
     fn sift(&mut self, change: FilterChange, cx: &mut Context<Self>) {
-        self.table.filter(change, cx);
+        page::filter(&self.settings, &self.table, &self.sort_key(cx), change, cx);
         self.persist(cx);
         cx.notify();
     }
@@ -503,9 +534,7 @@ impl DetailView {
         if track_count > 0 {
             strip = strip.text(t!("count-songs", count = track_count));
         }
-        if !duration.is_zero() {
-            strip = strip.text(runtime(duration));
-        }
+        strip = strip.duration(duration);
 
         let mut play = HeroPlayButton::listed("play-detail", &self.table, self.playback.clone());
         let mut shuffle =
@@ -548,6 +577,8 @@ impl DetailView {
         });
         let actions = div()
             .flex()
+            .w_full()
+            .min_w_0()
             .items_center()
             .gap(ACTION_GAP)
             .child(play)
@@ -583,7 +614,7 @@ impl DetailView {
             .cover_preview(header.and_then(|header| header.cover_preview.clone()))
             .cover_away(self.cover_viewer.read(cx).is_open())
             .when_some(view_cover, |hero, on_cover| hero.on_cover_click(on_cover))
-            .eyebrow(eyebrow)
+            .top_bar(eyebrow, self.toolbar.clone())
             .meta(strip)
             .actions(actions)
             .drag_start(move |event, window, cx| {
@@ -1023,22 +1054,23 @@ impl Searchable for DetailView {
             table.delegate_mut().set_query(query, cx);
             table.refresh(cx);
         });
+        if self.section == "playlist" && self.detail.read(cx).id().is_some() {
+            let key = self.sort_key(cx);
+            self.settings.update(cx, |settings, cx| {
+                let mut filters = settings.filters(&key).unwrap_or_default();
+                if query.is_empty() {
+                    filters.remove(SEARCH_FILTER);
+                } else {
+                    filters.insert(SEARCH_FILTER.into(), FilterValue::Text(query.into()));
+                }
+                settings.set_filters(&key, filters, cx);
+            });
+        }
         cx.notify();
     }
 
     fn hint() -> SharedString {
         "filter-album".into()
-    }
-}
-
-impl DetailView {
-    fn sorts(&self, cx: &App) -> Vec<SortAxis> {
-        self.table.sortables(cx)
-    }
-
-    fn set_sort(&mut self, key: &'static str, cx: &mut Context<Self>) {
-        self.table.clone().cycle_sort(key, cx);
-        cx.notify();
     }
 }
 
@@ -1048,27 +1080,20 @@ impl Tooled for DetailView {
     }
 
     fn tools(&self, cx: &App) -> Vec<AnyElement> {
-        let sifted = self.me.clone();
-        let sorted = self.me.clone();
-
-        vec![
-            tools::filters(
-                &self.popovers,
-                &self.sliders,
-                self.table.filters(cx),
-                move |change, cx| {
-                    sifted.update(cx, |view, cx| view.sift(change, cx)).ok();
-                },
-                cx,
-            ),
-            tools::sorts(
-                &self.popovers,
-                self.sorts(cx),
-                move |key, cx| {
-                    sorted.update(cx, |view, cx| view.set_sort(key, cx)).ok();
-                },
-                cx,
-            ),
-        ]
+        let axes = self.table.filters(cx);
+        // Empty results must still offer a way to clear their filters.
+        if axes.is_empty() && !self.table.narrowed(cx) {
+            return Vec::new();
+        }
+        let filtered = self.me.clone();
+        vec![tools::filters(
+            &self.popovers,
+            &self.sliders,
+            axes,
+            move |change, cx| {
+                filtered.update(cx, |view, cx| view.sift(change, cx)).ok();
+            },
+            cx,
+        )]
     }
 }

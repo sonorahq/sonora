@@ -125,6 +125,9 @@ pub trait TableSource: 'static {
     fn columns(&self) -> &'static [ColumnSpec<Self::Field>];
     fn rows(&self, cx: &App) -> usize;
 
+    /// Clears cached source data before the table rebuilds after a content change.
+    fn invalidate(&mut self) {}
+
     fn populated(&self, _field: Self::Field, _cx: &App) -> bool {
         true
     }
@@ -240,6 +243,9 @@ pub struct TableDelegate<S: TableSource> {
     sort: Option<(S::Field, Sort)>,
     query: String,
     order: Vec<usize>,
+    /// Every row in the table's sort order, before the query and filters drop any. Dropped by
+    /// `reorder` and reused by `refilter`.
+    ranked: Option<Vec<usize>>,
     /// The most rows the table shows, counted after sorting so a shorter list is the head of
     /// the longer one in the same order.
     limit: Option<usize>,
@@ -272,6 +278,7 @@ impl<S: TableSource> TableDelegate<S> {
             sort: None,
             query: String::new(),
             order: Vec::new(),
+            ranked: None,
             limit: None,
             revision: 0,
             locked: None,
@@ -577,7 +584,7 @@ impl<S: TableSource> TableDelegate<S> {
 
     pub fn set_query(&mut self, query: &str, cx: &App) {
         self.query = query.trim().to_lowercase();
-        self.reorder(cx);
+        self.refilter(cx);
     }
 
     pub fn query(&self) -> &str {
@@ -589,24 +596,48 @@ impl<S: TableSource> TableDelegate<S> {
         self.revision
     }
 
+    /// Sorts every row again and then filters them. Use it when the rows or the sort changed.
     fn reorder(&mut self, cx: &App) {
-        let mut order: Vec<usize> = (0..self.source.rows(cx))
-            .filter(|row| {
-                (self.query.is_empty() && !self.source.filtered(cx))
-                    || self.source.matches(*row, &self.query, cx)
-            })
-            .collect();
+        self.ranked = None;
+        self.refilter(cx);
+    }
 
-        if let Some((field, direction)) = self.sort {
-            match direction {
-                Sort::Ascending => order.sort_by(|&a, &b| self.source.compare(field, a, b, cx)),
-                Sort::Descending => order.sort_by(|&a, &b| self.source.compare(field, b, a, cx)),
+    /// Filters the rows to the query and the source's filters, keeping the sorted order of the
+    /// last `reorder`. A filter or search edit changes only which rows show, and a drag on a
+    /// range slider edits it on every step, so sorting the whole list each time would stall it.
+    fn refilter(&mut self, cx: &App) {
+        let rows = self.source.rows(cx);
+        let ranked = match self.ranked.take() {
+            Some(ranked) if ranked.len() == rows => ranked,
+            _ => {
+                let mut all: Vec<usize> = (0..rows).collect();
+                if let Some((field, direction)) = self.sort {
+                    match direction {
+                        Sort::Ascending => {
+                            all.sort_by(|&a, &b| self.source.compare(field, a, b, cx))
+                        }
+                        Sort::Descending => {
+                            all.sort_by(|&a, &b| self.source.compare(field, b, a, cx))
+                        }
+                    }
+                }
+                all
             }
-        }
+        };
+        let unfiltered = self.query.is_empty() && !self.source.filtered(cx);
+        let mut order: Vec<usize> = match unfiltered {
+            true => ranked.clone(),
+            false => ranked
+                .iter()
+                .copied()
+                .filter(|row| self.source.matches(*row, &self.query, cx))
+                .collect(),
+        };
         if let Some(limit) = self.limit {
             order.truncate(limit);
         }
 
+        self.ranked = Some(ranked);
         self.order = order;
         self.revision = self.revision.wrapping_add(1);
         self.prune_selection();
@@ -1104,6 +1135,7 @@ impl<S: TableSource> TableState<S> {
     /// Reads the rows again after the source changed. An open context menu follows its items
     /// to their new rows, and closes when the source names no rows or one of the items left.
     pub fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.delegate.source.invalidate();
         self.delegate.rebuild(cx);
         self.context_menu = self
             .context_menu
@@ -1963,7 +1995,7 @@ impl<S: TableSource> Listing for Entity<TableState<S>> {
     fn filter(&self, change: FilterChange, cx: &mut App) {
         self.update(cx, |table, cx| {
             if table.delegate_mut().source_mut().filter(change, cx) {
-                table.delegate_mut().reorder(cx);
+                table.delegate_mut().refilter(cx);
                 table.refresh(cx);
             }
         });

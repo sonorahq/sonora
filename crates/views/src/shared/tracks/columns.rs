@@ -12,6 +12,11 @@ pub(crate) enum TrackField {
     Artists,
     Album,
     Genre,
+    Mood,
+    Bpm,
+    Tags,
+    Year,
+    Popularity,
     AddedAt,
     LikedAt,
     AddedBy,
@@ -70,6 +75,47 @@ const GENRE: ColumnSpec<TrackField> = ColumnSpec {
     rank: SPARE,
     optional: true,
     ..COLUMN
+};
+
+const MOOD: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Mood,
+    key: "mood",
+    header: "common-mood",
+    ..GENRE
+};
+
+const BPM: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Bpm,
+    key: "bpm",
+    header: "common-bpm",
+    width: Width::Fixed(LENGTH),
+    align: TextAlign::Right,
+    ..GENRE
+};
+
+const TAGS: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Tags,
+    key: "tags",
+    header: "column-tags",
+    ..GENRE
+};
+
+const YEAR: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Year,
+    key: "year",
+    header: "column-year",
+    width: Width::Fixed(LENGTH),
+    align: TextAlign::Right,
+    first: Sort::Descending,
+    ..GENRE
+};
+
+const POPULARITY: ColumnSpec<TrackField> = ColumnSpec {
+    field: TrackField::Popularity,
+    key: "popularity",
+    header: "column-popularity",
+    first: Sort::Descending,
+    ..YEAR
 };
 
 const ADDED_AT: ColumnSpec<TrackField> = ColumnSpec {
@@ -154,82 +200,117 @@ const ALBUM_DURATION: ColumnSpec<TrackField> = ColumnSpec {
     ..DURATION
 };
 
-pub(crate) const LIBRARY_COLUMNS: &[ColumnSpec<TrackField>] = &[
-    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_AT, DURATION,
-];
+type Spec = ColumnSpec<TrackField>;
 
-/// The songs of the library page, which alone can date the favorites apart from the catalog.
-pub(crate) const SONGS_COLUMNS: &[ColumnSpec<TrackField>] = &[
-    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_AT, LIKED_AT, DURATION,
-];
+/// Whether a column is metadata a listener may turn on in any table, rather than part of the
+/// frame every table keeps (index, cover, title, artists, album and length).
+const fn is_metadata(field: TrackField) -> bool {
+    matches!(
+        field,
+        TrackField::Genre
+            | TrackField::Mood
+            | TrackField::Bpm
+            | TrackField::Tags
+            | TrackField::Year
+            | TrackField::Popularity
+            | TrackField::Plays
+            | TrackField::AddedAt
+            | TrackField::LikedAt
+            | TrackField::AddedBy
+            | TrackField::PlayedAt
+    )
+}
 
-pub(crate) const PLAYLIST_COLUMNS_SHARED: &[ColumnSpec<TrackField>] = &[
-    INDEX,
-    COVER,
-    TITLE,
-    ARTISTS,
-    ALBUM,
-    GENRE,
-    CREDITED_AT,
-    DURATION,
-];
+const fn listed(fields: &[TrackField], field: TrackField) -> bool {
+    let mut at = 0;
+    while at < fields.len() {
+        if fields[at] as u8 == field as u8 {
+            return true;
+        }
+        at += 1;
+    }
+    false
+}
 
-pub(crate) const PLAYLIST_COLUMNS_BLEND: &[ColumnSpec<TrackField>] = &[
-    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, ADDED_BY, DURATION,
-];
+/// Builds one table from the frame it opens with. Every table offers the same metadata, in the
+/// same order; `shown` names the ones it starts with and `tuned` swaps in a table's own width or
+/// rank for a column.
+const fn table<const N: usize>(
+    frame: [Spec; N],
+    tuned: &[Spec],
+    shown: &[TrackField],
+) -> [Spec; N] {
+    let mut specs = frame;
+    let mut at = 0;
+    while at < N {
+        let mut tune = 0;
+        while tune < tuned.len() {
+            if tuned[tune].field as u8 == specs[at].field as u8 {
+                specs[at] = tuned[tune];
+            }
+            tune += 1;
+        }
+        if is_metadata(specs[at].field) {
+            specs[at].optional = !listed(shown, specs[at].field);
+        }
+        at += 1;
+    }
+    specs
+}
 
-pub(crate) const HISTORY_COLUMNS: &[ColumnSpec<TrackField>] = &[
-    INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, PLAYED_AT, DURATION,
-];
+/// The columns of a table that lists tracks from many albums. `$dated` is the date column it
+/// reads `added_at` as: when a song was added, or when it was played in the history.
+macro_rules! songs {
+    ($dated:expr, $tuned:expr, $shown:expr) => {
+        &table(
+            [
+                INDEX, COVER, TITLE, ARTISTS, ALBUM, GENRE, MOOD, BPM, TAGS, YEAR, POPULARITY,
+                PLAYS, $dated, LIKED_AT, ADDED_BY, DURATION,
+            ],
+            $tuned,
+            $shown,
+        )
+    };
+}
 
-pub(crate) const ARTIST_COLUMNS: &[ColumnSpec<TrackField>] = &[
-    INDEX,
-    COVER,
-    TITLE,
-    ARTISTS.ranked(SPARE),
-    ALBUM.ranked(HANDY),
-    PLAYS,
-    DURATION,
-];
-
-pub(crate) const ARTIST_COLUMNS_LEAN: &[ColumnSpec<TrackField>] = &[
-    INDEX,
-    COVER,
-    TITLE,
-    ARTISTS.ranked(SPARE),
-    ALBUM.ranked(HANDY),
-    DURATION,
-];
-
-pub(crate) const ALBUM_COLUMNS: &[ColumnSpec<TrackField>] = &[
+/// The columns of a table that lists the tracks of one album, which needs no cover or album.
+const ALBUM_FRAME: [Spec; 14] = [
     INDEX,
     ALBUM_TITLE,
     ALBUM_ARTISTS,
+    GENRE,
+    MOOD,
+    BPM,
+    TAGS,
+    YEAR,
+    POPULARITY,
     ALBUM_PLAYCOUNT,
+    ADDED_AT,
+    LIKED_AT,
+    ADDED_BY,
     ALBUM_DURATION,
 ];
 
-pub(crate) const ALBUM_COLUMNS_LEAN: &[ColumnSpec<TrackField>] =
-    &[INDEX, ALBUM_TITLE, ALBUM_ARTISTS, ALBUM_DURATION];
+pub(crate) const LIBRARY_COLUMNS: &[Spec] = songs!(ADDED_AT, &[], &[TrackField::AddedAt]);
 
-pub(crate) fn playlist_columns(blend: bool, shared: bool) -> &'static [ColumnSpec<TrackField>] {
+const PLAYLIST_COLUMNS_SHARED: &[Spec] = songs!(CREDITED_AT, &[], &[TrackField::AddedAt]);
+
+const PLAYLIST_COLUMNS_BLEND: &[Spec] = songs!(ADDED_AT, &[], &[TrackField::AddedBy]);
+
+pub(crate) const HISTORY_COLUMNS: &[Spec] = songs!(PLAYED_AT, &[], &[TrackField::PlayedAt]);
+
+pub(crate) const ARTIST_COLUMNS: &[Spec] = songs!(
+    ADDED_AT,
+    &[ARTISTS.ranked(SPARE), ALBUM.ranked(HANDY)],
+    &[TrackField::Plays]
+);
+
+pub(crate) const ALBUM_COLUMNS: &[Spec] = &table(ALBUM_FRAME, &[], &[TrackField::Plays]);
+
+pub(crate) fn playlist_columns(blend: bool, shared: bool) -> &'static [Spec] {
     match (blend, shared) {
         (true, _) => PLAYLIST_COLUMNS_BLEND,
         (false, true) => PLAYLIST_COLUMNS_SHARED,
         (false, false) => LIBRARY_COLUMNS,
-    }
-}
-
-pub(crate) fn artist_columns(playcounts: bool) -> &'static [ColumnSpec<TrackField>] {
-    match playcounts {
-        true => ARTIST_COLUMNS,
-        false => ARTIST_COLUMNS_LEAN,
-    }
-}
-
-pub(crate) fn album_columns(playcounts: bool) -> &'static [ColumnSpec<TrackField>] {
-    match playcounts {
-        true => ALBUM_COLUMNS,
-        false => ALBUM_COLUMNS_LEAN,
     }
 }

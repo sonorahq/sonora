@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
 use gpui::prelude::*;
-use gpui::{App, Div, Entity, Pixels, Window, div, px};
+use gpui::{AnyElement, App, Div, ElementId, Entity, Pixels, Window, div, px};
 
 use state::{AppSettings, FilterValue, Playback};
 use ui::ActiveTheme as _;
 use ui::{
-    Filter, FilterChange, Listing, Scrollbar, Table, TableSource, TableState, Viewport, scrolled,
+    Button, Filter, FilterChange, Listing, Scrollbar, Table, TableSource, TableState, Viewport,
+    scrolled,
 };
 
 use crate::chrome::Chrome;
@@ -16,6 +15,35 @@ use crate::shared::tracks::{self, TrackSource};
 /// The width of the border around a framed table, which starts its rows this much lower than
 /// the box the page measures the scroll from.
 const TABLE_BORDER: Pixels = px(1.);
+
+/// Aligns a page heading and its controls.
+pub(crate) fn row(leading: impl IntoElement, trailing: impl IntoElement) -> AnyElement {
+    div()
+        .flex()
+        .w_full()
+        .min_w_0()
+        .items_center()
+        .gap_x_4()
+        .justify_between()
+        .child(leading)
+        .child(trailing)
+        .into_any_element()
+}
+
+/// Creates a small directional button used by paged decks and horizontal shelves.
+pub(crate) fn arrow_button(id: impl Into<ElementId>, previous: bool) -> Button {
+    Button::new(id)
+        .small()
+        .outline()
+        .icon(match previous {
+            true => "icons/chevron-left.svg",
+            false => "icons/chevron-right.svg",
+        })
+        .tooltip(match previous {
+            true => "common-previous",
+            false => "common-next",
+        })
+}
 
 pub(crate) fn store(
     settings: &Entity<AppSettings>,
@@ -31,40 +59,54 @@ pub(crate) fn store(
     settings.update(cx, |settings, cx| {
         settings.set_table(layout_key, layout, cx);
         settings.set_sorting(sort_key, sorting, cx);
-        let filters = snapshot(axes, settings.filters(sort_key).unwrap_or_default());
-        settings.set_filters(sort_key, filters, cx);
+        // Axes not currently offered keep their saved values while metadata loads.
+        let mut stored = settings.filters(sort_key).unwrap_or_default();
+        for axis in axes {
+            let (key, value) = match axis {
+                Filter::Range(axis) => (
+                    axis.key,
+                    (!axis.whole()).then_some(FilterValue::Range(axis.value.0, axis.value.1)),
+                ),
+                Filter::Flag(axis) => (axis.key, axis.on.then_some(FilterValue::Flag(true))),
+                Filter::Choice(axis) => {
+                    let picked: Vec<_> =
+                        axis.picked().map(|option| option.id.to_string()).collect();
+                    (
+                        axis.key,
+                        (!picked.is_empty()).then_some(FilterValue::Choice(picked)),
+                    )
+                }
+            };
+            match value {
+                Some(value) => stored.insert(key.to_owned(), value),
+                None => stored.remove(key),
+            };
+        }
+        settings.set_filters(sort_key, stored, cx);
     });
 }
 
-/// Merges the current axes into the stored ones: a narrowed axis upserts its key, a whole one
-/// drops it, and an axis the table does not name right now leaves storage alone. That last
-/// rule is what keeps a saved year span alive while its rows are still loading, and resetting
-/// a table clears its entry on the next store.
-pub(crate) fn snapshot(
-    axes: Vec<Filter>,
-    into: HashMap<String, FilterValue>,
-) -> HashMap<String, FilterValue> {
-    let mut stored = into;
-    for axis in axes {
-        match axis {
-            Filter::Range(axis) if axis.whole() => {
-                stored.remove(axis.key);
+/// Applies a filter edit. Clears its saved value first so removing an axis cannot retain stale picks.
+pub(crate) fn filter(
+    settings: &Entity<AppSettings>,
+    table: &dyn Listing,
+    key: &str,
+    change: FilterChange,
+    cx: &mut App,
+) {
+    if matches!(change, FilterChange::Reset | FilterChange::Choice(..)) {
+        settings.update(cx, |settings, cx| {
+            let mut filters = settings.filters(key).unwrap_or_default();
+            match &change {
+                FilterChange::Choice(key, ..) => {
+                    filters.remove(*key);
+                }
+                _ => filters.retain(|_, value| matches!(value, FilterValue::Text(_))),
             }
-            Filter::Range(axis) => {
-                stored.insert(
-                    axis.key.to_owned(),
-                    FilterValue::Range(axis.value.0, axis.value.1),
-                );
-            }
-            Filter::Flag(axis) if axis.on => {
-                stored.insert(axis.key.to_owned(), FilterValue::Flag(true));
-            }
-            Filter::Flag(axis) => {
-                stored.remove(axis.key);
-            }
-        }
+            settings.set_filters(key, filters, cx);
+        });
     }
-    stored
+    table.filter(change, cx);
 }
 
 /// Applies the stored axes a table has not narrowed itself yet. Ranges clamp to the current
@@ -90,8 +132,8 @@ pub(crate) fn restore(
                     low.clamp(axis.bounds.0, axis.bounds.1),
                     high.clamp(axis.bounds.0, axis.bounds.1),
                 );
-                if value != axis.bounds {
-                    table.filter(FilterChange::Range(axis.key, value), cx);
+                if value != axis.bounds && value != axis.value {
+                    table.filter(FilterChange::Range(axis.key, Some(value)), cx);
                 }
             }
             Filter::Flag(axis) => {
@@ -100,6 +142,23 @@ pub(crate) fn restore(
                 };
                 if *on != axis.on {
                     table.filter(FilterChange::Flag(axis.key, *on), cx);
+                }
+            }
+            Filter::Choice(axis) => {
+                let Some(FilterValue::Choice(picked)) = stored.get(axis.key) else {
+                    continue;
+                };
+                // Unknown choices remain selected and clearable while metadata loads.
+                for id in picked {
+                    if !axis.picked().any(|option| option.id == id.as_str()) {
+                        table.filter(FilterChange::Choice(axis.key, id.clone().into(), true), cx);
+                    }
+                }
+                for option in axis
+                    .picked()
+                    .filter(|option| !picked.iter().any(|id| option.id == id.as_str()))
+                {
+                    table.filter(FilterChange::Choice(axis.key, option.id.clone(), false), cx);
                 }
             }
         }

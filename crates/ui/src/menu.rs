@@ -128,7 +128,8 @@ impl SubmenuState {
         }
     }
 
-    fn is_open(&self) -> bool {
+    /// Whether the submenu panel is showing, so a caller can skip building rows nobody sees.
+    pub fn is_open(&self) -> bool {
         self.open.get()
     }
 

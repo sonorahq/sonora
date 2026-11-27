@@ -7,8 +7,24 @@ use super::TrackField;
 use crate::shared::blend::Joined;
 use crate::shared::text::{folded, holds};
 
-/// Orders two rows by one field. Date liked lives in the library rather than on the track, so the
-/// source orders it and this keeps the rows as they are.
+/// Labels stored on a track for the optional metadata columns.
+pub(super) fn words(track: &Track, field: TrackField) -> &[String] {
+    match field {
+        TrackField::Genre => &track.genres,
+        TrackField::Mood => &track.moods,
+        TrackField::Tags => &track.tags,
+        _ => &[],
+    }
+}
+
+/// Translates inferred moods while leaving provider and file labels as written.
+pub(super) fn mood_label(mood: &str) -> SharedString {
+    match mood.starts_with("mood-") {
+        true => i18n::lookup(mood, None),
+        false => mood.to_owned().into(),
+    }
+}
+
 pub(super) fn compare(
     tracks: Joined<'_, Track>,
     field: TrackField,
@@ -23,11 +39,36 @@ pub(super) fn compare(
         TrackField::Title => folded(|track| &track.name),
         TrackField::Artists => folded(|track| &track.artists),
         TrackField::Album => folded(|track| &track.album),
-        TrackField::Genre => genres(genres_of(tracks, a), genres_of(tracks, b)),
+        TrackField::Genre | TrackField::Mood | TrackField::Tags => {
+            let at = |index| {
+                tracks
+                    .get(index)
+                    .map(|track| words(track, field))
+                    .unwrap_or_default()
+            };
+            compare_words(at(a), at(b), field == TrackField::Mood)
+        }
         TrackField::AddedAt | TrackField::PlayedAt => tracks
             .get(a)
             .and_then(|track| track.added_at)
             .cmp(&tracks.get(b).and_then(|track| track.added_at)),
+        TrackField::Bpm => {
+            let bpm = |row| {
+                tracks
+                    .get(row)
+                    .and_then(|track| track.bpm)
+                    .unwrap_or(f32::NEG_INFINITY)
+            };
+            bpm(a).total_cmp(&bpm(b))
+        }
+        TrackField::Year => tracks
+            .get(a)
+            .and_then(|track| track.release_date)
+            .cmp(&tracks.get(b).and_then(|track| track.release_date)),
+        TrackField::Popularity => tracks
+            .get(a)
+            .map(|track| track.popularity)
+            .cmp(&tracks.get(b).map(|track| track.popularity)),
         TrackField::AddedBy => folded(contributor),
         TrackField::Plays => tracks
             .get(a)
@@ -61,8 +102,12 @@ pub(super) fn group(
         TrackField::Title => Some(initial(&track.name)),
         TrackField::Artists => Some(initial(&track.artists)),
         TrackField::Album => Some(initial(&track.album)),
-        TrackField::Genre => Some(match track.genres.first() {
+        TrackField::Genre | TrackField::Tags => Some(match words(track, field).first() {
             Some(genre) => SharedString::from(genre.clone()),
+            None => initial(""),
+        }),
+        TrackField::Mood => Some(match track.moods.first() {
+            Some(mood) => mood_label(mood),
             None => initial(""),
         }),
         TrackField::AddedBy => Some(initial(contributor(track))),
@@ -70,19 +115,14 @@ pub(super) fn group(
     }
 }
 
-fn genres_of<'a>(tracks: Joined<'a, Track>, index: usize) -> &'a [String] {
-    tracks
-        .get(index)
-        .map(|track| track.genres.as_slice())
-        .unwrap_or_default()
-}
-
-/// Orders two genre lists by their first genre that differs, ignoring case. A list that runs out
-/// first sorts ahead, so a track with no genre comes before every tagged one.
-fn genres(left: &[String], right: &[String]) -> Ordering {
+/// Case-insensitive label order, using translated mood labels. Empty lists sort first.
+fn compare_words(left: &[String], right: &[String], moods: bool) -> Ordering {
     left.iter()
         .zip(right)
-        .map(|(left, right)| folded(left, right))
+        .map(|(left, right)| match moods {
+            true => folded(&mood_label(left), &mood_label(right)),
+            false => folded(left, right),
+        })
         .find(|order| order.is_ne())
         .unwrap_or_else(|| left.len().cmp(&right.len()))
 }
