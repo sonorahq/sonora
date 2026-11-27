@@ -143,7 +143,7 @@ impl<F: 'static> ColumnSpec<F> {
     fn natural(&self, metrics: Metrics) -> Pixels {
         match self.width {
             Width::Fixed(width) => width,
-            Width::Thumb => metrics.thumb + metrics.pad * 2.,
+            Width::Thumb => metrics.table_thumb + metrics.pad * 2.,
             Width::Fill(_) => Pixels::ZERO,
         }
     }

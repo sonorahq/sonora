@@ -38,6 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Song lists follow the text size, rows and covers both, so a smaller text fits more songs on screen and a larger one gives them room.
 - Downloaded playlists stay in step with the service. Songs added to one, here or anywhere else, download in the background when Sonora starts, right after you add or like them in Sonora, and every hour, and songs taken out of it lose their download.
 - Song lists show each song's artists under its title, on an album only where they differ from the album's. Turn the Artist column back on from the column header, and pick a row height under Settings → Appearance.
 - Right-click an artist or album name in a song list to open its own menu, or drag it to the sidebar to pin it.
