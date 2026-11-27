@@ -10,7 +10,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, Context, Corners, Div, DragMoveEvent, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, Global, Interactivity, MouseButton, MouseDownEvent,
     MouseUpEvent, Pixels, Point, ScrollHandle, SharedString, Stateful, StyleRefinement, TextAlign,
-    Window, actions, div, point, px, svg,
+    Window, actions, div, point, px, rems, svg,
 };
 
 use i18n::t;
@@ -20,7 +20,7 @@ use crate::drag::{Edge, drop_gap, drop_marker};
 use crate::filters::FilterChange;
 use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::menu::{Menu, MenuItem};
-use crate::metrics::{Metrics, snapped, text_width};
+use crate::metrics::{Metrics, Text, snapped, text_width};
 use crate::motion::Glowing as _;
 use crate::pin::{DraggedPin, Pin, Pinnable, Spot};
 use crate::popup::Popup;
@@ -53,13 +53,20 @@ const GRIP: Pixels = px(9.);
 /// from behind the head is already drawn rather than popping in as the head lifts.
 const OVERSCAN: usize = 2;
 const OVERSCAN_ABOVE: usize = 1;
-/// How tall a skeleton bar stands against its row.
+/// How tall a skeleton bar stands against a single-line row.
 const SKELETON_BAR: f32 = 0.3;
+/// How much of its text line a skeleton bar fills when the cell stacks two lines.
+const SKELETON_LINE: f32 = 0.8;
+/// How far the bar for the folded line under a title reaches against the title's bar.
+const SKELETON_UNDER: f32 = 0.6;
 /// How far a skeleton bar reaches across its cell, stepped by row and column so the column
 /// edges do not line up into a grid.
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
 
 pub const ROW_GROUP: &str = "table-row";
+/// The line height, in ems, of a title and of the folded line under it, tighter than body text
+/// so the two read as one entry.
+pub const STACKED_LEADING: f32 = 1.1;
 /// The rule under a row, which its own height includes.
 const ROW_RULE: Pixels = px(1.);
 /// The list a row dragged within its own table names, so a drop on another row can tell it
@@ -1069,7 +1076,7 @@ impl<S: TableSource> TableState<S> {
         let theme = cx.theme();
         let first = self.viewport.first(head, row_height);
         let last = (first + self.viewport.rows(row_height)).min(count);
-        let bar = row_height * SKELETON_BAR;
+        let bar = theme.metrics.table_row * SKELETON_BAR;
 
         (first..last)
             .map(|display| {
@@ -1091,12 +1098,14 @@ impl<S: TableSource> TableState<S> {
                             .enumerate()
                             .map(|(ix, column)| {
                                 let inner = self.delegate.inner_width(ix);
-                                let skeleton = match column.spec.width {
-                                    Width::Thumb => Skeleton::new().size(theme.metrics.thumb),
-                                    _ => Skeleton::new()
-                                        .w(inner
-                                            * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()])
-                                        .h(bar),
+                                let reach =
+                                    inner * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
+                                let skeleton = match (column.spec.width, column.carries) {
+                                    (Width::Thumb, _) => {
+                                        Skeleton::new().size(theme.metrics.thumb).into_any_element()
+                                    }
+                                    (_, Some(_)) => stacked_skeleton(reach, cx),
+                                    _ => Skeleton::new().w(reach).h(bar).into_any_element(),
                                 };
                                 div()
                                     .w(inner + PADDING * 2.)
@@ -1710,6 +1719,36 @@ fn radii(style: &StyleRefinement, rem: Pixels) -> Corners<Pixels> {
         bottom_right: resolve(style.corner_radii.bottom_right),
         bottom_left: resolve(style.corner_radii.bottom_left),
     }
+}
+
+/// A loading stand-in for a title with a folded line under it: two bars in lines as tall as the
+/// real ones, so the bars sit where the text will land.
+fn stacked_skeleton(reach: Pixels, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let under = theme.text(Text::Small) * STACKED_LEADING;
+    let line = |height: AbsoluteLength, bar: AbsoluteLength, width: Pixels| {
+        div()
+            .h(height)
+            .flex()
+            .items_center()
+            .child(Skeleton::new().w(width).h(bar))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap_1p5()
+        .child(line(
+            rems(STACKED_LEADING).into(),
+            rems(STACKED_LEADING * SKELETON_LINE).into(),
+            reach,
+        ))
+        .child(line(
+            under.into(),
+            (under * SKELETON_LINE).into(),
+            reach * SKELETON_UNDER,
+        ))
+        .into_any_element()
 }
 
 fn sort_icon(direction: Option<Sort>) -> &'static str {
