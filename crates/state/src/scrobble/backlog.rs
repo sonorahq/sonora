@@ -2,6 +2,7 @@
 //! made offline, while a service is down or just before a quit still reaches it later.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -136,6 +137,8 @@ pub(super) struct Sender {
     backlog: Backlog,
     verdicts: mpsc::UnboundedSender<Verdict>,
     asked: mpsc::UnboundedSender<Submit>,
+    /// Counts the requests other than a wake, so a drain in progress can tell one is waiting.
+    turn: Arc<AtomicU64>,
 }
 
 impl Sender {
@@ -149,11 +152,13 @@ impl Sender {
         verdicts: mpsc::UnboundedSender<Verdict>,
     ) -> Self {
         let (asked, heard) = mpsc::unbounded_channel::<Submit>();
+        let turn = Arc::new(AtomicU64::new(0));
         io.spawn(send(
             service.clone(),
             backlog.clone(),
             verdicts.clone(),
             heard,
+            turn.clone(),
         ));
         Self {
             io: io.clone(),
@@ -161,6 +166,7 @@ impl Sender {
             backlog,
             verdicts,
             asked,
+            turn,
         }
     }
 
@@ -192,7 +198,12 @@ impl Sender {
         });
     }
 
+    /// Passes a request to the task. Anything but a wake also stops a drain in progress before
+    /// its next slice, so a hold or an unlink takes effect without waiting out the backlog.
     pub(super) fn ask(&self, submit: Submit) {
+        if !matches!(submit, Submit::Wake) {
+            self.turn.fetch_add(1, Ordering::SeqCst);
+        }
         self.asked.send(submit).ok();
     }
 }
@@ -204,8 +215,11 @@ async fn send(
     backlog: Backlog,
     verdicts: mpsc::UnboundedSender<Verdict>,
     mut heard: mpsc::UnboundedReceiver<Submit>,
+    turn: Arc<AtomicU64>,
 ) {
     let id = service.id();
+    // how many of the requests counted in `turn` this task has taken
+    let mut seen = 0;
     let mut account: Option<Account> = None;
     let mut wait: Option<Duration> = None;
     loop {
@@ -222,12 +236,17 @@ async fn send(
         };
         match next {
             Some(Submit::Account(given)) => {
+                seen += 1;
                 account = Some(given);
                 wait = None;
             }
             Some(Submit::Wake) => wait = None,
-            Some(Submit::Hold) => account = None,
+            Some(Submit::Hold) => {
+                seen += 1;
+                account = None;
+            }
             Some(Submit::Forget) => {
+                seen += 1;
                 account = None;
                 let kept = backlog.clone();
                 if let Err(error) = blocking(move || kept.forget(id)).await {
@@ -241,7 +260,8 @@ async fn send(
             wait = None;
             continue;
         };
-        let drained = drain(service.as_ref(), given, &backlog).await;
+        let turned = || turn.load(Ordering::SeqCst) != seen;
+        let drained = drain(service.as_ref(), given, &backlog, turned).await;
         // an empty backlog asked nothing, so it says nothing about the key either
         let heard_back = !matches!(drained, Ok(false));
         let answer = drained.map(|_| ());
@@ -265,14 +285,23 @@ async fn send(
 /// Sends a service's backlog oldest first, in slices of its batch size, until it is empty or an
 /// attempt fails, and says whether the service was asked anything. A rejected slice of several
 /// listens goes again one at a time, so only the listen the service refuses is dropped. The
-/// failure that stops the drain is returned and its slice keeps waiting.
-async fn drain(service: &dyn Service, account: &Account, backlog: &Backlog) -> Result<bool> {
+/// failure that stops the drain is returned and its slice keeps waiting. It also stops before a
+/// slice once `turned` says a new request waits.
+async fn drain(
+    service: &dyn Service,
+    account: &Account,
+    backlog: &Backlog,
+    turned: impl Fn() -> bool,
+) -> Result<bool> {
     let id = service.id();
     let batch = service.batch().max(1);
     let mut asked = false;
     // how many listens still go one at a time after a rejected slice
     let mut alone = 0;
     loop {
+        if turned() {
+            return Ok(asked);
+        }
         let reader = backlog.clone();
         let size = match alone > 0 {
             true => 1,
