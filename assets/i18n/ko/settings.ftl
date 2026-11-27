@@ -166,6 +166,8 @@ settings-provider-last-used = 마지막으로 사용한 항목
 settings-entries = 사이드바 항목
 settings-entries-detail = 사이드바에 표시되는 섹션 목록
 settings-entries-pick = 항목 선택
+settings-row-size = 행 높이
+settings-row-size-detail = 곡 목록 행의 세로 높이
 settings-language = 언어
 settings-language-detail = Sonora 인터페이스 전반에 사용되는 언어
 settings-language-system = 시스템 기본값
@@ -516,6 +518,11 @@ corners-square = 직각
 corners-subtle = 약간 둥글게
 corners-rounded = 둥글게
 corners-round = 매우 둥글게
+
+# row height
+row-size-compact = 좁게
+row-size-regular = 보통
+row-size-spacious = 넓게
 
 # motion
 motion-system = 시스템 설정 따름
