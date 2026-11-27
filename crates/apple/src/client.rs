@@ -1159,19 +1159,6 @@ impl AppleClient {
         })
     }
 
-    /// The listener's personal station, the one Apple builds from everything they play. An
-    /// account Apple has built none for yet has none to show.
-    async fn personal_station(&self) -> Result<Option<Playlist>> {
-        let body = self
-            .get(
-                &self.catalog("/stations"),
-                &[("filter[identity]", "personal")],
-            )
-            .await?;
-        let answered: wire::Answer = wire::answer(&body);
-        Ok(answered.data.first().and_then(wire::station))
-    }
-
     /// The next stretch of a station, a few requests long since Apple hands out ten tracks at a
     /// time. A station is free to come back to a song, so repeats within the stretch are dropped.
     async fn station_stretch(&self, station_id: &str) -> Result<Vec<Track>> {
@@ -2364,11 +2351,10 @@ impl MusicApi for AppleClient {
         // Apple's own recently played group is a cached ranking that lags real plays, so the live
         // list fills the Recently played shelf and leads Quick picks, and the group only stands
         // in when that list cannot be read.
-        let (containers, songs, added, personal) = futures::join!(
+        let (containers, songs, added) = futures::join!(
             self.recent_items(),
             <Self as MusicApi>::recently_played(self),
-            self.recently_added(),
-            self.personal_station()
+            self.recently_added()
         );
         match added {
             Ok(items) if !items.is_empty() => sections.insert(
@@ -2395,21 +2381,6 @@ impl MusicApi for AppleClient {
                 GenreSection {
                     title: "home-recently-played".to_owned(),
                     items: containers.clone(),
-                },
-            );
-        }
-        let personal = personal.unwrap_or_else(|error| {
-            log::warn!("apple: cannot load the personal station: {error:#}");
-            None
-        });
-        let stations = stations_shelf(personal, &containers);
-        if !stations.is_empty() {
-            let at = usize::from(!containers.is_empty());
-            sections.insert(
-                at,
-                GenreSection {
-                    title: "home-stations".to_owned(),
-                    items: stations,
                 },
             );
         }
@@ -2659,24 +2630,6 @@ fn is_recents(group: &Resource) -> bool {
         .as_ref()
         .and_then(|attributes| attributes.kind.as_str())
         == Some("recently-played")
-}
-
-/// The stations shelf: the listener's personal station first, then the stations they played
-/// lately, each once.
-fn stations_shelf(personal: Option<Playlist>, recents: &[GenreItem]) -> Vec<GenreItem> {
-    let played = recents.iter().filter_map(|item| match item {
-        GenreItem::Playlist(playlist) if AppleClient::is_station(&playlist.id) => {
-            Some(playlist.clone())
-        }
-        _ => None,
-    });
-    let mut seen = HashSet::new();
-    personal
-        .into_iter()
-        .chain(played)
-        .filter(|station| seen.insert(station.id.clone()))
-        .map(GenreItem::Playlist)
-        .collect()
 }
 
 #[cfg(test)]
