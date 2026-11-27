@@ -470,7 +470,8 @@ pub trait MusicApi: Send + Sync {
     /// Whether `playlist_id` is a playlist the provider never ends, as an Apple Music station
     /// read as a playlist. Playing one goes on through `collection_radio` with
     /// `RadioSeed::Playlist` rather than stopping after the stretch `playlist_tracks` lists, so
-    /// a provider that answers `true` for an id must answer that call for it too.
+    /// a provider that answers `true` for an id must answer that call for it too. Tracks started
+    /// from the playlist's page continue with the playlist id itself as the continuation.
     fn endless(&self, _playlist_id: &str) -> bool {
         false
     }

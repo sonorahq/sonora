@@ -23,8 +23,8 @@ use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Found, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome,
-    PinTarget, PinTargetKind, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track,
-    UserProfile, escape,
+    PinTarget, PinTargetKind, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track, UserProfile,
+    escape,
 };
 use serde::de::IgnoredAny;
 use serde_json::Value;
@@ -150,6 +150,9 @@ const STATION: usize = 10;
 
 /// How many of those requests make a queue worth having behind a track.
 const STATION_PULLS: usize = 3;
+
+/// What a song's station id starts with, the song's catalog id following.
+const SONG_STATION: &str = "ra.cp-";
 
 /// How many times one read is sent before its failure belongs to the caller.
 ///
@@ -548,6 +551,7 @@ impl AppleClient {
                 Some("playlists") | Some("library-playlists") => {
                     wire::playlist(row).map(GenreItem::Playlist)
                 }
+                Some("stations") => wire::station(row).map(GenreItem::Playlist),
                 _ => None,
             })
             .collect())
@@ -1131,43 +1135,52 @@ impl AppleClient {
         let found = match self.get(&path, &[]).await {
             Ok(body) => {
                 let answered: wire::Answer = wire::answer(&body);
-                answered.data.first().and_then(|row| {
-                    let attributes = row.attributes.as_ref()?;
-                    Some((
-                        wire::text(&attributes.name)?,
-                        wire::artwork(attributes, wire::ART),
-                    ))
-                })
+                answered.data.first().and_then(wire::station)
             }
             Err(error) => {
-                log::debug!(
-                    "apple: the catalog does not describe station {station_id}: {error:#}"
-                );
+                log::debug!("apple: the catalog does not describe station {station_id}: {error:#}");
                 None
             }
         };
-        let (name, cover) = found.unwrap_or_else(|| ("Station".to_owned(), None));
-        Playlist {
+        found.unwrap_or_else(|| Playlist {
             id: station_id.to_owned(),
-            name,
+            name: "Station".to_owned(),
             owner: "Apple Music".to_owned(),
             owner_id: "Apple Music".to_owned(),
             owned: false,
             collaborative: false,
             blend: false,
             public: true,
-            cover,
-            // A station has no length, and zero leaves the count off the page.
+            cover: None,
             track_count: 0,
             modified_at: None,
             read_only: true,
             revision: None,
-        }
+        })
+    }
+
+    /// The listener's personal station, the one Apple builds from everything they play. An
+    /// account Apple has built none for yet has none to show.
+    async fn personal_station(&self) -> Result<Option<Playlist>> {
+        let body = self
+            .get(
+                &self.catalog("/stations"),
+                &[("filter[identity]", "personal")],
+            )
+            .await?;
+        let answered: wire::Answer = wire::answer(&body);
+        Ok(answered.data.first().and_then(wire::station))
     }
 
     /// The next stretch of a station, a few requests long since Apple hands out ten tracks at a
     /// time. A station is free to come back to a song, so repeats within the stretch are dropped.
     async fn station_stretch(&self, station_id: &str) -> Result<Vec<Track>> {
+        // A song's station, as recent plays list it, answers only once it is built again from
+        // its song, which is what a track's radio does.
+        if let Some(song) = station_id.strip_prefix(SONG_STATION) {
+            let (tracks, _) = <Self as MusicApi>::track_radio(self, song, None).await?;
+            return Ok(tracks);
+        }
         let mut tracks = Vec::new();
         for _ in 0..STATION_PULLS {
             let more = self.station_tracks(station_id).await?;
@@ -1813,6 +1826,10 @@ impl MusicApi for AppleClient {
         let (kind, id) = rest
             .split_once(':')
             .context("cannot pin an item without a kind")?;
+        // Apple keeps no stations in the library, so a station is only ever pinned here.
+        if Self::is_station(id) {
+            return Ok(PinOutcome::Outside);
+        }
         let kind = match kind {
             "playlist" => "playlists",
             "album" => "albums",
@@ -2030,24 +2047,14 @@ impl MusicApi for AppleClient {
         Ok(found)
     }
 
-    /// A playlist, or a station wearing a playlist's id. A station's page lists one stretch
-    /// and never a continuation, since the page reads continuations until there are none;
-    /// playing it goes on through `collection_radio`.
+    /// A playlist, or a station wearing a playlist's id. A station's page is only its name and
+    /// picture, as in Apple's own app: what it plays is decided as it plays, through
+    /// `collection_radio`, so no list could say what comes.
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
         if Self::is_station(playlist_id) {
-            let (playlist, tracks) = futures::join!(
-                self.station_about(playlist_id),
-                self.station_stretch(playlist_id)
-            );
-            let tracks =
-                tracks.with_context(|| format!("cannot load the station {playlist_id}"))?;
-            let cover = playlist
-                .cover
-                .clone()
-                .or_else(|| tracks.iter().find_map(|track| track.cover.clone()));
             return Ok(PlaylistDetail {
-                playlist: Playlist { cover, ..playlist },
-                tracks,
+                playlist: self.station_about(playlist_id).await,
+                tracks: Vec::new(),
                 continuation: None,
             });
         }
@@ -2338,6 +2345,7 @@ impl MusicApi for AppleClient {
                     .iter()
                     .filter_map(|row| match row.kind.as_str() {
                         Some("playlists") => wire::playlist(row).map(GenreItem::Playlist),
+                        Some("stations") => wire::station(row).map(GenreItem::Playlist),
                         Some("albums") => wire::album(row).map(GenreItem::Album),
                         _ => None,
                     })
@@ -2356,10 +2364,11 @@ impl MusicApi for AppleClient {
         // Apple's own recently played group is a cached ranking that lags real plays, so the live
         // list fills the Recently played shelf and leads Quick picks, and the group only stands
         // in when that list cannot be read.
-        let (containers, songs, added) = futures::join!(
+        let (containers, songs, added, personal) = futures::join!(
             self.recent_items(),
             <Self as MusicApi>::recently_played(self),
-            self.recently_added()
+            self.recently_added(),
+            self.personal_station()
         );
         match added {
             Ok(items) if !items.is_empty() => sections.insert(
@@ -2386,6 +2395,21 @@ impl MusicApi for AppleClient {
                 GenreSection {
                     title: "home-recently-played".to_owned(),
                     items: containers.clone(),
+                },
+            );
+        }
+        let personal = personal.unwrap_or_else(|error| {
+            log::warn!("apple: cannot load the personal station: {error:#}");
+            None
+        });
+        let stations = stations_shelf(personal, &containers);
+        if !stations.is_empty() {
+            let at = usize::from(!containers.is_empty());
+            sections.insert(
+                at,
+                GenreSection {
+                    title: "home-stations".to_owned(),
+                    items: stations,
                 },
             );
         }
@@ -2635,6 +2659,24 @@ fn is_recents(group: &Resource) -> bool {
         .as_ref()
         .and_then(|attributes| attributes.kind.as_str())
         == Some("recently-played")
+}
+
+/// The stations shelf: the listener's personal station first, then the stations they played
+/// lately, each once.
+fn stations_shelf(personal: Option<Playlist>, recents: &[GenreItem]) -> Vec<GenreItem> {
+    let played = recents.iter().filter_map(|item| match item {
+        GenreItem::Playlist(playlist) if AppleClient::is_station(&playlist.id) => {
+            Some(playlist.clone())
+        }
+        _ => None,
+    });
+    let mut seen = HashSet::new();
+    personal
+        .into_iter()
+        .chain(played)
+        .filter(|station| seen.insert(station.id.clone()))
+        .map(GenreItem::Playlist)
+        .collect()
 }
 
 #[cfg(test)]

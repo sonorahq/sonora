@@ -329,6 +329,16 @@ impl Detail {
         self.kind == Some(Collection::Playlist) && self.loading && !self.tracks.is_empty()
     }
 
+    /// Whether the page is a playlist the provider never ends, a station, whose rows are only
+    /// its next stretch: it has no length, and nothing on it can be kept or downloaded.
+    pub fn station(&self, cx: &App) -> bool {
+        self.kind == Some(Collection::Playlist)
+            && self
+                .id
+                .as_deref()
+                .is_some_and(|id| self.session.read(cx).endless(id))
+    }
+
     /// Whether all playlist rows are available for edits that rely on the full list.
     pub fn playlist_tracks_complete(&self) -> bool {
         self.kind == Some(Collection::Playlist)

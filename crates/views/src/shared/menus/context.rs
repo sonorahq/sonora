@@ -1117,6 +1117,14 @@ pub(crate) fn artist_menu(
 /// The tiles of a playlist menu: the heart that keeps someone else's playlist in the library,
 /// the download and the pin.
 fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
+    // A station can only be pinned: it is kept nowhere and has no end to download.
+    if Sonora::global(cx).session.read(cx).endless(&playlist.id) {
+        return playlist
+            .pin()
+            .map(|pin| pin_tile(pin, cx))
+            .into_iter()
+            .collect();
+    }
     let kept = (!playlist.owned).then(|| {
         let saved = Sonora::global(cx)
             .library
@@ -1154,13 +1162,18 @@ fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
 /// queue, the owner's edits and the link.
 pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: &App) -> Menu {
     let from = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
-    let radio = radio_item(
-        RadioSeed::Playlist,
-        &playlist.id,
-        playlist.name.clone(),
-        &playback,
-        cx,
-    );
+    // A station is a radio already, and one built from it would play other songs.
+    let station = Sonora::global(cx).session.read(cx).endless(&playlist.id);
+    let radio = match station {
+        true => None,
+        false => radio_item(
+            RadioSeed::Playlist,
+            &playlist.id,
+            playlist.name.clone(),
+            &playback,
+            cx,
+        ),
+    };
     let copied = playlist.id.clone();
     let id = playlist.id.clone();
     let public = playlist.public;

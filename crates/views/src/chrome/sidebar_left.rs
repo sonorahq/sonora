@@ -653,6 +653,11 @@ impl SidebarLeft {
         let origin = Origin::from(&pin);
         let playing = self.playback.read(cx).engaged(&origin, cx);
         let warmed = origin.clone();
+        // A pinned station plays on a press, as in the provider's own app, since it has no
+        // page worth opening.
+        let station =
+            pin.kind == PinKind::Playlist && Sonora::global(cx).session.read(cx).endless(&pin.id);
+        let pressed = (station, origin.clone(), self.playback.clone());
 
         let key = format!("{}-{}", pin.kind.key(), pin.id);
         let card = Card::new(SharedString::from(format!("pinned-{key}")), pin.label())
@@ -680,7 +685,12 @@ impl SidebarLeft {
             .meta(caption(pin.kind.key(), marked, cx))
             .lit(active && !aimed, accent)
             .chosen(aimed)
-            .press(move |_, _, cx| navigate(destination.clone(), cx))
+            .press(move |_, _, cx| match &pressed {
+                (true, origin, playback) => {
+                    playback.update(cx, |playback, cx| playback.toggle_origin(origin, cx))
+                }
+                (false, ..) => navigate(destination.clone(), cx),
+            })
             .menu(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                 this.track_menu.reset(cx);
                 this.context_menu = Some((opened.clone(), event.position));

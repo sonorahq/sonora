@@ -36,8 +36,12 @@ mod tests {
     #[test]
     fn a_station_opens_as_a_playlist() {
         assert_eq!(
-            read("https://music.apple.com/de/station/peters-sender/ra.u-6e4d72dd33513ccc1abb70ff757aa95f"),
-            Some(Linked::Playlist("ra.u-6e4d72dd33513ccc1abb70ff757aa95f".into()))
+            read(
+                "https://music.apple.com/de/station/peters-sender/ra.u-6e4d72dd33513ccc1abb70ff757aa95f"
+            ),
+            Some(Linked::Playlist(
+                "ra.u-6e4d72dd33513ccc1abb70ff757aa95f".into()
+            ))
         );
         assert_eq!(
             read("https://music.apple.com/us/station/ra.978194965"),
@@ -49,7 +53,9 @@ mod tests {
     fn a_playlist_still_opens_as_one() {
         assert_eq!(
             read("https://music.apple.com/de/playlist/today/pl.f4d106fed2bd41149aaacabb233eb5eb"),
-            Some(Linked::Playlist("pl.f4d106fed2bd41149aaacabb233eb5eb".into()))
+            Some(Linked::Playlist(
+                "pl.f4d106fed2bd41149aaacabb233eb5eb".into()
+            ))
         );
     }
 }

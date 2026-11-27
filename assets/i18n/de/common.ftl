@@ -155,6 +155,7 @@ kind-song = Song
 kind-artist = Künstler
 kind-album = Album
 kind-playlist = Playlist
+kind-station = Sender
 
 # song languages
 language-ar = Arabisch

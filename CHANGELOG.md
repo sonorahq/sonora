@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Apple Music stations play in Sonora and keep going with new songs from the station for as long as you listen. Your personal station and the ones you played lately sit on a Stations shelf on Home, station links open too, and a station can be pinned to the sidebar.
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
 - Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.

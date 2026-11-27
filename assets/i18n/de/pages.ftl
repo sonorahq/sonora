@@ -80,6 +80,7 @@ home-quick-picks = Schnellauswahl
 home-quick-picks-empty = Markiere ein paar Songs als Favoriten, dann erscheinen sie hier
 home-recently-added = Kürzlich hinzugefügt
 home-recently-played = Kürzlich gespielt
+home-stations = Sender
 home-favorite-albums = Lieblingsalben
 home-artists = Künstler
 home-collection-albums = Alben aus deiner Sammlung

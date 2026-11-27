@@ -740,7 +740,7 @@ impl SearchView {
                 }
             }
             Hit::Album(album) => navigate(Destination::Album(album.id.into()), cx),
-            Hit::Playlist(list) => navigate(Destination::Playlist(list.id.into()), cx),
+            Hit::Playlist(list) => cards::open_playlist(&list.id, &list.name, &self.playback, cx),
         }
     }
 
@@ -1327,7 +1327,7 @@ fn pressed(
                 }
             }
             Hit::Album(album) => navigate(Destination::Album(album.id.clone().into()), cx),
-            Hit::Playlist(list) => navigate(Destination::Playlist(list.id.clone().into()), cx),
+            Hit::Playlist(list) => cards::open_playlist(&list.id, &list.name, &this.playback, cx),
         })
         .ok();
     }

@@ -1324,7 +1324,8 @@ impl Playback {
         }));
     }
 
-    /// Replaces the queue with `tracks` and plays the one at `index`.
+    /// Replaces the queue with `tracks` and plays the one at `index`. Tracks from a playlist the
+    /// provider never ends play on as its station once they run low.
     pub fn start(
         &mut self,
         tracks: Vec<Track>,
@@ -1333,7 +1334,24 @@ impl Playback {
         cx: &mut Context<Self>,
     ) {
         self.fetch = None;
-        self.begin(tracks, index, origin, cx);
+        let station = origin
+            .as_ref()
+            .and_then(|origin| self.endless_station(origin, cx));
+        if self.begin(tracks, index, origin, cx) {
+            self.station = station;
+        }
+    }
+
+    /// The station a playlist the provider never ends goes on as, continued from its own id
+    /// as `MusicApi::endless` promises.
+    fn endless_station(&self, origin: &Origin, cx: &Context<Self>) -> Option<Station> {
+        if origin.whence != Whence::Playlist {
+            return None;
+        }
+        let client = self.client_for(&origin.id, cx)?;
+        client
+            .endless(&origin.id)
+            .then(|| Station::of(origin.clone(), origin.id.clone()))
     }
 
     /// Replaces the queue with `tracks` and plays the one at `index` here from `at`, as another

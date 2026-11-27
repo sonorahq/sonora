@@ -185,6 +185,7 @@ kind-song = Song
 kind-artist = Artist
 kind-album = Album
 kind-playlist = Playlist
+kind-station = Station
 
 # song languages
 language-ar = Arabic
