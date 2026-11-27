@@ -560,26 +560,28 @@ pub(crate) struct LegacyScrobbler {
     pub enabled: bool,
 }
 
-/// The arrangement of the workspace's player bar, independent of its surface material.
+/// The arrangement of the workspace's player bar, independent of its surface material and of
+/// whether it floats as an island.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PlayerBarLayout {
     #[default]
     Classic,
     Centered,
     Compact,
-    /// A rounded pill that floats over the page instead of a bar across the window's foot.
-    Island,
+    /// The transport, the track over a thin seek line that opens under the pointer, and the
+    /// tools, in one low row.
+    Minimal,
 }
 
 impl PlayerBarLayout {
-    pub const ALL: [Self; 4] = [Self::Classic, Self::Centered, Self::Compact, Self::Island];
+    pub const ALL: [Self; 4] = [Self::Classic, Self::Centered, Self::Compact, Self::Minimal];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Classic => "classic",
             Self::Centered => "centered",
             Self::Compact => "compact",
-            Self::Island => "island",
+            Self::Minimal => "minimal",
         }
     }
 
@@ -589,7 +591,7 @@ impl PlayerBarLayout {
             Self::Classic => "settings-player-bar-classic",
             Self::Centered => "settings-player-bar-centered",
             Self::Compact => "settings-player-bar-compact",
-            Self::Island => "settings-player-bar-island",
+            Self::Minimal => "settings-player-bar-minimal",
         }
     }
 
@@ -598,8 +600,51 @@ impl PlayerBarLayout {
         match id {
             "centered" => Self::Centered,
             "compact" => Self::Compact,
-            "island" => Self::Island,
+            "minimal" => Self::Minimal,
             _ => Self::Classic,
+        }
+    }
+}
+
+/// When the player bar floats over the page as a rounded island rather than running along the
+/// window's foot. The island holds the chosen layout, and a window without room for it keeps
+/// the bar whatever the choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlayerBarIsland {
+    #[default]
+    Off,
+    /// Only on a vast window, where a bar across the whole foot would stretch thin.
+    Wide,
+    /// As soon as the window has room for the layout as an island.
+    Fits,
+}
+
+impl PlayerBarIsland {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Wide, Self::Fits];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Wide => "wide",
+            Self::Fits => "fits",
+        }
+    }
+
+    /// The segment's Fluent key, resolved by the view when it renders the choice.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Off => "settings-player-bar-island-off",
+            Self::Wide => "settings-player-bar-island-wide",
+            Self::Fits => "settings-player-bar-island-fits",
+        }
+    }
+
+    /// Reads a saved choice, keeping the bar for missing or unknown ones.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "wide" => Self::Wide,
+            "fits" => Self::Fits,
+            _ => Self::Off,
         }
     }
 }
@@ -655,6 +700,11 @@ struct Appearance {
     visualizer_absolute: bool,
     visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
+    /// When the player bar floats as an island, by its id. See `PlayerBarIsland`.
+    player_bar_island: String,
+    /// Whether the island stands in the middle of the page between the sidebars rather than in
+    /// the middle of the window.
+    player_bar_island_page: bool,
     player_bar_transparent: bool,
     /// Whether the player bar's right clock counts down what is left of the track instead of
     /// showing its length.
@@ -825,7 +875,19 @@ impl Values {
     /// The values as they are used, with whatever a hand edit or an older Sonora left settled.
     fn settled(mut self) -> Self {
         self.settle_equalizer();
+        self.settle_island();
         self
+    }
+
+    /// Turns the Island layout of nightly builds into the Minimal layout it drew, floating
+    /// whenever it fits as that layout did.
+    // TODO(0.52.0): remove once no nightly settings name the island layout.
+    fn settle_island(&mut self) {
+        let appearance = &mut self.appearance;
+        if appearance.player_bar_layout == "island" {
+            appearance.player_bar_layout = PlayerBarLayout::Minimal.id().to_owned();
+            appearance.player_bar_island = PlayerBarIsland::Fits.id().to_owned();
+        }
     }
 }
 
@@ -979,6 +1041,8 @@ impl Default for Appearance {
             visualizer_absolute: false,
             visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
+            player_bar_island: PlayerBarIsland::default().id().to_owned(),
+            player_bar_island_page: true,
             player_bar_transparent: true,
             player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
@@ -1537,6 +1601,16 @@ impl AppSettings {
     /// The arrangement of the workspace's playback controls. Unknown saved ids use Classic.
     pub fn player_bar_layout(&self) -> PlayerBarLayout {
         PlayerBarLayout::from_id(&self.values.appearance.player_bar_layout)
+    }
+
+    /// When the player bar floats as an island. Unknown saved ids keep the bar.
+    pub fn player_bar_island(&self) -> PlayerBarIsland {
+        PlayerBarIsland::from_id(&self.values.appearance.player_bar_island)
+    }
+
+    /// Whether the island stands in the middle of the page rather than of the window.
+    pub fn player_bar_island_page(&self) -> bool {
+        self.values.appearance.player_bar_island_page
     }
 
     /// Whether the listener asked for a see-through player bar. What the bar does is
@@ -2520,6 +2594,17 @@ impl AppSettings {
     /// Applies a player bar layout immediately and saves it in the appearance preferences.
     pub fn set_player_bar_layout(&mut self, layout: PlayerBarLayout, cx: &mut Context<Self>) {
         self.values.appearance.player_bar_layout = layout.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Applies when the player bar floats as an island and saves it.
+    pub fn set_player_bar_island(&mut self, island: PlayerBarIsland, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_island = island.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    pub fn set_player_bar_island_page(&mut self, page: bool, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_island_page = page;
         self.schedule_save(cx);
     }
 

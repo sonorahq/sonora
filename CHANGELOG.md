@@ -10,7 +10,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
-- Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
+- Settings → Player bar has an Island option that floats the player bar as a rounded pill over the page in any layout, on wide windows only or whenever it fits, in the middle of the page or of the window. Every layout keeps it low with a thin progress line that opens with both times under the pointer, and it holds still while the pointer is on it, so its buttons stay put as a sidebar opens.
+- The Minimal player bar layout puts the song over a thin progress line, and resting the pointer on the line opens it with both times.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The Playlists tab filters by track count too, so you can hide short playlists or keep only long ones.

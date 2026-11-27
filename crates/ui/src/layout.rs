@@ -31,4 +31,16 @@ impl Room {
     pub fn fits(self, step: Room) -> bool {
         self >= step
     }
+
+    /// The narrowest width that counts as this step, for an element that has to be as wide as a
+    /// window of this room.
+    pub fn least(self) -> Pixels {
+        match self {
+            Self::Tight => ALWAYS,
+            Self::Snug => SNUG,
+            Self::Roomy => ROOMY,
+            Self::Wide => WIDE,
+            Self::Vast => VAST,
+        }
+    }
 }
