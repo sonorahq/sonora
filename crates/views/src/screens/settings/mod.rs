@@ -109,6 +109,7 @@ enum Slot {
     Lyrics,
     Karaoke,
     BlurLyrics,
+    ScrollPlainLyrics,
     Romanized,
     PanelLyricsSize,
     FullscreenLyricsSize,
@@ -1087,6 +1088,10 @@ impl SettingsView {
                 t!("settings-blur-lyrics"),
                 t!("settings-blur-lyrics-detail"),
             ),
+            Slot::ScrollPlainLyrics => (
+                t!("settings-scroll-plain-lyrics"),
+                t!("settings-scroll-plain-lyrics-detail"),
+            ),
             Slot::Font => (
                 t!("settings-typeface"),
                 format!(
@@ -1335,6 +1340,7 @@ impl SettingsView {
             Slot::PanelLyricsSize => self.panel_lyrics_size_row(cx),
             Slot::FullscreenLyricsSize => self.fullscreen_lyrics_size_row(cx),
             Slot::BlurLyrics => self.blur_lyrics_row(cx),
+            Slot::ScrollPlainLyrics => self.scroll_plain_lyrics_row(cx),
             Slot::Font => self.font_row(cx),
             Slot::Motion => self.motion_row(cx),
             Slot::Pace => self.pace_row(cx),
