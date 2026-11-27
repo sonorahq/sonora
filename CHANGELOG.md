@@ -89,6 +89,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Japanese, Chinese and Korean text on Linux is drawn at the weight the rest of the interface uses, instead of looking bold everywhere.
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
 - An Apple Music album you took out of your library can be added back from its menu, and pinning it from its page no longer fails.
+- Removing a YouTube Music favorite you liked as a music video now takes it out of your likes, instead of the heart filling again on the next reload.
 
 - YouTube Music tracks start right away again for a signed-in account, in the 256 kbps stream on Premium, instead of waiting several seconds or failing with "could not be played".
 - Interrupted or failed app updates, Soloist installs, theme saves and offline downloads no longer leave partial files behind.

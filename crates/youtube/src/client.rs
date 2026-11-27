@@ -13,6 +13,8 @@ use music::{
 };
 use tokio::task::JoinSet;
 use ytmusic::YtMusic;
+use ytmusic::dedup;
+use ytmusic::library::LIKED_SONGS;
 
 use crate::{genres, radio, search, subscriptions, wire};
 
@@ -73,6 +75,42 @@ impl YouTubeClient {
                 tracks[index].duration = Some(duration);
             }
         }
+    }
+
+    /// The liked entries that the favorites list shows as `track_id`. A liked video is listed
+    /// as the song it resolves to, and likes of one song fold into a single row, so unliking the
+    /// shown id alone would leave the song liked. Falls back to `track_id` when the likes cannot
+    /// be read.
+    async fn liked_entries(&self, track_id: &str) -> Vec<String> {
+        let liked = match self.api.playlist(LIKED_SONGS).await {
+            Ok(detail) => detail.tracks,
+            Err(error) => {
+                log::warn!("youtube: cannot read the liked songs to unlike {track_id}: {error:#}");
+                return vec![track_id.to_owned()];
+            }
+        };
+        let resolved = self.api.resolve_videos(liked.clone()).await;
+        if resolved.len() != liked.len() {
+            return vec![track_id.to_owned()];
+        }
+        let shown = resolved
+            .iter()
+            .chain(&liked)
+            .find(|track| track.video_id.as_deref() == Some(track_id))
+            .cloned();
+        let mut entries: Vec<String> = match shown {
+            Some(shown) => liked
+                .into_iter()
+                .zip(resolved)
+                .filter(|(_, song)| dedup::collapse(vec![shown.clone(), song.clone()]).len() == 1)
+                .filter_map(|(entry, _)| entry.video_id)
+                .collect(),
+            None => Vec::new(),
+        };
+        if !entries.iter().any(|id| id == track_id) {
+            entries.push(track_id.to_owned());
+        }
+        entries
     }
 }
 
@@ -202,7 +240,13 @@ impl MusicApi for YouTubeClient {
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
-        self.api.rate_track(track_id, saved).await
+        if saved {
+            return self.api.rate_track(track_id, true).await;
+        }
+        for video_id in self.liked_entries(track_id).await {
+            self.api.rate_track(&video_id, false).await?;
+        }
+        Ok(())
     }
 
     async fn track(&self, track_id: &str) -> Result<Track> {
