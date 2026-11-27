@@ -1023,7 +1023,7 @@ impl FullscreenView {
                 .children(members::picked_by(cx).filter(|_| room > 0.).map(|added| {
                     jam::stamp("strip-adder", &added, side, theme.background, window)
                 }));
-        let cover = PlayerBar::tuck(cover, room, window, cx);
+        let cover = PlayerBar::tuck(cover, side, room, window);
         let details = PlayerBar::shows_track(window)
             .then(|| track_details(track, &self.playback, false, Self::menu_at, cx));
         let sound = match PlayerBar::volume(window, cx) {
@@ -1519,7 +1519,7 @@ impl FullscreenView {
             .absolute()
             .left_0()
             .right_0()
-            .bottom(PlayerBar::height(window, cx) + px(PILL_LIFT))
+            .bottom(PlayerBar::strip_height(window, cx) + px(PILL_LIFT))
             .flex()
             .justify_center()
             .child(
@@ -1543,7 +1543,7 @@ impl FullscreenView {
             .left_0()
             .right_0()
             .bottom_0()
-            .h(PlayerBar::height(window, cx) + pill + px(PILL_LIFT))
+            .h(PlayerBar::strip_height(window, cx) + pill + px(PILL_LIFT))
             .on_hover(cx.listener(|this, hovering: &bool, _, cx| {
                 this.over_dock = *hovering;
                 cx.notify();
@@ -1665,8 +1665,8 @@ impl Render for FullscreenView {
         let pill = theme.metrics.control_small + px(PILL_GAP * 2. + 2.);
         let foot = match (narrow, self.panel.is_some()) {
             (false, _) => rem * PAGE_PAD + px(DECK_LIFT) - PlayerBar::fullscreen_drop(window, cx),
-            (true, true) => PlayerBar::height(window, cx),
-            (true, false) => PlayerBar::height(window, cx) + pill + px(PILL_LIFT * 2.),
+            (true, true) => PlayerBar::strip_height(window, cx),
+            (true, false) => PlayerBar::strip_height(window, cx) + pill + px(PILL_LIFT * 2.),
         };
         let stack = theme.metrics.title_bar + rem * (COLUMN_GAP * 2.) + foot + meta;
         // The dock reserves the cap it clamps itself to while fading, and nothing at all once

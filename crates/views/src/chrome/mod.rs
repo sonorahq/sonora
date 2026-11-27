@@ -23,7 +23,7 @@ pub(crate) use jam::{JamCode, JamInvite, JamJoin};
 pub(crate) use members::Members;
 pub(crate) use notice::AppNotice;
 pub(crate) use output_picker::OutputPicker;
-pub(crate) use player_bar::{BarParts, COVER_GAP, PlayerBar, Volume};
+pub(crate) use player_bar::{BarParts, COVER_GAP, Held, PlayerBar, Volume};
 pub(crate) use session::{SessionCode, SessionJoin};
 pub(crate) use sessions_button::SessionsButton;
 pub(crate) use sheet::{SHEET_EDGE, inner_corners, sheet_frame};
