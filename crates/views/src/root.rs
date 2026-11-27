@@ -1288,6 +1288,7 @@ impl Render for Root {
         // An image behind the window covers it whole, so the desktop never shows through and
         // the window is opaque to it however thin its fills are.
         let backed = self.wallpaper.follow(window, cx);
+        ui::Backed::set(backed, cx);
         let appearance = ui::backdrop(theme.blur_window, theme.transparent && !backed);
         if self.background != Some(appearance) {
             self.background = Some(appearance);

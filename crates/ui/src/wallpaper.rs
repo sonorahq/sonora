@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use gpui::{ImageCacheError, RenderImage};
+use gpui::{App, Global, ImageCacheError, RenderImage};
 use image::{
     AnimationDecoder, DynamicImage, Frame, ImageDecoder, ImageFormat, RgbaImage,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
@@ -17,6 +17,28 @@ const MAX_EDGE: u32 = 4096;
 /// What the frames of an animated background may take together. Every frame is held decoded
 /// and uploaded to the GPU once shown, so a long animation is kept at a lower resolution.
 const ANIMATION_BYTES: usize = 128 * 1024 * 1024;
+
+/// Whether an image is laid behind the window, which is then opaque to the desktop. A surface
+/// that thins its own alpha to let the desktop through has nothing behind it there and would
+/// come out dark, so it asks here and lets the image through instead. The root keeps it current.
+#[derive(Clone, Copy)]
+pub struct Backed(bool);
+
+impl Global for Backed {}
+
+impl Backed {
+    pub fn get(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|backed| backed.0)
+    }
+
+    /// Records whether the window has an image behind it, touching the global only when the
+    /// answer changed so its observers run once per change.
+    pub fn set(backed: bool, cx: &mut App) {
+        if !cx.has_global::<Self>() || Self::get(cx) != backed {
+            cx.set_global(Self(backed));
+        }
+    }
+}
 
 /// Decodes the image in `bytes` to lay behind a window on a screen of `room` device pixels.
 ///

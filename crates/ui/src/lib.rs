@@ -173,5 +173,5 @@ pub use vacancy::Vacancy;
 pub use veil::{VeilEdge, effects, veil};
 pub use view::Mode;
 pub use visualizer::{Levels, Visualizer, VisualizerStyle};
-pub use wallpaper::{WALLPAPER_TRANSPARENCY, wallpaper};
+pub use wallpaper::{Backed, WALLPAPER_TRANSPARENCY, wallpaper};
 pub use waves::Waves;

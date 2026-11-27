@@ -2,6 +2,7 @@ use gpui::prelude::*;
 use gpui::{App, Hsla, Pixels, px};
 
 use crate::theme::ActiveTheme as _;
+use crate::wallpaper::Backed;
 
 /// How much of the popover colour a glass control keeps over what it blurs.
 pub const GLASS_FILL: f32 = 0.2;
@@ -63,14 +64,20 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
 /// saturated blur mixed most of the way to the popover colour at the window's own opacity. On a
 /// see-through window the bar then hides most of what scrolls under it, and over the page's own
 /// ground lets the desktop through as much as the page does. Artwork under it hides the desktop
-/// itself, and the bar keeps a little of that density there, as glass would. The caller asks
-/// `blurring` first, since without the blur the text would sit on the bare page.
+/// itself, and the bar keeps a little of that density there, as glass would. A window with an
+/// image behind it is opaque, so there the bar lets the image under it through by the share
+/// the desktop would have had. The caller asks `blurring` first, since without the blur the
+/// text would sit on the bare page.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
     let theme = cx.theme();
+    let (tint, fill) = match Backed::get(cx) {
+        true => (theme.popover, BAR_FILL * theme.opacity),
+        false => (theme.popover.opacity(theme.opacity), BAR_FILL),
+    };
     element
         .backdrop_blur(BAR_BLUR)
         .backdrop_saturate(BAR_SATURATION)
-        .backdrop_tint(theme.popover.opacity(theme.opacity), BAR_FILL)
+        .backdrop_tint(tint, fill)
 }
 
 /// Blurs what is behind an element by the glass width and nothing more, for a hover fill
