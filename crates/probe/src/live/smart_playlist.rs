@@ -178,6 +178,6 @@ fn connect(server: &str, username: &str, password: &str) -> Result<SubsonicClien
         username.to_owned(),
         password.to_owned(),
         &signature,
-        None,
+        Vec::new(),
     )
 }

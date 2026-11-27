@@ -14,10 +14,26 @@ pub struct Credentials {
     /// cover keeps one url across launches and the image caches can hold it.
     #[serde(default)]
     pub signature: Option<Signature>,
-    /// The library the account is scoped to, or `None` for the whole server. Accounts signed
-    /// in before a library could be chosen have no field here and keep reading everything.
-    #[serde(default)]
+    /// The one library an account was scoped to before several could be chosen. Loading moves
+    /// it into `libraries`, so it is never written again.
+    #[serde(default, skip_serializing)]
     pub library: Option<Library>,
+    /// The libraries the account is scoped to, empty for the whole server. Accounts signed in
+    /// before a library could be chosen have no field here and keep reading everything.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<Library>,
+}
+
+impl Credentials {
+    /// Moves a library kept the old way into `libraries`, so the next write keeps it.
+    fn settled(mut self) -> Self {
+        if let Some(library) = self.library.take()
+            && self.libraries.is_empty()
+        {
+            self.libraries.push(library);
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +78,9 @@ pub fn normalize_server(raw: &str) -> Result<String> {
 /// The sign-in kept for the account `slug`, or `None` when there is none or it names no user.
 pub fn load(slug: &str) -> Option<Credentials> {
     let bytes = std::fs::read(path(slug)).ok()?;
-    let mut credentials: Credentials = serde_json::from_slice(&bytes).ok()?;
+    let mut credentials = serde_json::from_slice::<Credentials>(&bytes)
+        .ok()?
+        .settled();
     credentials.server = normalize_server(&credentials.server).ok()?;
     match credentials.username.is_empty() {
         true => None,
@@ -100,7 +118,7 @@ mod tests {
             credentials.signature.as_ref().map(|s| s.token.as_str()),
             Some("abc")
         );
-        assert_eq!(credentials.library, None);
+        assert!(credentials.settled().libraries.is_empty());
     }
 
     /// Even older accounts have no `signature` field either.
@@ -113,7 +131,7 @@ mod tests {
         }"#;
         let credentials: Credentials = serde_json::from_str(stored).unwrap();
         assert_eq!(credentials.signature, None);
-        assert_eq!(credentials.library, None);
+        assert!(credentials.settled().libraries.is_empty());
     }
 
     #[test]
@@ -126,19 +144,20 @@ mod tests {
                 token: "abc".to_owned(),
                 salt: "xyz".to_owned(),
             }),
-            library: Some(Library {
+            library: None,
+            libraries: vec![Library {
                 id: 7,
                 name: Some("Classical".to_owned()),
-            }),
+            }],
         };
         let bytes = serde_json::to_vec(&credentials).unwrap();
         let read: Credentials = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
-            read.library,
-            Some(Library {
+            read.settled().libraries,
+            vec![Library {
                 id: 7,
                 name: Some("Classical".to_owned()),
-            })
+            }]
         );
     }
 
@@ -152,6 +171,9 @@ mod tests {
             "library": { "id": 3 }
         }"#;
         let credentials: Credentials = serde_json::from_str(stored).unwrap();
-        assert_eq!(credentials.library, Some(Library { id: 3, name: None }));
+        assert_eq!(
+            credentials.settled().libraries,
+            vec![Library { id: 3, name: None }]
+        );
     }
 }

@@ -5269,7 +5269,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 [[package]]
 name = "opensubsonic"
 version = "0.7.0"
-source = "git+https://github.com/sonorahq/opensubsonic-rs?rev=486fe6bec8eb7464e084c21e251d776d6ee48db0#486fe6bec8eb7464e084c21e251d776d6ee48db0"
+source = "git+https://github.com/sonorahq/opensubsonic-rs?rev=addaa7a4a17b796cc3b6d4bcdea2aa9559d6132c#addaa7a4a17b796cc3b6d4bcdea2aa9559d6132c"
 dependencies = [
  "bytes",
  "futures-util",
