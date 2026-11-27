@@ -74,8 +74,8 @@ fastrand = "2.5"
 futures = "0.3"
 gethostname = "1.1"
 fluent-bundle = "0.16"
-gpui = { git = "https://github.com/sonorahq/gpui", rev = "9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb" }
-gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "9f6b3c8da26b00a367e688e3fedc0b5710bfc8eb", features = [
+gpui = { git = "https://github.com/sonorahq/gpui", rev = "e79fdfbc1b4e1c2110662df3d9ed3e13f525ffed" }
+gpui_platform = { git = "https://github.com/sonorahq/gpui", rev = "e79fdfbc1b4e1c2110662df3d9ed3e13f525ffed", features = [
     "font-kit",
     "wayland",
     "x11",
