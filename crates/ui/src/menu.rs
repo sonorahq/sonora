@@ -297,7 +297,14 @@ impl MenuSearch {
         let own = self.input.read(cx).focus_handle(cx);
         let before = window.focused(cx).filter(|focus| *focus != own);
         *self.restore.borrow_mut() = Some(before);
-        window.focus(&own, cx);
+        // This runs while the frame draws, so focusing now would report two focused nodes to the
+        // accessibility tree. Focus after the frame instead, unless the menu has closed by then.
+        let restore = self.restore.clone();
+        window.defer(cx, move |window, cx| {
+            if restore.borrow().is_some() {
+                window.focus(&own, cx);
+            }
+        });
     }
 
     /// Empties the field and returns focus to where it was before `hold`. Without that, focus
