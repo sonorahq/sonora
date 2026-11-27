@@ -96,6 +96,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - 32-bit FLAC files play, from your own folders and from Subsonic servers, instead of failing to load.
+- Playing from a playlist on Apple Music puts the playlist in Recently Played on your other devices, instead of each song's album.
 - The `sonora` command controls Sonora on Windows, instead of saying Sonora is not running while it is.
 - Skipping ahead in a song no longer counts toward its scrobble, so a song is scrobbled only once you have actually listened to half of it or four minutes.
 - The page's frame and the sidebar's edge fade with the window's opacity instead of staying bright on a see-through window.

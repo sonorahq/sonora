@@ -216,6 +216,8 @@ pub struct PlayParams<'a> {
     /// The catalog song a library row plays as now. It differs from `catalog_id` when Apple
     /// pulled the old id and delivered the song again under a new one.
     pub reporting_id: Leaf<'a>,
+    /// The catalog id a library playlist was shared under. A playlist never shared has none.
+    pub global_id: Leaf<'a>,
 }
 
 #[derive(Default, Deserialize)]
