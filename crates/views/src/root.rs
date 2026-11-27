@@ -1576,7 +1576,11 @@ impl Render for Root {
             .flex()
             .font(self.font(cx))
             .flex_col()
-            .size_full()
+            // Under a fractional scale a whole number of logical pixels can end between two
+            // device pixels. Laying the root out on the device grid keeps everything hung from
+            // the window's foot on it too, so the player bar draws the same at every height.
+            .w(ui::snapped(viewport.width, window))
+            .h(ui::snapped(viewport.height, window))
             .when_some(radius, |this, radius| {
                 this.rounded(radius).overflow_hidden()
             })

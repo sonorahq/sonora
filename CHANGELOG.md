@@ -87,6 +87,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - The page's frame and the sidebar's edge fade with the window's opacity instead of staying bright on a see-through window.
+- The player bar draws the same at every window height under fractional display scaling, instead of its seek line and times shifting by a pixel as you resize.
 - The Italian and Korean translations are complete, so no screen falls back to English.
 - Japanese, Chinese and Korean text on Linux is drawn at the weight the rest of the interface uses, instead of looking bold everywhere.
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
