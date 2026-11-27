@@ -278,7 +278,7 @@ impl CoverViewer {
     }
 
     /// Drops the viewer at once, without flying the cover back, for a page whose item changed
-    /// under it. Focus goes back where it was when a `window` is at hand.
+    /// under it. Focus goes back where it was after this frame when a `window` is at hand.
     pub(crate) fn force_close(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         if self.open.is_none() {
             return;
@@ -286,7 +286,7 @@ impl CoverViewer {
         self.open = None;
         self.grab = false;
         if let (Some(window), Some(focus)) = (window, self.restore.take()) {
-            window.focus(&focus, cx);
+            ui::focus_after_frame(&focus, window, cx);
         }
         self.restore = None;
         cx.notify();
@@ -428,7 +428,7 @@ impl Render for CoverViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.grab {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.grab = false;
         }
         let Some(closing) = self.open.as_ref().map(|open| open.closing) else {

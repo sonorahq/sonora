@@ -1920,7 +1920,7 @@ impl Render for SettingsView {
             || self.library_picker;
         match (dialog, self.grabbed) {
             (true, false) => {
-                window.focus(&self.focus, cx);
+                ui::focus_after_frame(&self.focus, window, cx);
                 self.grabbed = true;
             }
             (false, true) => self.grabbed = false,

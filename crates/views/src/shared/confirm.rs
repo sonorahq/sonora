@@ -185,7 +185,7 @@ impl Render for Confirm {
         };
         if self.grab {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.grab = false;
         }
 

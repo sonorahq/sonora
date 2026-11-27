@@ -135,6 +135,14 @@ pub fn release_focus(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Moves focus to `focus` once the frame being drawn has finished. Code that runs while a frame
+/// draws calls this rather than `Window::focus`, because moving focus mid-frame reports two
+/// focused nodes to the accessibility tree and a debug build panics on that.
+pub fn focus_after_frame(focus: &FocusHandle, window: &mut Window, cx: &mut App) {
+    let focus = focus.clone();
+    window.defer(cx, move |window, cx| window.focus(&focus, cx));
+}
+
 /// Whether a middle click in a field pastes the primary selection right now.
 fn primary_paste() -> bool {
     PRIMARY_SELECTION && PRIMARY_PASTE.load(Ordering::Relaxed)

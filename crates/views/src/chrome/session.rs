@@ -4,7 +4,10 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{App, ClipboardItem, Context, Entity, FocusHandle, Render, SharedString, Window, div};
+use gpui::{
+    App, ClipboardItem, Context, Entity, FocusHandle, Focusable as _, Render, SharedString, Window,
+    div,
+};
 use i18n::t;
 use music::connect::JamMember;
 use state::{Listening, Outcome, Room, SESSION_CODE_LENGTH, Session, Sonora, Toasts};
@@ -75,13 +78,13 @@ impl Render for SessionJoin {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.listening.read(cx).join_shown() {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         }
         if !self.shown {
             self.restore = window.focused(cx);
-            self.code.update(cx, |code, cx| code.focus(window, cx));
+            ui::focus_after_frame(&self.code.read(cx).focus_handle(cx), window, cx);
             self.shown = true;
         }
         let ready = self.code.read(cx).complete();
@@ -175,13 +178,13 @@ impl Render for SessionCode {
             .map(|room| (room.code.clone(), room.provider.clone()));
         let Some((code, provider)) = shown else {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         };
         if !self.shown {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.shown = true;
         }
         let provider = self
