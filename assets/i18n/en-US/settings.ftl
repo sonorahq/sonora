@@ -524,8 +524,8 @@ corners-rounded = Rounded
 corners-round = Round
 
 # row height
-row-size-standard = Standard
-row-size-comfortable = Comfortable
+row-size-compact = Compact
+row-size-regular = Regular
 row-size-spacious = Spacious
 
 # motion

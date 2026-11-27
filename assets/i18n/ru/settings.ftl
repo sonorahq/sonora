@@ -429,8 +429,8 @@ corners-rounded = Скруглённые
 corners-round = Круглые
 
 # row height
-row-size-standard = Обычные
-row-size-comfortable = Свободные
+row-size-compact = Компактные
+row-size-regular = Обычные
 row-size-spacious = Просторные
 
 # motion
