@@ -22,6 +22,7 @@ log.workspace = true
 lyrics.workspace = true
 music.workspace = true
 open.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 rodio.workspace = true

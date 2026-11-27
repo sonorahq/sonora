@@ -142,6 +142,8 @@ impl PlayerBar {
         let library = Sonora::global(cx).library.clone();
         let settings = Sonora::global(cx).settings.clone();
         let devices = Sonora::global(cx).devices.clone();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         cx.observe(&devices, |_, _, cx| cx.notify()).detach();
         cx.observe(&queue, |_, _, cx| cx.notify()).detach();

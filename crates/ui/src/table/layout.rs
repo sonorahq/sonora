@@ -32,6 +32,7 @@ pub enum Width {
     Fixed(Pixels),
     Fill(f32),
     Thumb,
+    Control(fn(Metrics) -> Pixels),
 }
 
 impl Width {
@@ -144,6 +145,7 @@ impl<F: 'static> ColumnSpec<F> {
         match self.width {
             Width::Fixed(width) => width,
             Width::Thumb => metrics.thumb + metrics.pad * 2.,
+            Width::Control(control) => control(metrics) + PADDING * 2.,
             Width::Fill(_) => Pixels::ZERO,
         }
     }
@@ -159,7 +161,7 @@ impl<F: 'static> ColumnSpec<F> {
 
     fn floor(&self, metrics: Metrics, head: Pixels) -> Pixels {
         let bare = match (self.anchored, self.width) {
-            (true, _) | (_, Width::Thumb) => self.natural(metrics),
+            (true, _) | (_, Width::Thumb | Width::Control(_)) => self.natural(metrics),
             (false, Width::Fixed(width)) => width.min(MIN_RIGID),
             (false, Width::Fill(_)) => MIN_FLEX,
         };
@@ -173,7 +175,7 @@ impl<F: 'static> ColumnSpec<F> {
         let wish = match self.width {
             Width::Fill(_) => COMFORT,
             Width::Fixed(width) => width,
-            Width::Thumb => self.natural(metrics),
+            Width::Thumb | Width::Control(_) => self.natural(metrics),
         };
 
         wish.max(self.floor(metrics, head))

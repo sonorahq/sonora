@@ -18,6 +18,7 @@ use crate::shared::confirm::Confirm;
 use crate::shared::local;
 use crate::shared::pins::Pinned as _;
 use crate::shared::playlist_editor::{Edit, PlaylistEditor};
+use crate::shared::rating::rating;
 use crate::shared::smart_playlist::{SmartEdit, SmartPlaylistEditor};
 use crate::shared::tag_editor::TagEditor;
 
@@ -210,12 +211,16 @@ impl ItemMenu {
         cx: &App,
     ) -> Menu {
         let library = Sonora::global(cx).library.clone();
+        let ratings = Sonora::global(cx).ratings.read(cx);
         let playlists: Vec<Playlist> = library
             .read(cx)
             .state(shelf)
             .playlists()
             .iter()
             .filter(|playlist| playlist.takes_tracks())
+            .filter(|playlist| {
+                !ratings.is_rating_playlist(&playlist.id) && playlist.rating().is_none()
+            })
             .cloned()
             .collect();
         let ids = match &addition {
@@ -406,6 +411,8 @@ impl ItemMenu {
                     .disabled(),
             ),
         };
+        let rated = (!many && Sonora::global(cx).ratings.read(cx).can_rate(track, cx))
+            .then(|| track.clone());
         let album = match (many, columns.album, track.album_id.clone()) {
             (true, _, _) | (false, true, _) => None,
             (false, false, Some(id)) if Some(id.as_str()) == current_album => None,
@@ -512,7 +519,9 @@ impl ItemMenu {
         let tiles = track_tiles(tracks, &ids, shelf, imported, pinnable, cx);
 
         sections(
-            item_shell("track-context-menu", tiles)
+            Menu::new("track-context-menu")
+                .min_w(ITEM_MENU_WIDTH)
+                .header(Tiles::Track(tiles, rated.map(Box::new)))
                 .relative()
                 .when(many, |menu| menu.min_w(SELECTION_MENU_WIDTH)),
             vec![
@@ -574,7 +583,7 @@ fn item_shell(id: &'static str, tiles: Vec<Tile>) -> Menu {
     let menu = Menu::new(id).min_w(ITEM_MENU_WIDTH);
     match tiles.is_empty() {
         true => menu,
-        false => menu.header(Tiles(tiles)),
+        false => menu.header(Tiles::Item(tiles)),
     }
 }
 
@@ -649,54 +658,79 @@ impl FluentBuilder for Tile {}
 /// the favorites, the download and the pin. The tiles share the row evenly, only a tile that is on
 /// has a fill, and they leave the menu open when picked.
 #[derive(IntoElement)]
-struct Tiles(Vec<Tile>);
+enum Tiles {
+    Item(Vec<Tile>),
+    Track(Vec<Tile>, Option<Box<Track>>),
+}
 
 impl RenderOnce for Tiles {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = *cx.theme();
         let tucked = ui::tucked(theme.radius, window);
-        div()
-            .flex()
-            .flex_row()
-            .w_full()
-            .gap_1()
-            .children(self.0.into_iter().map(|tile| {
-                let Tile {
-                    id,
-                    icon,
-                    tip,
-                    active,
-                    ring,
-                    on_click,
-                } = tile;
-                Button::new(id)
-                    .ghost()
-                    .flex_1()
-                    .min_w_0()
-                    .rounded(tucked)
-                    .tooltip_above(tip)
-                    .toggled(active)
-                    .when(active, |button| {
-                        button.fill(theme.secondary_active, theme.secondary_hover)
-                    })
-                    .tint(match active {
-                        true => theme.primary,
-                        false => theme.popover_foreground,
-                    })
-                    .disabled(on_click.is_none())
-                    .map(|button| match ring {
-                        Some(Ring { done, failed }) => button.leading(
-                            ArrowRing::new("tile-download-ring", done).color(match failed {
-                                true => theme.danger,
-                                false => theme.primary,
-                            }),
-                        ),
-                        None => button.icon(icon),
-                    })
-                    .when_some(on_click, |button, click| {
-                        button.on_click(move |_, window, cx| click(window, cx))
-                    })
-            }))
+        let (tiles, track, track_menu) = match self {
+            Self::Item(tiles) => (tiles, None, false),
+            Self::Track(tiles, track) => (tiles, track, true),
+        };
+        let hover = track_menu.then(|| window.use_state(cx, |_, _| None::<u8>));
+        let sonora = Sonora::global(cx);
+        let preview = track.as_ref().and_then(|track| {
+            sonora
+                .ratings
+                .read(cx)
+                .preview_like(track.id.as_deref()?, *hover.as_ref()?.read(cx))
+        });
+        let hide_heart = track_menu && !sonora.settings.read(cx).star_ratings().hearts;
+        let row = div().flex().flex_row().w_full().gap_1().children(
+            tiles
+                .into_iter()
+                .filter(|tile| !hide_heart || tile.id != "tile-favorite")
+                .map(|mut tile| {
+                    if tile.id == "tile-favorite"
+                        && let Some(saved) = preview
+                    {
+                        tile = Tile {
+                            on_click: tile.on_click,
+                            ..heart_tile(saved)
+                        };
+                    }
+                    Button::new(tile.id)
+                        .ghost()
+                        .flex_1()
+                        .min_w_0()
+                        .rounded(tucked)
+                        .tooltip_above(tile.tip)
+                        .toggled(tile.active)
+                        .when(tile.active, |button| {
+                            button.fill(theme.secondary_active, theme.secondary_hover)
+                        })
+                        .tint(match tile.active {
+                            true => theme.primary,
+                            false => theme.popover_foreground,
+                        })
+                        .disabled(tile.on_click.is_none())
+                        .map(|button| match tile.ring {
+                            Some(Ring { done, failed }) => button.leading(
+                                ArrowRing::new("tile-download-ring", done).color(match failed {
+                                    true => theme.danger,
+                                    false => theme.primary,
+                                }),
+                            ),
+                            None => button.icon(tile.icon),
+                        })
+                        .when_some(tile.on_click, |button, click| {
+                            button.on_click(move |_, window, cx| click(window, cx))
+                        })
+                }),
+        );
+        match hover {
+            None => row,
+            Some(hover) => div().flex().flex_col().gap_1().child(row).when_some(
+                rating("menu-rating", track.as_deref(), None, false),
+                |header, stars| {
+                    header.child(div().flex().justify_center().child(stars.stars_only(hover)))
+                },
+            ),
+        }
     }
 }
 

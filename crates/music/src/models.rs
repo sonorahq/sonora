@@ -153,10 +153,32 @@ pub struct Playlist {
     pub revision: Option<Vec<u8>>,
 }
 
+/// The name prefix of a rating playlist.
+pub(crate) const RATING_PREFIX: &str = "Sonora Rating ";
+
+/// A rating in half-stars written as stars, such as `4.5`.
+pub fn rating_label(half_stars: u8) -> String {
+    format!("{:.1}", f64::from(half_stars) / 2.)
+}
+
+/// Reads a `rating_label` back into half-stars.
+pub fn parse_rating(name: &str) -> Option<u8> {
+    (1..=10).find(|rating| name == rating_label(*rating))
+}
+
 impl Playlist {
     /// Whether the listener can add, remove or move this playlist's tracks.
     pub fn takes_tracks(&self) -> bool {
         (self.owned || self.collaborative) && !self.read_only
+    }
+
+    /// The half-star value of a Sonora rating playlist.
+    pub fn rating(&self) -> Option<u8> {
+        let name = self
+            .name
+            .strip_prefix(RATING_PREFIX)
+            .filter(|_| self.owned)?;
+        parse_rating(name)
     }
 }
 

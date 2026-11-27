@@ -13,7 +13,7 @@ use ui::{
 };
 
 use crate::shared::pins::Pinned as _;
-use crate::shared::transport::like;
+use crate::shared::rating::{self, rating};
 
 /// Opens the track menu of the view that draws the details at the pointer's window position.
 type OpenMenu<V> = fn(&mut V, Point<Pixels>, &mut Window, &mut Context<V>);
@@ -84,17 +84,13 @@ pub(crate) fn track_details<V: 'static>(
         .when(explicit, |this| {
             this.child(div().flex_none().child(Badge::explicit()))
         })
-        .child(like(track, playback, cx));
+        .children(rating("player-ratings", track, Some(playback), false));
     let headline = match centered {
         true => {
             // Equal clearance on both sides keeps the title itself centered. Actions sit
             // outside its measured width and remain reachable even for a truncated title.
-            let clearance = theme.metrics.control_small
-                * match explicit {
-                    true => 2.,
-                    false => 1.,
-                }
-                + theme.metrics.pad;
+            let badge = theme.metrics.control_small * f32::from(u8::from(explicit));
+            let clearance = rating::width(cx) + badge + theme.metrics.pad;
             div().w_full().flex().justify_center().px(clearance).child(
                 div()
                     .relative()

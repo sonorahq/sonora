@@ -26,6 +26,8 @@ type ChangeFn = Box<dyn Fn(&(f32, f32), &mut Window, &mut App) + 'static>;
 pub enum Unit {
     Clock,
     Plain,
+    /// Half-stars shown as stars.
+    Stars,
 }
 
 impl Unit {
@@ -33,6 +35,7 @@ impl Unit {
         match self {
             Unit::Clock => clock(std::time::Duration::from_secs_f32(value.max(0.))),
             Unit::Plain => SharedString::from(format!("{}", value.round() as i64)),
+            Unit::Stars => SharedString::from(format!("{}", value.round() / 2.)),
         }
     }
 }
@@ -581,5 +584,6 @@ mod tests {
     fn clock_and_plain_format_differently() {
         assert_eq!(Unit::Clock.say(125.), "2:05");
         assert_eq!(Unit::Plain.say(2005.), "2005");
+        assert_eq!(Unit::Stars.say(7.), "3.5");
     }
 }

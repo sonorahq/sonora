@@ -18,9 +18,9 @@ use input::{
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Badge, Button, Flight, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, Sprung, TabBar, Text,
-    Visualizer, Zoom, clock, entering, snapped,
+    ActiveTheme as _, Artwork, Badge, Button, Flight, Motion, Motioned as _, Popup, Room,
+    Scrollbar, Scrubber, ScrubberState, Springs, Sprung, TabBar, Text, Visualizer, Zoom, clock,
+    entering, snapped,
 };
 
 use crate::chrome::{
@@ -28,8 +28,9 @@ use crate::chrome::{
 };
 use crate::shared::menus::ItemMenu;
 use crate::shared::now_playing::track_details;
+use crate::shared::rating::rating;
 use crate::shared::transport::{
-    Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like,
+    Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction,
     moved, transport,
 };
 use crate::shared::visualizer::VisualizerDrive;
@@ -135,6 +136,9 @@ pub struct FullscreenView {
     volume: RisingVolume,
     over_pill: bool,
     over_transport: bool,
+    over_rating: Option<&'static str>,
+    rating_focus: FocusHandle,
+    rating_focused: bool,
     over_leave: bool,
     /// Whether the pointer rests on the bar along the bottom below `Room::Wide` or the pill over
     /// it, which keeps the controls awake.
@@ -215,6 +219,8 @@ impl FullscreenView {
         cx.observe(&ticks, |this, _, cx| this.redraw(cx)).detach();
         let cover = Sonora::global(cx).cover.clone();
         cx.observe(&cover, |this, _, cx| this.redraw(cx)).detach();
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |this, _, cx| this.redraw(cx)).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |this, _, cx| this.redraw(cx)).detach();
         // Another device steering playback, a Jam and its members, and the Sessions button.
@@ -280,6 +286,9 @@ impl FullscreenView {
             volume: RisingVolume::new("fullscreen-volume-slider"),
             over_pill: false,
             over_transport: false,
+            over_rating: None,
+            rating_focus: cx.focus_handle(),
+            rating_focused: false,
             over_leave: false,
             over_dock: false,
             large: None,
@@ -367,6 +376,7 @@ impl FullscreenView {
         // The transport may move between the dock and the strip, and the row it leaves never
         // says the pointer left it.
         self.over_transport = false;
+        self.over_rating = None;
         self.settings
             .update(cx, |settings, cx| settings.set_fullscreen_tab(panel, cx));
         if let Some(tab) = panel {
@@ -453,6 +463,14 @@ impl FullscreenView {
         self.stir(cx);
     }
 
+    /// Wakes the chrome when the pointer enters a control that keeps it visible.
+    fn park_hover(&mut self, hovering: bool, window: &Window, cx: &mut Context<Self>) {
+        if hovering && hovered(window) && !self.left {
+            self.poke(cx);
+        }
+        cx.notify();
+    }
+
     /// Whether anything under the pointer should hold the chrome awake. A hover flag only counts
     /// while the pointer is over the window: one set when it left stays set, and a stale flag
     /// would keep the controls up for good. A Jam invite, a panel's track menu or the Sessions
@@ -462,12 +480,14 @@ impl FullscreenView {
         let parked = self.volume.parked()
             || self.over_pill
             || self.over_transport
+            || self.over_rating.is_some()
             || self.over_leave
             || self.over_dock
             || self.over_seek.is_some()
             || self.over_volume.is_some()
             || self.scrollbar_held(cx);
         (self.inside && parked)
+            || self.rating_focused
             || self.volume.held
             || self.pending.is_some()
             || self.context_menu.is_some()
@@ -482,6 +502,7 @@ impl FullscreenView {
         self.volume.unpark();
         self.over_pill = false;
         self.over_transport = false;
+        self.over_rating = None;
         self.over_leave = false;
         self.over_dock = false;
         self.over_seek = None;
@@ -768,7 +789,6 @@ impl FullscreenView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = *cx.theme();
-        let frosted = ambient::shown(cx);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
         let title = match track {
@@ -790,23 +810,6 @@ impl FullscreenView {
         let shadow = TEXT_SHADOW.map(|blur| {
             TextShadow::new(theme.background.opacity(TEXT_SHADOW_STRENGTH)).blur(px(blur))
         });
-        let trailing = |track: Option<&music::Track>, cx: &App| {
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_2()
-                .when(explicit, |this| {
-                    this.child(explicit_badge("fullscreen-explicit", track.is_some()))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .opacity(1. - hide)
-                        .child(like(track, &self.playback, cx).when(frosted, Button::frosted)),
-                )
-        };
 
         div()
             .relative()
@@ -830,12 +833,7 @@ impl FullscreenView {
                 .bottom(px(SHADOW_BLEED)),
             )
             .child(
-                // Three-part row with equal flex sides, so the title stays truly centred:
-                // the heart and the explicit badge live in the right cell and never shift it.
-                // The left cell holds an invisible copy of the right one, so both sides floor
-                // at the same width and a long title truncates instead of pushing the heart out
-                // of the row. The room around the title comes from the row gap, since padding
-                // on a side would make that side the wider one.
+                // Ratings sit beside the artist, leaving the title its full width.
                 div()
                     .flex()
                     .items_center()
@@ -849,7 +847,9 @@ impl FullscreenView {
                             .flex_1()
                             .justify_end()
                             .invisible()
-                            .child(trailing(None, cx)),
+                            .when(explicit, |this| {
+                                this.child(explicit_badge("fullscreen-explicit-balance", false))
+                            }),
                     )
                     .child(
                         div()
@@ -882,27 +882,16 @@ impl FullscreenView {
                             .when(shadowed, |this| this.text_shadow(shadow))
                             .child(title),
                     )
-                    .child(div().flex().flex_1().child(trailing(track, cx))),
+                    .child(div().flex().flex_1().when(explicit, |this| {
+                        this.child(explicit_badge("fullscreen-explicit", true))
+                    })),
             )
             .when_some(track, |this, track| {
                 this.child(
-                    div().flex().w_full().min_w_0().justify_center().child(
-                        InlineLinks::new(
-                            "fullscreen-artists",
-                            track.artist_refs.iter().map(|artist| {
-                                InlineLink::new(
-                                    artist.name.clone(),
-                                    artist.id.clone().map(Into::into),
-                                )
-                            }),
-                            track.artists.clone(),
-                            shared::quiet(&theme),
-                        )
-                        .text_size(theme.text(Text::Body))
-                        .truncate()
-                        .when(shadowed, |this| this.text_shadow(shadow))
-                        .on_click(|id, cx| navigate(Destination::Artist(id), cx)),
-                    ),
+                    self.artists(track, "fullscreen-artists", Text::Body, hide, cx)
+                        .w_full()
+                        .justify_center()
+                        .when(shadowed, |this| this.text_shadow(shadow)),
                 )
             })
             .children(self.adder(cx))
@@ -1097,6 +1086,54 @@ impl FullscreenView {
                 cx.notify();
             }))
             .child(transport(&self.playback, big, cx))
+    }
+
+    /// The artist line with its rating control.
+    fn artists(
+        &self,
+        track: &music::Track,
+        id: &'static str,
+        size: Text,
+        hide: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .child(
+                shared::cells::artist_links(
+                    id,
+                    track.artist_refs.clone(),
+                    track.artists.clone(),
+                    shared::quiet(cx.theme()),
+                )
+                .text_size(cx.theme().text(size))
+                .truncate(),
+            )
+            .child(
+                div()
+                    .id((gpui::ElementId::from(id), "controls"))
+                    .track_focus(&self.rating_focus)
+                    .flex_none()
+                    .opacity(1. - hide)
+                    .when(hide >= 1., |this| this.invisible())
+                    .on_hover(cx.listener(move |this, hovering: &bool, window, cx| {
+                        if *hovering {
+                            this.over_rating = Some(id);
+                        } else if this.over_rating == Some(id) {
+                            this.over_rating = None;
+                        }
+                        this.park_hover(*hovering, window, cx);
+                    }))
+                    .children(rating(
+                        SharedString::from(format!("{id}-rating")),
+                        Some(track),
+                        Some(&self.playback),
+                        ambient::shown(cx),
+                    )),
+            )
     }
 
     fn seek(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -1317,10 +1354,7 @@ impl FullscreenView {
         let gap = px(PILL_GAP);
         let linger = cx.listener(|this: &mut Self, hovering: &bool, window, cx| {
             this.over_pill = *hovering;
-            if *hovering && hovered(window) && !this.left {
-                this.poke(cx);
-            }
-            cx.notify();
+            this.park_hover(*hovering, window, cx);
         });
         let tab = move |id: &'static str, icon: &'static str, hint: &'static str, panel| {
             let showing = self.panel == panel;
@@ -1607,6 +1641,11 @@ impl Render for FullscreenView {
         if !narrow {
             self.over_dock = false;
         }
+        let rating_focused = self.rating_focus.contains_focused(window, cx);
+        if rating_focused && !self.rating_focused {
+            self.poke(cx);
+        }
+        self.rating_focused = rating_focused;
         let idle = self.hidden(window, cx);
         let switching = self.switching(window, cx);
         let leaving = self.leaving.as_mut().map(|leaving| {
@@ -1707,6 +1746,13 @@ impl Render for FullscreenView {
         let raster_side = snapped(far, window);
         let cover_scale = presentation_scale(presented_side, raster_side);
         let staged = self.panel.is_none() || split;
+        if self.over_rating.is_some_and(|id| {
+            (id == "fullscreen-artists") != staged
+                || hide >= 1.
+                || self.playback.read(cx).shown_track(cx).is_none()
+        }) {
+            self.over_rating = None;
+        }
         // The column settles by half of what the dock gives up and the meta by half of what the
         // cover grows, both straight along `hide` to a rest that sits on the device grid, so
         // neither steps a whole pixel at a time through layout in the slow tail of the spring.

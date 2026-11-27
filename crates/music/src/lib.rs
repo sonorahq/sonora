@@ -38,6 +38,7 @@ pub use models::{
     SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
     WritingSystem,
 };
+pub use models::{parse_rating, rating_label};
 pub use redact::redact;
 pub use smart::{
     Condition, FieldKind, Operand, OperandShape, Operator, Problem, Rule, RuleGroup, RuleProblem,
@@ -128,6 +129,110 @@ pub trait MusicApi: Send + Sync {
     fn scan_report(&self) -> ScanReport {
         ScanReport::default()
     }
+
+    /// Whether ratings can fall between whole stars.
+    fn half_star_ratings(&self) -> bool {
+        true
+    }
+
+    /// Every rated track in half-stars, and the rating playlists by id.
+    async fn track_ratings(&self) -> Result<(HashMap<String, u8>, HashMap<String, u8>)> {
+        let playlists: HashMap<_, _> = self.rating_playlists().await?.into_iter().collect();
+        let reads = playlists.iter().map(|(id, rating)| async move {
+            Ok::<_, anyhow::Error>((self.playlist_entries(id).await?, *rating))
+        });
+        let mut values = HashMap::new();
+        for (entries, rating) in futures::future::try_join_all(reads).await? {
+            for (track, added_at) in entries {
+                let value = (added_at.unwrap_or_default(), rating);
+                let entry = values.entry(track).or_insert(value);
+                *entry = (*entry).max(value);
+            }
+        }
+        let values = values
+            .into_iter()
+            .map(|(id, (_, rating))| (id, rating))
+            .collect();
+        Ok((values, playlists))
+    }
+
+    /// Writes a native rating, returning false when ratings live in playlists.
+    async fn write_native_rating(&self, _track_id: &str, _rating: Option<u8>) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Rates a track in half-stars, or clears it, and returns the rating playlists.
+    async fn set_track_rating(
+        &self,
+        track_id: &str,
+        rating: Option<u8>,
+        previous: Option<u8>,
+        playlists: &HashMap<String, u8>,
+        verify: bool,
+    ) -> Result<HashMap<String, u8>> {
+        if self.write_native_rating(track_id, rating).await? {
+            return Ok(HashMap::new());
+        }
+        anyhow::ensure!(
+            rating.is_none_or(|value| (1..=10).contains(&value)),
+            "invalid half-star rating"
+        );
+        let mut ids = playlists.clone();
+        let holds = async |playlist: &str| {
+            let entries = self.playlist_entries(playlist).await?;
+            Ok::<_, anyhow::Error>(entries.iter().any(|(id, _)| id == track_id))
+        };
+        if let Some(rating) = rating {
+            let id = match ids.iter().find(|(_, value)| **value == rating) {
+                Some((id, _)) => id.clone(),
+                None => {
+                    let id = self.create_rating_playlist(rating).await?;
+                    ids.insert(id.clone(), rating);
+                    id
+                }
+            };
+            if !verify || !holds(&id).await? {
+                self.add_track_to_playlist(&id, track_id).await?;
+            }
+        }
+        // A clear checks every playlist, as the track may sit in several.
+        let check = verify || rating.is_none();
+        let candidates = ids.iter().filter_map(|(id, &value)| {
+            (Some(value) != rating && (check || Some(value) == previous)).then_some(id.as_str())
+        });
+        let removals = futures::future::try_join_all(candidates.map(|id| async move {
+            Ok::<_, anyhow::Error>((!check || holds(id).await?).then_some(id))
+        }))
+        .await?;
+        for id in removals.into_iter().flatten() {
+            self.remove_track_from_playlist(id, track_id).await?;
+        }
+        Ok(ids)
+    }
+
+    /// Rating playlist ids with their half-star values.
+    async fn rating_playlists(&self) -> Result<Vec<(String, u8)>> {
+        Ok(self
+            .playlists()
+            .await?
+            .into_iter()
+            .filter_map(|playlist| {
+                let value = playlist.rating()?;
+                Some((playlist.id, value))
+            })
+            .collect())
+    }
+
+    /// Creates the playlist that stores one rating.
+    async fn create_rating_playlist(&self, rating: u8) -> Result<String> {
+        self.create_playlist(&format!(
+            "{}{}",
+            models::RATING_PREFIX,
+            models::rating_label(rating)
+        ))
+        .await
+    }
+
     fn alive(&self) -> bool {
         true
     }
@@ -468,6 +573,17 @@ pub trait MusicApi: Send + Sync {
     }
 
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>>;
+
+    /// Track ids and addition times, without full metadata.
+    async fn playlist_entries(&self, playlist_id: &str) -> Result<Vec<(String, Option<i64>)>> {
+        Ok(self
+            .playlist_tracks(playlist_id)
+            .await?
+            .into_iter()
+            .filter_map(|track| Some((track.id?, track.added_at)))
+            .collect())
+    }
+
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>>;
 
     /// Reads artwork candidates in request order, with an independent result for each playlist.

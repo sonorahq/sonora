@@ -37,7 +37,9 @@ pub(super) fn compare(
             .get(a)
             .map(|track| track.duration)
             .cmp(&tracks.get(b).map(|track| track.duration)),
-        TrackField::Index | TrackField::Cover | TrackField::LikedAt => a.cmp(&b),
+        TrackField::Index | TrackField::Cover | TrackField::LikedAt | TrackField::Rating => {
+            a.cmp(&b)
+        }
     }
 }
 

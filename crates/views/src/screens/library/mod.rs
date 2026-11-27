@@ -292,7 +292,7 @@ impl LibraryView {
             })
             .with_liked(library.clone())
             .shelved()
-            .table(cx.weak_entity());
+            .table(cx);
             let mut delegate = TableDelegate::new(source, width, cx)
                 .with_column_menu(&PINNED)
                 .with_sort(TrackField::AddedAt, RECENT, cx);
@@ -385,6 +385,13 @@ impl LibraryView {
             for table in this.tables() {
                 table.refresh(cx);
             }
+            cx.notify();
+        })
+        .detach();
+
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |this, _, cx| {
+            this.cards_dirty = true;
             cx.notify();
         })
         .detach();

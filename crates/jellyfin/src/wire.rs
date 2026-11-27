@@ -97,6 +97,8 @@ pub struct NameId {
 pub struct UserData {
     pub play_count: Option<u64>,
     pub last_played_date: Option<String>,
+    /// The user's rating, 0 to 10.
+    pub rating: Option<f64>,
 }
 
 /// Someone credited on an item, such as its composer.

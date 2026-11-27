@@ -69,6 +69,7 @@ settings-group-display = Display
 settings-group-sources = Sources
 settings-group-lyrics-order = Priority
 settings-group-playing = Playing
+settings-group-ratings = Favorites and ratings
 settings-group-cache = Played tracks
 settings-group-downloads = Downloads
 settings-group-protected = Protected playback
@@ -251,6 +252,19 @@ settings-gapless = Gapless playback
 settings-sponsorblock = SponsorBlock
 settings-sponsorblock-detail = Uses SponsorBlock to skip community-marked sponsors, self-promotion and non-music sections on YouTube Music
 settings-gapless-detail = Runs one track into the next without a pause, the way an album was sequenced
+
+# star ratings
+settings-star-ratings = Show star ratings
+settings-star-ratings-detail = Rate songs with stars from the player, menus and song lists. Subsonic, Navidrome and Jellyfin keep ratings on the server, and other services keep them in playlists
+settings-half-ratings = Allow half-star ratings
+settings-half-ratings-detail = Rate in steps of half a star
+settings-rating-hearts = Show favorite hearts
+settings-rating-hearts-detail = Show the heart that adds a song to your favorites. Hiding it also turns off automatic liking.
+settings-rating-auto-like = Like songs you rate at this threshold or above
+settings-rating-auto-like-detail = Likes a song when you rate it at or above the stars shown, and unlikes it when you rate it lower. Pick the cross to turn this off
+settings-rating-auto-like-off = Turn off automatic liking
+settings-rating-auto-like-set = Like songs rated { unit-stars } or higher
+
 settings-keep-tracks = Keep played tracks
 settings-keep-tracks-detail = Saves what you play, locked to this computer, so playing it again downloads nothing. Turning this off deletes it and leaves your downloads alone. Spotify follows a change the next time Sonora starts
 settings-cache-size = Cache size

@@ -32,6 +32,18 @@ impl SpotifyClient {
 
 #[async_trait]
 impl MusicApi for SpotifyClient {
+    async fn rating_playlists(&self) -> Result<Vec<(String, u8)>> {
+        playlists::rating_playlists(&self.session).await
+    }
+
+    async fn create_rating_playlist(&self, rating: u8) -> Result<String> {
+        playlists::create_rating_playlist(&self.session, rating).await
+    }
+
+    async fn playlist_entries(&self, playlist_id: &str) -> Result<Vec<(String, Option<i64>)>> {
+        playlists::entries(&self.session, playlist_id).await
+    }
+
     fn connect(&self) -> Option<Arc<Connect>> {
         Some(self.connect_handle())
     }

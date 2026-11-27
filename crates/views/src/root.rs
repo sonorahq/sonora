@@ -2,9 +2,9 @@ use gpui::{AnyView, Context, Entity, MouseButton, NavigationDirection, Render, T
 use gpui::{App, Font, FontFallbacks, SharedString, StyleRefinement, font, prelude::*};
 use gpui::{Pixels, Window, deferred, div};
 use input::{
-    CloseWindow, MinimizeWindow, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, Refresh, ShowMembers, ToggleFullscreen, ToggleLyrics, TogglePowerbar,
-    ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
+    CloseWindow, FocusNextControl, FocusPreviousControl, MinimizeWindow, NavigateBack,
+    NavigateForward, OpenFilter, OpenSearch, OpenSettings, Refresh, ShowMembers, ToggleFullscreen,
+    ToggleLyrics, TogglePowerbar, ToggleQueue, ToggleWindowFullscreen, ZoomWindow,
 };
 use router::{Destination, NavigationEvent, back, forward, navigate};
 use state::{
@@ -1619,6 +1619,8 @@ impl Render for Root {
                 MouseButton::Navigate(NavigationDirection::Forward),
                 |_, _, cx| forward(cx),
             )
+            .on_action(|_: &FocusNextControl, window, cx| window.focus_next(cx))
+            .on_action(|_: &FocusPreviousControl, window, cx| window.focus_prev(cx))
             .on_action(cx.listener(|_, _: &NavigateBack, _, cx| back(cx)))
             .on_action(cx.listener(|_, _: &NavigateForward, _, cx| forward(cx)))
             .on_action(cx.listener(|this, _: &OpenFilter, window, cx| this.open_filter(window, cx)))

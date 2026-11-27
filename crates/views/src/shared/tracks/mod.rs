@@ -11,10 +11,9 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use crate::shared::menus::{Item, ItemMenu, TrackColumns};
 use gpui::accesskit::Role;
-use gpui::prelude::FluentBuilder as _;
 use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement as _,
+    AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
 use music::{Album, Arrival, ArtistRef, Track};
@@ -24,13 +23,13 @@ use state::{
     Reorder, Shelf, Sonora,
 };
 use ui::{
-    ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
-    TableSource, TableState,
+    ArrowRing, Cell, ColumnSpec, Menu, Pending, Pin, RowMoves, Scrollbar, TableSource, TableState,
 };
 
 use crate::shared::blend::{Joined, Reach};
 use crate::shared::cells;
 use crate::shared::pins::{Pinned as _, origin_tag};
+use crate::shared::rating::rating;
 
 pub(crate) use columns::{
     HISTORY_COLUMNS, LIBRARY_COLUMNS, SONGS_COLUMNS, TrackField, album_columns, artist_columns,
@@ -40,9 +39,6 @@ pub(crate) use sieve::TrackSieve;
 pub(crate) use sort::initial;
 
 use sort::hits;
-
-/// How strongly an unsaved track's heart shows on its row.
-const SETTLED: f32 = 0.5;
 
 /// The current track, its `Playback::control` and its queue origin. A screen keeps the last
 /// status and redraws only when it changes, including a move between collections of the same song.
@@ -310,8 +306,12 @@ impl TrackSource {
         once.then(|| origin_tag(&origin)).flatten()
     }
 
-    pub(crate) fn table(mut self, table: WeakEntity<TableState<TrackSource>>) -> Self {
-        self.table = Some(table);
+    /// Attaches the table, rebuilding it when ratings change.
+    pub(crate) fn table(mut self, cx: &mut Context<TableState<TrackSource>>) -> Self {
+        self.table = Some(cx.weak_entity());
+        let ratings = Sonora::global(cx).ratings.clone();
+        cx.observe(&ratings, |table, _, cx| table.rebuild(cx))
+            .detach();
         self
     }
 
@@ -348,15 +348,6 @@ impl TrackSource {
                 .is_liked
                 .as_ref()
                 .is_some_and(|library| library.read(cx).state(Shelf::Local).tracks().is_empty())
-    }
-
-    /// Whether a library row of `shelf` sits among more than the favorites, so its heart says
-    /// something.
-    fn catalog(&self, shelf: Shelf, cx: &App) -> bool {
-        match (self.shelved, &self.is_liked) {
-            (true, Some(library)) => library.read(cx).shape(shelf).is_catalog(),
-            _ => false,
-        }
     }
 
     /// Whether any shelf with songs listed here is a catalog, so a favorites filter has
@@ -565,7 +556,6 @@ impl TrackSource {
                 true => Some(cells::local_badge(cell.row)),
                 false => download_mark(cell, track, cx),
             },
-            self.liked_button(cell, track, cx),
         )
     }
 
@@ -605,56 +595,6 @@ impl TrackSource {
             }
             false => names == lowered(&track.artist_refs),
         }
-    }
-
-    fn liked_button(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
-        let library = self.is_liked.as_ref()?;
-        let id = track.id.clone()?;
-        // on a saved shelf every listed track is a favorite, so the heart would say nothing
-        if self.shelved && !self.catalog(Shelf::of(&id), cx) {
-            return None;
-        }
-        let theme = *cx.theme();
-        let state = library.read(cx);
-        let saved = state.saved(&id);
-        let pending = state.pending(&id);
-        let library = library.clone();
-        let source = self.provider.clone();
-        let at = cell.row;
-        // Every album opens in the same screen, so a button keyed by its row would carry the
-        // last album's heart over and play a swap from it.
-        let key = (ElementId::from("toggle-liked-track"), id);
-
-        Some(
-            Button::new(key)
-                .ghost()
-                .backgroundless()
-                .small()
-                .icon(match saved {
-                    true => "icons/heart-filled.svg",
-                    false => "icons/heart.svg",
-                })
-                .tooltip(match saved {
-                    true => "menu-remove-from-library",
-                    false => "menu-add-to-library",
-                })
-                .tint(match saved {
-                    true => theme.primary,
-                    false => theme.muted_foreground.opacity(SETTLED),
-                })
-                .when(!saved, |this| {
-                    this.invisible()
-                        .group_hover(ROW_GROUP, |style| style.visible())
-                })
-                .disabled(pending)
-                .on_click(move |_, _, cx| {
-                    let Some(track) = source.tracks(cx).get(at).cloned() else {
-                        return;
-                    };
-                    library.update(cx, |library, cx| library.toggle(track, cx));
-                })
-                .into_any_element(),
-        )
     }
 
     /// Whether the current track is playing locally or remotely, for its first row only.
@@ -722,6 +662,12 @@ impl TableSource for TrackSource {
                 .any(|track| self.provider.added_at(track, cx).is_some()),
             TrackField::PlayedAt => tracks.iter().any(|track| track.added_at.is_some()),
             TrackField::AddedBy => tracks.iter().any(|track| track.added_by.is_some()),
+            // Stays with ratings off so tables line up.
+            TrackField::Rating => {
+                let sonora = Sonora::global(cx);
+                sonora.settings.read(cx).star_ratings().hearts
+                    || sonora.ratings.read(cx).enabled(cx)
+            }
             TrackField::Plays => tracks.iter().any(|track| track.playcount.is_some()),
             _ => true,
         }
@@ -744,6 +690,12 @@ impl TableSource for TrackSource {
                 return false;
             }
             let id = track.id.as_deref();
+            if let Some((low, high)) = self.sieve.rating {
+                let rating = id.and_then(|id| Sonora::global(cx).ratings.read(cx).for_track(id));
+                if !(low..=high).contains(&f32::from(rating.unwrap_or(0))) {
+                    return false;
+                }
+            }
             let shelf = id.map_or(Shelf::Streaming, Shelf::of);
             if (self.sieve.downloaded || self.downloads_only(shelf, cx))
                 && !id.is_some_and(|id| state::downloaded(id, cx))
@@ -773,6 +725,25 @@ impl TableSource for TrackSource {
         });
 
         let mut axes: Vec<Filter> = duration.into_iter().collect();
+        let ratings = Sonora::global(cx).ratings.read(cx);
+        if ratings.enabled(cx) || self.sieve.rating.is_some() {
+            let step = match ratings.halves(cx) {
+                true => 1,
+                false => 2,
+            };
+            let bounds = (0., 10.);
+            axes.push(Filter::Range(
+                RangeAxis {
+                    key: "filter-rating",
+                    label: t!("common-rating"),
+                    bounds,
+                    value: self.sieve.rating.unwrap_or(bounds),
+                    unit: Unit::Stars,
+                    values: Some((0..=10u8).step_by(step).map(f32::from).collect()),
+                }
+                .clamped(),
+            ));
+        }
         axes.push(Filter::Flag(FlagAxis {
             key: "filter-hide-explicit",
             label: t!("filter-hide-explicit"),
@@ -807,6 +778,11 @@ impl TableSource for TrackSource {
         match change {
             FilterChange::Range("filter-duration", value) => {
                 self.sieve.duration = Some(value);
+                true
+            }
+            FilterChange::Range("filter-rating", value) => {
+                // The full span is no filter.
+                self.sieve.rating = Some(value).filter(|value| *value != (0., 10.));
                 true
             }
             FilterChange::Flag("filter-hide-explicit", value) => {
@@ -899,6 +875,20 @@ impl TableSource for TrackSource {
         };
 
         match cell.field {
+            TrackField::Rating => cell
+                .frame()
+                .flex()
+                .items_center()
+                .children(rating(
+                    SharedString::from(format!(
+                        "track-rating-{}",
+                        track.id.as_deref().unwrap_or(&track.name)
+                    )),
+                    Some(track),
+                    None,
+                    false,
+                ))
+                .into_any_element(),
             TrackField::Cover => cells::artwork(&cell, track.cover.clone()),
             TrackField::Title => self.title_cell(&cell, track, title, detail, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
@@ -1003,6 +993,20 @@ impl TableSource for TrackSource {
             (TrackField::LikedAt, _) => {
                 let at = |row| tracks.get(row).and_then(|track| self.liked_at(track, cx));
                 at(a).cmp(&at(b))
+            }
+            (TrackField::Rating, _) => {
+                // By rating, then liked.
+                let ratings = Sonora::global(cx).ratings.read(cx);
+                let rated = ratings.enabled(cx);
+                let key = |at: usize| {
+                    let track = tracks.get(at)?;
+                    let id = track.id.as_deref().filter(|_| rated);
+                    Some((
+                        id.and_then(|id| ratings.for_track(id)),
+                        self.starred(track, cx),
+                    ))
+                };
+                key(a).cmp(&key(b))
             }
             _ => sort::compare(tracks, field, a, b),
         }

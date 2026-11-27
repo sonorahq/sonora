@@ -944,32 +944,37 @@ impl MusicApi for SubsonicClient {
     /// Every song on the server. An empty `search3` query lists the whole library on
     /// OpenSubsonic servers, a page at a time.
     async fn all_tracks(&self) -> Result<Vec<Track>> {
-        let mut tracks = Vec::new();
-        let mut offset = 0i32;
-        loop {
-            let page = self
-                .client
-                .search3(
-                    "",
-                    &self.scoped(
-                        Search3Options::new()
-                            .artist_count(0)
-                            .album_count(0)
-                            .song_count(LIBRARY_PAGE)
-                            .song_offset(offset),
-                    ),
-                )
-                .await
-                .map_err(bare)
-                .context("cannot load the songs")?;
-            let fetched = page.song.len();
-            tracks.extend(page.song.into_iter().map(|song| self.song(song)));
-            if fetched < LIBRARY_PAGE as usize {
-                break;
-            }
-            offset += fetched as i32;
-        }
-        Ok(tracks)
+        Ok(self
+            .all_songs(true)
+            .await?
+            .into_iter()
+            .map(|song| self.song(song))
+            .collect())
+    }
+
+    fn half_star_ratings(&self) -> bool {
+        false
+    }
+
+    async fn track_ratings(&self) -> Result<(HashMap<String, u8>, HashMap<String, u8>)> {
+        let rated = self.all_songs(false).await?.into_iter().filter_map(|song| {
+            let stars = u8::try_from(song.user_rating?)
+                .ok()
+                .filter(|s| (1..=5).contains(s))?;
+            Some((song.id, stars * 2))
+        });
+        Ok((rated.collect(), HashMap::new()))
+    }
+
+    async fn write_native_rating(&self, track_id: &str, rating: Option<u8>) -> Result<bool> {
+        // Subsonic rates whole stars, and 0 clears.
+        let stars = rating.map_or(0, |half| i32::from(half.div_ceil(2)));
+        self.client
+            .set_rating(track_id, stars)
+            .await
+            .map_err(bare)
+            .with_context(|| format!("cannot rate {track_id}"))?;
+        Ok(true)
     }
 
     async fn set_track_saved(&self, track_id: &str, saved: bool) -> Result<()> {
@@ -1723,6 +1728,41 @@ impl MusicApi for SubsonicClient {
 }
 
 impl SubsonicClient {
+    /// Walks every song with an empty `search3`, optionally within the chosen library.
+    async fn all_songs(&self, scoped: bool) -> Result<Vec<Child>> {
+        let mut songs = Vec::new();
+        let mut seen = HashSet::new();
+        let mut offset = 0i32;
+        loop {
+            let options = Search3Options::new()
+                .artist_count(0)
+                .album_count(0)
+                .song_count(LIBRARY_PAGE)
+                .song_offset(offset);
+            let options = match scoped {
+                true => self.scoped(options),
+                false => options,
+            };
+            let page = self
+                .client
+                .search3("", &options)
+                .await
+                .map_err(bare)
+                .context("cannot load the songs")?;
+            // Pages can run short, so only an empty one ends the walk.
+            if page.song.is_empty() {
+                return Ok(songs);
+            }
+            offset += page.song.len() as i32;
+            let before = seen.len();
+            seen.extend(page.song.iter().map(|song| song.id.clone()));
+            if seen.len() == before {
+                anyhow::bail!("the server repeats one page of the songs");
+            }
+            songs.extend(page.song);
+        }
+    }
+
     async fn change_saved(
         &self,
         saved: bool,

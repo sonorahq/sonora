@@ -22,6 +22,9 @@ actions!(
         SignOut,
         Refresh,
         TogglePlayback,
+        ActivateRating,
+        FocusNextControl,
+        FocusPreviousControl,
         SongPrevious,
         SongNext,
         VolumeUp,
@@ -62,6 +65,7 @@ actions!(
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 /// The context of the cover viewer, open above an album, playlist or artist page.
 pub const COVER_VIEWER_CONTEXT: &str = "CoverViewer";
+pub const RATING_CONTEXT: &str = "Rating";
 pub const SEARCH_CONTEXT: &str = "Search";
 pub const POWERBAR_CONTEXT: &str = "Powerbar";
 
@@ -96,7 +100,15 @@ fn shared() -> Vec<KeyBinding> {
     let results = format!("{SEARCH_CONTEXT} && !{INPUT_CONTEXT}");
     let typing = format!("{SEARCH_CONTEXT} > {INPUT_CONTEXT}");
 
+    let rating = Some(RATING_CONTEXT);
+
     vec![
+        KeyBinding::new("tab", FocusNextControl, None),
+        KeyBinding::new("shift-tab", FocusPreviousControl, None),
+        KeyBinding::new("tab", FocusNextControl, rating),
+        KeyBinding::new("shift-tab", FocusPreviousControl, rating),
+        KeyBinding::new("enter", ActivateRating, rating),
+        KeyBinding::new("space", ActivateRating, rating),
         KeyBinding::new("down", SelectNext, table),
         KeyBinding::new("up", SelectPrevious, table),
         KeyBinding::new("shift-down", SelectNext, table),

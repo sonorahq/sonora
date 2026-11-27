@@ -28,6 +28,20 @@ toast-playlist-imported-partly = Imported { $name }, leaving out { $count ->
 toast-playlist-import-empty = None of the songs in { $name } are in your library
 toast-playlist-exported = Playlist exported
 toast-file-dialog-failed = Could not open the file dialog
+
+toast-rating-updated = Updated the rating of { $name }
+toast-rating-cleared = Cleared the rating of { $name }
+toast-rating-save-failed = Could not save your rating. Please try again.
+toast-rating-detail =
+    { $changed ->
+        [yes] { $previous } → { $current }
+       *[no] { $current }
+    }{ $favorite ->
+        [liked] { " · " }liked
+        [unliked] { " · " }unliked
+       *[unchanged] { "" }
+    }
+
 toast-queued-track = { $name } added to the queue
 toast-next-track = { $name } plays next
 toast-last-track = { $name } plays last

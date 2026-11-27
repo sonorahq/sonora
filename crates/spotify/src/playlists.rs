@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::session::Session;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use bytes::Bytes;
 use futures::StreamExt as _;
 use spotifyapis::proto::extended_metadata::ExtensionKind;
@@ -17,6 +17,9 @@ use music::cover::{self, CoverLimits};
 use music::order;
 use music::{Contributor, Playlist, PlaylistDetail, PlaylistPreview, Track};
 
+const FOLDER: &str = "Rated";
+const START: &str = "spotify:start-group:";
+const END: &str = "spotify:end-group";
 const TRACK_PREFIX: &str = "spotify:track:";
 const PLAYLIST_PREFIX: &str = "spotify:playlist:";
 const COVER_SLACK: usize = 4;
@@ -28,7 +31,62 @@ const COVER_LIMITS: CoverLimits = CoverLimits {
     bytes: 256 * 1024,
 };
 
+/// The Rated folder's closing index and its rating playlists.
+type Folder = (usize, Vec<(String, u8)>);
+
+/// Finds the rating playlists inside Rated.
+pub(super) async fn rating_playlists(session: &Session) -> Result<Vec<(String, u8)>> {
+    let (root, _) = fetch_rootlist(session).await?;
+    Ok(rated_folder(&root)?
+        .map(|(_, playlists)| playlists)
+        .unwrap_or_default())
+}
+
+/// Creates a rating playlist, and the Rated folder if missing.
+pub(super) async fn create_rating_playlist(session: &Session, rating: u8) -> Result<String> {
+    let (root, revision) = fetch_rootlist(session).await?;
+    let folder = rated_folder(&root)?;
+    let id = create_unlisted(session, &music::rating_label(rating)).await?;
+    let mut op = playlist_v2::append([format!("{PLAYLIST_PREFIX}{id}")]);
+    let add = op.add.get_or_insert_default();
+    add.items[0].attributes = Some(playlist_v2::ItemAttributes {
+        public: Some(false),
+        ..Default::default()
+    });
+    match folder {
+        Some((end, _)) => {
+            add.add_last = None;
+            add.from_index = Some(end as i32);
+        }
+        None => {
+            let group = format!("{:016x}", fastrand::u64(..));
+            add.items.insert(
+                0,
+                playlist_v2::Item {
+                    uri: format!("{START}{group}:{FOLDER}"),
+                    attributes: None,
+                },
+            );
+            add.items.push(playlist_v2::Item {
+                uri: format!("{END}:{group}"),
+                attributes: None,
+            });
+        }
+    }
+    rootlist_edit(session, &playlist_v2::changes(Some(&revision), [op]))
+        .await
+        .context("cannot create the rating playlist")?;
+    Ok(id)
+}
+
 pub async fn create(session: &Session, name: &str) -> Result<String> {
+    let id = create_unlisted(session, name).await?;
+    add_to_library(session, &id).await?;
+    Ok(id)
+}
+
+/// Creates a playlist without adding it to the library.
+async fn create_unlisted(session: &Session, name: &str) -> Result<String> {
     let body = playlist_v2::changes(None, [playlist_v2::rename(name)]);
     let reply = session
         .api()
@@ -45,8 +103,6 @@ pub async fn create(session: &Session, name: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("cannot read the created playlist id"))?;
 
     rename(session, &id, name).await?;
-
-    add_to_library(session, &id).await?;
 
     Ok(id)
 }
@@ -453,6 +509,28 @@ async fn hydrate_tracks(
     Ok(tracks)
 }
 
+/// Reads track ids and timestamps without metadata.
+pub(super) async fn entries(
+    session: &Session,
+    playlist_id: &str,
+) -> Result<Vec<(String, Option<i64>)>> {
+    let (content, _) = snapshot(session, playlist_id, &[]).await?;
+    Ok(content
+        .items
+        .iter()
+        .filter_map(|item| item.attributes.as_ref())
+        .filter_map(|item| {
+            Some((
+                item.uri.strip_prefix(TRACK_PREFIX)?.to_owned(),
+                item.added_at
+                    .as_ref()
+                    .map(|stamp| stamp.seconds)
+                    .filter(|&seconds| seconds > 0),
+            ))
+        })
+        .collect())
+}
+
 pub async fn playlist_tracks(session: &Session, playlist_id: &str) -> Result<Vec<Track>> {
     let (content, _) = snapshot(session, playlist_id, &[]).await?;
     hydrate_tracks(session, &content, None, None)
@@ -689,6 +767,97 @@ fn move_ops(
 
 fn position(content: &Snapshot, uri: &str) -> Option<i32> {
     i32::try_from(content.items.iter().position(|item| item == uri)?).ok()
+}
+
+/// Reads every rootlist uri and name with its revision.
+async fn fetch_rootlist(session: &Session) -> Result<(Vec<(String, String)>, Bytes)> {
+    const PAGE_SIZE: i32 = 100;
+    const ATTEMPTS: usize = 3;
+    let mut query = ListQuery {
+        uri: format!("spotify:user:{}:rootlist", session.username()),
+        page: Some(PAGE_SIZE),
+        offset: 0,
+    };
+    let projection = ListProjection {
+        items: &[AttributeKind::Uri],
+        referenced: &[AttributeKind::Name],
+        ..Default::default()
+    };
+    'attempt: for _ in 0..ATTEMPTS {
+        query.offset = 0;
+        let mut entries = Vec::new();
+        let mut revision: Option<Bytes> = None;
+        loop {
+            let (page, version) = session
+                .api()
+                .get_list(&query, projection)
+                .await
+                .map_err(sign_in_error)
+                .context("cannot read the rootlist")?;
+            if revision.as_ref().is_some_and(|first| first != &version) {
+                continue 'attempt;
+            }
+            revision = Some(version);
+            let length = page.items.len() as i32;
+            for uri in page
+                .items
+                .into_iter()
+                .map(|item| item.attributes.map(|attrs| attrs.uri).unwrap_or_default())
+            {
+                let name = page
+                    .meta_items
+                    .get(&uri)
+                    .and_then(|item| item.attributes.as_ref())
+                    .map(|attrs| attrs.name.clone())
+                    .unwrap_or_default();
+                entries.push((uri, name));
+            }
+            if length < PAGE_SIZE {
+                break;
+            }
+            query.offset += length;
+        }
+        let revision = revision.filter(|revision| !revision.is_empty());
+        return Ok((
+            entries,
+            revision.context("Spotify omitted the list revision")?,
+        ));
+    }
+    anyhow::bail!("Spotify rootlist changed during each read")
+}
+
+/// Finds the Rated folder and its rating playlists.
+fn rated_folder(root: &[(String, String)]) -> Result<Option<Folder>> {
+    let mut depth = 0usize;
+    let mut rated = None;
+    let mut found = None;
+    let mut playlists = Vec::new();
+    for (index, (uri, name)) in root.iter().enumerate() {
+        if let Some(group) = uri.strip_prefix(START) {
+            let label = group.split_once(':').map(|(_, label)| label);
+            let label = percent_encoding::percent_decode_str(label.unwrap_or_default());
+            if depth == 0 && (label.decode_utf8_lossy() == FOLDER || name == FOLDER) {
+                ensure!(found.is_none(), "more than one Rated folder exists");
+                rated = Some(1);
+            }
+            depth += 1;
+        } else if uri.starts_with(END) {
+            if rated == Some(depth) {
+                found = Some((index, std::mem::take(&mut playlists)));
+                rated = None;
+            }
+            depth = depth.saturating_sub(1);
+        } else if rated == Some(depth)
+            && let Some(id) = uri.strip_prefix(PLAYLIST_PREFIX)
+        {
+            ensure!(!name.is_empty(), "cannot read rating playlist names");
+            if let Some(rating) = music::parse_rating(name) {
+                playlists.push((id.to_owned(), rating));
+            }
+        }
+    }
+    ensure!(rated.is_none(), "cannot read the complete Rated folder");
+    Ok(found)
 }
 
 const BATCH: usize = 100;

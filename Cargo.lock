@@ -7449,6 +7449,7 @@ dependencies = [
  "lyrics",
  "music",
  "open",
+ "percent-encoding",
  "reqwest 0.13.5",
  "ring",
  "rodio",

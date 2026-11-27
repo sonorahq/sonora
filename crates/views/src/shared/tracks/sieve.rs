@@ -5,6 +5,8 @@ pub(crate) struct TrackSieve {
     pub duration: Option<(f32, f32)>,
     /// Drop tracks marked explicit.
     pub hide_explicit: bool,
+    /// The half-star range kept, where 0 is unrated.
+    pub rating: Option<(f32, f32)>,
     /// Keep only starred tracks. `keeps` cannot see the library, so the source applies it.
     pub favorites: bool,
     /// Keep only downloaded tracks, which the source applies for the same reason.
@@ -13,7 +15,11 @@ pub(crate) struct TrackSieve {
 
 impl TrackSieve {
     pub(crate) fn active(&self) -> bool {
-        self.duration.is_some() || self.hide_explicit || self.favorites || self.downloaded
+        self.duration.is_some()
+            || self.rating.is_some()
+            || self.hide_explicit
+            || self.favorites
+            || self.downloaded
     }
 
     pub(super) fn keeps(&self, track: &Track) -> bool {
@@ -55,6 +61,7 @@ mod tests {
         let sieve = TrackSieve {
             duration: Some((60., 180.)),
             hide_explicit: true,
+            rating: None,
             favorites: false,
             downloaded: false,
         };

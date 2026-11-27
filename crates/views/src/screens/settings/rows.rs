@@ -42,8 +42,12 @@ pub(crate) struct Row {
     status: Option<SharedString>,
     control: AnyElement,
     disabled: bool,
+    nested: bool,
     yielding: bool,
 }
+
+/// A nested row's indent, in list rows.
+const INDENT: f32 = 0.6;
 
 impl Row {
     pub(crate) fn new(title: SharedString, control: AnyElement) -> Self {
@@ -54,8 +58,15 @@ impl Row {
             status: None,
             control,
             disabled: false,
+            nested: false,
             yielding: false,
         }
+    }
+
+    /// Indents the row under the setting it depends on.
+    pub(crate) fn nested(mut self) -> Self {
+        self.nested = true;
+        self
     }
 
     /// Lets the control give up width before the label does, for a text field that still works
@@ -101,9 +112,11 @@ impl RenderOnce for Row {
             status,
             control,
             disabled,
+            nested,
             yielding,
         } = self;
         let theme = *cx.theme();
+        let unit = theme.metrics.list_row;
         let info = detail.map(|detail| {
             mark(
                 SharedString::from(format!("settings-row-detail-{title}")),
@@ -128,7 +141,8 @@ impl RenderOnce for Row {
             .items_center()
             .justify_between()
             .gap_4()
-            .min_h(theme.metrics.list_row)
+            .min_h(unit)
+            .when(nested, |this| this.pl(unit * INDENT))
             .when(disabled, |this| this.text_color(theme.muted_foreground))
             .child(
                 div()

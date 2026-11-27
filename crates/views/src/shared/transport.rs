@@ -127,40 +127,6 @@ pub(crate) fn percent(fraction: f32) -> SharedString {
     t!("unit-percent", value = (fraction * 100.).round())
 }
 
-/// The heart that shows whether `track` is saved. A click toggles the track shown at click time.
-pub(crate) fn like(track: Option<&music::Track>, playback: &Entity<Playback>, cx: &App) -> Button {
-    let theme = *cx.theme();
-    let library = Sonora::global(cx).library.clone();
-    let playback = playback.clone();
-    let id = track.and_then(|track| track.id.as_deref());
-    let saved = id.is_some_and(|id| library.read(cx).saved(id));
-
-    Button::new("toggle-liked-track")
-        .ghost()
-        .backgroundless()
-        .small()
-        .icon(match saved {
-            true => "icons/heart-filled.svg",
-            false => "icons/heart.svg",
-        })
-        .tooltip_above(match saved {
-            true => "menu-remove-from-library",
-            false => "menu-add-to-library",
-        })
-        .tint(match saved {
-            true => theme.primary,
-            false => theme.muted_foreground,
-        })
-        .disabled(id.is_none())
-        .on_click(move |_, _, cx| {
-            // `track` always returns the local track, which is not the currently played track
-            // if remote playback has taken over. Use `shown_track` instead.
-            if let Some(track) = playback.read(cx).shown_track(cx) {
-                library.update(cx, |library, cx| library.toggle(track, cx));
-            }
-        })
-}
-
 /// `big` is only true in fullscreen, where these buttons float over the ambient
 /// background and so blur their hover fills. Without that background, and on
 /// the flat player bar, the blur would show nothing.

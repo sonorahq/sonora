@@ -117,6 +117,7 @@ enum Slot {
     Normalisation,
     Gapless,
     SponsorBlock,
+    Rating(playback::RatingSetting),
     KeepTracks,
     CacheSize,
     CacheUsage,
@@ -1135,6 +1136,7 @@ impl SettingsView {
                 t!("settings-sponsorblock"),
                 t!("settings-sponsorblock-detail"),
             ),
+            Slot::Rating(setting) => setting.copy(),
             Slot::KeepTracks => (
                 t!("settings-keep-tracks"),
                 t!("settings-keep-tracks-detail"),
@@ -1353,6 +1355,7 @@ impl SettingsView {
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),
             Slot::SponsorBlock => self.sponsorblock_row(cx),
+            Slot::Rating(setting) => self.rating_setting_row(setting, cx),
             Slot::KeepTracks => self.keep_tracks_row(cx),
             Slot::CacheSize => self.cache_size_row(cx),
             Slot::CacheUsage => self.cache_usage_row(cx),

@@ -480,7 +480,6 @@ pub(crate) fn title<F>(
     explicit: Option<SharedString>,
     under: Option<AnyElement>,
     status: Option<AnyElement>,
-    is_liked: Option<AnyElement>,
 ) -> AnyElement {
     let value = value.into();
     let text = div()
@@ -516,8 +515,7 @@ pub(crate) fn title<F>(
                     .child(Badge::explicit()),
             )
         })
-        .when_some(status, |this, status| this.child(status))
-        .when_some(is_liked, |this, is_liked| this.child(is_liked));
+        .when_some(status, |this, status| this.child(status));
 
     let Some(under) = under else {
         return top.into_any_element();
