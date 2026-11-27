@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
@@ -8,9 +9,10 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use storage::Database;
 
+use crate::catalog::CatalogSource;
 use crate::{
-    Collection, Io, Network, Outcome, Playback, Reconnected, Session, SessionEvent, SessionState,
-    Target, Toast, Toasts, join,
+    Collection, Io, Library, LibraryEvent, Network, Outcome, Playback, Reconnected, Session,
+    SessionEvent, SessionState, Target, Toast, Toasts, join,
 };
 
 /// How many tracks download at once. Two keep the line busy without starving a track that is
@@ -29,6 +31,11 @@ const PACE_WINDOW: usize = 12;
 /// otherwise promise a speed that is gone.
 const PACE_FRESH: Duration = Duration::from_secs(5 * 60);
 const TICK: Duration = Duration::from_millis(250);
+/// How often every downloaded playlist is listed again, so tracks added elsewhere download too.
+const SYNC_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How long a change made in Sonora waits before its playlists are listed again, so a run of
+/// likes or adds costs one listing.
+const SYNC_SETTLE: Duration = Duration::from_secs(5);
 
 /// Where one track stands on its way to being downloaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +240,16 @@ pub struct Downloads {
     unsealing: Option<Task<()>>,
     /// Whether that pass is owed after a sign-in, once there is an engine to run it through.
     unsealed: bool,
+    /// Downloaded playlists waiting to be listed again, in the order they were asked for.
+    owed: VecDeque<String>,
+    /// Lists the owed playlists one after another and catches each download up with it.
+    syncing: Option<Task<()>>,
+    /// Holds back a sync that a change in Sonora asked for until the changes stop coming.
+    settling: Option<Task<()>>,
+    /// When every downloaded playlist was last listed again.
+    synced_at: Option<Instant>,
+    /// Lists every downloaded playlist again once `SYNC_EVERY` has passed.
+    _hourly: Task<()>,
 }
 
 impl EventEmitter<DownloadsChanged> for Downloads {}
@@ -241,14 +258,18 @@ impl Downloads {
     pub fn new(
         session: Entity<Session>,
         playback: Entity<Playback>,
+        library: &Entity<Library>,
         network: &Entity<Network>,
         database: Database,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
         // The queue stops while the network is gone, and picks up again once it is back.
-        cx.subscribe(network, |this, _, _: &Reconnected, cx| this.resume(cx))
-            .detach();
+        cx.subscribe(network, |this, _, _: &Reconnected, cx| {
+            this.resume(cx);
+            this.sync_due(cx);
+        })
+        .detach();
         cx.subscribe(&session, |this, session, event, cx| match event {
             SessionEvent::SignedIn | SessionEvent::Reconnected => {
                 let provider = session.read(cx).provider_slug();
@@ -256,6 +277,7 @@ impl Downloads {
                 this.failed.clear();
                 this.requeue();
                 this.pump(cx);
+                this.sync_due(cx);
             }
             SessionEvent::SignedOut => this.clear(cx),
             SessionEvent::WentOffline => this.halt(cx),
@@ -277,6 +299,31 @@ impl Downloads {
             this.unseal(cx);
         })
         .detach();
+        // A downloaded playlist changed in Sonora downloads what was added to it.
+        cx.subscribe(library, |this, _, event, cx| match event {
+            LibraryEvent::TrackAdded { playlist }
+            | LibraryEvent::TrackDropped { playlist, .. }
+            | LibraryEvent::PlaylistChanged(playlist)
+            | LibraryEvent::PlaylistChangedRemotely(playlist, _) => {
+                this.sync_soon([playlist.clone()], cx)
+            }
+            // A like can land in a playlist, as YouTube Music's Liked Music, under an id
+            // nothing here can tell apart, so every downloaded playlist is listed again.
+            LibraryEvent::TrackSaved => {
+                let playlists = this.playlists();
+                this.sync_soon(playlists, cx);
+            }
+            _ => {}
+        })
+        .detach();
+        let hourly = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(SYNC_EVERY).await;
+                if this.update(cx, |this, cx| this.sync_all(cx)).is_err() {
+                    return;
+                }
+            }
+        });
         Self {
             session,
             playback,
@@ -303,6 +350,11 @@ impl Downloads {
             restore: None,
             unsealing: None,
             unsealed: false,
+            owed: VecDeque::new(),
+            syncing: None,
+            settling: None,
+            synced_at: None,
+            _hourly: hourly,
         }
     }
 
@@ -793,6 +845,184 @@ impl Downloads {
         cx.notify();
     }
 
+    /// The ids of the downloaded playlists.
+    fn playlists(&self) -> Vec<String> {
+        self.sets
+            .keys()
+            .filter(|(kind, _)| *kind == Collection::Playlist)
+            .map(|(_, id)| id.clone())
+            .collect()
+    }
+
+    /// Lists every downloaded playlist again unless that happened within `SYNC_EVERY`, and
+    /// carries on with any listing a lost connection left owed.
+    fn sync_due(&mut self, cx: &mut Context<Self>) {
+        match self.synced_at {
+            Some(at) if at.elapsed() < SYNC_EVERY => self.sync(cx),
+            _ => self.sync_all(cx),
+        }
+    }
+
+    /// Lists every downloaded playlist again and quietly downloads the tracks added to it since.
+    /// Nothing happens until the account is signed in and the list is read from disk.
+    fn sync_all(&mut self, cx: &mut Context<Self>) {
+        let playlists = self.playlists();
+        let signed_in = matches!(self.session.read(cx).state(), SessionState::SignedIn(_));
+        if playlists.is_empty() || !signed_in {
+            return;
+        }
+        self.synced_at = Some(Instant::now());
+        self.owe(playlists);
+        self.sync(cx);
+    }
+
+    /// Lists those of `playlists` that are downloaded again once changes stop coming for
+    /// `SYNC_SETTLE`.
+    fn sync_soon(&mut self, playlists: impl IntoIterator<Item = String>, cx: &mut Context<Self>) {
+        let playlists: Vec<String> = playlists
+            .into_iter()
+            .filter(|id| self.sets.contains_key(&(Collection::Playlist, id.clone())))
+            .collect();
+        if playlists.is_empty() {
+            return;
+        }
+        self.owe(playlists);
+        self.settling = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SYNC_SETTLE).await;
+            this.update(cx, |this, cx| {
+                this.settling = None;
+                this.sync(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn owe(&mut self, playlists: Vec<String>) {
+        for id in playlists {
+            if !self.owed.contains(&id) {
+                self.owed.push_back(id);
+            }
+        }
+    }
+
+    /// Starts listing the owed playlists one at a time, unless that is under way already or
+    /// still settling.
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        if self.syncing.is_some() || self.settling.is_some() || self.owed.is_empty() {
+            return;
+        }
+        let io = self.io.clone();
+        self.syncing = Some(cx.spawn(async move |this, cx| {
+            while let Some((id, catalog)) = this
+                .update(cx, |this, cx| this.next_owed(cx))
+                .ok()
+                .flatten()
+            {
+                let listed = join(io.spawn({
+                    let id = id.clone();
+                    async move { list_whole(&catalog, &id).await }
+                }))
+                .await;
+                let applied = this.update(cx, |this, cx| match listed {
+                    Ok(detail) => this.catch_up(detail, cx),
+                    Err(error) => {
+                        log::warn!("downloads: cannot list playlist {id} again: {error:#}");
+                        crate::noted(&error, cx);
+                        if music::trouble::offline(&format!("{error:#}")) {
+                            this.owed.push_front(id);
+                        }
+                    }
+                });
+                if applied.is_err() {
+                    return;
+                }
+            }
+        }));
+    }
+
+    /// The next owed playlist that is still downloaded, with the catalog to list it from. When
+    /// none is left the sync ends in the same update, so a playlist owed later starts a new one.
+    /// A playlist whose first listing is still running is skipped, since that one is fresh. The
+    /// rest stay owed while the network is gone or the account is not signed in yet.
+    fn next_owed(&mut self, cx: &mut Context<Self>) -> Option<(String, Arc<CatalogSource>)> {
+        while !Network::lost(cx) {
+            let Some(id) = self.owed.pop_front() else {
+                break;
+            };
+            if !self.sets.contains_key(&(Collection::Playlist, id.clone()))
+                || self.fetching.contains_key(&id)
+            {
+                continue;
+            }
+            let Some(catalog) = self.session.read(cx).catalog(&id) else {
+                self.owed.push_front(id);
+                break;
+            };
+            return Some((id, catalog));
+        }
+        self.syncing = None;
+        None
+    }
+
+    /// Brings a downloaded playlist in line with a fresh listing of it. Tracks added since join
+    /// the download with no toast, and tracks taken out lose their download unless a song pick
+    /// or another set keeps them. A listing with no tracks changes nothing, since a provider
+    /// that answers so has more likely failed than seen the playlist emptied.
+    fn catch_up(&mut self, detail: PlaylistDetail, cx: &mut Context<Self>) {
+        let Some(provider) = self.provider else {
+            return;
+        };
+        let (id, fresh) = playlist_set(detail);
+        if self.fetching.contains_key(&id) {
+            return;
+        }
+        let key = (Collection::Playlist, id.clone());
+        let Some(set) = self.sets.get(&key) else {
+            return;
+        };
+        if fresh.tracks.is_empty() || same(set, &fresh) {
+            return;
+        }
+        let Some(kept) = self.sets.insert(key, fresh.clone()) else {
+            return;
+        };
+        let held = self.held_by_sets();
+        let gone: Vec<String> = kept
+            .tracks
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .filter(|id| !held.contains(id))
+            .filter(|id| !self.tracks.get(id).is_some_and(|entry| entry.single))
+            .collect();
+        let added: Vec<Track> = fresh
+            .tracks
+            .iter()
+            .filter(|track| downloadable(track))
+            .filter(|track| {
+                track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !self.tracks.contains_key(id))
+            })
+            .cloned()
+            .collect();
+        for track in &added {
+            self.enlist(track, false);
+        }
+        if !added.is_empty() || !gone.is_empty() {
+            log::info!(
+                "downloads: playlist {id} gained {} tracks and lost {}",
+                added.len(),
+                gone.len()
+            );
+        }
+        self.drop_tracks(provider, &gone, cx);
+        self.persist(provider, Some((Collection::Playlist, id, fresh)), added);
+        self.pump(cx);
+        cx.emit(DownloadsChanged);
+        cx.notify();
+    }
+
     /// Downloads an album or playlist.
     fn download_set(&mut self, kind: Collection, id: String, set: Set, cx: &mut Context<Self>) {
         let Some(provider) = self.provider else {
@@ -1222,6 +1452,7 @@ impl Downloads {
                 this.unsealed = this.session.read(cx).capabilities().plain_downloads;
                 this.unseal(cx);
                 this.pump(cx);
+                this.sync_due(cx);
                 cx.emit(DownloadsChanged);
                 cx.notify();
             })
@@ -1248,6 +1479,10 @@ impl Downloads {
         self.restore = None;
         self.unsealing = None;
         self.unsealed = false;
+        self.owed.clear();
+        self.syncing = None;
+        self.settling = None;
+        self.synced_at = None;
         cx.emit(DownloadsChanged);
         cx.notify();
     }
@@ -1453,6 +1688,27 @@ fn rest(refusals: u32) -> Duration {
     FIRST_REST
         .saturating_mul(1 << refusals.saturating_sub(1).min(8))
         .min(LONGEST_REST)
+}
+
+/// Lists a playlist with every page of its tracks.
+async fn list_whole(catalog: &CatalogSource, id: &str) -> Result<PlaylistDetail> {
+    let mut detail = Arc::unwrap_or_clone(catalog.playlist(id).await?);
+    let mut next = detail.continuation.take();
+    while let Some(continuation) = next {
+        let (tracks, more) = catalog.playlist_continuation(&continuation).await?;
+        detail.tracks.extend(tracks);
+        next = more;
+    }
+    Ok(detail)
+}
+
+/// Whether two copies of a set would be kept the same, which spares a sync that found
+/// nothing new the write.
+fn same(kept: &Set, fresh: &Set) -> bool {
+    match (serde_json::to_string(kept), serde_json::to_string(fresh)) {
+        (Ok(kept), Ok(fresh)) => kept == fresh,
+        _ => false,
+    }
 }
 
 fn album_set(detail: AlbumDetail) -> (String, Set) {
