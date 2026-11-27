@@ -69,15 +69,14 @@ impl Control {
     }
 }
 
-/// Traffic-light styled window controls: three plain colored dots that only reveal their
-/// glyph on hover, in the familiar close/minimize/maximize order and coloring (not themed —
-/// the whole point of this style is the recognizable, unthemed convention).
-/// Position mirrors [`crate::WindowControls`]'s own `leading` flag: on the left the order
-/// reads red, yellow, green; on the right it's mirrored so close stays at the outer edge.
+/// Window controls drawn as three colored dots that show their glyph on hover. The colors stay
+/// unthemed because the look is the familiar convention. On the left they read red, yellow,
+/// green and on the right the row is mirrored, so close always stands at the outer edge.
 #[derive(IntoElement)]
 pub struct TrafficLightControls {
     base: Div,
     leading: bool,
+    reversed: bool,
 }
 
 impl TrafficLightControls {
@@ -85,7 +84,14 @@ impl TrafficLightControls {
         Self {
             base: div(),
             leading,
+            reversed: false,
         }
+    }
+
+    /// Swaps minimize and maximize, so the dots follow the order of [`crate::WindowControls`].
+    pub fn reversed(mut self, reversed: bool) -> Self {
+        self.reversed = reversed;
+        self
     }
 }
 
@@ -125,6 +131,9 @@ impl RenderOnce for TrafficLightControls {
         .flatten()
         .collect();
 
+        if self.reversed {
+            wanted[1..].reverse();
+        }
         if !self.leading {
             wanted.reverse();
         }
