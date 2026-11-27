@@ -1,11 +1,14 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
+use std::path::PathBuf;
+
 use gpui::{
-    AnyElement, App, Context, Div, Hsla, Pixels, SharedString, Window, div, px, relative, svg,
+    AnyElement, App, Context, Div, Hsla, PathPromptOptions, Pixels, SharedString, Window, div, px,
+    relative, svg,
 };
 use i18n::t;
 use router::NavEntry;
-use state::SYSTEM_FONT;
+use state::{Outcome, SYSTEM_FONT, Toasts};
 use ui::{
     ActiveTheme as _, Button, Look, MAX_FONT, MAX_TRANSPARENCY, MIN_FONT, MenuItem, OptionCard,
     Pace, Picker, Rounding, RowSize, Scrubber, Stillness, Switch, Theme, ThemeKind,
@@ -50,7 +53,7 @@ impl SettingsView {
                 Slot::Entries,
             ]),
             Group::new("settings-group-window").rows(
-                [Slot::Opacity, Slot::Blur]
+                [Slot::BackgroundImage, Slot::Opacity, Slot::Blur]
                     .into_iter()
                     .chain(self.decoration_slots(cx)),
             ),
@@ -236,7 +239,8 @@ impl SettingsView {
     pub(super) fn blur_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let look = self.look(cx);
         let overrides = self.settings.read(cx).theme_overrides();
-        let opaque = !look.transparent && !ui::COMPOSITOR_OPACITY;
+        let backed = self.settings.read(cx).background_image().is_some();
+        let opaque = (!look.transparent || backed) && !ui::COMPOSITOR_OPACITY;
         let window = ui::WindowBlur::supported(cx).then(|| {
             let overrides = overrides.clone();
             chip(
@@ -404,6 +408,95 @@ impl SettingsView {
                     }),
             )
             .into_any_element()
+    }
+
+    /// The image behind the window: a button that picks one, and once there is one its file's
+    /// name, a button that picks another and one that takes it away.
+    pub(super) fn background_image_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = *cx.theme();
+        let name = self
+            .settings
+            .read(cx)
+            .background_image()
+            .map(|path| match path.file_name() {
+                Some(name) => SharedString::from(name.to_string_lossy().into_owned()),
+                None => SharedString::from(path.to_string_lossy().into_owned()),
+            });
+        let label = match name {
+            Some(_) => t!("settings-background-image-change"),
+            None => t!("settings-background-image-choose"),
+        };
+        let choose = Button::new("background-image-choose")
+            .label(label)
+            .small()
+            .outline()
+            .on_click(cx.listener(|this, _, _, cx| this.choose_background_image(cx)));
+
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_w_0()
+            .when_some(name, |this, name| {
+                this.child(
+                    ui::spoken("settings-background-image-name", name)
+                        .min_w_0()
+                        .max_w(theme.metrics.cover)
+                        .truncate()
+                        .text_color(theme.muted_foreground),
+                )
+                .child(
+                    Button::new("background-image-remove")
+                        .ghost()
+                        .small()
+                        .icon("icons/x.svg")
+                        .tint(theme.muted_foreground)
+                        .tooltip("settings-background-image-remove")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.set_background_image(None, cx);
+                        })),
+                )
+            })
+            .child(choose);
+
+        self.row(t!("settings-background-image"), control.into_any_element())
+    }
+
+    /// Asks for an image file and lays it behind the window.
+    fn choose_background_image(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        self.background_task = Some(cx.spawn(async move |this, cx| {
+            let path = match receiver.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Err(error)) => {
+                    log::warn!("settings: cannot open the file dialog: {error:#}");
+                    cx.update(|cx| Toasts::show(Outcome::Failed, "toast-file-dialog-failed", cx));
+                    None
+                }
+                _ => None,
+            };
+            let Some(path) = path else {
+                return;
+            };
+            this.update(cx, |this, cx| this.set_background_image(Some(path), cx))
+                .ok();
+        }));
+    }
+
+    /// Stores the background image and draws the theme again, since the window is thinned over
+    /// an image by the image's own transparency.
+    fn set_background_image(&mut self, image: Option<PathBuf>, cx: &mut Context<Self>) {
+        let overrides = self.settings.update(cx, |settings, cx| {
+            settings.set_background_image(image, cx);
+            settings.theme_overrides()
+        });
+        Theme::set(self.look(cx), &overrides, cx);
+        cx.notify();
     }
 
     pub(super) fn opacity_row(&self, cx: &mut Context<Self>) -> AnyElement {

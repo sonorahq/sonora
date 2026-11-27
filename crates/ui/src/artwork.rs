@@ -337,7 +337,8 @@ fn artwork_frame(image: DynamicImage, edge: u32) -> RgbaImage {
     image
 }
 
-fn bgra(image: &mut RgbaImage) {
+/// Swaps a decoded image from RGBA to the BGRA the renderer draws from.
+pub(crate) fn bgra(image: &mut RgbaImage) {
     for pixel in image.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }

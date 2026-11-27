@@ -17,6 +17,7 @@ mod title_bar;
 mod toasts;
 mod toolbar;
 pub(crate) mod tools;
+mod wallpaper;
 
 pub(crate) use aside::{Aside, VerseLook, verse, verse_gap, verse_sizes};
 pub(crate) use jam::{JamCode, JamInvite, JamJoin};
@@ -37,6 +38,7 @@ pub use title_bar::traffic_lights;
 pub(crate) use title_bar::{Busy, TitleBar, TitleBarEvent, TitleBarOptions};
 pub use toasts::ToastStack;
 pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
+pub(crate) use wallpaper::Wallpaper;
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;

@@ -28,6 +28,7 @@ toast-playlist-imported-partly = Imported { $name }, leaving out { $count ->
 toast-playlist-import-empty = None of the songs in { $name } are in your library
 toast-playlist-exported = Playlist exported
 toast-file-dialog-failed = Could not open the file dialog
+toast-background-image-failed = Could not show that image as the background
 toast-queued-track = { $name } added to the queue
 toast-next-track = { $name } plays next
 toast-last-track = { $name } plays last

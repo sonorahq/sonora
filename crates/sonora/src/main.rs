@@ -417,7 +417,9 @@ fn open_window(cx: &mut App) {
     #[cfg(not(target_os = "macos"))]
     let traffic_lights = gpui::point(px(9.), px(9.));
     let look = settings.look();
-    let background = ui::backdrop(look.blur_window, look.transparent);
+    // A background image covers the window, so it opens opaque to the desktop.
+    let backed = settings.background_image().is_some();
+    let background = ui::backdrop(look.blur_window, look.transparent && !backed);
 
     cx.open_window(
         WindowOptions {

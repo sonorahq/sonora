@@ -21,7 +21,7 @@ use ui::{
 
 use crate::chrome::{
     Busy, JamCode, JamInvite, JamJoin, PlayerBar, SessionCode, SessionJoin, ThemeInvite, TitleBar,
-    TitleBarEvent, TitleBarOptions, ToastStack, Toolbar, Tooled,
+    TitleBarEvent, TitleBarOptions, ToastStack, Toolbar, Tooled, Wallpaper,
 };
 use crate::screens::search::SearchView;
 use crate::screens::settings::SettingsHeader;
@@ -211,6 +211,8 @@ pub struct Root {
     screens: Screens,
     adaptive: Entity<Adaptive>,
     background: Option<gpui::WindowBackgroundAppearance>,
+    /// The image laid behind the window, when the settings name one.
+    pub(crate) wallpaper: Wallpaper,
     /// The font the window is set in and the name it was built from, rebuilt only when the
     /// chosen font changes since the root renders every frame anything below it animates.
     font: Option<(String, Font)>,
@@ -456,6 +458,7 @@ impl Root {
             dialogs: Dialogs::new(cx),
             toasts: cx.new(ToastStack::new),
             background: None,
+            wallpaper: Wallpaper::default(),
             font: None,
             #[cfg(target_os = "windows")]
             rounded: None,
@@ -1282,7 +1285,10 @@ impl Render for Root {
 
         let theme = *cx.theme();
         window.set_rem_size(theme.font_size);
-        let appearance = ui::backdrop(theme.blur_window, theme.transparent);
+        // An image behind the window covers it whole, so the desktop never shows through and
+        // the window is opaque to it however thin its fills are.
+        let backed = self.wallpaper.follow(window, cx);
+        let appearance = ui::backdrop(theme.blur_window, theme.transparent && !backed);
         if self.background != Some(appearance) {
             self.background = Some(appearance);
             window.set_background_appearance(appearance);
@@ -1571,6 +1577,9 @@ impl Render for Root {
             .child(self.theme_invite.clone())
             .child(self.powerbar.clone());
 
+        // Whether the page colour goes down under everything. The ambient field, the ground
+        // fading in under an opening player and a see-through workspace each bring their own.
+        let paged = !ambient && !opening && !grounded;
         let root = div()
             .relative()
             .flex()
@@ -1584,9 +1593,7 @@ impl Render for Root {
             .when_some(radius, |this, radius| {
                 this.rounded(radius).overflow_hidden()
             })
-            .when(!ambient && !opening && !grounded, |this| {
-                this.bg(theme.background)
-            })
+            .when(paged && !backed, |this| this.bg(theme.background))
             .text_color(theme.foreground)
             .capture_any_mouse_down(|_, window, cx| {
                 if ui::cancel_middle_scroll(cx) {
@@ -1650,6 +1657,13 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &ShowMembers, _, cx| this.reveal_side(SideTab::Members, cx)),
             )
+            // The background image lies under all of it and takes the page colour over itself.
+            .when(backed, |this| {
+                this.child(
+                    self.wallpaper
+                        .layer(radius, paged.then_some(theme.background), cx),
+                )
+            })
             // The ambient background sits behind everything, title bar included.
             .when(ambient && !opening, |this| this.child(self.ambient.clone()))
             .children(leaving)

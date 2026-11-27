@@ -91,6 +91,9 @@ enum Slot {
     Corners,
     /// The typeface and the text size, chosen in one row.
     Font,
+    /// The image laid behind the whole window: its file's name, and the buttons that pick
+    /// another and take it away.
+    BackgroundImage,
     Opacity,
     /// The blur of the window over the desktop and of the menus over the app, as chips.
     Blur,
@@ -348,6 +351,8 @@ pub struct SettingsView {
     installed: Option<Vec<SharedString>>,
     loading_fonts: bool,
     font_task: Option<Task<()>>,
+    /// The file dialog a background image is being picked in.
+    background_task: Option<Task<()>>,
     /// What the pages' previews keep between frames.
     previews: preview::Previews,
     /// Each page's groups as a view of its own, made the first time the page shows, so a preview
@@ -550,6 +555,7 @@ impl SettingsView {
             installed: None,
             loading_fonts: false,
             font_task: None,
+            background_task: None,
             previews,
             parts: Vec::new(),
             recording: None,
@@ -1053,6 +1059,10 @@ impl SettingsView {
                 t!("settings-visualizer-absolute-detail"),
             ),
             Slot::Icons => (t!("settings-icons"), t!("settings-icons-detail")),
+            Slot::BackgroundImage => (
+                t!("settings-background-image"),
+                t!("settings-background-image-detail"),
+            ),
             Slot::Opacity => (t!("settings-opacity"), t!("settings-opacity-detail")),
             Slot::Blur => (
                 t!("settings-blur-title"),
@@ -1335,6 +1345,7 @@ impl SettingsView {
             Slot::PlayerBarTimeLeft => self.player_bar_time_left_row(cx),
             Slot::VisualizerScreens => self.visualizer_screens_row(cx),
             Slot::VisualizerAbsolute => self.visualizer_absolute_row(cx),
+            Slot::BackgroundImage => self.background_image_row(cx),
             Slot::Opacity => self.opacity_row(cx),
             Slot::Blur => self.blur_row(cx),
             Slot::FullscreenControlsAutohide => self.fullscreen_controls_autohide_row(cx),

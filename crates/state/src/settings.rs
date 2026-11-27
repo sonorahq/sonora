@@ -723,6 +723,11 @@ struct Appearance {
     font_size: f32,
     transparent: bool,
     transparency: f32,
+    /// The image laid behind the whole window, by its path. None leaves the window plain.
+    background_image: Option<PathBuf>,
+    /// How see-through the window is over `background_image`. It is kept apart from
+    /// `transparency`, so taking the image away leaves the window as it was before.
+    background_image_transparency: f32,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     server_side_decorations: bool,
     /// The window's own corner rounding, independent of `rounding` (the UI element radius).
@@ -1054,6 +1059,8 @@ impl Default for Appearance {
             font_size: DEFAULT_FONT_SIZE,
             transparent: false,
             transparency: ui::BACKDROP_TRANSPARENCY,
+            background_image: None,
+            background_image_transparency: ui::WALLPAPER_TRANSPARENCY,
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             server_side_decorations: true,
             #[cfg(target_os = "windows")]
@@ -1777,15 +1784,29 @@ impl AppSettings {
             .clamp(ui::MIN_FONT, ui::MAX_FONT)
     }
 
+    /// Whether the window's fills are thinned to show what is behind them: the background
+    /// image when there is one, the desktop otherwise.
     pub fn transparent(&self) -> bool {
-        self.values.appearance.transparent
+        match self.background_image() {
+            Some(_) => self.transparency() > 0.,
+            None => self.values.appearance.transparent,
+        }
     }
 
+    /// How see-through the window is over the background image when there is one, and over
+    /// the desktop otherwise.
     pub fn transparency(&self) -> f32 {
-        self.values
-            .appearance
-            .transparency
-            .clamp(0., ui::MAX_TRANSPARENCY)
+        let appearance = &self.values.appearance;
+        match appearance.background_image {
+            Some(_) => appearance.background_image_transparency,
+            None => appearance.transparency,
+        }
+        .clamp(0., ui::MAX_TRANSPARENCY)
+    }
+
+    /// The image laid behind the whole window, when the listener chose one.
+    pub fn background_image(&self) -> Option<&Path> {
+        self.values.appearance.background_image.as_deref()
     }
 
     /// Combines the selected theme file with legacy overrides from `settings.json`.
@@ -2773,13 +2794,36 @@ impl AppSettings {
         self.set_font_size(DEFAULT_FONT_SIZE, cx);
     }
 
+    /// Makes the window see-through to the desktop or opaque. A window with a background
+    /// image shows that instead, at its own transparency, so this waits until the image goes.
     pub fn set_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
-        self.values.appearance.transparent = transparent;
+        if self.background_image().is_none() {
+            self.values.appearance.transparent = transparent;
+        }
         self.schedule_save(cx);
     }
 
+    /// Sets how see-through the window is over what `transparency` reads: the background
+    /// image when there is one, the desktop otherwise.
     pub fn set_transparency(&mut self, transparency: f32, cx: &mut Context<Self>) {
-        self.values.appearance.transparency = transparency.clamp(0., ui::MAX_TRANSPARENCY);
+        let transparency = transparency.clamp(0., ui::MAX_TRANSPARENCY);
+        let appearance = &mut self.values.appearance;
+        match appearance.background_image {
+            Some(_) => appearance.background_image_transparency = transparency,
+            None => appearance.transparency = transparency,
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Lays `image` behind the whole window, or takes the image away with none. An image
+    /// whose transparency was dragged down to nothing would not show, so it starts over at
+    /// `ui::WALLPAPER_TRANSPARENCY`.
+    pub fn set_background_image(&mut self, image: Option<PathBuf>, cx: &mut Context<Self>) {
+        let appearance = &mut self.values.appearance;
+        if image.is_some() && appearance.background_image_transparency <= 0. {
+            appearance.background_image_transparency = ui::WALLPAPER_TRANSPARENCY;
+        }
+        appearance.background_image = image;
         self.schedule_save(cx);
     }
 
