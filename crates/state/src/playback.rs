@@ -466,6 +466,12 @@ impl Origin {
     ) -> Result<(Vec<Track>, Option<String>)> {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
+            // A playlist that never ends is a station, and plays on like one.
+            Whence::Playlist if client.endless(&self.id) => {
+                let (mut tracks, next) = self.station(client, capabilities, None).await?;
+                tracks.retain(|track| track.playable);
+                return Ok((tracks, next));
+            }
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
             Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
@@ -486,8 +492,9 @@ impl Origin {
     }
 
     /// The stretch of the station this origin names, from its start or from the continuation
-    /// `from`. Only a radio is a station. `capabilities` decide whether a collection's radio comes
-    /// from the provider or is blended from track radios.
+    /// `from`. Only a radio, or a playlist the provider never ends, is a station. `capabilities`
+    /// decide whether a collection's radio comes from the provider or is blended from track
+    /// radios.
     async fn station(
         &self,
         client: &dyn MusicApi,
@@ -498,6 +505,11 @@ impl Origin {
             Whence::CollectionRadio(seed) => {
                 let native = capabilities.collection_radio.contains(&seed);
                 station::collection_radio(client, seed, &self.id, native, from).await
+            }
+            Whence::Playlist => {
+                client
+                    .collection_radio(RadioSeed::Playlist, &self.id, from)
+                    .await
             }
             _ => client.track_radio(&self.id, from).await,
         }

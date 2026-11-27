@@ -23,7 +23,8 @@ use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Found, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome,
-    PinTarget, PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
+    PinTarget, PinTargetKind, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track,
+    UserProfile, escape,
 };
 use serde::de::IgnoredAny;
 use serde_json::Value;
@@ -1116,6 +1117,71 @@ impl AppleClient {
         matches!(letters.next(), Some('i' | 'l' | 'r' | 'p')) && letters.next() == Some('.')
     }
 
+    /// Whether an id names a station, read here as a playlist that never ends: an editorial
+    /// station (`ra.978194965`) or a listener's own (`ra.u-…`).
+    pub(crate) fn is_station(id: &str) -> bool {
+        id.starts_with("ra.")
+    }
+
+    /// A station's name and picture, as the playlist its page is drawn as. Apple lists editorial
+    /// stations in the catalog but may not list a listener's own, so a station it does not
+    /// describe still opens, under a plain name and with no picture of its own.
+    async fn station_about(&self, station_id: &str) -> Playlist {
+        let path = self.catalog(&format!("/stations/{}", escape::component(station_id)));
+        let found = match self.get(&path, &[]).await {
+            Ok(body) => {
+                let answered: wire::Answer = wire::answer(&body);
+                answered.data.first().and_then(|row| {
+                    let attributes = row.attributes.as_ref()?;
+                    Some((
+                        wire::text(&attributes.name)?,
+                        wire::artwork(attributes, wire::ART),
+                    ))
+                })
+            }
+            Err(error) => {
+                log::debug!(
+                    "apple: the catalog does not describe station {station_id}: {error:#}"
+                );
+                None
+            }
+        };
+        let (name, cover) = found.unwrap_or_else(|| ("Station".to_owned(), None));
+        Playlist {
+            id: station_id.to_owned(),
+            name,
+            owner: "Apple Music".to_owned(),
+            owner_id: "Apple Music".to_owned(),
+            owned: false,
+            collaborative: false,
+            blend: false,
+            public: true,
+            cover,
+            // A station has no length, and zero leaves the count off the page.
+            track_count: 0,
+            modified_at: None,
+            read_only: true,
+            revision: None,
+        }
+    }
+
+    /// The next stretch of a station, a few requests long since Apple hands out ten tracks at a
+    /// time. A station is free to come back to a song, so repeats within the stretch are dropped.
+    async fn station_stretch(&self, station_id: &str) -> Result<Vec<Track>> {
+        let mut tracks = Vec::new();
+        for _ in 0..STATION_PULLS {
+            let more = self.station_tracks(station_id).await?;
+            if more.is_empty() {
+                break;
+            }
+            tracks.extend(more);
+        }
+        let mut seen = HashSet::new();
+        tracks.retain(|track| track.id.as_ref().is_some_and(|id| seen.insert(id.clone())));
+        log::debug!("apple: station {station_id} gave {} tracks", tracks.len());
+        Ok(tracks)
+    }
+
     /// Builds the station a track seeds and reads its first tracks.
     ///
     /// This is what the web player's autoplay calls, and the only way Apple hands out the
@@ -1333,6 +1399,7 @@ impl MusicApi for AppleClient {
             MediaKind::Track => "song",
             MediaKind::Album => "album",
             MediaKind::Artist => "artist",
+            MediaKind::Playlist if Self::is_station(id) => "station",
             MediaKind::Playlist => "playlist",
         };
         // A library id means nothing to anyone else.
@@ -1963,7 +2030,27 @@ impl MusicApi for AppleClient {
         Ok(found)
     }
 
+    /// A playlist, or a station wearing a playlist's id. A station's page lists one stretch
+    /// and never a continuation, since the page reads continuations until there are none;
+    /// playing it goes on through `collection_radio`.
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        if Self::is_station(playlist_id) {
+            let (playlist, tracks) = futures::join!(
+                self.station_about(playlist_id),
+                self.station_stretch(playlist_id)
+            );
+            let tracks =
+                tracks.with_context(|| format!("cannot load the station {playlist_id}"))?;
+            let cover = playlist
+                .cover
+                .clone()
+                .or_else(|| tracks.iter().find_map(|track| track.cover.clone()));
+            return Ok(PlaylistDetail {
+                playlist: Playlist { cover, ..playlist },
+                tracks,
+                continuation: None,
+            });
+        }
         let mine = Self::is_mine(playlist_id);
         let path = match mine {
             true => format!("/me/library/playlists/{}", escape::component(playlist_id)),
@@ -2000,6 +2087,9 @@ impl MusicApi for AppleClient {
     /// The rows skip the listing memo, since startup reads every playlist at once and only the
     /// tracks read from them are used.
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        if Self::is_station(playlist_id) {
+            return self.station_stretch(playlist_id).await;
+        }
         let path = match Self::is_mine(playlist_id) {
             true => format!(
                 "/me/library/playlists/{}/tracks",
@@ -2040,6 +2130,13 @@ impl MusicApi for AppleClient {
     }
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
+        if Self::is_station(playlist_id) {
+            if let Some(cover) = self.station_about(playlist_id).await.cover {
+                return Ok(vec![cover]);
+            }
+            let tracks = self.station_stretch(playlist_id).await?;
+            return Ok(music::distinct_covers(&tracks, wanted));
+        }
         let path = match Self::is_mine(playlist_id) {
             true => format!(
                 "/me/library/playlists/{}/tracks",
@@ -2121,12 +2218,18 @@ impl MusicApi for AppleClient {
     }
 
     async fn add_playlist_to_library(&self, playlist_id: &str) -> Result<()> {
+        if Self::is_station(playlist_id) {
+            bail!("apple music keeps no stations in the library");
+        }
         self.post("/me/library", &[("ids[playlists]", playlist_id)], None)
             .await
             .map(|_| ())
     }
 
     async fn remove_playlist_from_library(&self, playlist_id: &str) -> Result<()> {
+        if Self::is_station(playlist_id) {
+            bail!("apple music keeps no stations in the library");
+        }
         let id = match Self::is_mine(playlist_id) {
             true => Some(playlist_id.to_owned()),
             false => self.mine("playlists", playlist_id).await?,
@@ -2348,6 +2451,27 @@ impl MusicApi for AppleClient {
             .iter()
             .flat_map(wire::Relation::rows)
             .find_map(|row| wire::album(row)?.cover))
+    }
+
+    fn endless(&self, playlist_id: &str) -> bool {
+        Self::is_station(playlist_id)
+    }
+
+    /// A station opened as a playlist, a stretch at a time. A station never ends, so the
+    /// continuation is always there; the queue stops asking once stretches come back empty.
+    /// Apple builds no radio from any other collection, so the capabilities list none and
+    /// nothing else is asked here.
+    async fn collection_radio(
+        &self,
+        seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        if seed != RadioSeed::Playlist || !Self::is_station(id) {
+            bail!("apple music builds no radio from a collection");
+        }
+        let tracks = self.station_stretch(id).await?;
+        Ok((tracks, Some(id.to_owned())))
     }
 
     /// The station a track seeds, as a queue's worth of tracks.
