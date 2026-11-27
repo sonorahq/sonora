@@ -6,8 +6,8 @@ use gpui::prelude::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, FontWeight, Hsla,
-    Pixels, Render, SharedString, Window, div, px, rgb, svg,
+    AnyElement, App, ClipboardItem, Context, Div, ElementId, Entity, FocusHandle, Focusable as _,
+    FontWeight, Hsla, Pixels, Render, SharedString, Window, div, px, rgb, svg,
 };
 use i18n::t;
 use music::Contributor;
@@ -102,13 +102,13 @@ impl Render for JamInvite {
         });
         let Some((host, count)) = asked else {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         };
         if !self.shown {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.shown = true;
         }
 
@@ -217,13 +217,13 @@ impl Render for JamJoin {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.devices.read(cx).join_shown() {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         }
         if !self.shown {
             self.restore = window.focused(cx);
-            self.link.update(cx, |input, cx| input.focus(window, cx));
+            ui::focus_after_frame(&self.link.read(cx).focus_handle(cx), window, cx);
             self.shown = true;
         }
 
@@ -338,13 +338,13 @@ impl Render for JamCode {
             });
         let Some((host, link)) = shown else {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         };
         if !self.shown {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.shown = true;
         }
 

@@ -60,13 +60,13 @@ impl Render for WidevinePrompt {
         );
         if !open {
             if self.shown {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         }
         if !self.shown {
             self.restore = window.focused(cx);
-            window.focus(&self.focus, cx);
+            ui::focus_after_frame(&self.focus, window, cx);
             self.shown = true;
         }
 

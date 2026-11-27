@@ -297,13 +297,21 @@ impl MenuSearch {
         let own = self.input.read(cx).focus_handle(cx);
         let before = window.focused(cx).filter(|focus| *focus != own);
         *self.restore.borrow_mut() = Some(before);
-        window.focus(&own, cx);
+        // This runs while the frame draws, so focusing now would report two focused nodes to the
+        // accessibility tree. Focus after the frame instead, unless the menu has closed by then.
+        let restore = self.restore.clone();
+        window.defer(cx, move |window, cx| {
+            if restore.borrow().is_some() {
+                window.focus(&own, cx);
+            }
+        });
     }
 
     /// Empties the field and returns focus to where it was before `hold`. Without that, focus
     /// stays on a field that is no longer drawn and later actions reach no handler. Focus the
-    /// user already moved elsewhere stays where it is.
-    fn release(&self, window: &mut Window, cx: &mut App) {
+    /// user already moved elsewhere stays where it is. With `later` the focus moves once the frame
+    /// has drawn, for a release that runs while one draws.
+    fn release(&self, later: bool, window: &mut Window, cx: &mut App) {
         let Some(restore) = self.restore.borrow_mut().take() else {
             return;
         };
@@ -312,9 +320,11 @@ impl MenuSearch {
         if !self.input.read(cx).focus_handle(cx).is_focused(window) {
             return;
         }
-        match restore {
-            Some(focus) => window.focus(&focus, cx),
-            None => crate::release_focus(window, cx),
+        match (restore, later) {
+            (Some(focus), false) => window.focus(&focus, cx),
+            (Some(focus), true) => crate::focus_after_frame(&focus, window, cx),
+            (None, false) => crate::release_focus(window, cx),
+            (None, true) => window.defer(cx, crate::release_focus),
         }
     }
 
@@ -780,7 +790,7 @@ impl RenderOnce for Menu {
             };
             match submenu.state.is_open() {
                 true => submenu.state.held.set(!inner.query(cx).is_empty()),
-                false => inner.release(window, cx),
+                false => inner.release(true, window, cx),
             }
             searches.push(inner.clone());
         }
@@ -1457,7 +1467,7 @@ fn grown(bounds: Bounds<Pixels>, x: Pixels, y: Pixels) -> Bounds<Pixels> {
 /// Hands focus back from every search in `searches`, before the menu holding them goes away.
 pub(crate) fn release(searches: &[MenuSearch], window: &mut Window, cx: &mut App) {
     for search in searches {
-        search.release(window, cx);
+        search.release(false, window, cx);
     }
 }
 

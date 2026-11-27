@@ -369,7 +369,7 @@ impl Render for TagEditor {
         let tags = self.tags.read(cx);
         let Some(track) = tags.track().cloned() else {
             if let Some(focus) = self.restore.take() {
-                window.focus(&focus, cx);
+                ui::focus_after_frame(&focus, window, cx);
             }
             return div().into_any_element();
         };

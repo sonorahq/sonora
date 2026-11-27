@@ -4,7 +4,10 @@
 
 use gpui::accesskit::Role;
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Entity, FocusHandle, Render, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Context, Entity, FocusHandle, Focusable as _, Render, SharedString, Window,
+    div,
+};
 use i18n::t;
 use soloist::{DASHBOARD, DEVICE, TERMS};
 use state::{Soloist, SoloistProblem, SoloistState, SoloistStep, Sonora};
@@ -94,8 +97,10 @@ impl SoloistSetup {
         self.step = Some(step);
         Modal::rewind(ID, cx);
         match step {
-            SoloistStep::Key => self.key.update(cx, |key, cx| key.focus(window, cx)),
-            _ => window.focus(&self.focus, cx),
+            SoloistStep::Key => {
+                ui::focus_after_frame(&self.key.read(cx).focus_handle(cx), window, cx)
+            }
+            _ => ui::focus_after_frame(&self.focus, window, cx),
         }
     }
 
@@ -208,7 +213,7 @@ impl Render for SoloistSetup {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(step) = self.open_on(cx) else {
             if self.step.is_some() {
-                self.release(window, cx);
+                cx.defer_in(window, |this, window, cx| this.release(window, cx));
             }
             return div().into_any_element();
         };
