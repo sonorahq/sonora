@@ -1362,7 +1362,25 @@ pub struct Library {
 #[async_trait]
 pub trait MusicProvider: Send + Sync {
     fn name(&self) -> &'static str;
+    /// The slug this account goes by in settings, caches and downloads. A provider's further
+    /// accounts carry a suffix that [`credentials::kind`] strips.
     fn slug(&self) -> &'static str;
+
+    /// Whether the user can keep more than one account of this provider, one per server, and
+    /// switch between them.
+    fn keeps_several(&self) -> bool {
+        false
+    }
+    /// An empty account slot of the same provider under a slug no account uses yet, for adding
+    /// another server. Only a provider that keeps several accounts makes one.
+    fn spare(&self) -> Option<Arc<dyn MusicProvider>> {
+        None
+    }
+    /// The further accounts of this provider that have a sign-in kept on disk, each as a provider
+    /// of its own, oldest first. Only the provider's first account answers.
+    fn siblings(&self) -> Vec<Arc<dyn MusicProvider>> {
+        Vec::new()
+    }
 
     /// Whether a stored account can be limited to one library of its server. Only such a
     /// provider answers the other library calls.
@@ -1405,6 +1423,12 @@ pub trait MusicProvider: Send + Sync {
     /// can tell the two apart. A provider without an anonymous sign-in never says yes.
     fn stored_guest(&self) -> bool {
         false
+    }
+    /// A short name that tells this account apart from the provider's other accounts without
+    /// giving away where its server is: the server's own name, or the username where the server
+    /// has none. `None` while nothing is stored.
+    fn account_name(&self) -> Option<String> {
+        None
     }
     fn location(&self) -> Option<String> {
         None
