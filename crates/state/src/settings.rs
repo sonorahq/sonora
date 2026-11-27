@@ -494,6 +494,8 @@ struct Values {
     lyrics_prefer_word_synced: bool,
     karaoke_lyrics: bool,
     blur_lyrics: bool,
+    /// Whether lyrics without timing scroll on their own over the length of the song.
+    scroll_plain_lyrics: bool,
     romanized_lyrics: bool,
     panel_lyrics_scale: f32,
     fullscreen_lyrics_scale: f32,
@@ -847,6 +849,7 @@ impl Default for Values {
             lyrics_prefer_word_synced: true,
             karaoke_lyrics: true,
             blur_lyrics: true,
+            scroll_plain_lyrics: true,
             romanized_lyrics: true,
             panel_lyrics_scale: DEFAULT_LYRICS_SCALE,
             fullscreen_lyrics_scale: DEFAULT_LYRICS_SCALE,
@@ -1409,6 +1412,10 @@ impl AppSettings {
 
     pub fn blur_lyrics(&self) -> bool {
         self.values.blur_lyrics
+    }
+
+    pub fn scroll_plain_lyrics(&self) -> bool {
+        self.values.scroll_plain_lyrics
     }
 
     pub fn romanized_lyrics(&self) -> bool {
@@ -2077,6 +2084,11 @@ impl AppSettings {
 
     pub fn set_blur_lyrics(&mut self, blur: bool, cx: &mut Context<Self>) {
         self.values.blur_lyrics = blur;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_scroll_plain_lyrics(&mut self, scroll: bool, cx: &mut Context<Self>) {
+        self.values.scroll_plain_lyrics = scroll;
         self.schedule_save(cx);
     }
 

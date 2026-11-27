@@ -102,6 +102,14 @@ const SETTLE: std::time::Duration = std::time::Duration::from_secs(4);
 const AWAY: std::time::Duration = std::time::Duration::from_secs(1);
 /// How far the place a put verse belongs may drift, in pixels, before the sheet is put again.
 const PUT_REST: f32 = 0.5;
+/// How long before the song ends a plain sheet scrolling along with it reaches its end.
+const PLAIN_TAIL: std::time::Duration = std::time::Duration::from_secs(10);
+/// How far a scrolling plain sheet may move between frames, in pixels, and still count as its
+/// own step rather than the reader's scroll.
+const PLAIN_REST: f32 = 0.5;
+/// The longest step, in pixels, a plain sheet following the song takes at once. A longer one,
+/// after a seek or a return to the song, glides there.
+const PLAIN_STEP: f32 = 2.;
 const INSTRUMENTAL_BREAK: std::time::Duration = std::time::Duration::from_secs(5);
 // karaoke sweep ceiling
 const KARAOKE_HZ: u32 = 45;
@@ -330,6 +338,12 @@ pub(crate) struct Aside {
     put: Option<(usize, Pixels)>,
     /// When the verses were last followed, which tells a sheet that was off screen for a while.
     drawn: std::time::Instant,
+    /// How far the reader scrolled a plain sheet away from where the song puts it, which it
+    /// keeps while it goes on scrolling at the song's pace.
+    plain_shift: Pixels,
+    /// Where a plain sheet scrolling with the song stood last frame, so a move between frames
+    /// tells the reader's scroll apart from the sheet's own.
+    plain_at: Option<Pixels>,
     context_menu: Option<ContextMenuState>,
     track_menu: ItemMenu,
     drop_gap: Option<usize>,
@@ -461,6 +475,8 @@ impl Aside {
             placing: false,
             put: None,
             drawn: std::time::Instant::now(),
+            plain_shift: Pixels::ZERO,
+            plain_at: None,
             context_menu: None,
             track_menu: ItemMenu::new(playlist_scrollbar, cx),
             drop_gap: None,
@@ -626,7 +642,9 @@ impl Aside {
         }
     }
 
-    fn sweep_karaoke(&mut self, window: &Window, cx: &mut Context<Self>) {
+    /// Asks for the next frame of something that moves on its own, the karaoke sweep or a plain
+    /// sheet scrolling with the song.
+    fn keep_moving(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.sweeping.is_some() {
             return;
         }
@@ -634,8 +652,8 @@ impl Aside {
             true => None,
             false => self.settings.read(cx).saver().interval(),
         };
-        // Rising letters move a pixel or two over a second, which only reads as smooth on every
-        // frame the display draws. A timer of its own beats against the display and stutters.
+        // Rising letters and a plain sheet move a pixel or two over a second, which only reads as
+        // smooth on every frame the display draws. A timer of its own beats against the display and stutters.
         if saved.is_none() && ui::motion::animates(cx) {
             window.request_animation_frame();
             return;
@@ -1332,6 +1350,19 @@ impl Aside {
             };
             self.pin_verse(focus, window, cx);
         }
+        let plain = state == LyricsState::Ready
+            && matches!(
+                self.lyrics.read(cx).current().map(|hit| &hit.lyrics),
+                Some(music::Lyrics::Plain { .. })
+            );
+        match plain && self.settings.read(cx).scroll_plain_lyrics() {
+            true => self.scroll_plain(position, singing, window, cx),
+            false if lines.is_none() => {
+                self.anchor_verse();
+                self.nudges = self.verse_bar.read(cx).nudges();
+            }
+            false => {}
+        }
 
         let verse_pad = verse * VERSE_SIDE_PADDING;
         let sheet_padding = theme.metrics.pad * 0.75;
@@ -1393,7 +1424,7 @@ impl Aside {
                             && primary_karaoke_visible(line, Some(index) == active_line, position)
                     })
                 {
-                    self.sweep_karaoke(window, cx);
+                    self.keep_moving(window, cx);
                 }
                 if self.previous_active_line != active_line {
                     if self.previous_active_line.is_some() {
@@ -2036,6 +2067,71 @@ impl Aside {
         self.rested = None;
         self.followed = None;
         self.nudged = None;
+        self.plain_shift = Pixels::ZERO;
+        self.plain_at = None;
+    }
+
+    /// Scrolls a plain sheet along with the song, so its end comes into view `PLAIN_TAIL` before
+    /// the song ends. A reader who scrolls it moves it off that place, and it goes on at the same
+    /// pace from where they left it until the follow button brings it back.
+    fn scroll_plain(
+        &mut self,
+        position: std::time::Duration,
+        singing: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (_, total) = self.playback.read(cx).shown_time(cx);
+        let (nudges, gliding, scroll) = {
+            let bar = self.verse_bar.read(cx);
+            (bar.nudges(), bar.gliding(), bar.scroll().clone())
+        };
+        // A new sheet is laid out only after this frame, so its reach is read again on the next.
+        if self.plain_at.is_none() {
+            window.request_animation_frame();
+        }
+        let reach = scroll.max_offset().y;
+        if reach <= Pixels::ZERO || total.is_zero() {
+            self.nudges = nudges;
+            self.plain_at = Some(Pixels::ZERO);
+            return;
+        }
+        let span = total.saturating_sub(PLAIN_TAIL);
+        let along = match span.is_zero() {
+            true => 1.,
+            false => (position.as_secs_f32() / span.as_secs_f32()).min(1.),
+        };
+        if singing && along < 1. {
+            self.keep_moving(window, cx);
+        }
+        let at = -scroll.offset().y;
+        let due = reach * along;
+        let stirred = self.nudges != nudges;
+        self.nudges = nudges;
+        // A wheel glide goes on moving the sheet for a while after the last nudge.
+        let moved = !self.pinned
+            && (gliding
+                || self
+                    .plain_at
+                    .is_some_and(|was| f32::from(at - was).abs() > PLAIN_REST));
+        if stirred || moved {
+            self.pinned = false;
+            self.plain_shift = at - due;
+            self.plain_at = Some(at);
+            return;
+        }
+        let goal = snapped((due + self.plain_shift).clamp(Pixels::ZERO, reach), window);
+        let gap = f32::from(goal - at).abs();
+        let glide = self.pinned
+            && gap > PLAIN_STEP
+            && px(gap) < scroll.bounds().size.height
+            && !cx.reduce_motion();
+        self.verse_bar.update(cx, |bar, _| match glide {
+            true => bar.aim(-goal, window),
+            false if gap > 0. => bar.place(-goal),
+            false => {}
+        });
+        self.plain_at = Some(goal);
     }
 
     /// Seeks to a verse and holds the panel on the row it was asked for. The

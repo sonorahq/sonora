@@ -343,6 +343,11 @@ impl Scrollbar {
         self.following = true;
     }
 
+    /// Whether a glide, the reader's wheel or an aim, is still moving the region.
+    pub fn gliding(&self) -> bool {
+        self.glide.gliding()
+    }
+
     pub fn goal(&self) -> Pixels {
         match &self.list {
             Some(list) => self.glide.goal(list).y,

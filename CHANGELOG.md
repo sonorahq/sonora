@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Lyrics without timing scroll on their own over the length of the song, so the last line shows ten seconds before it ends. Scroll them yourself and they carry on from there at the same pace until you press the follow button. Turn it off under Settings → Lyrics → Auto-scroll plain lyrics.
 - Search finds your local files while you are signed in to a streaming service, and marks each local song, album, playlist and artist with the same badge as the library.
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
 - Settings → Player bar has an Island option that floats the player bar as a rounded pill over the page in any layout, on wide windows only or whenever it fits, in the middle of the page or of the window. Every layout keeps it low with a thin progress line that opens with both times under the pointer, and it holds still while the pointer is on it, so its buttons stay put as a sidebar opens.
