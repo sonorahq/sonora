@@ -152,9 +152,9 @@ pub use swipe::{hold_swipe, swipe_pull, swiped};
 pub use switch::Switch;
 pub use table::{
     Activate, Cell, ColumnSpec, Deselect, Layout, Listing, MoveRowDown, MoveRowUp, Pending,
-    ROW_GROUP, Remove, RowMoves, SelectNext, SelectPrevious, Sort, Sorting, TABLE_CONTEXT, Table,
-    TableDelegate, TableEvent, TableSource, TableState, Toggle, Viewport, Width, clear_listing,
-    rank, show_listing, shown_listing, table,
+    ROW_GROUP, Remove, RowMoves, STACKED_LEADING, SelectNext, SelectPrevious, Sort, Sorting,
+    TABLE_CONTEXT, Table, TableDelegate, TableEvent, TableSource, TableState, Toggle, Viewport,
+    Width, clear_listing, rank, show_listing, shown_listing, table,
 };
 pub use tabs::{TabBar, Tabs};
 pub use theme::{

@@ -15,7 +15,7 @@ use router::{Destination, Link as _, navigate};
 use state::{Playback, Sonora};
 use ui::{
     ActiveTheme as _, Artwork, Avatar, Badge, Cell, InlineLink, InlineLinks, Pin, PinKind,
-    Pinnable, ROW_GROUP, Text, Theme, clock, tabular,
+    Pinnable, ROW_GROUP, STACKED_LEADING, Text, Theme, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -28,9 +28,6 @@ const PAUSE: &str = "icons/pause.svg";
 const UNAVAILABLE: &str = "icons/play-off.svg";
 const HOVER_PRELOAD_DELAY: Duration = Duration::from_millis(200);
 const PERSON: &str = "icons/user.svg";
-/// The line height of a title and the artists under it, tighter than body text so the two read
-/// as one entry.
-const STACKED_LEADING: f32 = 1.1;
 
 pub(crate) type Tap = Box<dyn Fn(&mut App)>;
 
