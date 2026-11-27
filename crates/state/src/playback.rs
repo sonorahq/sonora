@@ -2820,11 +2820,14 @@ impl Playback {
     }
 
     /// Ends an end-of-track sleep request once its track has ended, holding the next track
-    /// paused, and says so on a toast.
+    /// paused, and says so on a toast. It counts as a pause press, so the play a gapless join
+    /// already sent for the next track is dropped rather than reported as a new listen.
     fn doze(&mut self, cx: &mut Context<Self>) {
         Toasts::show(Outcome::Info, "toast-sleep-ended", cx);
         self.sleep = None;
         self.sleep_task = None;
+        self.intent = Intent::Pause;
+        self.pressed = Some(Instant::now());
         self.fetch = None;
         let Some(track) = self.playable_next(cx) else {
             return self.finish_queue(cx);

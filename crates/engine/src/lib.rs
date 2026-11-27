@@ -218,6 +218,9 @@ enum Command {
         id: String,
         segue: bool,
     },
+    /// Take back the gapless join lined up behind the current track. A join the decoder has
+    /// already crossed stays, and the load that follows replaces it.
+    Unline,
     Play,
     Pause,
     Seek(Duration),
@@ -251,6 +254,8 @@ enum Job<F: Fetch> {
         id: String,
         loaded: F::Loaded,
     },
+    /// Drop the track `Queue` lined up, so the current one ends with nothing after it.
+    Unqueue,
     /// Drop whatever is decoding and hold the output silent. A load sends this before it waits
     /// on the fetch, so the track being replaced cannot be heard again whatever happens next.
     Stop,
@@ -301,6 +306,10 @@ impl Player for Handle {
                 segue,
             })
             .context("cannot reach the playback engine")
+    }
+
+    fn unline(&self) {
+        self.commands.send(Command::Unline).ok();
     }
 
     fn play(&self) {
@@ -659,6 +668,14 @@ async fn engine_loop<F: Fetch>(
                                 });
                             }
                         }
+                    }
+                    Command::Unline => {
+                        segued = None;
+                        waiting = None;
+                        if let Some(pending) = preloading.as_mut() {
+                            pending.segue = false;
+                        }
+                        jobs.send(Job::Unqueue).ok();
                     }
                     Command::Play => {
                         wanted = true;
@@ -1237,7 +1254,11 @@ fn audio_loop<F: Fetch>(
                         }
                     }
                 }
+                // The decoder already crossed onto this track, which an unline that came too
+                // late to stop the join can line up a second time.
+                Job::Queue { id, .. } if current.as_ref().is_some_and(|held| held.id == id) => {}
                 Job::Queue { id, loaded } => queued = Some((id, loaded)),
+                Job::Unqueue => queued = None,
                 Job::Stop => {
                     current = None;
                     queued = None;
