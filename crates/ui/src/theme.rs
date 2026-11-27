@@ -45,6 +45,9 @@ pub const COMPOSITOR_OPACITY: bool = cfg!(any(target_os = "linux", target_os = "
 /// it holds the least and still lands in the same place.
 const SURFACE_FLOOR: f32 = 0.2;
 const HEADER_FLOOR: f32 = 0.15;
+/// What the chrome's edges keep once the window is fully see-through. The fills they part
+/// are gone by then, so a faint line is all that still shows where the sheet lies.
+const EDGE_FLOOR: f32 = 0.2;
 
 /// How much of a fill's alpha survives on a see-through window before the
 /// slider takes its share. A surface reads denser than its own alpha because the
@@ -841,15 +844,16 @@ impl Theme {
     ///
     /// `opacity` is what the window itself keeps. The page background and the
     /// chrome's follow it all the way down, so each still paints its own part of
-    /// the window once; anything painted *over* them — a field, a
-    /// card, a hover — keeps a floor, because those read as layers above the
-    /// glass and have to stay legible once the glass is gone entirely. The
-    /// table head is flattened first: it is a tint meant to sit on an opaque
-    /// page, and veiling the two layers separately is what makes it read solid.
+    /// the window once. The edges between them fade with them down to a faint
+    /// line. Anything painted over them, such as a field, a card or a hover, keeps
+    /// a floor, because it reads as a layer above the glass and has to stay
+    /// legible once the glass is gone. The table head is flattened first, since it
+    /// is a tint meant to sit on an opaque page and veiling the two layers
+    /// separately makes it read solid.
     ///
-    /// `popover` is deliberately left out. A menu, a modal or a toast covers
-    /// content rather than wallpaper, so thinning it only lets the page bleed
-    /// through the thing that was raised to be read.
+    /// `popover` is left out. A menu, a modal or a toast covers content rather
+    /// than wallpaper, so thinning it only lets the page bleed through the thing
+    /// that was raised to be read.
     fn see_through(&mut self, opacity: f32) {
         let clearing = clearing(opacity);
         let weight = |full: f32| 1. - (1. - full) * clearing;
@@ -863,6 +867,8 @@ impl Theme {
 
         self.background = veil(self.background, opacity, 0.);
         self.sidebar = veil(self.sidebar, opacity, 0.);
+        self.sidebar_border = veil(self.sidebar_border, opacity, EDGE_FLOOR);
+        self.title_bar_border = veil(self.title_bar_border, opacity, EDGE_FLOOR);
 
         for surface in [
             &mut self.sidebar_accent,
