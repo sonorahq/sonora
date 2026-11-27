@@ -11,6 +11,7 @@ settings-player-bar-layout = Layout
 settings-player-bar-layout-detail = Arrange the track information, playback controls and progress bar
 settings-player-bar-classic = Classic
 settings-player-bar-compact = Compact
+settings-player-bar-compact-needs-bar = The island is already as low as Compact. Turn off Island to use it
 settings-player-bar-centered = Centered
 settings-player-bar-minimal = Minimal
 settings-player-bar-island = Island

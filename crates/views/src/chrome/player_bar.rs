@@ -919,8 +919,8 @@ impl PlayerBar {
 
     /// Lays `parts` out in `base`, already sized and padded with `row` across inside, the way
     /// the layout lays them out at this width. `slim` is how far the island's slim seek line has
-    /// opened, which the classic middle sets under its transport and the compact row low in the
-    /// pill, and `None` along the window's foot.
+    /// opened, which the classic middle sets under its transport, and `None` along the window's
+    /// foot.
     fn lay_out(
         base: Stateful<Div>,
         parts: BarParts,
@@ -970,21 +970,9 @@ impl PlayerBar {
                 .gap_3()
                 .child(now_playing.max_w(theme.metrics.cover * 1.6))
                 .child(transport)
-                .child(match slim {
-                    // The island's slim line keeps the inset under it that it has under the
-                    // other layouts' controls, so it stands as low in every pill and its clocks
-                    // have room over it.
-                    Some(_) => div()
-                        .flex()
-                        .flex_col()
-                        .justify_end()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .pb(theme.metrics.pad * MINIMAL_INSET)
-                        .child(Self::slim_line(seek, cx)),
-                    None => div().flex_1().min_w_0().child(seek),
-                })
+                // The compact row never floats, since the settings lay it out as classic while
+                // the bar may, so its seek bar is always the full one.
+                .child(div().flex_1().min_w_0().child(seek))
                 .children(tools)
                 .child(sound)
                 .child(corner),
@@ -994,11 +982,16 @@ impl PlayerBar {
                 let (middle, _) = Self::classic(row, window, Self::tool_count(window, cx), cx);
                 let column = div().flex().flex_col().items_center().flex_none().w(middle);
                 let column = match slim {
+                    // In the island the transport stands in the middle of the room over the
+                    // slim line rather than right on it, clear of the line and the pill's top
+                    // alike.
                     Some(_) => column
                         .h_full()
-                        .justify_end()
                         .pb(theme.metrics.pad * MINIMAL_INSET)
-                        .child(under_line(div().flex_none().child(transport), slim))
+                        .child(under_line(
+                            div().flex().flex_1().items_center().child(transport),
+                            slim,
+                        ))
                         .child(Self::slim_line(seek, cx)),
                     None => column.gap_1().child(transport).child(seek),
                 };
@@ -1087,8 +1080,10 @@ impl Render for PlayerBar {
                 None
             }
         };
+        // The compact row is too low for the seek bar's bubble to stand its usual height over it.
+        let low = layout == PlayerBarLayout::Compact && !stacked;
         self.timeline
-            .update(cx, |timeline, cx| timeline.spread(opened, cx));
+            .update(cx, |timeline, cx| timeline.spread(opened, low, cx));
         let seek = self.timeline.clone();
 
         let base = Self::surface(

@@ -1612,9 +1612,16 @@ impl AppSettings {
         self.values.appearance.adaptive_theme
     }
 
-    /// The arrangement of the workspace's playback controls. Unknown saved ids use Classic.
+    /// The arrangement of the workspace's playback controls. Unknown saved ids use Classic, and
+    /// so does Compact while the bar may float as an island, which is as low in every layout.
+    /// Compact stays saved and comes back once the island is off.
     pub fn player_bar_layout(&self) -> PlayerBarLayout {
-        PlayerBarLayout::from_id(&self.values.appearance.player_bar_layout)
+        match PlayerBarLayout::from_id(&self.values.appearance.player_bar_layout) {
+            PlayerBarLayout::Compact if self.player_bar_island() != PlayerBarIsland::Off => {
+                PlayerBarLayout::Classic
+            }
+            layout => layout,
+        }
     }
 
     /// When the player bar floats as an island. Unknown saved ids keep the bar.
