@@ -467,6 +467,15 @@ pub trait MusicApi: Send + Sync {
         anyhow::bail!("playlist pagination is not supported")
     }
 
+    /// Whether `playlist_id` is a playlist the provider never ends, as an Apple Music station
+    /// read as a playlist. Playing one goes on through `collection_radio` with
+    /// `RadioSeed::Playlist` rather than stopping after the stretch `playlist_tracks` lists, so
+    /// a provider that answers `true` for an id must answer that call for it too. Tracks started
+    /// from the playlist's page continue with the playlist id itself as the continuation.
+    fn endless(&self, _playlist_id: &str) -> bool {
+        false
+    }
+
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>>;
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>>;
 

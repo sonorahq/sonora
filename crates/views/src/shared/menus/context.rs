@@ -1117,6 +1117,14 @@ pub(crate) fn artist_menu(
 /// The tiles of a playlist menu: the heart that keeps someone else's playlist in the library,
 /// the download and the pin.
 fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
+    // A station can only be pinned: it is kept nowhere and has no end to download.
+    if Sonora::global(cx).session.read(cx).endless(&playlist.id) {
+        return playlist
+            .pin()
+            .map(|pin| pin_tile(pin, cx))
+            .into_iter()
+            .collect();
+    }
     let kept = (!playlist.owned).then(|| {
         let saved = Sonora::global(cx)
             .library
@@ -1154,13 +1162,18 @@ fn playlist_tiles(playlist: &Playlist, cx: &App) -> Vec<Tile> {
 /// queue, the owner's edits and the link.
 pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: &App) -> Menu {
     let from = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
-    let radio = radio_item(
-        RadioSeed::Playlist,
-        &playlist.id,
-        playlist.name.clone(),
-        &playback,
-        cx,
-    );
+    // A station is a radio already, and one built from it would play other songs.
+    let station = Sonora::global(cx).session.read(cx).endless(&playlist.id);
+    let radio = match station {
+        true => None,
+        false => radio_item(
+            RadioSeed::Playlist,
+            &playlist.id,
+            playlist.name.clone(),
+            &playback,
+            cx,
+        ),
+    };
     let copied = playlist.id.clone();
     let id = playlist.id.clone();
     let public = playlist.public;
@@ -1248,7 +1261,11 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     sections(
         item_shell("playlist-context-menu", tiles),
         vec![
-            open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
+            // A station plays rather than opens, as in the provider's own app.
+            match station {
+                true => Vec::new(),
+                false => open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
+            },
             radio
                 .into_iter()
                 .chain(collection_queue_items(from, playback))
@@ -1343,6 +1360,9 @@ pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
 }
 
 fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
+    // A station plays rather than opens, as in the provider's own app, and is a radio already.
+    let station =
+        pin.kind == PinKind::Playlist && Sonora::global(cx).session.read(cx).endless(&pin.id);
     let destination = Destination::from(pin);
     let copied = pin.id.clone();
     let kind = media_kind(pin.kind);
@@ -1353,8 +1373,11 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
     sections(
         Menu::new("pin-context-menu").min_w(ITEM_MENU_WIDTH),
         vec![
-            vec![open],
-            transport_items(pin, playback, cx),
+            match station {
+                true => Vec::new(),
+                false => vec![open],
+            },
+            transport_items(pin, station, playback, cx),
             vec![copy_link_item("copy-pin-link", kind, Some(&copied), cx)],
             vec![pin_action(pin, cx)],
         ],
@@ -1412,10 +1435,18 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<Men
     .collect()
 }
 
-fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
+/// What a pin's menu offers for playing it. A `station` gets no radio of its own, since one
+/// built from it would play other songs.
+fn transport_items(
+    pin: &Pin,
+    station: bool,
+    playback: Entity<Playback>,
+    cx: &App,
+) -> Vec<MenuItem> {
     let played = Origin::from(pin);
     let seed = match pin.kind {
         PinKind::Album => Some(RadioSeed::Album),
+        PinKind::Playlist if station => None,
         PinKind::Playlist => Some(RadioSeed::Playlist),
         PinKind::Artist => Some(RadioSeed::Artist),
         PinKind::Song | PinKind::Liked => None,

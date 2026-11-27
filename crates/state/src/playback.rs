@@ -466,6 +466,12 @@ impl Origin {
     ) -> Result<(Vec<Track>, Option<String>)> {
         let tracks = match self.whence {
             Whence::Album => client.album_tracks(&self.id).await?,
+            // A playlist that never ends is a station, and plays on like one.
+            Whence::Playlist if client.endless(&self.id) => {
+                let (mut tracks, next) = self.station(client, capabilities, None).await?;
+                tracks.retain(|track| track.playable);
+                return Ok((tracks, next));
+            }
             Whence::Playlist => client.playlist_tracks(&self.id).await?,
             Whence::Artist => client.artist_tracks(&self.id).await?,
             Whence::Saved => client.saved_tracks().await?,
@@ -486,8 +492,9 @@ impl Origin {
     }
 
     /// The stretch of the station this origin names, from its start or from the continuation
-    /// `from`. Only a radio is a station. `capabilities` decide whether a collection's radio comes
-    /// from the provider or is blended from track radios.
+    /// `from`. Only a radio, or a playlist the provider never ends, is a station. `capabilities`
+    /// decide whether a collection's radio comes from the provider or is blended from track
+    /// radios.
     async fn station(
         &self,
         client: &dyn MusicApi,
@@ -498,6 +505,11 @@ impl Origin {
             Whence::CollectionRadio(seed) => {
                 let native = capabilities.collection_radio.contains(&seed);
                 station::collection_radio(client, seed, &self.id, native, from).await
+            }
+            Whence::Playlist => {
+                client
+                    .collection_radio(RadioSeed::Playlist, &self.id, from)
+                    .await
             }
             _ => client.track_radio(&self.id, from).await,
         }
@@ -1312,7 +1324,8 @@ impl Playback {
         }));
     }
 
-    /// Replaces the queue with `tracks` and plays the one at `index`.
+    /// Replaces the queue with `tracks` and plays the one at `index`. Tracks from a playlist the
+    /// provider never ends play on as its station once they run low.
     pub fn start(
         &mut self,
         tracks: Vec<Track>,
@@ -1321,11 +1334,29 @@ impl Playback {
         cx: &mut Context<Self>,
     ) {
         self.fetch = None;
-        self.begin(tracks, index, origin, cx);
+        let station = origin
+            .as_ref()
+            .and_then(|origin| self.endless_station(origin, cx));
+        if self.begin(tracks, index, origin, cx) {
+            self.station = station;
+        }
+    }
+
+    /// The station a playlist the provider never ends goes on as, continued from its own id
+    /// as `MusicApi::endless` promises.
+    fn endless_station(&self, origin: &Origin, cx: &Context<Self>) -> Option<Station> {
+        if origin.whence != Whence::Playlist {
+            return None;
+        }
+        let client = self.client_for(&origin.id, cx)?;
+        client
+            .endless(&origin.id)
+            .then(|| Station::of(origin.clone(), origin.id.clone()))
     }
 
     /// Replaces the queue with `tracks` and plays the one at `index` here from `at`, as another
-    /// device handed it over. A seek after `start` would be lost while the track loads.
+    /// device handed it over. A seek after `start` would be lost while the track loads. A
+    /// station handed over plays on here as it did there.
     pub(crate) fn start_at(
         &mut self,
         tracks: Vec<Track>,
@@ -1335,6 +1366,9 @@ impl Playback {
         cx: &mut Context<Self>,
     ) {
         self.fetch = None;
+        let station = origin
+            .as_ref()
+            .and_then(|origin| self.endless_station(origin, cx));
         let Some(track) = self
             .queue
             .update(cx, |queue, cx| queue.start(tracks, index, origin, cx))
@@ -1342,6 +1376,7 @@ impl Playback {
             return;
         };
         self.leave_station();
+        self.station = station;
         self.load_from(&track, at, Start::Pick, cx);
     }
 
@@ -1787,19 +1822,25 @@ impl Playback {
         self.enqueue = Some(Io::global(cx).load(
             async move {
                 match from {
-                    Some(origin) => origin
-                        .load(&*client, capabilities)
-                        .await
-                        .map(|(tracks, _)| tracks),
-                    None => client.track(&id).await.map(|track| vec![track]),
+                    Some(origin) => origin.load(&*client, capabilities).await,
+                    None => client.track(&id).await.map(|track| (vec![track], None)),
                 }
             },
             move |this, loaded, cx| {
                 this.enqueue = None;
                 match loaded {
-                    Ok(tracks) => {
+                    Ok((tracks, next)) => {
                         let count = tracks.len();
-                        let placed = this.place(tracks, origin, placement, cx);
+                        let starts = this.queue.read(cx).current().is_none();
+                        let placed = this.place(tracks, origin.clone(), placement, cx);
+                        // Placed into an empty queue, a station starts it and plays on, as
+                        // it would from its Play button. Placed behind other tracks, it is
+                        // only the stretch it brought.
+                        if let (true, Some(origin), Some(next)) = (starts, origin, next)
+                            && this.origin(cx) == Some(&origin)
+                        {
+                            this.station = Some(Station::of(origin, next));
+                        }
                         if let Some(key) = placed.and_then(|placed| placed.toast(source)) {
                             Toasts::post(Toast::new(Outcome::Done, key).count(count), cx);
                         }
@@ -2739,6 +2780,12 @@ impl Playback {
         let Some(track) = self.queue.update(cx, |queue, cx| queue.revive(resume, cx)) else {
             return;
         };
+        // The saved queue keeps no continuation, but a station needs none to go on: it
+        // continues from its own id, so it is found again from the origin it was saved with.
+        self.station = self
+            .origin(cx)
+            .cloned()
+            .and_then(|origin| self.endless_station(&origin, cx));
         self.track = Some(track);
         self.state = PlaybackState::Paused;
         self.position = at;

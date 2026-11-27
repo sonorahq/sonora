@@ -243,6 +243,16 @@ impl Session {
         self.client.clone()
     }
 
+    /// Whether `id` is a playlist the provider never ends, a station. It plays on as one, and
+    /// it cannot be kept, downloaded or made into a radio, since it is one already.
+    pub fn endless(&self, id: &str) -> bool {
+        !music::is_local_id(id)
+            && self
+                .client
+                .as_ref()
+                .is_some_and(|client| client.endless(id))
+    }
+
     /// Whether Offline was selected as the music source. Streaming accounts remain stored.
     pub fn local_only(&self) -> bool {
         self.local_only

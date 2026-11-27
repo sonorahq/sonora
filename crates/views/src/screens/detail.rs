@@ -467,8 +467,14 @@ impl DetailView {
         let owner_name = header.and_then(|header| header.owner_name.clone());
         let track_count = header.map(|header| header.track_count).unwrap_or(0);
         let listed = self.detail.read(cx).tracks();
-        let duration: std::time::Duration = listed.iter().map(|track| track.duration).sum();
+        // A station's rows are only its next stretch, so their sum says nothing about it.
+        let station = self.detail.read(cx).station(cx);
+        let duration: std::time::Duration = match station {
+            true => std::time::Duration::ZERO,
+            false => listed.iter().map(|track| track.duration).sum(),
+        };
         let eyebrow = match kind {
+            Collection::Playlist if station => t!("kind-station"),
             Collection::Playlist => t!("kind-playlist"),
             Collection::Album => i18n::lookup(cards::release_key(release), None),
         };
@@ -514,6 +520,11 @@ impl DetailView {
             play = play.load_origin(None);
             shuffle = shuffle.load_origin(None);
         }
+        // A station lists nothing, so Play starts the station itself, and there is nothing
+        // to shuffle.
+        if station && let Some(id) = self.detail.read(cx).id() {
+            play = play.load_origin(Some(Origin::playlist(id.to_owned()).named(title.clone())));
+        }
         let menu = self.menu(cx);
         // Buttons whose action the overflow menu also offers fold into it from the right when
         // the row runs out of room, Download first and Shuffle last. Play and More always show.
@@ -533,12 +544,14 @@ impl DetailView {
                 true
             }
         };
-        let (shuffle, folded) = match fits() {
-            true => (Some(shuffle), None),
-            false => (None, Some(shuffle.shuffle_item(cx))),
+        let (shuffle, folded) = match (station, fits()) {
+            (true, _) => (None, None),
+            (false, true) => (Some(shuffle), None),
+            (false, false) => (None, Some(shuffle.shuffle_item(cx))),
         };
-        let library = self.library_button(cx).filter(|_| fits());
-        let download = self.download_button(cx).filter(|_| fits());
+        // A station keeps nothing in the library and has no end to download.
+        let library = self.library_button(cx).filter(|_| !station && fits());
+        let download = self.download_button(cx).filter(|_| !station && fits());
         let overflow = menu.map(|menu| {
             Picker::icon("detail-overflow", &self.popovers, "icons/ellipsis.svg")
                 .tooltip("common-more")
@@ -960,6 +973,7 @@ impl Render for DetailView {
             weak.update(cx, |_, cx| cx.notify()).ok();
         });
         let rails = self.recommended(window, &notify, cx);
+        let station = self.detail.read(cx).station(cx);
 
         div()
             .relative()
@@ -973,7 +987,11 @@ impl Render for DetailView {
                     .pt(inset)
                     .pb(inset)
                     .child(div().px(inset).child(self.header(window, cx)))
-                    .child(page::bleed(table(&self.table), framed, cx))
+                    // A station has no list, as in Apple's own app: what it plays is only
+                    // decided as it plays.
+                    .when(!station, |this| {
+                        this.child(page::bleed(table(&self.table), framed, cx))
+                    })
                     .children(self.notices(cx))
                     .child(div().px(inset).pt_10().children(rails)),
             )

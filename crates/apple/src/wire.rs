@@ -1056,6 +1056,29 @@ pub fn playlist(value: &Resource) -> Option<Playlist> {
     })
 }
 
+/// A station, read as the playlist the client opens stations as: endless, so it has no length,
+/// and nothing on it can be changed.
+pub fn station(value: &Resource) -> Option<Playlist> {
+    let id = value.id.as_str()?;
+    let attributes = value.attributes.as_ref()?;
+    Some(Playlist {
+        revision: None,
+        id: id.to_owned(),
+        name: text(&attributes.name)?,
+        owner: "Apple Music".to_owned(),
+        owner_id: "Apple Music".to_owned(),
+        owned: false,
+        collaborative: false,
+        blend: false,
+        public: true,
+        cover: artwork(attributes, ART),
+        // Zero leaves the count off the page.
+        track_count: 0,
+        modified_at: None,
+        read_only: true,
+    })
+}
+
 /// One of the listener's own playlists.
 pub fn library_playlist(value: &Resource, owner: &str) -> Option<Playlist> {
     let id = value.id.as_str()?;

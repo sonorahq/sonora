@@ -23,7 +23,8 @@ use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Found, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Page, Pages, PinOutcome,
-    PinTarget, PinTargetKind, Playlist, PlaylistDetail, SavedArtist, Track, UserProfile, escape,
+    PinTarget, PinTargetKind, Playlist, PlaylistDetail, RadioSeed, SavedArtist, Track, UserProfile,
+    escape,
 };
 use serde::de::IgnoredAny;
 use serde_json::Value;
@@ -149,6 +150,9 @@ const STATION: usize = 10;
 
 /// How many of those requests make a queue worth having behind a track.
 const STATION_PULLS: usize = 3;
+
+/// What a song's station id starts with, the song's catalog id following.
+const SONG_STATION: &str = "ra.cp-";
 
 /// How many times one read is sent before its failure belongs to the caller.
 ///
@@ -547,6 +551,7 @@ impl AppleClient {
                 Some("playlists") | Some("library-playlists") => {
                     wire::playlist(row).map(GenreItem::Playlist)
                 }
+                Some("stations") => wire::station(row).map(GenreItem::Playlist),
                 _ => None,
             })
             .collect())
@@ -1116,6 +1121,67 @@ impl AppleClient {
         matches!(letters.next(), Some('i' | 'l' | 'r' | 'p')) && letters.next() == Some('.')
     }
 
+    /// Whether an id names a station, read here as a playlist that never ends: an editorial
+    /// station (`ra.978194965`) or a listener's own (`ra.u-…`).
+    pub(crate) fn is_station(id: &str) -> bool {
+        id.starts_with("ra.")
+    }
+
+    /// A station's name and picture, as the playlist its page is drawn as. Apple lists editorial
+    /// stations in the catalog but may not list a listener's own, so a station it does not
+    /// describe still opens, under a plain name and with no picture of its own.
+    async fn station_about(&self, station_id: &str) -> Playlist {
+        let path = self.catalog(&format!("/stations/{}", escape::component(station_id)));
+        let found = match self.get(&path, &[]).await {
+            Ok(body) => {
+                let answered: wire::Answer = wire::answer(&body);
+                answered.data.first().and_then(wire::station)
+            }
+            Err(error) => {
+                log::debug!("apple: the catalog does not describe station {station_id}: {error:#}");
+                None
+            }
+        };
+        found.unwrap_or_else(|| Playlist {
+            id: station_id.to_owned(),
+            name: "Station".to_owned(),
+            owner: "Apple Music".to_owned(),
+            owner_id: "Apple Music".to_owned(),
+            owned: false,
+            collaborative: false,
+            blend: false,
+            public: true,
+            cover: None,
+            track_count: 0,
+            modified_at: None,
+            read_only: true,
+            revision: None,
+        })
+    }
+
+    /// The next stretch of a station, a few requests long since Apple hands out ten tracks at a
+    /// time. A station is free to come back to a song, so repeats within the stretch are dropped.
+    async fn station_stretch(&self, station_id: &str) -> Result<Vec<Track>> {
+        // A song's station, as recent plays list it, answers only once it is built again from
+        // its song, which is what a track's radio does.
+        if let Some(song) = station_id.strip_prefix(SONG_STATION) {
+            let (tracks, _) = <Self as MusicApi>::track_radio(self, song, None).await?;
+            return Ok(tracks);
+        }
+        let mut tracks = Vec::new();
+        for _ in 0..STATION_PULLS {
+            let more = self.station_tracks(station_id).await?;
+            if more.is_empty() {
+                break;
+            }
+            tracks.extend(more);
+        }
+        let mut seen = HashSet::new();
+        tracks.retain(|track| track.id.as_ref().is_some_and(|id| seen.insert(id.clone())));
+        log::debug!("apple: station {station_id} gave {} tracks", tracks.len());
+        Ok(tracks)
+    }
+
     /// Builds the station a track seeds and reads its first tracks.
     ///
     /// This is what the web player's autoplay calls, and the only way Apple hands out the
@@ -1333,6 +1399,7 @@ impl MusicApi for AppleClient {
             MediaKind::Track => "song",
             MediaKind::Album => "album",
             MediaKind::Artist => "artist",
+            MediaKind::Playlist if Self::is_station(id) => "station",
             MediaKind::Playlist => "playlist",
         };
         // A library id means nothing to anyone else.
@@ -1746,6 +1813,10 @@ impl MusicApi for AppleClient {
         let (kind, id) = rest
             .split_once(':')
             .context("cannot pin an item without a kind")?;
+        // Apple keeps no stations in the library, so a station is only ever pinned here.
+        if Self::is_station(id) {
+            return Ok(PinOutcome::Outside);
+        }
         let kind = match kind {
             "playlist" => "playlists",
             "album" => "albums",
@@ -1963,7 +2034,17 @@ impl MusicApi for AppleClient {
         Ok(found)
     }
 
+    /// A playlist, or a station wearing a playlist's id. A station's page is only its name and
+    /// picture, as in Apple's own app: what it plays is decided as it plays, through
+    /// `collection_radio`, so no list could say what comes.
     async fn playlist(&self, playlist_id: &str) -> Result<PlaylistDetail> {
+        if Self::is_station(playlist_id) {
+            return Ok(PlaylistDetail {
+                playlist: self.station_about(playlist_id).await,
+                tracks: Vec::new(),
+                continuation: None,
+            });
+        }
         let mine = Self::is_mine(playlist_id);
         let path = match mine {
             true => format!("/me/library/playlists/{}", escape::component(playlist_id)),
@@ -2000,6 +2081,9 @@ impl MusicApi for AppleClient {
     /// The rows skip the listing memo, since startup reads every playlist at once and only the
     /// tracks read from them are used.
     async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        if Self::is_station(playlist_id) {
+            return self.station_stretch(playlist_id).await;
+        }
         let path = match Self::is_mine(playlist_id) {
             true => format!(
                 "/me/library/playlists/{}/tracks",
@@ -2040,6 +2124,13 @@ impl MusicApi for AppleClient {
     }
 
     async fn playlist_covers(&self, playlist_id: &str, wanted: usize) -> Result<Vec<String>> {
+        if Self::is_station(playlist_id) {
+            if let Some(cover) = self.station_about(playlist_id).await.cover {
+                return Ok(vec![cover]);
+            }
+            let tracks = self.station_stretch(playlist_id).await?;
+            return Ok(music::distinct_covers(&tracks, wanted));
+        }
         let path = match Self::is_mine(playlist_id) {
             true => format!(
                 "/me/library/playlists/{}/tracks",
@@ -2121,12 +2212,18 @@ impl MusicApi for AppleClient {
     }
 
     async fn add_playlist_to_library(&self, playlist_id: &str) -> Result<()> {
+        if Self::is_station(playlist_id) {
+            bail!("apple music keeps no stations in the library");
+        }
         self.post("/me/library", &[("ids[playlists]", playlist_id)], None)
             .await
             .map(|_| ())
     }
 
     async fn remove_playlist_from_library(&self, playlist_id: &str) -> Result<()> {
+        if Self::is_station(playlist_id) {
+            bail!("apple music keeps no stations in the library");
+        }
         let id = match Self::is_mine(playlist_id) {
             true => Some(playlist_id.to_owned()),
             false => self.mine("playlists", playlist_id).await?,
@@ -2235,6 +2332,7 @@ impl MusicApi for AppleClient {
                     .iter()
                     .filter_map(|row| match row.kind.as_str() {
                         Some("playlists") => wire::playlist(row).map(GenreItem::Playlist),
+                        Some("stations") => wire::station(row).map(GenreItem::Playlist),
                         Some("albums") => wire::album(row).map(GenreItem::Album),
                         _ => None,
                     })
@@ -2348,6 +2446,27 @@ impl MusicApi for AppleClient {
             .iter()
             .flat_map(wire::Relation::rows)
             .find_map(|row| wire::album(row)?.cover))
+    }
+
+    fn endless(&self, playlist_id: &str) -> bool {
+        Self::is_station(playlist_id)
+    }
+
+    /// A station opened as a playlist, a stretch at a time. A station never ends, so the
+    /// continuation is always there; the queue stops asking once stretches come back empty.
+    /// Apple builds no radio from any other collection, so the capabilities list none and
+    /// nothing else is asked here.
+    async fn collection_radio(
+        &self,
+        seed: RadioSeed,
+        id: &str,
+        _from: Option<&str>,
+    ) -> Result<(Vec<Track>, Option<String>)> {
+        if seed != RadioSeed::Playlist || !Self::is_station(id) {
+            bail!("apple music builds no radio from a collection");
+        }
+        let tracks = self.station_stretch(id).await?;
+        Ok((tracks, Some(id.to_owned())))
     }
 
     /// The station a track seeds, as a queue's worth of tracks.
