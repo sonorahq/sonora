@@ -926,7 +926,11 @@ impl Downloads {
                 let applied = this.update(cx, |this, cx| match listed {
                     Ok(detail) => this.catch_up(detail, cx),
                     Err(error) => {
-                        log::warn!("downloads: cannot list playlist {id} again: {error:#}")
+                        log::warn!("downloads: cannot list playlist {id} again: {error:#}");
+                        crate::noted(&error, cx);
+                        if music::trouble::offline(&format!("{error:#}")) {
+                            this.owed.push_front(id);
+                        }
                     }
                 });
                 if applied.is_err() {
@@ -938,7 +942,8 @@ impl Downloads {
 
     /// The next owed playlist that is still downloaded, with the catalog to list it from. When
     /// none is left the sync ends in the same update, so a playlist owed later starts a new one.
-    /// A playlist whose first listing is still running is skipped, since that one is fresh.
+    /// A playlist whose first listing is still running is skipped, since that one is fresh. The
+    /// rest stay owed while the network is gone or the account is not signed in yet.
     fn next_owed(&mut self, cx: &mut Context<Self>) -> Option<(String, Arc<CatalogSource>)> {
         while !Network::lost(cx) {
             let Some(id) = self.owed.pop_front() else {
@@ -950,7 +955,8 @@ impl Downloads {
                 continue;
             }
             let Some(catalog) = self.session.read(cx).catalog(&id) else {
-                continue;
+                self.owed.push_front(id);
+                break;
             };
             return Some((id, catalog));
         }
@@ -967,6 +973,9 @@ impl Downloads {
             return;
         };
         let (id, fresh) = playlist_set(detail);
+        if self.fetching.contains_key(&id) {
+            return;
+        }
         let key = (Collection::Playlist, id.clone());
         let Some(set) = self.sets.get(&key) else {
             return;
@@ -997,7 +1006,7 @@ impl Downloads {
             })
             .cloned()
             .collect();
-        for track in fresh.tracks.iter().filter(|track| downloadable(track)) {
+        for track in &added {
             self.enlist(track, false);
         }
         if !added.is_empty() || !gone.is_empty() {
