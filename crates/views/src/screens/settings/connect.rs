@@ -102,7 +102,11 @@ impl SettingsView {
 /// Whether the signed-in provider is Jellyfin, whose device list is its remote control and
 /// takes its device name from the sign-in.
 pub(super) fn jellyfin(cx: &App) -> bool {
-    Sonora::global(cx).session.read(cx).provider_slug() == Some("jellyfin")
+    Sonora::global(cx)
+        .session
+        .read(cx)
+        .provider_slug()
+        .is_some_and(|slug| music::credentials::kind(slug) == "jellyfin")
 }
 
 /// Whether the signed-in provider is YouTube, whose device list is the Cast devices on the

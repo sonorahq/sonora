@@ -2,6 +2,7 @@ use gpui::prelude::*;
 use gpui::{AnyElement, Context, SharedString, div};
 use i18n::{Language, t};
 use router::Screen;
+use state::ProviderInfo;
 use ui::{Button, MenuItem, Picker, Saver, Switch};
 
 use super::{Group, LANGUAGES, SettingsView, Slot};
@@ -56,14 +57,44 @@ impl SettingsView {
             .session
             .read(cx)
             .providers()
-            .map(|provider| (provider.slug, provider.name))
+            // every kept account, and a provider with none under its own slug
+            .filter(|provider| provider.stored || !provider.spare)
+            .fold(Vec::new(), |mut listed: Vec<ProviderInfo>, provider| {
+                let open = !provider.stored
+                    && listed
+                        .iter()
+                        .any(|shown| shown.kind == provider.kind && !shown.stored);
+                if !open {
+                    listed.push(provider);
+                }
+                listed
+            })
+            .into_iter()
+            .map(|provider| {
+                // the accounts of a provider kept on several servers go by their own names
+                let label = crate::shared::account_label(&provider).filter(|_| provider.several);
+                let name = match label {
+                    Some(label) => t!(
+                        "settings-provider-account",
+                        provider = provider.name,
+                        account = &label
+                    ),
+                    None => SharedString::from(provider.name),
+                };
+                // an empty slot stands for its provider, whose own slug always exists
+                let slug = match provider.stored {
+                    true => provider.slug,
+                    false => provider.kind,
+                };
+                (slug, name)
+            })
             .collect();
         let current = match configured.as_deref() {
             None => t!("settings-provider-last-used"),
             Some(slug) => providers
                 .iter()
                 .find(|(provider, _)| *provider == slug)
-                .map(|(_, name)| SharedString::from(*name))
+                .map(|(_, name)| name.clone())
                 .unwrap_or_else(|| t!("common-unavailable", name = slug)),
         };
 
@@ -83,17 +114,15 @@ impl SettingsView {
 
         for (slug, name) in providers {
             let selected = configured.as_deref() == Some(slug);
-            picker = picker.item(
-                MenuItem::new(slug, SharedString::from(name))
-                    .selected(selected)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.update(cx, |settings, cx| {
-                            settings.set_startup_provider(Some(slug), cx);
-                        });
-                        this.popovers.close();
-                        cx.notify();
-                    })),
-            );
+            picker = picker.item(MenuItem::new(slug, name).selected(selected).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    this.settings.update(cx, |settings, cx| {
+                        settings.set_startup_provider(Some(slug), cx);
+                    });
+                    this.popovers.close();
+                    cx.notify();
+                }),
+            ));
         }
 
         self.row(

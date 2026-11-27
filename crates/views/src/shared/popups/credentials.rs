@@ -50,14 +50,14 @@ impl Credentials {
         }
     }
 
-    /// The address, username and password typed for provider `slug`, or `None` while one of
+    /// The address, username and password typed for the account `slug`, or `None` while one of
     /// them is missing. A Jellyfin account may have no password, and leaving out both the
     /// username and the password signs in to Jellyfin by Quick Connect.
     pub(crate) fn filled(&self, slug: &str, cx: &App) -> Option<(String, String, String)> {
         let server = self.server.read(cx).text().to_string();
         let username = self.username.read(cx).text().to_string();
         let password = self.password.read(cx).text().to_string();
-        let jellyfin = slug == "jellyfin";
+        let jellyfin = music::credentials::kind(slug) == "jellyfin";
         let quick_connect = jellyfin && username.trim().is_empty() && password.is_empty();
         let missing = server.trim().is_empty()
             || (username.trim().is_empty() && !quick_connect)
@@ -136,7 +136,7 @@ impl RenderOnce for CredentialsPrompt {
             submit,
             cancel,
         } = self;
-        let jellyfin = provider == "jellyfin";
+        let jellyfin = music::credentials::kind(provider) == "jellyfin";
         let (title, detail) = match jellyfin {
             true => (t!("login-jellyfin-title"), t!("login-jellyfin-detail")),
             false => (t!("login-server-title"), t!("login-server-detail")),

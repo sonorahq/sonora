@@ -600,7 +600,16 @@ impl Render for LoginView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.session.read(cx).state().clone();
         let pending = self.session.read(cx).is_pending();
-        let providers: Vec<ProviderInfo> = self.session.read(cx).providers().collect();
+        // the sign-in screen offers each provider once, through the account that is signing in or
+        // failed to, else the first one listed
+        let mut providers: Vec<ProviderInfo> = Vec::new();
+        for info in self.session.read(cx).providers() {
+            match providers.iter().position(|shown| shown.kind == info.kind) {
+                Some(at) if info.pending || info.error.is_some() => providers[at] = info,
+                Some(_) => {}
+                None => providers.push(info),
+            }
+        }
         let manual_secret = self.manual_secret.filter(|_| {
             matches!(
                 &state,

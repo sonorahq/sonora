@@ -4,16 +4,16 @@ use std::time::Duration;
 use gpui::accesskit::{Role, Toggled};
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, ElementId, FontWeight, Hsla, Pixels, SharedString,
-    StyledText, Window, div, px, relative, svg,
+    AnyElement, App, ClickEvent, Context, ElementId, FontWeight, Global, Hsla, Pixels,
+    SharedString, StyledText, WeakEntity, Window, div, px, relative, svg,
 };
 use i18n::t;
 use music::{AccountChoices, SignIn, SignInPrompt};
 use router::{Destination, SettingsPage, navigate};
 use state::{Failure, Outcome, Scan, SessionState, Sonora, Toast, Toasts};
 use ui::{
-    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, Modal, Perch, Radio, Room,
-    Skeleton, Text, Theme, Tipped as _, mix,
+    ActiveTheme as _, Avatar, Button, HoverFade, Initials, LEADING, MenuItem, Modal, Perch, Picker,
+    Radio, Room, Skeleton, Text, Theme, Tipped as _, mix,
 };
 
 use super::rows::{dashed, drill};
@@ -47,9 +47,19 @@ const OFFLINE: &str = "offline";
 /// What a row does when it is clicked.
 pub(super) type Press = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
+/// One provider's card. A provider that keeps an account per server still draws one card, which
+/// stands for the account in use, or else the first one kept, or else the empty slot.
 pub(super) struct Account {
     slug: &'static str,
     name: &'static str,
+    /// What tells the card's account apart from the provider's others, for a provider that keeps
+    /// one account per server.
+    label: Option<SharedString>,
+    /// Every kept account of the provider, which the card's switch menu lists once there are two.
+    kept: Vec<Kept>,
+    /// The empty slot the card's plus button signs another server in to, for a provider that
+    /// keeps an account per server and already has one.
+    spare: Option<&'static str>,
     options: Vec<SignIn>,
     web_sign_in: bool,
     stored: bool,
@@ -58,6 +68,18 @@ pub(super) struct Account {
     active: bool,
     cancel: bool,
     error: Option<Failure>,
+}
+
+/// The settings view, for the account menu to add a server through from outside the page.
+struct Installed(WeakEntity<SettingsView>);
+
+impl Global for Installed {}
+
+/// One kept account of a provider, as the card's switch menu lists it.
+pub(super) struct Kept {
+    slug: &'static str,
+    label: SharedString,
+    active: bool,
 }
 
 /// The sign-in methods a provider's dialog lists, guest mode last so it stands under the ways
@@ -663,8 +685,8 @@ impl SettingsView {
             });
     }
 
-    /// The provider accounts as plain data, shared by the row, its height and its search
-    /// entry, so the three never disagree about what is shown.
+    /// The provider cards as plain data, shared by the row, its height and its search entry, so
+    /// the three never disagree about what is shown. The accounts of one provider share a card.
     pub(super) fn providers(&self, cx: &App) -> Vec<Account> {
         let session = self.session.read(cx);
         let signed_out = matches!(session.state(), SessionState::SignedOut);
@@ -677,24 +699,56 @@ impl SettingsView {
         };
         let loading = session.is_pending();
         let chosen = self.chosen.filter(|_| loading);
-        session
-            .providers()
-            .map(|info| Account {
-                slug: info.slug,
-                name: info.name,
-                options: info.options,
-                web_sign_in: info.web_sign_in,
-                stored: info.stored,
-                guest: info.guest,
-                // a session on its way up reports no account yet, so while it loads the card
-                // it belongs to keeps the radio rather than leaving the list blank
-                active: match chosen {
-                    Some(picked) => picked == info.slug,
-                    None if loading => info.active,
-                    None => info.active && !signed_out && !offline,
-                },
-                cancel: waiting && info.pending,
-                error: info.error,
+        // a session on its way up reports no account yet, so while it loads the card it belongs
+        // to keeps the radio rather than leaving the list blank
+        let active = |info: &state::ProviderInfo| match chosen {
+            Some(picked) => picked == info.slug,
+            None if loading => info.active,
+            None => info.active && !signed_out && !offline,
+        };
+        let mut groups: Vec<Vec<state::ProviderInfo>> = Vec::new();
+        for info in session.providers() {
+            match groups.iter_mut().find(|group| group[0].kind == info.kind) {
+                Some(group) => group.push(info),
+                None => groups.push(vec![info]),
+            }
+        }
+        groups
+            .into_iter()
+            .filter_map(|group| {
+                let kept: Vec<Kept> = group
+                    .iter()
+                    .filter(|info| info.stored && !info.guest)
+                    .map(|info| Kept {
+                        slug: info.slug,
+                        label: crate::shared::account_label(info)
+                            .unwrap_or_else(|| SharedString::from(info.name)),
+                        active: active(info),
+                    })
+                    .collect();
+                let spare = group.iter().find(|info| info.spare).map(|info| info.slug);
+                let cancel = waiting && group.iter().any(|info| info.pending);
+                let error = group.iter().find_map(|info| info.error.clone());
+                let shown = group
+                    .iter()
+                    .position(&active)
+                    .or_else(|| group.iter().position(|info| info.stored))
+                    .unwrap_or(0);
+                let info = group.into_iter().nth(shown)?;
+                Some(Account {
+                    slug: info.slug,
+                    name: info.name,
+                    label: crate::shared::account_label(&info),
+                    kept,
+                    spare,
+                    active: active(&info),
+                    options: info.options,
+                    web_sign_in: info.web_sign_in,
+                    stored: info.stored,
+                    guest: info.guest,
+                    cancel,
+                    error,
+                })
             })
             .collect()
     }
@@ -747,7 +801,9 @@ impl SettingsView {
 
     /// A provider's card at `place`, its index and the length of the list. Clicking a provider
     /// that is signed in but not in use switches to it, clicking one signed out starts its
-    /// sign-in, and one being signed in offers to stop.
+    /// sign-in, and one being signed in offers to stop. A provider that keeps an account per
+    /// server adds a plus button for another server and, once it has two, a menu to switch
+    /// between them.
     pub(super) fn account_card(
         &self,
         account: Account,
@@ -758,6 +814,9 @@ impl SettingsView {
         let Account {
             slug,
             name,
+            label,
+            kept,
+            spare,
             options,
             web_sign_in,
             stored,
@@ -766,17 +825,34 @@ impl SettingsView {
             cancel,
             error,
         } = account;
+        let kind = music::credentials::kind(slug);
+        let several = kept.len() > 1;
         let status = match (active, stored, guest) {
             (_, true, true) => Some(t!("login-guest-title")),
             (true, ..) => Some(t!("settings-provider-current")),
             (false, true, false) => Some(t!("settings-provider-signed-in")),
             (false, false, _) => None,
         };
+        // the card of a provider with several accounts says which of them it stands for
+        let status = match (status, label.filter(|_| several)) {
+            (Some(status), Some(label)) => Some(t!(
+                "settings-provider-status-account",
+                status = &status,
+                account = &label
+            )),
+            (status, _) => status,
+        };
         let offer = match (cancel, stored) {
             (true, _) => Offer::Cancel(self.cancel_button(slug, cx)),
-            (false, true) => Offer::Choice {
-                leave: Some(self.sign_out_button(slug, slug, pending, cx)),
-            },
+            (false, true) => {
+                let accounts = spare
+                    .is_some()
+                    .then(|| self.accounts_picker(kind, kept, spare, pending, cx));
+                Offer::Choice {
+                    tools: accounts.into_iter().collect(),
+                    leave: Some(self.sign_out_button(slug, slug, pending, cx)),
+                }
+            }
             (false, false) => Offer::SignIn(crate::screens::login::sign_in_offer(&options)),
         };
         // a guest already in use signs in to an account from its own card
@@ -795,7 +871,7 @@ impl SettingsView {
         };
 
         ProviderCard {
-            id: SharedString::from(format!("account-{slug}")),
+            id: SharedString::from(format!("account-{kind}")),
             logo: Some(crate::shared::provider_logo(slug)),
             brand: crate::shared::provider_brand(slug, cx),
             active,
@@ -850,12 +926,80 @@ impl SettingsView {
             name: t!("login-offline-title"),
             status,
             alert: false,
-            offer: Offer::Choice { leave },
+            offer: Offer::Choice {
+                tools: Vec::new(),
+                leave,
+            },
             press: press.filter(|_| !pending),
             error: None,
             place,
         }
         .into_any_element()
+    }
+
+    /// The chevron that opens the menu of provider `kind`'s kept accounts, to switch to another
+    /// of them or sign another server in to the empty slot `spare`.
+    fn accounts_picker(
+        &self,
+        kind: &'static str,
+        kept: Vec<Kept>,
+        spare: Option<&'static str>,
+        pending: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = *cx.theme();
+        let accounts = kept.into_iter().map(|account| {
+            let slug = account.slug;
+            MenuItem::new(SharedString::from(format!("switch-{slug}")), account.label)
+                .selected(account.active)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.popovers.close();
+                    this.chosen = Some(slug);
+                    this.session
+                        .update(cx, |session, cx| session.switch(slug, cx));
+                    cx.notify();
+                }))
+        });
+        let add = spare.map(|spare| {
+            MenuItem::new(
+                SharedString::from(format!("add-account-{kind}")),
+                t!("settings-provider-add-server"),
+            )
+            .icon("icons/plus.svg")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.popovers.close();
+                this.add_account(spare, cx);
+            }))
+        });
+
+        // the provider's own slug keys the popover, which no other control in settings uses
+        Picker::icon(kind, &self.popovers, "icons/chevron-down.svg")
+            .tooltip("settings-provider-accounts")
+            .name(t!("settings-provider-accounts"))
+            .tint(theme.muted_foreground)
+            .disabled(pending)
+            .items(accounts)
+            .when(add.is_some(), |picker| {
+                picker.item(MenuItem::separator(SharedString::from(format!(
+                    "add-account-{kind}-rule"
+                ))))
+            })
+            .items(add)
+            .into_any_element()
+    }
+
+    /// Starts signing another server in to the empty slot `spare`, the way its provider asks.
+    fn add_account(&mut self, spare: &'static str, cx: &mut Context<Self>) {
+        let Some(info) = self
+            .session
+            .read(cx)
+            .providers()
+            .find(|info| info.slug == spare)
+        else {
+            return;
+        };
+        self.chosen = None;
+        self.start_sign_in(spare, info.name, &info.options, info.web_sign_in, false, cx);
     }
 
     /// The button that stops a sign-in in flight.
@@ -1277,9 +1421,12 @@ fn line(theme: &Theme, step: Text) -> Pixels {
 
 /// What a service card ends with.
 pub(super) enum Offer {
-    /// The card is a choice between accounts, with the sign out button at its end when there
-    /// is an account to leave.
-    Choice { leave: Option<AnyElement> },
+    /// The card is a choice between accounts. The sign out button shows on hover when there is
+    /// an account to leave, and the `tools` after it always show, at the card's very end.
+    Choice {
+        tools: Vec<AnyElement>,
+        leave: Option<AnyElement>,
+    },
     /// A quiet word, as "Sign in", for a service with no account yet. The card's own click
     /// answers it.
     SignIn(SharedString),
@@ -1373,15 +1520,21 @@ impl RenderOnce for ProviderCard {
             (false, false) => (theme.secondary.opacity(hover), theme.border),
         };
         let trailing = match offer {
-            Offer::Choice { leave } => div()
+            Offer::Choice { tools, leave } => div()
                 .flex()
-                .justify_center()
-                .w(theme.metrics.control_small)
-                .opacity(match active {
-                    true => 1.,
-                    false => hover,
-                })
-                .children(leave.filter(|_| active || hover > 0.))
+                .items_center()
+                .child(
+                    div()
+                        .flex()
+                        .justify_center()
+                        .w(theme.metrics.control_small)
+                        .opacity(match active {
+                            true => 1.,
+                            false => hover,
+                        })
+                        .children(leave.filter(|_| active || hover > 0.)),
+                )
+                .children(tools)
                 .into_any_element(),
             Offer::SignIn(hint) => div()
                 .text_size(theme.text(Text::Label))
@@ -1529,4 +1682,23 @@ pub(super) fn account_error(error: &Failure, cx: &App) -> impl IntoElement {
                 .text_color(theme.muted_foreground)
                 .child(crate::shared::trouble::short(error)),
         )
+}
+
+/// Makes the settings view the one `add_server` reaches.
+pub(super) fn install(cx: &mut Context<SettingsView>) {
+    let view = cx.entity().downgrade();
+    cx.set_global(Installed(view));
+}
+
+/// Opens the streaming services page and starts signing another server in to the empty slot
+/// `spare`, for the account menu. Nothing happens before the settings view exists.
+pub(crate) fn add_server(spare: &'static str, cx: &mut App) {
+    let Some(view) = cx
+        .try_global::<Installed>()
+        .and_then(|view| view.0.upgrade())
+    else {
+        return;
+    };
+    navigate(Destination::Settings(SettingsPage::Accounts), cx);
+    view.update(cx, |this, cx| this.add_account(spare, cx));
 }

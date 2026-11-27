@@ -59,8 +59,9 @@ const TEALFM: u32 = 0x14b8a6;
 /// The theme's grey is about that share of white over the page colour.
 const QUIET: f32 = 0.56;
 
+/// The mark of the provider an account slug belongs to, whichever of its accounts it is.
 pub(crate) fn provider_logo(slug: &str) -> &'static str {
-    match slug {
+    match music::credentials::kind(slug) {
         "spotify" => "icons/spotify.svg",
         "youtube" => "icons/youtubemusic.svg",
         "subsonic" => "icons/subsonic.svg",
@@ -71,6 +72,16 @@ pub(crate) fn provider_logo(slug: &str) -> &'static str {
         "jellyfin" => "icons/jellyfin.svg",
         _ => "icons/music.svg",
     }
+}
+
+/// What tells an account apart from its provider's other accounts in a list, numbered when
+/// another account of the provider goes by the same label. Never the server's address.
+pub(crate) fn account_label(info: &state::ProviderInfo) -> Option<gpui::SharedString> {
+    let label = info.label.as_ref()?;
+    Some(match info.number {
+        Some(number) => i18n::t!("account-label-numbered", label = label, number = number),
+        None => gpui::SharedString::from(label.clone()),
+    })
 }
 
 /// The mark of the scrobbling service `id`, as `assets/icons/common/LICENSE` credits them.
@@ -101,7 +112,7 @@ pub(crate) fn scrobbler_brand(id: &str, cx: &gpui::App) -> gpui::Hsla {
 /// The brand colour of the provider `slug`'s mark. Tidal's mark is plain black or white, so it
 /// takes the foreground, as does any provider without a colour of its own.
 pub(crate) fn provider_brand(slug: &str, cx: &gpui::App) -> gpui::Hsla {
-    match slug {
+    match music::credentials::kind(slug) {
         "spotify" => gpui::rgb(SPOTIFY).into(),
         "youtube" => gpui::rgb(YOUTUBE).into(),
         "deezer" => gpui::rgb(DEEZER).into(),
