@@ -166,6 +166,8 @@ settings-provider-last-used = Ultimo usato
 settings-entries = Voci barra laterale
 settings-entries-detail = Le sezioni elencate nella barra laterale
 settings-entries-pick = Scegli voci
+settings-row-size = Altezza riga
+settings-row-size-detail = Quanto sono alte le righe degli elenchi di brani
 settings-language = Lingua
 settings-language-detail = La lingua usata da Sonora nell'interfaccia
 settings-language-system = Sistema
@@ -520,6 +522,11 @@ corners-square = Squadrato
 corners-subtle = Discreto
 corners-rounded = Arrotondato
 corners-round = Rotondo
+
+# row height
+row-size-standard = Standard
+row-size-comfortable = Comoda
+row-size-spacious = Ampia
 
 # motion
 motion-system = Sistema
