@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use music::credentials;
 use serde::{Deserialize, Serialize};
 
+use music::ListeningStats;
 mod audioscrobbler;
 mod listenbrainz;
 mod maloja;
@@ -204,6 +205,28 @@ pub trait Service: Send + Sync {
     /// The account is one `connect` returned, since a row only submits while its account is
     /// linked and switched on.
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()>;
+
+    /// Whether the linked account can read personal rankings between any two dates.
+    fn stats_dated(&self) -> bool {
+        false
+    }
+
+    /// Reads what only the whole account can say, which a range never changes: the round-number
+    /// plays and the plays across the account's history. It is read once, apart from the rankings,
+    /// so that they are not kept waiting for it.
+    async fn history(&self, _account: &Account) -> Result<ListeningStats> {
+        anyhow::bail!("{} does not expose listening history", self.id())
+    }
+
+    /// Reads personal rankings between two dates in Unix seconds, or of all time, without
+    /// changing the service's scrobble state.
+    async fn stats(
+        &self,
+        _account: &Account,
+        _dates: Option<(i64, i64)>,
+    ) -> Result<ListeningStats> {
+        anyhow::bail!("{} does not expose listening stats", self.id())
+    }
 }
 
 /// The account linked to a service, blank when it was never linked or its file cannot be read.

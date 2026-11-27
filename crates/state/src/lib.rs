@@ -38,6 +38,7 @@ mod snapshot;
 mod soloist;
 mod song;
 mod sponsorblock;
+mod stats;
 mod tags;
 mod toast;
 mod updates;
@@ -96,6 +97,7 @@ pub use signal::{Change, Equalizing, FLOAT_BITS, Following, Signal, SignalPath};
 pub use soloist::{Soloist, SoloistProblem, SoloistState, SoloistStep, SoloistSwitched};
 pub use song::SongDetail;
 pub use sponsorblock::SponsorBlock;
+pub use stats::{Entry, Found, Stats, StatsSource};
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
 pub use updates::{
@@ -238,6 +240,7 @@ pub struct Sonora {
     pub links: Entity<Links>,
     pub listening: Entity<Listening>,
     pub history: Entity<History>,
+    pub stats: Entity<Stats>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
     pub outputs: Entity<Outputs>,
@@ -357,6 +360,15 @@ pub fn init(
             cx,
         )
     });
+    let stats = cx.new(|cx| {
+        Stats::new(
+            session.clone(),
+            history.clone(),
+            scrobbling.clone(),
+            database.clone(),
+            cx,
+        )
+    });
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),
@@ -450,6 +462,7 @@ pub fn init(
         links,
         listening,
         history,
+        stats,
         lyrics,
         network,
         outputs,

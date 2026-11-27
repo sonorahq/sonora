@@ -28,7 +28,7 @@ impl LibraryTab {
 
 /// A row the sidebar can hide from Settings. The four library pages are rows of their own,
 /// each opening its page of the merged streaming and local library. History and Settings always
-/// sit in the account menu, so their rows are optional and stay out of the sidebar until asked for.
+/// sit in the account menu, and so does Stats, so their rows are optional and stay out of the sidebar until asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
@@ -39,15 +39,17 @@ pub enum NavEntry {
     Playlists,
     History,
     Settings,
+    Stats,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Home,
         Self::Search,
         Self::History,
         Self::Settings,
+        Self::Stats,
         Self::Songs,
         Self::Albums,
         Self::Artists,
@@ -65,6 +67,7 @@ impl NavEntry {
             Self::Playlists => "playlists",
             Self::History => "history",
             Self::Settings => "settings",
+            Self::Stats => "stats",
             Self::Pins => "sidebar-pins",
         }
     }
@@ -79,6 +82,7 @@ impl NavEntry {
             Self::Playlists => "nav-playlists",
             Self::History => "nav-history",
             Self::Settings => "nav-settings",
+            Self::Stats => "nav-stats",
             Self::Pins => "nav-pinned",
         }
     }
@@ -86,7 +90,7 @@ impl NavEntry {
     /// Whether the row stays out of the sidebar until the listener adds it, rather than showing
     /// until hidden.
     pub fn optional(self) -> bool {
-        matches!(self, Self::Settings)
+        matches!(self, Self::Settings | Self::Stats)
     }
 }
 
@@ -95,6 +99,7 @@ pub enum Screen {
     Home,
     Search,
     History,
+    Stats,
     Songs,
     Albums,
     Playlists,
@@ -102,7 +107,7 @@ pub enum Screen {
 }
 
 impl Screen {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Home,
         Self::Search,
         Self::Songs,
@@ -110,6 +115,7 @@ impl Screen {
         Self::Artists,
         Self::Playlists,
         Self::History,
+        Self::Stats,
     ];
 
     pub fn id(self) -> &'static str {
@@ -117,6 +123,7 @@ impl Screen {
             Self::Home => "home",
             Self::Search => "search",
             Self::History => "history",
+            Self::Stats => "stats",
             Self::Songs => "songs",
             Self::Albums => "albums",
             Self::Playlists => "playlists",
@@ -129,6 +136,7 @@ impl Screen {
             Self::Home => "nav-home",
             Self::Search => "nav-search",
             Self::History => "nav-history",
+            Self::Stats => "nav-stats",
             Self::Songs => "nav-songs",
             Self::Albums => "nav-albums",
             Self::Playlists => "nav-playlists",
@@ -149,6 +157,7 @@ impl Screen {
             Self::Home => Destination::Home,
             Self::Search => Destination::Search,
             Self::History => Destination::History,
+            Self::Stats => Destination::Stats,
             Self::Songs => Destination::Library(LibraryTab::Songs),
             Self::Albums => Destination::Library(LibraryTab::Albums),
             Self::Playlists => Destination::Library(LibraryTab::Playlists),
@@ -364,6 +373,7 @@ impl SettingsTab {
 pub enum Destination {
     Home,
     History,
+    Stats,
     Library(LibraryTab),
     Album(SharedString),
     Song(SharedString),

@@ -4202,6 +4202,7 @@ dependencies = [
  "anyhow",
  "fastrand",
  "futures",
+ "jiff",
  "log",
  "lyrics",
  "music",
@@ -6889,6 +6890,7 @@ version = "0.50.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures",
  "jiff",
  "log",
  "md-5 0.11.0",
@@ -7525,6 +7527,7 @@ dependencies = [
  "i18n",
  "icons",
  "image",
+ "jiff",
  "libc",
  "log",
  "logic",

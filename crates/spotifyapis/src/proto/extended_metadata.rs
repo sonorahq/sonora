@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use bytes::Bytes;
+use reqwest::{Method, header};
+use serde::de::DeserializeOwned;
 
 use crate::{Session, http};
 
@@ -599,6 +601,7 @@ pub enum ExtensionKind {
     AlbumV4 = 9,
     TrackV4 = 10,
     UserProfile = 15,
+    TrackExtendedCredits = 96,
     RelatedReleases = 153,
     RelatedCreatorsSection = 165,
     VisualIdentity = 179,
@@ -761,4 +764,38 @@ impl Session {
         }
         Ok(indexed)
     }
+}
+
+impl Session {
+    /// Reads audio analysis of up to 100 tracks on the Spotify client API.
+    pub async fn audio_features<T: DeserializeOwned>(&self, ids: &[String]) -> Result<T> {
+        let path = format!("/audio-attributes/v1/audio-features?ids={}", ids.join(","));
+        let body = http::send(
+            self,
+            Method::GET,
+            &path,
+            header::HeaderMap::new(),
+            bytes::Bytes::new(),
+        )
+        .await
+        .context("cannot request Spotify audio features")?;
+        serde_json::from_slice(&body).context("cannot decode Spotify audio features")
+    }
+}
+/// Extended composer, songwriter and producer credits for a recording.
+#[derive(prost::Message)]
+pub struct TrackCredits {
+    #[prost(message, repeated, tag = "1")]
+    pub people: Vec<TrackCredit>,
+}
+
+/// One artist and role from the extended track credits.
+#[derive(prost::Message)]
+pub struct TrackCredit {
+    #[prost(string, tag = "1")]
+    pub uri: String,
+    #[prost(string, tag = "2")]
+    pub name: String,
+    #[prost(string, tag = "3")]
+    pub role: String,
 }

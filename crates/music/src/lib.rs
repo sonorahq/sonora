@@ -16,6 +16,7 @@ pub mod potoken;
 pub mod progress;
 mod redact;
 pub mod smart;
+mod stats;
 pub mod trouble;
 pub mod vault;
 
@@ -32,11 +33,11 @@ pub use calendar::ReleaseDate;
 pub use models::SearchPart;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Arrival, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
-    Contributor, CoverSize, Credit, Found, Genre, GenreDetail, GenreItem, GenreSection, HomeFeed,
-    ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine, LyricsQuery, LyricsWord,
-    PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail, ReleaseType, RomanizedText,
-    SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail, UserProfile, Voice,
-    WritingSystem,
+    Contributor, CoverSize, Credit, Descriptors, Found, Genre, GenreDetail, GenreItem,
+    GenreSection, HomeFeed, ImportedPlaylist, Lyrics, LyricsHit, LyricsLane, LyricsLine,
+    LyricsQuery, LyricsWord, PinOutcome, PinTarget, PinTargetKind, Playlist, PlaylistDetail,
+    ReleaseType, RomanizedText, SavedArtist, ScanReport, Track, TrackKey, TrackTags, UserDetail,
+    UserProfile, Voice, WritingSystem,
 };
 pub use redact::redact;
 pub use smart::{
@@ -47,6 +48,11 @@ pub use sound::audio::Meter;
 pub use sound::equalizer::{self, Equalizer};
 pub use sound::output::{self, Server as SoundServer, missing_bridge};
 pub use sound::spectrum::{Analyzer, Level, Listening, Spectrum, Watch};
+pub use stats::{
+    Board, HourMood, ListeningStats, Milestone, Overview, Ranked, StatsPeriod, TimeSlice,
+    TrackBreakdown, TrackTotals, Trait, album_key, album_of, compare, credits, infer_mood,
+    milestone_numbers, tag_key,
+};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";
@@ -192,6 +198,12 @@ pub trait MusicApi: Send + Sync {
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile>;
     async fn artist_images(&self, ids: Vec<String>) -> Result<HashMap<String, String>>;
 
+    /// Genres, moods, tags and tempo for tracks by id. A track the provider does not describe is
+    /// left out, and a provider that describes none returns an empty map.
+    async fn descriptors(&self, _track_ids: &[String]) -> Result<HashMap<String, Descriptors>> {
+        Ok(HashMap::new())
+    }
+
     /// The tracks the user starred. On a `Shape::Saved` provider this is the whole songs
     /// library; on a `Shape::Catalog` one it only feeds the hearts and the favorites filter.
     async fn saved_tracks(&self) -> Result<Vec<Track>>;
@@ -271,6 +283,16 @@ pub trait MusicApi: Send + Sync {
     /// that keeps no cross-device history keeps the default and answers with nothing.
     async fn recently_played(&self) -> Result<Vec<Track>> {
         Ok(Vec::new())
+    }
+
+    /// The periods this provider can rank from its own listening data. Empty means unsupported.
+    fn stats_periods(&self) -> &'static [StatsPeriod] {
+        &[]
+    }
+
+    /// Personal rankings across devices, in the provider's order; counts may be unavailable.
+    async fn stats(&self, _period: StatsPeriod) -> Result<ListeningStats> {
+        anyhow::bail!("this provider does not expose listening stats")
     }
 
     async fn playlists(&self) -> Result<Vec<Playlist>>;

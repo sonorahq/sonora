@@ -6,3 +6,4 @@
 pub mod lyrics;
 pub mod queue;
 pub mod station;
+pub mod stats;

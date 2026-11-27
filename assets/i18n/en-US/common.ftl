@@ -246,3 +246,22 @@ nav-return-top = Back to top
 
 # power
 wake-reason = Music is playing
+
+number-thousand = { $value }k
+number-million = { $value }M
+count-artists = { $count ->
+    [one] { $count } artist
+   *[other] { $count } artists
+    }
+count-albums = { $count ->
+    [one] { $count } album
+   *[other] { $count } albums
+    }
+count-plays = { $count ->
+    [one] { $count } play
+   *[other] { $count } plays
+    }
+count-days = { $count ->
+    [one] { $count } day
+   *[other] { $count } days
+    }

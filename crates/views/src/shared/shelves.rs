@@ -22,7 +22,8 @@ const ROWS: usize = 3;
 const STEADY: Pixels = px(0.5);
 const PENDING: usize = 3;
 const RAIL_GAP: Pixels = px(16.);
-const STACK_GAP: Pixels = px(32.);
+/// The space between the sections of a page that stacks rails and other sections.
+pub(crate) const STACK_GAP: Pixels = px(32.);
 const LANE_GAP: Pixels = px(8.);
 const HEADING_GAP: Pixels = px(12.);
 const LEADING: f32 = 1.4;
@@ -241,13 +242,7 @@ impl Shelves {
             .flex_col()
             .gap_3()
             .child(
-                div()
-                    .flex()
-                    .px(cx.theme().metrics.inset)
-                    .items_end()
-                    .justify_between()
-                    .gap_4()
-                    .h(head(window, cx))
+                rail_header(window, cx)
                     .child(shelf_heading(
                         self.tag("heading", place),
                         i18n::translate(&section.title),
@@ -257,54 +252,34 @@ impl Shelves {
                         this.child(self.arrows(place, page, line, &handle, &glide, me))
                     }),
             )
-            .child(Hold::new(
+            .child(rail_body(
                 (self.id, place),
-                Axis::Horizontal,
+                inset,
+                tall,
                 &handle,
-                div()
-                    .id((self.id, place))
-                    .w_full()
-                    .px(inset)
-                    .h(tall)
-                    .fade_sides(inset, inset)
-                    .overflow_x_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&handle)
-                    .on_scroll({
-                        let scroll = handle.clone();
-                        move |event: &ScrollEvent, window, cx| {
-                            ui::hold_swipe(event, &scroll, cx);
-                            if !sideways(event) {
-                                return;
-                            }
-                            glide.nudge(&scroll, window);
-                        }
-                    })
-                    .child(
-                        Deck::new(self.tag("rail", place))
-                            .across()
-                            .hold()
-                            .rows(section.items.iter().map(|_| card))
-                            .gap(gap)
-                            .draw(move |index, _, cx| {
-                                let Some(view) = drawn.upgrade() else {
-                                    return div().into_any_element();
-                                };
-                                let Some(items) = feed.get(place).map(|section| &section.items)
-                                else {
-                                    return div().into_any_element();
-                                };
-                                let Some(item) = items.get(index) else {
-                                    return div().into_any_element();
-                                };
+                &glide,
+                Deck::new(self.tag("rail", place))
+                    .across()
+                    .hold()
+                    .rows(section.items.iter().map(|_| card))
+                    .gap(gap)
+                    .draw(move |index, _, cx| {
+                        let Some(view) = drawn.upgrade() else {
+                            return div().into_any_element();
+                        };
+                        let Some(items) = feed.get(place).map(|section| &section.items) else {
+                            return div().into_any_element();
+                        };
+                        let Some(item) = items.get(index) else {
+                            return div().into_any_element();
+                        };
 
-                                view.read(cx)
-                                    .card(place * 100 + index, item, Some(card), cx)
-                                    .aria_position_in_set(index + 1)
-                                    .aria_size_of_set(items.len())
-                                    .into_any_element()
-                            }),
-                    ),
+                        view.read(cx)
+                            .card(place * 100 + index, item, Some(card), cx)
+                            .aria_position_in_set(index + 1)
+                            .aria_size_of_set(items.len())
+                            .into_any_element()
+                    }),
             ))
             .into_any_element()
     }
@@ -601,7 +576,7 @@ impl Rail {
         &self,
         spec: RailSpec,
         window: &Window,
-        cx: &mut App,
+        cx: &App,
         notify: &Rc<dyn Fn(&mut App)>,
         draw: impl Fn(usize, &mut Window, &mut App) -> AnyElement + 'static,
     ) -> AnyElement {
@@ -613,15 +588,19 @@ impl Rail {
             tile,
             columns,
             tabs,
+            note,
         } = spec;
         let tall = Card::tile_height(tile, window, cx);
         let inset = cx.theme().metrics.inset;
-        let scrolled = self.scroll.clone();
-        let glided = self.glide.clone();
         let arrows = match count > columns {
             true => Some(arrows(tag, place, &self.scroll, &self.glide, notify)),
             false => None,
         };
+        let heading = shelf_heading(
+            SharedString::from(format!("{tag}-heading-{place}")),
+            title,
+            cx,
+        );
 
         div()
             .flex()
@@ -629,49 +608,35 @@ impl Rail {
             .mx(-inset)
             .gap_3()
             .child(
-                div()
-                    .flex()
-                    .px(inset)
-                    .items_end()
-                    .justify_between()
-                    .gap_4()
-                    .h(head(window, cx))
-                    .child(shelf_heading(
-                        SharedString::from(format!("{tag}-heading-{place}")),
-                        title,
-                        cx,
-                    ))
+                rail_header(window, cx)
+                    .map(|header| match note {
+                        Some(note) => header.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .h_full()
+                                .gap_3()
+                                .min_w_0()
+                                .child(heading)
+                                .child(note),
+                        ),
+                        None => header.child(heading),
+                    })
                     .children(arrows),
             )
             .children(tabs.map(|tabs| div().px(inset).child(tabs)))
-            .child(Hold::new(
+            .child(rail_body(
                 (tag, place),
-                Axis::Horizontal,
+                inset,
+                tall,
                 &self.scroll,
-                div()
-                    .id((tag, place))
-                    .w_full()
-                    .px(inset)
-                    .h(tall)
-                    .fade_sides(inset, inset)
-                    .overflow_x_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&self.scroll)
-                    .on_scroll(move |event: &ScrollEvent, window, cx| {
-                        ui::hold_swipe(event, &scrolled, cx);
-                        if !sideways(event) {
-                            return;
-                        }
-                        glided.nudge(&scrolled, window);
-                    })
-                    .child(
-                        Deck::new(SharedString::from(format!("{tag}-rail-{place}")))
-                            .across()
-                            .hold()
-                            .rows(std::iter::repeat_n(tile, count))
-                            .gap(RAIL_GAP)
-                            .draw(draw),
-                    ),
+                &self.glide,
+                Deck::new(SharedString::from(format!("{tag}-rail-{place}")))
+                    .across()
+                    .hold()
+                    .rows(std::iter::repeat_n(tile, count))
+                    .gap(RAIL_GAP)
+                    .draw(draw),
             ))
             .into_any_element()
     }
@@ -682,7 +647,7 @@ impl Rail {
         tile: Pixels,
         columns: usize,
         window: &Window,
-        cx: &mut App,
+        cx: &App,
     ) -> AnyElement {
         let tall = Card::tile_height(tile, window, cx);
         let inset = cx.theme().metrics.inset;
@@ -733,6 +698,39 @@ pub(crate) struct RailSpec {
     pub tile: Pixels,
     pub columns: usize,
     pub tabs: Option<AnyElement>,
+    /// Small badges beside the heading, such as what the rail counts.
+    pub note: Option<AnyElement>,
+}
+
+/// A page section that is no rail, under the same heading and spacing as one.
+pub(crate) fn section(
+    tag: &'static str,
+    title: SharedString,
+    note: Option<AnyElement>,
+    body: impl IntoElement,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .items_end()
+                .h(head(window, cx))
+                .gap_3()
+                .items_center()
+                .child(shelf_heading(
+                    SharedString::from(format!("{tag}-heading")),
+                    title,
+                    cx,
+                ))
+                .children(note),
+        )
+        .child(body)
+        .into_any_element()
 }
 
 /// The paging arrows of a rail head, which is what tells a crowded rail from a short one.
@@ -804,6 +802,50 @@ fn arrow(
 
 fn slot(kind: &'static str, place: usize) -> ElementId {
     ElementId::NamedInteger(SharedString::new_static(kind), place as u64)
+}
+
+fn rail_header(window: &Window, cx: &App) -> Div {
+    div()
+        .flex()
+        .px(cx.theme().metrics.inset)
+        .items_end()
+        .justify_between()
+        .gap_4()
+        .h(head(window, cx))
+}
+
+/// Wraps a virtualized row with the same scroll tracking, hold and fades for every rail.
+fn rail_body(
+    id: (&'static str, usize),
+    inset: Pixels,
+    tall: Pixels,
+    handle: &ScrollHandle,
+    glide: &Glide,
+    deck: Deck,
+) -> Hold {
+    let scroll = handle.clone();
+    let glide = glide.clone();
+    Hold::new(
+        id,
+        Axis::Horizontal,
+        handle,
+        div()
+            .id(id)
+            .w_full()
+            .px(inset)
+            .h(tall)
+            .fade_sides(inset, inset)
+            .overflow_x_scroll()
+            .restrict_scroll_to_axis()
+            .track_scroll(handle)
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
+                ui::hold_swipe(event, &scroll, cx);
+                if sideways(event) {
+                    glide.nudge(&scroll, window);
+                }
+            })
+            .child(deck),
+    )
 }
 
 /// Whether a wheel event should glide a rail. Only a notched wheel moving sideways does, since a

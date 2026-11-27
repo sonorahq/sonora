@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
+- Stats page for Spotify, Last.fm or your recorded plays, with your top artists, songs and albums, genres, moods, release years, a listening clock, milestones and a summary of your listening style, over a window or any dates you pick.
 
 ### Changed
 

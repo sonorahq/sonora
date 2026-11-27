@@ -34,7 +34,7 @@ const PINS: &str = "sidebar-pins";
 /// open one page of the merged streaming and local library. Settings lives in the account menu of
 /// the title bar and shows here only when added. It opens on the settings page last visited
 /// rather than on the one named here.
-pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
+pub(crate) const NAV: [(NavEntry, &str, Destination); 9] = [
     (NavEntry::Home, "icons/house.svg", Destination::Home),
     (NavEntry::Search, "icons/search.svg", Destination::Search),
     (
@@ -42,6 +42,7 @@ pub(crate) const NAV: [(NavEntry, &str, Destination); 8] = [
         "icons/rotate-ccw-clock.svg",
         Destination::History,
     ),
+    (NavEntry::Stats, "icons/gauge.svg", Destination::Stats),
     (
         NavEntry::Settings,
         "icons/settings.svg",
