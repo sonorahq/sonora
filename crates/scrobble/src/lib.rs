@@ -60,8 +60,29 @@ impl std::fmt::Display for KeyRefused {
 
 impl std::error::Error for KeyRefused {}
 
-/// One listen: what played and when it started.
-#[derive(Clone, Debug)]
+/// The service refused the listens themselves, so sending them again cannot help and they are
+/// dropped. Any other failure leaves them waiting for the next attempt.
+#[derive(Debug)]
+pub struct Rejected(pub String);
+
+impl Rejected {
+    /// Whether `error`, or the error it wraps under its context, refused the listens for good.
+    pub fn in_error(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<Self>().is_some()
+    }
+}
+
+impl std::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the scrobbling service rejected the listens: {}", self.0)
+    }
+}
+
+impl std::error::Error for Rejected {}
+
+/// One listen: what played and when it started. It is stored while it waits to be sent, so its
+/// fields are part of the saved backlog.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Play {
     pub artist: String,
     pub title: String,
@@ -210,9 +231,15 @@ pub trait Service: Send + Sync {
         Ok(())
     }
 
-    /// Submits finished listens. Every service takes a batch, so one listen is a slice of one.
-    /// The account is one `connect` returned, since a row only submits while its account is
-    /// linked and switched on.
+    /// The most listens one `scrobble` call sends in a single request, so a call that fails
+    /// has sent none of them. The backlog is drained in slices of this size.
+    fn batch(&self) -> usize {
+        1
+    }
+
+    /// Submits finished listens, oldest first. The account is one `connect` returned, since a
+    /// row only submits while its account is linked and switched on. A refusal of the listens
+    /// themselves comes back as [`Rejected`], and any other error keeps them for a retry.
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()>;
 }
 
