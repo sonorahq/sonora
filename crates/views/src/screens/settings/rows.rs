@@ -451,7 +451,7 @@ pub(super) fn grid(columns: u16, window: &Window, cx: &App) -> Div {
         Room::Tight => columns.min(2),
         Room::Snug => columns.min(3),
         Room::Roomy => columns.min(4),
-        Room::Wide | Room::Vast => columns,
+        Room::Wide | Room::Vast | Room::Grand => columns,
     };
     div().grid().grid_cols(columns.max(1)).gap_3()
 }

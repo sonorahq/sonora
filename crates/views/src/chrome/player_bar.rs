@@ -653,7 +653,7 @@ impl PlayerBar {
         let layout = settings.player_bar_layout();
         let wanted = match settings.player_bar_island() {
             PlayerBarIsland::Off => false,
-            PlayerBarIsland::Wide => Chrome::window_room(window).fits(Room::Vast),
+            PlayerBarIsland::Wide => Chrome::window_room(window).fits(Room::Grand),
             PlayerBarIsland::Fits => true,
         };
         let room = window.viewport_size().width - Self::clear(cx) * 2.;
