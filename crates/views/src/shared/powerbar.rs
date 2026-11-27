@@ -10,9 +10,9 @@ use input::{POWERBAR_CONTEXT, PowerbarDetails};
 use router::{Destination, navigate};
 use state::{Hit, Origin, Playback, Search};
 use ui::{
-    ActiveTheme as _, Button, Card, Cascade, Dismiss, Input, Kbd, SelectNext, SelectPrevious,
-    Spinner, Sprung, Submit, Text, Unfold, blurring, corners, effects, eyebrow, popover_fill,
-    snapped, spoken_vacant,
+    ActiveTheme as _, Button, Card, Cascade, Dismiss, Input, Kbd, Scrollbar, Scroller, SelectNext,
+    SelectPrevious, Spinner, Sprung, Submit, Text, Unfold, blurring, corners, effects, eyebrow,
+    popover_fill, snapped, spoken_vacant,
 };
 
 use crate::screens::search::hit_card;
@@ -47,6 +47,8 @@ const FROST: Pixels = px(24.);
 const BLUR_LEAST: Pixels = px(0.05);
 /// How close the panel's spring has to come to count as landed.
 const REST: f32 = 0.001;
+/// How tall the band grows along the top of the results where rows fade out as they scroll away.
+const FADE: Pixels = px(24.);
 
 /// A floating quick search over the whole window. It drops in from above with the window
 /// blurring away behind it, and its results surface one after another as they arrive.
@@ -60,6 +62,8 @@ pub(crate) struct Powerbar {
     cursor: Cursor,
     restore: Option<FocusHandle>,
     scroll: ScrollHandle,
+    /// The results' scrollbar, which drives `scroll`.
+    scrollbar: Entity<Scrollbar>,
     /// How far the panel has arrived, 0 gone and 1 in place. The panel stays drawn while this
     /// springs back to 0 after a close.
     shown: Sprung,
@@ -117,7 +121,7 @@ impl Powerbar {
                         return;
                     }
                     this.cursor = Cursor::First;
-                    this.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
+                    this.scrollbar.update(cx, |bar, _| bar.place(Pixels::ZERO));
                     this.search.update(cx, |search, cx| search.ask(&query, cx));
                     // An emptied field goes back to the search history, which no answer brings.
                     if query.trim().is_empty() {
@@ -152,6 +156,10 @@ impl Powerbar {
                 })
                 .detach();
 
+                let scroll = ScrollHandle::new();
+                let me = cx.entity_id();
+                let scrollbar = cx.new(|_| Scrollbar::new(scroll.clone()).watching(me));
+
                 Self {
                     open: false,
                     input,
@@ -161,7 +169,8 @@ impl Powerbar {
                     hits: Vec::new(),
                     cursor: Cursor::First,
                     restore: None,
-                    scroll: ScrollHandle::new(),
+                    scroll,
+                    scrollbar,
                     shown: Sprung::at(0.),
                     unfold: Unfold::default(),
                     cascade: Cascade::default(),
@@ -196,7 +205,7 @@ impl Powerbar {
         self.hits = recent(cx);
         self.cascade.clear();
         self.unfold.reset();
-        self.scroll.set_offset(point(Pixels::ZERO, Pixels::ZERO));
+        self.scrollbar.update(cx, |bar, _| bar.place(Pixels::ZERO));
         self.input.update(cx, |input, cx| {
             input.set_text("", cx);
             input.focus(window, cx);
@@ -526,13 +535,14 @@ impl Render for Powerbar {
         let width = (theme.metrics.cover * WIDTH).min(viewport.width - theme.metrics.inset * 2.);
         let radius = corners(theme.radius);
         let reach = room * REACH;
+        let tall = snapped(theme.metrics.list_row, window) * self.hits.len() as f32
+            + snapped(theme.metrics.pad, window) * 2.;
 
         self.cascade
             .show(self.hits.iter().map(|hit| SharedString::from(hit.key())));
         let results = self.results(window, cx);
         let quiet = self.quiet(cx);
         let empty = results.is_empty() && quiet.is_none();
-        let scroll = self.scroll.clone();
 
         let body = div()
             .flex()
@@ -552,6 +562,8 @@ impl Render for Powerbar {
             })
             .map(|this| match quiet {
                 Some(quiet) => this.child(quiet),
+                // The results stand as tall as their rows up to the reach, a definite height the
+                // scroller can fill, and scroll from there.
                 None => this.child(
                     div()
                         .id("powerbar-results")
@@ -563,11 +575,15 @@ impl Render for Powerbar {
                         .flex()
                         .flex_col()
                         .w_full()
-                        .max_h(reach)
-                        .p(theme.metrics.pad)
-                        .overflow_y_scroll()
-                        .track_scroll(&scroll)
-                        .children(results),
+                        .h(tall.min(reach))
+                        .child(
+                            Scroller::new("powerbar-scroll", &self.scrollbar)
+                                .fade_scrolled(FADE)
+                                .flex()
+                                .flex_col()
+                                .p(theme.metrics.pad)
+                                .children(results),
+                        ),
                 ),
             })
             // The key hints only make sense with something to act on, so they arrive with the
