@@ -101,3 +101,7 @@ lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }
 lyrics-via = Via { $service }
 lyrics-instrumental-break = Instrumental break
+
+mini-player-title = Sonora mini player
+mini-player-new = Open mini player
+mini-player-main = Show main window

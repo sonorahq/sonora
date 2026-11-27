@@ -13,7 +13,8 @@ use gpui::{
 use gpui::{Div, Window, anchored, canvas, deferred, div, phi, point, px, rems};
 use i18n::t;
 use input::{
-    ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen, WORKSPACE_CONTEXT,
+    OpenMiniPlayer, ToggleFullscreen, ToggleLyrics, ToggleQueue, ToggleWindowFullscreen,
+    WORKSPACE_CONTEXT,
 };
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
@@ -1444,6 +1445,12 @@ impl FullscreenView {
         holds: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let mini = Button::new("open-mini-player")
+            .ghost()
+            .small()
+            .icon("icons/external-link.svg")
+            .tooltip_above("mini-player-new")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenMiniPlayer), cx));
         let leave = Button::new("leave-fullscreen")
             .ghost()
             .when(frosted, Button::frosted)
@@ -1451,6 +1458,7 @@ impl FullscreenView {
             .icon("icons/minimize.svg")
             .tooltip_above("player-fullscreen-leave")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleFullscreen), cx));
+        let leave = div().flex().items_center().gap_1().child(mini).child(leave);
         let leave = match cx.try_global::<ShellSwap>().copied().unwrap_or_default() {
             ShellSwap::Opening => deferred(leave).into_any_element(),
             ShellSwap::Closing => leave.invisible().into_any_element(),

@@ -36,6 +36,9 @@ pub fn hide_to_tray(cx: &mut App) {
 pub fn register(lingers: bool, cx: &mut App) {
     bind_keys(cx);
 
+    cx.on_action(|_: &input::OpenMiniPlayer, cx: &mut App| crate::open_mini_player(cx));
+    cx.on_action(|_: &input::ShowMainWindow, cx: &mut App| crate::show_window(cx));
+
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
     cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
     cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
@@ -165,6 +168,7 @@ fn menus() -> Vec<Menu> {
     let app = match cfg!(target_os = "macos") {
         true => vec![
             MenuItem::action(t!("app-settings"), OpenSettings),
+            MenuItem::action(t!("mini-player-new"), input::OpenMiniPlayer),
             MenuItem::separator(),
             MenuItem::action(t!("app-refresh"), Refresh),
             MenuItem::action(t!("app-sign-out"), SignOut),
@@ -176,6 +180,7 @@ fn menus() -> Vec<Menu> {
             MenuItem::action(t!("app-quit"), Quit),
         ],
         false => vec![
+            MenuItem::action(t!("mini-player-new"), input::OpenMiniPlayer),
             MenuItem::action(t!("app-refresh"), Refresh),
             MenuItem::action(t!("app-sign-out"), SignOut),
             MenuItem::separator(),

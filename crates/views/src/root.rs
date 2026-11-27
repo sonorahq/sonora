@@ -1151,7 +1151,7 @@ const SCRIPTS: [&str; 19] = [
     "Segoe UI Emoji",
 ];
 
-fn ui_font(chosen: &str) -> Font {
+pub(crate) fn ui_font(chosen: &str) -> Font {
     match chosen == SYSTEM_FONT {
         true => Font {
             fallbacks: Some(scripts(false).clone()),

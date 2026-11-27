@@ -65,6 +65,8 @@ impl RisingVolume {
 pub(crate) trait VolumeHost: Sized + 'static {
     fn volume(&mut self) -> &mut RisingVolume;
     fn playback(&self) -> &Entity<Playback>;
+    /// Called when a volume drag ends, for a host that paused something while it was held.
+    fn released(&mut self, _cx: &mut Context<Self>) {}
 }
 
 /// Turns the volume by one notch for each step of the wheel, and keeps the wheel from the page.
@@ -152,6 +154,7 @@ pub(crate) fn volume_slider<V: VolumeHost>(
                         this.volume().held = false;
                         this.playback()
                             .update(cx, |playback, cx| playback.end_volume_slide(cx));
+                        this.released(cx);
                         cx.notify();
                     })),
             ),
@@ -260,6 +263,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                                 this.volume().held = false;
                                 this.playback()
                                     .update(cx, |playback, cx| playback.end_volume_slide(cx));
+                                this.released(cx);
                                 cx.notify();
                             })),
                     ),
