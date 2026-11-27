@@ -1261,7 +1261,11 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
     sections(
         item_shell("playlist-context-menu", tiles),
         vec![
-            open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
+            // A station plays rather than opens, as in the provider's own app.
+            match station {
+                true => Vec::new(),
+                false => open_item(Destination::Playlist(id.into()), "menu-go-to-playlist", cx),
+            },
             radio
                 .into_iter()
                 .chain(collection_queue_items(from, playback))
@@ -1356,6 +1360,9 @@ pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {
 }
 
 fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
+    // A station plays rather than opens, as in the provider's own app, and is a radio already.
+    let station =
+        pin.kind == PinKind::Playlist && Sonora::global(cx).session.read(cx).endless(&pin.id);
     let destination = Destination::from(pin);
     let copied = pin.id.clone();
     let kind = media_kind(pin.kind);
@@ -1366,8 +1373,11 @@ fn sparse_menu(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Menu {
     sections(
         Menu::new("pin-context-menu").min_w(ITEM_MENU_WIDTH),
         vec![
-            vec![open],
-            transport_items(pin, playback, cx),
+            match station {
+                true => Vec::new(),
+                false => vec![open],
+            },
+            transport_items(pin, station, playback, cx),
             vec![copy_link_item("copy-pin-link", kind, Some(&copied), cx)],
             vec![pin_action(pin, cx)],
         ],
@@ -1425,10 +1435,18 @@ fn collection_queue_items(origin: Origin, playback: Entity<Playback>) -> Vec<Men
     .collect()
 }
 
-fn transport_items(pin: &Pin, playback: Entity<Playback>, cx: &App) -> Vec<MenuItem> {
+/// What a pin's menu offers for playing it. A `station` gets no radio of its own, since one
+/// built from it would play other songs.
+fn transport_items(
+    pin: &Pin,
+    station: bool,
+    playback: Entity<Playback>,
+    cx: &App,
+) -> Vec<MenuItem> {
     let played = Origin::from(pin);
     let seed = match pin.kind {
         PinKind::Album => Some(RadioSeed::Album),
+        PinKind::Playlist if station => None,
         PinKind::Playlist => Some(RadioSeed::Playlist),
         PinKind::Artist => Some(RadioSeed::Artist),
         PinKind::Song | PinKind::Liked => None,
