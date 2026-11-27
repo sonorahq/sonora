@@ -1329,7 +1329,7 @@ impl<S: TableSource> TableState<S> {
             .when_else(
                 blurring(cx),
                 // The menu material is nearly opaque, so a see-through window takes the
-                // player bar's thin fill instead and the head stays as clear as the page.
+                // player bar's surface instead and the head stays as clear as the page.
                 |this| match theme.transparent {
                     true => bar_surface(this, cx),
                     false => popover_surface(this, cx),
