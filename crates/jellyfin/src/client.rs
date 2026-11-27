@@ -26,6 +26,9 @@ use crate::wire::{self, Covers, Item, Items, Permission, PlaylistInfo};
 
 /// How many items one library request asks for, so a large library arrives in pages.
 const LIBRARY_PAGE: usize = 500;
+/// How long the server's name is waited for. It only labels the account, so a slow server is
+/// not worth holding up a sign-in or a launch for.
+const SERVER_NAME_WAIT: Duration = Duration::from_secs(5);
 /// How many tracks, albums, artists and playlists a search lists.
 const SEARCH_TRACKS: usize = 50;
 const SEARCH_OTHERS: usize = 30;
@@ -199,7 +202,27 @@ pub(crate) fn account(
         username: user.name.unwrap_or_else(|| username.to_owned()),
         token,
         device_id: device_id.to_owned(),
+        server_name: None,
     })
+}
+
+/// The name the server at `server` goes by, from the public part of its system info that any
+/// client may read. `None` when it cannot be asked or names nothing.
+pub async fn server_name(server: &str) -> Option<String> {
+    let answer: serde_json::Value = reqwest::Client::new()
+        .get(format!("{server}/System/Info/Public"))
+        .timeout(SERVER_NAME_WAIT)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    answer["ServerName"]
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
 }
 
 impl JellyfinClient {
@@ -1597,6 +1620,7 @@ mod tests {
                 username: "liam".to_owned(),
                 token: "secret-token".to_owned(),
                 device_id: "sonora-test".to_owned(),
+                server_name: None,
             })
         }
     }

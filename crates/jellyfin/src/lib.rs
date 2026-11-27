@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use music::{
     Capabilities, Catalog, MusicApi as _, MusicProvider, PlaybackFactory, PromptSink,
     ProviderSession, RadioSeed, Shape, SignIn, SignInFailure, SignInProblem, SignInPrompt,
+    credentials,
 };
 use reqwest::header::AUTHORIZATION;
 
@@ -27,6 +28,8 @@ pub use lyrics::JellyfinLyrics;
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
 /// cache, so it must not change.
 pub(crate) const NAME: &str = "Jellyfin";
+/// The slug of the provider and of its first account.
+pub(crate) const SLUG: &str = "jellyfin";
 
 /// Everything a streaming service offers, with the server converting on request and keeping
 /// playlist pictures of its own, downloads as plain files and an instant mix of any collection.
@@ -43,14 +46,24 @@ const QUICK_CONNECT_PATIENCE: Duration = Duration::from_secs(5 * 60);
 /// How long a sign-out waits for the server to revoke the token.
 const LOG_OUT_PATIENCE: Duration = Duration::from_secs(5);
 
-pub struct JellyfinProvider;
+/// One account on a Jellyfin server. The first account goes by the provider's own slug, and
+/// every further one by a slug of its own, which also names the folder its sign-in is kept in.
+pub struct JellyfinProvider {
+    slug: &'static str,
+}
 
 impl JellyfinProvider {
     pub fn new() -> Self {
-        Self
+        Self { slug: SLUG }
+    }
+
+    /// The account kept under `slug`, one of the provider's further accounts.
+    fn slot(slug: &'static str) -> Self {
+        Self { slug }
     }
 
     async fn connect(
+        slug: &'static str,
         server: String,
         username: String,
         password: String,
@@ -67,19 +80,39 @@ impl JellyfinProvider {
             }
         };
         let client = JellyfinClient::new(&credentials);
-        let profile = client.profile().await?;
-        auth::store(&credentials)?;
+        let (profile, server_name) =
+            tokio::join!(client.profile(), client::server_name(&credentials.server));
+        let profile = profile?;
+        auth::store(
+            slug,
+            &auth::Credentials {
+                server_name,
+                ..credentials
+            },
+        )?;
         Ok(session(client, profile))
     }
 
     /// Opens the kept sign-in. A server that is only out of reach keeps the account, and one
     /// that refuses the token asks for the sign-in again.
-    async fn restore_stored() -> Result<Option<ProviderSession>> {
-        let Some(credentials) = auth::load() else {
+    async fn restore_stored(slug: &'static str) -> Result<Option<ProviderSession>> {
+        let Some(credentials) = auth::load(slug) else {
             return Ok(None);
         };
         let client = JellyfinClient::new(&credentials);
-        match client.profile().await {
+        let (profile, server_name) =
+            tokio::join!(client.profile(), client::server_name(&credentials.server));
+        // the server may have been renamed in its dashboard since the account was kept
+        if server_name.is_some() && server_name != credentials.server_name {
+            let renamed = auth::Credentials {
+                server_name,
+                ..credentials
+            };
+            if let Err(error) = auth::store(slug, &renamed) {
+                log::warn!("jellyfin: cannot keep the server's name: {error:#}");
+            }
+        }
+        match profile {
             Ok(profile) => Ok(Some(session(client, profile))),
             Err(error) if music::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) if error.downcast_ref::<SignInFailure>().is_some() => {
@@ -107,7 +140,25 @@ impl MusicProvider for JellyfinProvider {
     }
 
     fn slug(&self) -> &'static str {
-        "jellyfin"
+        self.slug
+    }
+
+    fn keeps_several(&self) -> bool {
+        true
+    }
+
+    fn spare(&self) -> Option<Arc<dyn MusicProvider>> {
+        Some(Arc::new(Self::slot(credentials::fresh(SLUG))))
+    }
+
+    fn siblings(&self) -> Vec<Arc<dyn MusicProvider>> {
+        match self.slug == SLUG {
+            true => credentials::slots(SLUG)
+                .into_iter()
+                .map(|slug| Arc::new(Self::slot(slug)) as Arc<dyn MusicProvider>)
+                .collect(),
+            false => Vec::new(),
+        }
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
@@ -119,17 +170,23 @@ impl MusicProvider for JellyfinProvider {
     }
 
     fn stored(&self) -> bool {
-        auth::load().is_some()
+        auth::load(self.slug).is_some()
     }
 
     fn location(&self) -> Option<String> {
-        auth::load().map(|credentials| credentials.server)
+        auth::load(self.slug).map(|credentials| credentials.server)
+    }
+
+    /// The server's own name, or the username while that is not known yet.
+    fn account_name(&self) -> Option<String> {
+        auth::load(self.slug)
+            .map(|credentials| credentials.server_name.unwrap_or(credentials.username))
     }
 
     /// The configured server's host, since a self-hosted library has no address in common with
     /// anyone else's.
     fn reach(&self) -> Option<String> {
-        let server = auth::load()?.server;
+        let server = auth::load(self.slug)?.server;
         let host = server
             .split_once("://")
             .map_or(server.as_str(), |(_, rest)| rest);
@@ -139,12 +196,12 @@ impl MusicProvider for JellyfinProvider {
 
     /// Kept tracks are plain files, so they play from the stored sign-in alone.
     fn offline_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
-        let credentials = auth::load()?;
+        let credentials = auth::load(self.slug)?;
         Some(Arc::new(Factory::new(JellyfinClient::new(&credentials))))
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        Self::restore_stored().await
+        Self::restore_stored(self.slug).await
     }
 
     /// Signs in with a username and password, or by Quick Connect when both are left empty:
@@ -166,17 +223,17 @@ impl MusicProvider for JellyfinProvider {
         if username.trim().is_empty() && !password.is_empty() {
             anyhow::bail!("the jellyfin username is empty");
         }
-        Self::connect(server, username, password, prompt).await
+        Self::connect(self.slug, server, username, password, prompt).await
     }
 
     /// Forgets the sign-in and, on a thread of its own, tells the server to revoke the token, so
     /// the device leaves the server's device list. A server out of reach keeps the token until
     /// it expires there.
     fn sign_out(&self) {
-        if let Some(credentials) = auth::load() {
+        if let Some(credentials) = auth::load(self.slug) {
             std::thread::spawn(move || log_out(credentials));
         }
-        auth::forget();
+        auth::forget(self.slug);
     }
 }
 

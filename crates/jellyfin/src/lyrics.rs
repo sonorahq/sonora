@@ -6,9 +6,7 @@ use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use crate::auth::{self, Credentials};
-use crate::{JellyfinClient, NAME, wire};
-
-const SLUG: &str = "jellyfin";
+use crate::{JellyfinClient, NAME, SLUG, wire};
 
 /// The same tier as lyrics read from a local file, since these are most often the sidecar
 /// files and tags of the user's own music.
@@ -27,10 +25,10 @@ impl JellyfinLyrics {
         }
     }
 
-    /// A client for the stored sign-in, kept until the sign-in changes. This provider has no
-    /// session handle, so it reads the same file the session was restored from.
-    fn client(&self) -> Option<JellyfinClient> {
-        let stored = auth::load()?;
+    /// A client for the sign-in of the account `slug`, kept until the sign-in changes. This
+    /// provider has no session handle, so it reads the same file the session was restored from.
+    fn client(&self, slug: &str) -> Option<JellyfinClient> {
+        let stored = auth::load(slug)?;
         let mut held = self
             .client
             .lock()
@@ -60,10 +58,11 @@ impl LyricsProvider for JellyfinLyrics {
     }
 
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let Some(id) = query.id_for(SLUG) else {
+        let Some(track) = query.key_for(SLUG) else {
             return Ok(Vec::new());
         };
-        let Some(client) = self.client() else {
+        let id = track.id.as_str();
+        let Some(client) = self.client(track.provider) else {
             return Ok(Vec::new());
         };
         let Some(answer) = client.lyrics(id).await? else {
