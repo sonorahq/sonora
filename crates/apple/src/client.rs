@@ -117,6 +117,14 @@ const PINS_QUERY: &[(&str, &str)] = &[
     ("fields[artists]", "artwork"),
 ];
 
+/// A library album with everything that leads to its catalog album: its own link, and its
+/// tracks' catalog songs with their albums for an album whose own link Apple dropped.
+const LINKED_QUERY: &[(&str, &str)] = &[
+    ("include", "catalog,tracks"),
+    ("include[library-songs]", "catalog"),
+    ("include[songs]", "albums"),
+];
+
 /// How many pins Apple keeps, songs and videos included. It refuses the next one with a 400.
 const PIN_LIMIT: usize = 6;
 
@@ -196,11 +204,13 @@ type Sink<'a, T> = (
 );
 
 /// The last pin list as the client remembers it: the library id behind each pin Sonora shows,
-/// by uri, and how many pins Apple holds in all.
+/// by uri, and how many pins Apple holds in all. `links` keeps, by library id, the catalog
+/// album found for each pinned album the list did not link, so it is looked up once.
 #[derive(Default)]
 struct Pinned {
     ids: HashMap<String, String>,
     count: usize,
+    links: HashMap<String, Option<wire::PinLink>>,
 }
 
 /// One listing fetched, or still being fetched, and when it was first asked for.
@@ -838,12 +848,19 @@ impl AppleClient {
             .collect())
     }
 
-    /// Favorites or unfavorites one catalog resource, the way the web player's star does: the
-    /// id is posted to `/me/favorites` and deleted from there, and neither answer has a body.
-    /// Apple itself adds a favorited song to the library when the account's Add Favorite Songs
-    /// to Library setting is on, which it is by default. Removing a favorite never touches it.
+    /// Favorites or unfavorites one resource, the way the web player's star does: the id is
+    /// posted to `/me/favorites` and deleted from there, and neither answer has a body.
+    ///
+    /// A catalog song or album is added to the library first, as Apple Music does when its Add
+    /// Favorite Songs setting is on, so the two agree whatever the setting says. Removing a
+    /// favorite leaves the library alone. Removing from the library drops the favorite on
+    /// Apple's side by itself.
     async fn favorite(&self, kind: &str, id: &str, saved: bool) -> Result<()> {
-        let key = match Self::is_mine(id) {
+        let mine = Self::is_mine(id);
+        if saved && !mine && matches!(kind, "songs" | "albums") {
+            self.add(kind, id).await?;
+        }
+        let key = match mine {
             true => format!("ids[library-{kind}]"),
             false => format!("ids[{kind}]"),
         };
@@ -851,6 +868,84 @@ impl AppleClient {
         match saved {
             true => self.post("/me/favorites", &query, None).await.map(|_| ()),
             false => self.delete("/me/favorites", &query).await,
+        }
+    }
+
+    /// Adds one catalog song or album to the library. Apple answers at once and fills the
+    /// library a moment later.
+    async fn add(&self, kind: &str, id: &str) -> Result<()> {
+        let key = format!("ids[{kind}]");
+        self.post("/me/library", &[(key.as_str(), id)], None)
+            .await
+            .map(|_| ())
+    }
+
+    /// The catalog id behind a library song or album, so a library copy can be added back
+    /// after it was removed. `None` when Apple no longer knows the copy or matches it to
+    /// nothing in the catalog.
+    async fn catalog_copy(&self, kind: &str, id: &str) -> Result<Option<String>> {
+        let path = format!("/me/library/{kind}/{}", escape::component(id));
+        let query = match kind {
+            "albums" => LINKED_QUERY,
+            _ => CATALOG_QUERY,
+        };
+        let body = match self.get(&path, query).await {
+            Ok(body) => body,
+            Err(error) if error.is::<Missing>() => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let answered: wire::Answer = wire::answer(&body);
+        let Some(found) = answered.data.first() else {
+            return Ok(None);
+        };
+        let linked = match kind {
+            "albums" => wire::catalog_album(found),
+            _ => wire::catalog(found),
+        };
+        Ok(linked
+            .and_then(|linked| linked.id.as_str())
+            .map(str::to_owned))
+    }
+
+    /// Links every pinned album the pin list names only by its library id to the catalog album
+    /// behind it, the way an album page opened from that pin reads it. Without this a pin made
+    /// from the album page could never be found in the list again. Each album is looked up once
+    /// and the answer kept in `links`. A failed lookup leaves the pin as it was and is tried
+    /// again on the next read.
+    async fn link_pins(
+        &self,
+        pins: &mut [(String, PinTarget)],
+        links: &mut HashMap<String, Option<wire::PinLink>>,
+    ) {
+        links.retain(|id, _| pins.iter().any(|(pinned, _)| pinned == id));
+        for (id, target) in pins.iter_mut() {
+            let unlinked = target
+                .uri
+                .rsplit_once(':')
+                .is_some_and(|(_, tail)| Self::is_mine(tail));
+            if target.kind != PinTargetKind::Album || !unlinked {
+                continue;
+            }
+            if !links.contains_key(id) {
+                let path = format!("/me/library/albums/{}", escape::component(id));
+                let body = match self.get(&path, LINKED_QUERY).await {
+                    Ok(body) => body,
+                    Err(error) => {
+                        log::debug!("apple: cannot link the pinned album {id}: {error:#}");
+                        continue;
+                    }
+                };
+                let answered: wire::Answer = wire::answer(&body);
+                let link = answered
+                    .data
+                    .first()
+                    .and_then(wire::catalog_album)
+                    .and_then(wire::pin_link);
+                links.insert(id.clone(), link);
+            }
+            if let Some(Some(link)) = links.get(id) {
+                link.apply(target);
+            }
         }
     }
 
@@ -1626,13 +1721,17 @@ impl MusicApi for AppleClient {
         query.push(("limit", &limit));
         let body = self.get(PINS, &query).await?;
         let answered: wire::Answer = wire::answer(&body);
-        let pins = wire::pins(&answered, OWNER);
+        let mut pins = wire::pins(&answered, OWNER);
+        let count = answered.data.len();
+        let mut links = self.remembered().links.clone();
+        self.link_pins(&mut pins, &mut links).await;
         *self.remembered() = Pinned {
             ids: pins
                 .iter()
                 .map(|(id, target)| (target.uri.clone(), id.clone()))
                 .collect(),
-            count: answered.data.len(),
+            count,
+            links,
         };
         Ok(Some(pins.into_iter().map(|(_, target)| target).collect()))
     }
@@ -1697,8 +1796,10 @@ impl MusicApi for AppleClient {
         self.favorite("artists", artist_id, saved).await
     }
 
-    /// Adding works on a catalog id. Removing needs the library id, which only the catalog
-    /// resource can point at, so it is one request to find and one to remove.
+    /// Adding works on a catalog id, so a library copy, such as the one an album page opened
+    /// from a pin holds, is first looked up for the catalog id behind it. Apple then brings the
+    /// same library copy back. Removing needs the library id, which only the catalog resource
+    /// can point at, so it is one request to find and one to remove.
     async fn set_in_library(&self, kind: MediaKind, id: &str, present: bool) -> Result<()> {
         let kind = match kind {
             MediaKind::Track => "songs",
@@ -1710,14 +1811,12 @@ impl MusicApi for AppleClient {
         };
         match present {
             true if Self::is_mine(id) => {
-                bail!("apple music cannot add a removed library copy {id} back")
+                let Some(catalog) = self.catalog_copy(kind, id).await? else {
+                    bail!("apple music has no catalog copy of {id} to add back");
+                };
+                self.add(kind, &catalog).await
             }
-            true => {
-                let key = format!("ids[{kind}]");
-                self.post("/me/library", &[(key.as_str(), id)], None)
-                    .await
-                    .map(|_| ())
-            }
+            true => self.add(kind, id).await,
             false => {
                 let mine = match Self::is_mine(id) {
                     true => Some(id.to_owned()),

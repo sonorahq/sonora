@@ -1068,6 +1068,22 @@ impl Savable for Album {
         library.set_album_saved(item, saved);
     }
 
+    /// Puts the album at the top of the shelf's Albums page where the library is a set apart
+    /// from the favorites, since Apple Music adds a favorited album to the library too.
+    fn admit(library: &mut Library, album: Self, cx: &mut Context<Library>) {
+        let shelf = Shelf::of(&album.id);
+        if !library.session.read(cx).shape_of(shelf).editable() {
+            return;
+        }
+        let Some(ready) = library.held_mut(shelf).ready_mut() else {
+            return;
+        };
+        if ready.albums.iter().any(|known| known.id == album.id) {
+            return;
+        }
+        ready.albums.insert(0, album);
+    }
+
     async fn ask(client: Arc<dyn MusicApi>, id: String, saved: bool) -> anyhow::Result<()> {
         client.set_album_saved(&id, saved).await
     }

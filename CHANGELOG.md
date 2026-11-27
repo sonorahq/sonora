@@ -81,12 +81,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The queue sidebar no longer redraws while a song plays, which lowers CPU use with it open.
 - Karaoke lyrics, the fullscreen player and scrolling long lists use less CPU.
 - Guest mode for YouTube Music is in its sign-in dialog, next to signing in and connecting manually.
+- Favoriting an Apple Music song or album adds it to your library, as the Apple Music app does.
 
 ### Fixed
 
 - The Italian and Korean translations are complete, so no screen falls back to English.
 - Japanese, Chinese and Korean text on Linux is drawn at the weight the rest of the interface uses, instead of looking bold everywhere.
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
+- An Apple Music album you took out of your library can be added back from its menu, and pinning it from its page no longer fails.
 
 - YouTube Music tracks start right away again for a signed-in account, in the 256 kbps stream on Premium, instead of waiting several seconds or failing with "could not be played".
 - Interrupted or failed app updates, Soloist installs, theme saves and offline downloads no longer leave partial files behind.
