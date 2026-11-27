@@ -78,10 +78,13 @@ impl Service for Maloja {
                     .error
                     .map(|error| error.desc)
                     .unwrap_or_else(|| answer.status.clone());
-                // a client error other than a refused key names a listen the server never takes
+                // a client error other than a refused key, a timeout or a rate limit names a
+                // listen the server never takes
                 if status.is_client_error()
                     && status != StatusCode::UNAUTHORIZED
                     && status != StatusCode::FORBIDDEN
+                    && status != StatusCode::REQUEST_TIMEOUT
+                    && status != StatusCode::TOO_MANY_REQUESTS
                 {
                     return Err(Rejected(format!("maloja ({status}): {reason}")).into());
                 }

@@ -23,8 +23,6 @@ const LONGEST_WAIT: Duration = Duration::from_secs(30 * 60);
 
 /// What the sender of one service is asked to do.
 pub(super) enum Submit {
-    /// Keep this listen, then send everything waiting to this account.
-    Play(Account, Play),
     /// Send everything waiting to this account.
     Account(Account),
     /// Stop sending, since the service was switched off. Its listens keep waiting.
@@ -126,98 +124,157 @@ impl Backlog {
     }
 }
 
-/// Starts the task that sends one service its listens. Every listen goes into the backlog first,
-/// and the backlog goes out oldest first whenever a listen arrives, the account is handed over
-/// again or the wait after a failure runs out. It ends when the row drops its sender.
-pub(super) fn sender(
-    io: &Io,
+/// One service's end of the backlog: it keeps the service's listens and wakes the task that sends
+/// them. Keeping a listen never waits on a send still in flight, so a stalled service cannot cost
+/// a listen made meanwhile.
+pub(super) struct Sender {
+    io: Io,
     service: Arc<dyn Service>,
     backlog: Backlog,
     verdicts: mpsc::UnboundedSender<Verdict>,
-) -> mpsc::UnboundedSender<Submit> {
-    let (sender, mut asked) = mpsc::unbounded_channel::<Submit>();
-    io.spawn(async move {
-        let id = service.id();
-        let mut account: Option<Account> = None;
-        let mut wait: Option<Duration> = None;
-        loop {
-            let next = match wait {
-                Some(wait) => match tokio::time::timeout(wait, asked.recv()).await {
-                    Ok(Some(next)) => Some(next),
-                    Ok(None) => break,
-                    Err(_) => None,
-                },
-                None => match asked.recv().await {
-                    Some(next) => Some(next),
-                    None => break,
-                },
-            };
-            match next {
-                Some(Submit::Play(given, play)) => {
-                    let kept = backlog.clone();
-                    let copy = play.clone();
-                    let stored = blocking(move || kept.push(id, &copy)).await;
-                    if let Err(error) = stored {
-                        log::warn!(
-                            "scrobble: cannot keep a listen for {id}, sending it once: {error:#}"
-                        );
-                        let answer = service.scrobble(&given, std::slice::from_ref(&play)).await;
-                        if let Err(error) = &answer {
-                            log::warn!("scrobble: cannot submit the track to {id}: {error:#}");
-                        }
-                        judge(&verdicts, id, &given, &answer);
-                    }
-                    account = Some(given);
-                }
-                Some(Submit::Account(given)) => account = Some(given),
-                Some(Submit::Hold) => account = None,
-                Some(Submit::Forget) => {
-                    account = None;
-                    let kept = backlog.clone();
-                    if let Err(error) = blocking(move || kept.forget(id)).await {
-                        log::warn!("scrobble: {error:#}");
-                    }
-                }
-                None => {}
-            }
+    asked: mpsc::UnboundedSender<Submit>,
+}
 
-            let Some(given) = &account else {
-                wait = None;
-                continue;
-            };
-            let drained = drain(service.as_ref(), given, &backlog).await;
-            // an empty backlog asked nothing, so it says nothing about the key either
-            let heard = !matches!(drained, Ok(false));
-            let answer = drained.map(|_| ());
-            wait = match &answer {
-                Ok(()) => None,
-                Err(error) => {
-                    let next = wait.map_or(FIRST_WAIT, |wait| (wait * 2).min(LONGEST_WAIT));
-                    log::warn!(
-                        "scrobble: cannot submit to {id}, trying again in {}s: {error:#}",
-                        next.as_secs()
-                    );
-                    Some(next)
-                }
-            };
-            if heard {
-                judge(&verdicts, id, given, &answer);
-            }
+impl Sender {
+    /// Starts the task that sends the service's backlog oldest first whenever a listen is kept,
+    /// the account is handed over again or the wait after a failure runs out. The task ends when
+    /// the sender is dropped.
+    pub(super) fn new(
+        io: &Io,
+        service: Arc<dyn Service>,
+        backlog: Backlog,
+        verdicts: mpsc::UnboundedSender<Verdict>,
+    ) -> Self {
+        let (asked, heard) = mpsc::unbounded_channel::<Submit>();
+        io.spawn(send(
+            service.clone(),
+            backlog.clone(),
+            verdicts.clone(),
+            heard,
+        ));
+        Self {
+            io: io.clone(),
+            service,
+            backlog,
+            verdicts,
+            asked,
         }
-    });
-    sender
+    }
+
+    /// Keeps a listen, then asks for everything waiting to go to `account`. When the listen
+    /// cannot be kept it is sent once on its own.
+    pub(super) fn play(&self, account: Account, play: Play) {
+        let (service, backlog) = (self.service.clone(), self.backlog.clone());
+        let (verdicts, asked) = (self.verdicts.clone(), self.asked.clone());
+        self.io.spawn(async move {
+            let id = service.id();
+            let copy = play.clone();
+            match blocking(move || backlog.push(id, &copy)).await {
+                Ok(()) => {
+                    asked.send(Submit::Account(account)).ok();
+                }
+                Err(error) => {
+                    log::warn!(
+                        "scrobble: cannot keep a listen for {id}, sending it once: {error:#}"
+                    );
+                    let answer = service
+                        .scrobble(&account, std::slice::from_ref(&play))
+                        .await;
+                    if let Err(error) = &answer {
+                        log::warn!("scrobble: cannot submit the track to {id}: {error:#}");
+                    }
+                    judge(&verdicts, id, &account, &answer);
+                }
+            }
+        });
+    }
+
+    pub(super) fn ask(&self, submit: Submit) {
+        self.asked.send(submit).ok();
+    }
+}
+
+/// The task behind a [`Sender`]. It drains the backlog after each request and, after a failure,
+/// once the wait runs out. A new account starts the wait over.
+async fn send(
+    service: Arc<dyn Service>,
+    backlog: Backlog,
+    verdicts: mpsc::UnboundedSender<Verdict>,
+    mut heard: mpsc::UnboundedReceiver<Submit>,
+) {
+    let id = service.id();
+    let mut account: Option<Account> = None;
+    let mut wait: Option<Duration> = None;
+    loop {
+        let next = match wait {
+            Some(wait) => match tokio::time::timeout(wait, heard.recv()).await {
+                Ok(Some(next)) => Some(next),
+                Ok(None) => break,
+                Err(_) => None,
+            },
+            None => match heard.recv().await {
+                Some(next) => Some(next),
+                None => break,
+            },
+        };
+        match next {
+            Some(Submit::Account(given)) => {
+                account = Some(given);
+                wait = None;
+            }
+            Some(Submit::Hold) => account = None,
+            Some(Submit::Forget) => {
+                account = None;
+                let kept = backlog.clone();
+                if let Err(error) = blocking(move || kept.forget(id)).await {
+                    log::warn!("scrobble: {error:#}");
+                }
+            }
+            None => {}
+        }
+
+        let Some(given) = &account else {
+            wait = None;
+            continue;
+        };
+        let drained = drain(service.as_ref(), given, &backlog).await;
+        // an empty backlog asked nothing, so it says nothing about the key either
+        let heard_back = !matches!(drained, Ok(false));
+        let answer = drained.map(|_| ());
+        wait = match &answer {
+            Ok(()) => None,
+            Err(error) => {
+                let next = wait.map_or(FIRST_WAIT, |wait| (wait * 2).min(LONGEST_WAIT));
+                log::warn!(
+                    "scrobble: cannot submit to {id}, trying again in {}s: {error:#}",
+                    next.as_secs()
+                );
+                Some(next)
+            }
+        };
+        if heard_back {
+            judge(&verdicts, id, given, &answer);
+        }
+    }
 }
 
 /// Sends a service's backlog oldest first, in slices of its batch size, until it is empty or an
-/// attempt fails, and says whether the service was asked anything. A slice the service rejects
-/// for good is dropped. The failure that stops the drain is returned and its slice keeps waiting.
+/// attempt fails, and says whether the service was asked anything. A rejected slice of several
+/// listens goes again one at a time, so only the listen the service refuses is dropped. The
+/// failure that stops the drain is returned and its slice keeps waiting.
 async fn drain(service: &dyn Service, account: &Account, backlog: &Backlog) -> Result<bool> {
     let id = service.id();
     let batch = service.batch().max(1);
     let mut asked = false;
+    // how many listens still go one at a time after a rejected slice
+    let mut alone = 0;
     loop {
         let reader = backlog.clone();
-        let waiting = blocking(move || reader.oldest(id, batch)).await?;
+        let size = match alone > 0 {
+            true => 1,
+            false => batch,
+        };
+        let waiting = blocking(move || reader.oldest(id, size)).await?;
         if waiting.is_empty() {
             return Ok(asked);
         }
@@ -225,12 +282,17 @@ async fn drain(service: &dyn Service, account: &Account, backlog: &Backlog) -> R
         let (ids, plays): (Vec<i64>, Vec<Play>) = waiting.into_iter().unzip();
         match service.scrobble(account, &plays).await {
             Ok(()) => {}
-            Err(error) if Rejected::in_error(&error) => log::warn!(
-                "scrobble: {id} rejected {} listens, dropping them: {error:#}",
-                plays.len()
-            ),
+            Err(error) if Rejected::in_error(&error) && plays.len() > 1 => {
+                log::warn!("scrobble: {id} rejected a batch, sending it one at a time: {error:#}");
+                alone = plays.len();
+                continue;
+            }
+            Err(error) if Rejected::in_error(&error) => {
+                log::warn!("scrobble: {id} rejected a listen, dropping it: {error:#}")
+            }
             Err(error) => return Err(error),
         }
+        alone = alone.saturating_sub(plays.len());
         let remover = backlog.clone();
         blocking(move || remover.remove(&ids)).await?;
     }
@@ -245,14 +307,25 @@ async fn blocking<T: Send + 'static>(
         .context("the scrobble backlog task failed")?
 }
 
+/// Deletes listens by row id in one transaction, so a batch goes all at once.
 fn remove(connection: &Connection, ids: &[i64]) -> Result<()> {
-    let mut statement = connection
-        .prepare("DELETE FROM scrobble_backlog WHERE id = ?")
-        .context("cannot prepare a scrobble backlog delete")?;
-    for id in ids {
-        statement
-            .execute(params![id])
-            .context("cannot delete a sent listen")?;
+    if ids.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let transaction = connection
+        .unchecked_transaction()
+        .context("cannot start a scrobble backlog delete")?;
+    {
+        let mut statement = transaction
+            .prepare("DELETE FROM scrobble_backlog WHERE id = ?")
+            .context("cannot prepare a scrobble backlog delete")?;
+        for id in ids {
+            statement
+                .execute(params![id])
+                .context("cannot delete a sent listen")?;
+        }
+    }
+    transaction
+        .commit()
+        .context("cannot delete the sent listens")
 }

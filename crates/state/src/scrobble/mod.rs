@@ -84,8 +84,8 @@ pub struct ScrobbleRow {
     /// Whether the service was last told that something plays, so a pause, an end or a quit
     /// has a status to take back.
     shown: bool,
-    /// The task that keeps this service's listens and sends them. See [`backlog::sender`].
-    submit: mpsc::UnboundedSender<Submit>,
+    /// Keeps this service's listens and sends them.
+    submit: backlog::Sender,
     /// The account the sender was last handed, `None` while it holds the listens back.
     handed: Option<Account>,
 }
@@ -155,7 +155,7 @@ impl ScrobbleRow {
             Some(account) => Submit::Account(account),
             None => Submit::Hold,
         };
-        self.submit.send(submit).ok();
+        self.submit.ask(submit);
     }
 }
 
@@ -229,7 +229,12 @@ impl Scrobbling {
             .into_iter()
             .map(|service| ScrobbleRow {
                 now: tell(&io, service.clone(), verdicts.clone()),
-                submit: backlog::sender(&io, service.clone(), backlog.clone(), verdicts.clone()),
+                submit: backlog::Sender::new(
+                    &io,
+                    service.clone(),
+                    backlog.clone(),
+                    verdicts.clone(),
+                ),
                 handed: None,
                 service,
                 account: Account::default(),
@@ -347,7 +352,7 @@ impl Scrobbling {
         scrobble::forget(service);
         if let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
             row.hide();
-            row.submit.send(Submit::Forget).ok();
+            row.submit.ask(Submit::Forget);
             row.handed = None;
             row.account = Account::default();
             row.refused = false;
@@ -614,9 +619,7 @@ impl Scrobbling {
                 continue;
             }
             row.sent = true;
-            row.submit
-                .send(Submit::Play(row.account.clone(), play.clone()))
-                .ok();
+            row.submit.play(row.account.clone(), play.clone());
         }
     }
 

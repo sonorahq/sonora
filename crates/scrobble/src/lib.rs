@@ -20,6 +20,8 @@ mod tealfm;
 /// to any one service.
 const MIN_LENGTH: Duration = Duration::from_secs(30);
 const FULL_PLAY: Duration = Duration::from_secs(240);
+/// How long one request to a scrobbling service may take.
+const REQUEST_WAIT: Duration = Duration::from_secs(30);
 
 /// Every scrobbling service the app offers, in the order the settings screen lists them.
 pub fn services() -> Vec<Arc<dyn Service>> {
@@ -280,10 +282,16 @@ fn file(service: &str) -> PathBuf {
 }
 
 /// The one http client every service shares, so they pool connections and reuse TLS sessions
-/// between them rather than each holding its own.
+/// between them rather than each holding its own. A request that stalls fails after
+/// [`REQUEST_WAIT`], so a dead server cannot hold up the listens waiting behind it.
 fn http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
-    HTTP.get_or_init(reqwest::Client::new)
+    HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(REQUEST_WAIT)
+            .build()
+            .unwrap_or_default()
+    })
 }
 
 /// The server url without its trailing slash, with `https://` added when the user left the
