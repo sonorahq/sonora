@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{App, Hsla, Pixels, px};
 
-use crate::theme::{ActiveTheme as _, BACKDROP_TRANSPARENCY, Theme};
+use crate::theme::ActiveTheme as _;
 
 /// How much of the popover colour a glass control keeps over what it blurs.
 pub const GLASS_FILL: f32 = 0.2;
@@ -9,15 +9,14 @@ pub const GLASS_FILL: f32 = 0.2;
 pub const GLASS_BLUR: Pixels = px(8.);
 /// Raised surfaces retain contrast even over bright artwork, while a faint backdrop remains visible.
 const POPOVER_FILL: f32 = 0.82;
-/// How much of the popover colour a frosted bar keeps, and how far it blurs what passes under.
-/// Both are thicker than a menu's, since a bar sits over the page for good and its text has to
-/// read over whatever scrolls by.
-const BAR_FILL: f32 = 0.86;
+/// How far a frosted bar mixes what passes under it towards the popover colour, how far it
+/// blurs it and how much it saturates it first. The fill and the blur are thicker than a
+/// menu's, since a bar sits over the page for good and its text has to read over whatever
+/// scrolls by. The saturation lets the colours under the fill come through as a glow, so the
+/// bar still reads as glass.
+const BAR_FILL: f32 = 0.7;
 const BAR_BLUR: Pixels = px(18.);
-/// The thinnest bar fill, which a window at the default transparency or clearer gets. The fill
-/// stacks on the page wash under the bar, so a thick one would leave the bar far darker than the
-/// window around it.
-const CLEAR_BAR_FILL: f32 = 0.3;
+const BAR_SATURATION: f32 = 1.8;
 
 /// Whether a surface that only frosts for the look of it should frost at all. A backdrop blur
 /// is the priciest thing the renderer does per frame, so the setting turns those off and each
@@ -60,15 +59,18 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
     }
 }
 
-/// Styles chrome that stays over scrolling content, the player bar and a table's head: a thick
-/// popover fill over a wide blur. The caller asks `blurring` first, since without the blur the
-/// thin fill would leave the text on the bare page. A see-through window gets a thinner fill so
-/// the bar lets the desktop through about as much as the page does.
+/// Styles chrome that stays over scrolling content, the player bar and a table's head: a wide,
+/// saturated blur mixed most of the way to the popover colour at the window's own opacity. On a
+/// see-through window the bar then hides most of what scrolls under it, and over the page's own
+/// ground lets the desktop through as much as the page does. Artwork under it hides the desktop
+/// itself, and the bar keeps a little of that density there, as glass would. The caller asks
+/// `blurring` first, since without the blur the text would sit on the bare page.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
     let theme = cx.theme();
     element
-        .bg(theme.popover.opacity(bar_fill(theme)))
         .backdrop_blur(BAR_BLUR)
+        .backdrop_saturate(BAR_SATURATION)
+        .backdrop_tint(theme.popover.opacity(theme.opacity), BAR_FILL)
 }
 
 /// Blurs what is behind an element by the glass width and nothing more, for a hover fill
@@ -77,13 +79,4 @@ pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
 /// `blurring` first, since this one has no theme to read.
 pub fn frost<E: Styled>(element: E) -> E {
     element.backdrop_blur(GLASS_BLUR)
-}
-
-/// How much of the popover colour a bar keeps on `theme`'s window. A fill `f` over a page that
-/// lets `clear` of the desktop through hides `f * clear` more of it than the page does, so the
-/// fill thins as the window clears, to hide no more than the thin fill does at the default
-/// transparency. A window that is barely see-through keeps the full fill.
-fn bar_fill(theme: &Theme) -> f32 {
-    let clear = (1. - theme.opacity).max(f32::EPSILON);
-    (CLEAR_BAR_FILL * BACKDROP_TRANSPARENCY / clear).clamp(CLEAR_BAR_FILL, BAR_FILL)
 }

@@ -128,6 +128,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A see-through window keeps its theme: the sidebars and bars stay their own colour beside the page, and buttons and the player bar no longer change shade the moment opacity drops below 100%.
 - The bottom edge of the fullscreen player no longer lets the desktop show through on a see-through window with the ambient background.
 - Opening and closing the fullscreen player on a see-through window no longer turns the window clearer halfway through, and the blur under its controls fades in instead of snapping on.
+- A transparent player bar stays readable on a see-through window at any opacity: what scrolls under it shows only as a soft glow of its colours, and the bar lets the desktop through as much as the page does.
 - Play, pause and volume on another device show at once, and the volume slider no longer jumps back and replays your drag while the device catches up. A drag sets the device's volume once you let go.
 - Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
 - Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
