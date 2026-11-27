@@ -289,6 +289,7 @@ impl SettingsView {
         self.library_cursor = None;
         self.selected_libraries = self.session.read(cx).chosen_libraries();
         self.library_draft = self.selected_libraries.clone();
+        self.library_account = self.session.read(cx).library_slug();
         self.session
             .update(cx, |session, cx| session.load_libraries(cx));
         cx.notify()
@@ -353,8 +354,19 @@ impl SettingsView {
         cx.notify();
     }
 
+    /// Keeps what is ticked in the open picker, the keyboard's Save. Called for the page's
+    /// Submit action, which only an open picker of a server that reads several libraries binds.
+    pub(super) fn library_save(&mut self, cx: &mut Context<Self>) {
+        if !self.library_picker || !self.reads_several(cx) {
+            cx.propagate();
+            return;
+        }
+        let choice = self.library_draft.clone();
+        self.keep_libraries(choice, cx);
+    }
+
     /// Whether the server the picker lists reads several libraries at once.
-    fn reads_several(&self, cx: &App) -> bool {
+    pub(super) fn reads_several(&self, cx: &App) -> bool {
         matches!(self.session.read(cx).libraries(), Some(Ok(libraries)) if libraries.several)
     }
 

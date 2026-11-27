@@ -726,6 +726,12 @@ impl Session {
             .or_else(|| self.providers.iter().find(scoped))
     }
 
+    /// The slug of the account the library choice applies to, `None` when no stored account
+    /// can be limited.
+    pub fn library_slug(&self) -> Option<&'static str> {
+        self.library_provider().map(|provider| provider.slug())
+    }
+
     /// Whether a stored account can be limited to some libraries of its server.
     pub fn offers_libraries(&self) -> bool {
         self.library_provider().is_some()
