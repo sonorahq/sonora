@@ -99,6 +99,9 @@ pub struct Cell<F> {
     pub row: usize,
     /// The folded column this cell draws on a second line under its own value.
     pub carries: Option<F>,
+    /// Whether the row folds a column under its title, so a text column can step down a size and
+    /// let the title lead.
+    pub stacked: bool,
 }
 
 impl<F> Cell<F> {
@@ -1499,6 +1502,7 @@ impl<S: TableSource> TableState<S> {
                 };
                 let selected = marked.contains(&row);
                 let playing = self.delegate.source.playing(row, cx);
+                let stacked = self.delegate.stacked();
                 let cells: Vec<AnyElement> = (0..self.delegate.columns.len())
                     .map(|ix| {
                         let column = &self.delegate.columns[ix];
@@ -1510,6 +1514,7 @@ impl<S: TableSource> TableState<S> {
                             display,
                             row,
                             carries: column.carries.map(|spec| spec.field),
+                            stacked,
                         };
                         self.delegate.source.cell(cell, cx)
                     })
@@ -1649,6 +1654,7 @@ impl<S: TableSource> TableState<S> {
                     display,
                     row,
                     carries: None,
+                    stacked: false,
                 };
                 cells.push(self.delegate.source.cell(cell, cx));
             }

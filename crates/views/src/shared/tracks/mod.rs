@@ -25,7 +25,7 @@ use state::{
 };
 use ui::{
     ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
-    TableSource, TableState,
+    TableSource, TableState, Text,
 };
 
 use crate::shared::blend::{Joined, Reach};
@@ -453,8 +453,28 @@ impl TrackSource {
         )
     }
 
-    /// The album's name, which opens the album and, right-clicked, the album's own menu.
+    /// The album's name, which opens the album and, right-clicked, the album's own menu. In a row
+    /// with artists under the title it steps down a size, so the title leads the row.
     fn album_cell(
+        &self,
+        cell: &Cell<TrackField>,
+        track: &Track,
+        color: Hsla,
+        cx: &App,
+    ) -> AnyElement {
+        let name = self.album_name(cell, track, color, cx);
+        match cell.stacked {
+            true => div()
+                .flex_none()
+                .h_full()
+                .text_size(cx.theme().text(Text::Label))
+                .child(name)
+                .into_any_element(),
+            false => name,
+        }
+    }
+
+    fn album_name(
         &self,
         cell: &Cell<TrackField>,
         track: &Track,
