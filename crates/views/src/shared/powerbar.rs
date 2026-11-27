@@ -358,7 +358,7 @@ impl Powerbar {
             _ => false,
         };
 
-        hit_card(hit, item_idx, true, current, cx.theme())
+        hit_card(hit, item_idx, true, current, cx)
             .chosen(chosen)
             .aria_position_in_set(item_idx + 1)
             .aria_size_of_set(total)

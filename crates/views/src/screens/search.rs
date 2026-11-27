@@ -849,7 +849,7 @@ impl SearchView {
             _ => false,
         };
 
-        hit_card(hit, place, compact, current, cx.theme())
+        hit_card(hit, place, compact, current, cx)
             .when(opens(hit), |card| card.press(pressed(hit, me)))
             .when_some(self.transport(hit, me, cx), |card, (playing, play)| {
                 card.play(playing, play)
@@ -921,7 +921,7 @@ impl SearchView {
         };
 
         let me = cx.entity().downgrade();
-        let card = Card::new("best", title)
+        let card = cards::marked_local(Card::new("best", title), marks_local(hit, cx))
             .art(theme.metrics.cover * 0.45)
             .cover(cover(hit))
             .when(matches!(kind, Kind::Artist), Card::circle)
@@ -1423,14 +1423,11 @@ fn meta(hit: &Hit, compact: bool) -> SharedString {
 
 /// The card for one hit, shared by the search page and the quick search so a hit looks and
 /// links the same in both. `compact` is the mixed list, where the subtitle leads with the kind
-/// and a song names its album. The caller decides what a press and the play button do.
-pub(crate) fn hit_card(
-    hit: &Hit,
-    place: usize,
-    compact: bool,
-    current: bool,
-    theme: &Theme,
-) -> Card {
+/// and a song names its album. A local hit carries the library's local file badge unless every
+/// hit is local. The caller decides what a press and the play button do.
+pub(crate) fn hit_card(hit: &Hit, place: usize, compact: bool, current: bool, cx: &App) -> Card {
+    let theme = cx.theme();
+    let local = marks_local(hit, cx);
     let meta = subtitle(hit, place, compact, theme);
     let card = match hit {
         Hit::Song(track) => Card::new(("song", place), track.name.clone())
@@ -1462,11 +1459,18 @@ pub(crate) fn hit_card(
             .underline(),
     };
 
-    card.meta(meta)
+    cards::marked_local(card, local)
+        .meta(meta)
         .when_some(hit.pin(), Pinnable::pin)
         .when(compact, Card::tucked)
         // The mixed list tags each row with its kind, which the card's name leaves out.
         .when(compact, |card| card.aria_description(noun(hit.kind())))
+}
+
+/// Whether `hit` carries the local file badge. A local hit does unless the session plays local
+/// files alone, when every hit is local and the badge would tell nothing apart.
+fn marks_local(hit: &Hit, cx: &App) -> bool {
+    !Sonora::global(cx).session.read(cx).local_only() && hit.id().is_some_and(music::is_local_id)
 }
 
 /// The line under a hit's name, where every artist, owner and album links to its page.
