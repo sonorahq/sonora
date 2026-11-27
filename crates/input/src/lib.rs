@@ -64,6 +64,9 @@ pub const WORKSPACE_CONTEXT: &str = "Workspace";
 pub const COVER_VIEWER_CONTEXT: &str = "CoverViewer";
 pub const SEARCH_CONTEXT: &str = "Search";
 pub const POWERBAR_CONTEXT: &str = "Powerbar";
+/// The context of an open list of checkboxes, where Space ticks the row under the cursor and
+/// Enter keeps what is ticked.
+pub const CHECKLIST_CONTEXT: &str = "Checklist";
 
 /// Every key binding, in precedence order: GPUI prefers the deepest matching context and,
 /// within one, the binding registered last, so the macOS set at the end overrides the shared one.
@@ -173,6 +176,8 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("escape", Dismiss, form),
         KeyBinding::new("tab", NextField, form),
         KeyBinding::new("shift-tab", PreviousField, form),
+        KeyBinding::new("space", Activate, Some(CHECKLIST_CONTEXT)),
+        KeyBinding::new("enter", Submit, Some(CHECKLIST_CONTEXT)),
         KeyBinding::new("+", ZoomIn, Some(COVER_VIEWER_CONTEXT)),
         KeyBinding::new("=", ZoomIn, Some(COVER_VIEWER_CONTEXT)),
         KeyBinding::new("-", ZoomOut, Some(COVER_VIEWER_CONTEXT)),

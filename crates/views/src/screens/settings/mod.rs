@@ -10,7 +10,7 @@ use gpui::{
     Window, canvas, div, point, px,
 };
 use i18n::{Language, t};
-use input::SEARCH_CONTEXT;
+use input::{CHECKLIST_CONTEXT, SEARCH_CONTEXT};
 use music::SignInPrompt;
 use router::{Destination, SettingsPage, SettingsTab, navigate};
 use state::{
@@ -339,6 +339,9 @@ pub struct SettingsView {
     /// The libraries ticked in the open picker of a server that reads several at once, kept
     /// only once the picker is saved.
     library_draft: Vec<music::Library>,
+    /// The account the open picker lists the libraries of. The picker closes when the account
+    /// that can be limited changes under it, so its ticks never reach another account.
+    library_account: Option<&'static str>,
     languages: SearchPopup,
     typefaces: SearchPopup,
     typeface_faced: RefCell<HashSet<SharedString>>,
@@ -385,6 +388,9 @@ impl SettingsView {
         cx.observe(&session, |this, session, cx| {
             // the library row follows the account in use, which may switch under the page
             this.selected_libraries = session.read(cx).chosen_libraries();
+            if this.library_picker && session.read(cx).library_slug() != this.library_account {
+                this.close_library_picker(cx);
+            }
             this.remeasure(cx);
         })
         .detach();
@@ -541,6 +547,7 @@ impl SettingsView {
             library_scroll: ScrollHandle::new(),
             selected_libraries,
             library_draft: Vec::new(),
+            library_account: None,
             scrobbling,
             scrobble_first: cx.new(|cx| Input::new("common-api-key", cx)),
             scrobble_second: cx.new(|cx| Input::new("settings-scrobble-secret", cx)),
@@ -1962,11 +1969,16 @@ impl Render for SettingsView {
                 cx.propagate();
             }
         }))
-        // the library picker's keyboard: arrows walk the cursor, enter chooses; a closed
-        // picker passes every one of these on untouched
+        // the library picker's keyboard: arrows walk the cursor and enter chooses, or on a
+        // server that reads several libraries space ticks and enter saves; a closed picker
+        // passes every one of these on untouched
+        .when(self.library_picker && self.reads_several(cx), |this| {
+            this.key_context(CHECKLIST_CONTEXT)
+        })
         .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.library_walk(1, cx)))
         .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.library_walk(-1, cx)))
         .on_action(cx.listener(|this, _: &Activate, _, cx| this.library_activate(cx)))
+        .on_action(cx.listener(|this, _: &Submit, _, cx| this.library_save(cx)))
         .when_some(accounts, |this, accounts| {
             this.child(self.account_modal(accounts, cx).into_any_element())
         })
