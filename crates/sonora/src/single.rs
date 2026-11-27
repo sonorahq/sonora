@@ -140,10 +140,13 @@ pub fn claim(
 /// changes.
 pub fn connect(streams: bool) -> io::Result<Stream> {
     let stream = Stream::connect(name()?)?;
-    stream.set_recv_timeout(match streams {
-        true => None,
-        false => Some(ANSWER),
-    })?;
+    bound(
+        &stream,
+        match streams {
+            true => None,
+            false => Some(ANSWER),
+        },
+    )?;
     Ok(stream)
 }
 
@@ -154,7 +157,7 @@ fn serve(
     sender: &UnboundedSender<Vec<String>>,
     commands: &UnboundedSender<Asked>,
 ) {
-    if let Err(error) = connection.set_recv_timeout(Some(PATIENCE)) {
+    if let Err(error) = bound(&connection, Some(PATIENCE)) {
         log::warn!("single: cannot bound the read: {error:#}");
     }
     let mut reader = BufReader::new(&connection);
@@ -225,6 +228,15 @@ fn hand_over(name: Name<'_>, args: &[String]) -> bool {
         }
     };
     stream.write_all(args.join("\n").as_bytes()).is_ok()
+}
+
+/// Sets how long a read on `stream` may wait. Windows named pipes take no timeout, so there a read
+/// waits as long as the other end stays connected.
+fn bound(stream: &Stream, timeout: Option<Duration>) -> io::Result<()> {
+    match stream.set_recv_timeout(timeout) {
+        Err(error) if error.kind() == ErrorKind::Unsupported => Ok(()),
+        result => result,
+    }
 }
 
 /// The instance socket as a file in a folder only this user can enter, so another account can
