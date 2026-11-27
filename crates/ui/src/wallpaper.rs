@@ -9,10 +9,11 @@ use image::{
 
 use crate::artwork::bgra;
 
-/// The transparency a window takes when an image is first laid behind it, so the image shows
-/// without washing out the text over it.
-pub const WALLPAPER_TRANSPARENCY: f32 = 0.5;
-/// The longest side a window background is decoded at, which a 4K screen fits inside.
+/// The transparency a window takes when an image is first laid behind it. Any more and the
+/// muted text is lost over a bright picture.
+pub const WALLPAPER_TRANSPARENCY: f32 = 0.35;
+/// The longest side a window background is held at, which a 4K screen fits inside and every
+/// GPU takes as one texture.
 const MAX_EDGE: u32 = 4096;
 /// What the frames of an animated background may take together. Every frame is held decoded
 /// and uploaded to the GPU once shown, so a long animation is kept at a lower resolution.
@@ -46,6 +47,7 @@ impl Backed {
 /// it can be drawn. An animated GIF or WebP keeps all of its frames, halved in size as often as
 /// it takes to fit them in `ANIMATION_BYTES`.
 pub fn wallpaper(bytes: &[u8], room: (u32, u32)) -> Result<RenderImage, ImageCacheError> {
+    let started = std::time::Instant::now();
     let room = (room.0.clamp(1, MAX_EDGE), room.1.clamp(1, MAX_EDGE));
     let format = image::guess_format(bytes)?;
     let frames = match format {
@@ -66,7 +68,19 @@ pub fn wallpaper(bytes: &[u8], room: (u32, u32)) -> Result<RenderImage, ImageCac
             vec![still(decoder, room)?]
         }
     };
-    Ok(RenderImage::new(frames))
+    let image = RenderImage::new(frames);
+    let held = image.size(0);
+    log::debug!(
+        "wallpaper: {format:?} of {} bytes held at {}x{} in {} frames for a {}x{} screen, {:?}",
+        bytes.len(),
+        held.width.0,
+        held.height.0,
+        image.frame_count(),
+        room.0,
+        room.1,
+        started.elapsed()
+    );
+    Ok(image)
 }
 
 fn still(mut decoder: impl ImageDecoder, room: (u32, u32)) -> Result<Frame, ImageCacheError> {
@@ -131,10 +145,13 @@ fn animation<'a>(
 
 /// The size an image of `size` is held at to cover `room`: scaled down, keeping its aspect,
 /// until one side meets the room's and the other still reaches past it. An image that is
-/// already no larger keeps its size.
+/// already no larger keeps its size. A side that would still be longer than `MAX_EDGE`, as a
+/// panorama's is, brings the whole image down to it, since no texture may be larger.
 fn covering(size: (u32, u32), room: (u32, u32)) -> (u32, u32) {
     let (width, height) = (size.0.max(1) as f32, size.1.max(1) as f32);
-    let scale = (room.0 as f32 / width).max(room.1 as f32 / height);
+    let cover = (room.0 as f32 / width).max(room.1 as f32 / height);
+    let fit = MAX_EDGE as f32 / width.max(height);
+    let scale = cover.min(fit);
     match scale < 1. {
         true => (
             ((width * scale).round() as u32).max(1),

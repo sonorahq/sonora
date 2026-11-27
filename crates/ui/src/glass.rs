@@ -66,17 +66,27 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
 /// ground lets the desktop through as much as the page does. Artwork under it hides the desktop
 /// itself, and the bar keeps a little of that density there, as glass would. A window with an
 /// image behind it is opaque, so there the bar lets the image under it through by the share
-/// the desktop would have had. The caller asks `blurring` first, since without the blur the
+/// the desktop would have had. That lets more of the page under the bar through as well, and
+/// the saturation tuned for the thick fill is eased by as much, or covers passing under the
+/// bar would glow twice as hard. The caller asks `blurring` first, since without the blur the
 /// text would sit on the bare page.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
     let theme = cx.theme();
-    let (tint, fill) = match Backed::get(cx) {
-        true => (theme.popover, BAR_FILL * theme.opacity),
-        false => (theme.popover.opacity(theme.opacity), BAR_FILL),
+    let (tint, fill, saturation) = match Backed::get(cx) {
+        true => {
+            let fill = BAR_FILL * theme.opacity;
+            let kept = (1. - BAR_FILL) / (1. - fill);
+            (theme.popover, fill, 1. + (BAR_SATURATION - 1.) * kept)
+        }
+        false => (
+            theme.popover.opacity(theme.opacity),
+            BAR_FILL,
+            BAR_SATURATION,
+        ),
     };
     element
         .backdrop_blur(BAR_BLUR)
-        .backdrop_saturate(BAR_SATURATION)
+        .backdrop_saturate(saturation)
         .backdrop_tint(tint, fill)
 }
 
