@@ -109,7 +109,7 @@ pub use label::{
     spoken_steady, spoken_vacant, vacant,
 };
 pub use lattice::Lattice;
-pub use layout::{ALWAYS, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
+pub use layout::{ALWAYS, GRAND, MIN_CONTENT, ROOMY, Room, SNUG, VAST, WIDE};
 pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
 pub use linger::{Linger, lingers};

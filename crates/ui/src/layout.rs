@@ -5,6 +5,7 @@ pub const SNUG: Pixels = px(420.);
 pub const ROOMY: Pixels = px(620.);
 pub const WIDE: Pixels = px(740.);
 pub const VAST: Pixels = px(1180.);
+pub const GRAND: Pixels = px(1440.);
 
 pub const MIN_CONTENT: Pixels = px(200.);
 
@@ -15,11 +16,13 @@ pub enum Room {
     Roomy,
     Wide,
     Vast,
+    Grand,
 }
 
 impl Room {
     pub fn of(width: Pixels) -> Self {
         match width {
+            width if width >= GRAND => Self::Grand,
             width if width >= VAST => Self::Vast,
             width if width >= WIDE => Self::Wide,
             width if width >= ROOMY => Self::Roomy,
@@ -41,6 +44,7 @@ impl Room {
             Self::Roomy => ROOMY,
             Self::Wide => WIDE,
             Self::Vast => VAST,
+            Self::Grand => GRAND,
         }
     }
 }
