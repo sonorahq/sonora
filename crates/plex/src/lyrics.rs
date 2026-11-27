@@ -6,9 +6,7 @@ use lyrics::lrc;
 use music::{Lyrics, LyricsHit, LyricsProvider, LyricsQuery};
 
 use crate::auth::{self, Credentials};
-use crate::{NAME, PlexClient};
-
-const SLUG: &str = "plex";
+use crate::{NAME, PlexClient, SLUG};
 
 /// The same tier as lyrics read from a local file, since these are most often the tags of the
 /// user's own files or what Plex fetched for them.
@@ -19,7 +17,8 @@ type Identity = (String, String, String);
 /// Asks the connected Plex server for the lyrics of one of its tracks. Any other track, or no
 /// stored sign-in, gets no answer.
 pub struct PlexLyrics {
-    client: Mutex<Option<(Identity, PlexClient)>>,
+    /// The client last made, with the slug of the account it signs in as.
+    client: Mutex<Option<(&'static str, Identity, PlexClient)>>,
 }
 
 impl PlexLyrics {
@@ -29,10 +28,10 @@ impl PlexLyrics {
         }
     }
 
-    /// A client for the stored sign-in, kept until the credentials change. This provider has no
-    /// session handle, so it reads the same file the session was restored from.
-    fn client(&self) -> Result<Option<PlexClient>> {
-        let Some(stored) = auth::load() else {
+    /// A client for the sign-in of the account `slug`, kept until the credentials change. This
+    /// provider has no session handle, so it reads the same file the session was restored from.
+    fn client(&self, slug: &'static str) -> Result<Option<PlexClient>> {
+        let Some(stored) = auth::load(slug) else {
             return Ok(None);
         };
         let identity = identity(&stored);
@@ -40,13 +39,14 @@ impl PlexLyrics {
             .client
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((known, client)) = held.as_ref()
+        if let Some((account, known, client)) = held.as_ref()
+            && *account == slug
             && *known == identity
         {
             return Ok(Some(client.clone()));
         }
-        let client = PlexClient::new(stored, auth::client_id()?)?;
-        *held = Some((identity, client.clone()));
+        let client = PlexClient::new(stored, auth::client_id()?, slug)?;
+        *held = Some((slug, identity, client.clone()));
         Ok(Some(client))
     }
 }
@@ -64,10 +64,11 @@ impl LyricsProvider for PlexLyrics {
     }
 
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let Some(id) = query.id_for(SLUG) else {
+        let Some(track) = query.key_for(SLUG) else {
             return Ok(Vec::new());
         };
-        let Some(client) = self.client()? else {
+        let id = track.id.as_str();
+        let Some(client) = self.client(track.provider)? else {
             return Ok(Vec::new());
         };
         let Some(lyrics) = client

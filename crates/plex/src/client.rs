@@ -69,6 +69,9 @@ struct Inner {
     /// Talks to plex.tv, which can take longer to connect to than a server on the same network.
     tv: reqwest::Client,
     client_id: String,
+    /// The slug of the account this client signs in as, which names the file a new address
+    /// is kept in.
+    slug: &'static str,
     stored: Credentials,
     /// The address of the server that last answered. It moves when the server does.
     uri: RwLock<String>,
@@ -79,7 +82,7 @@ struct Inner {
 }
 
 impl PlexClient {
-    pub fn new(stored: Credentials, client_id: String) -> Result<Self> {
+    pub fn new(stored: Credentials, client_id: String, slug: &'static str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT)
             .read_timeout(STALL)
@@ -95,6 +98,7 @@ impl PlexClient {
                 http,
                 tv,
                 client_id,
+                slug,
                 uri: RwLock::new(stored.server.uri.clone()),
                 stored,
                 revoked: AtomicBool::new(false),
@@ -145,12 +149,12 @@ impl PlexClient {
         )
         .await?;
         log::info!("plex: reached {} at {uri}", stored.server.name);
-        if let Some(mut remembered) = auth::load()
+        if let Some(mut remembered) = auth::load(self.inner.slug)
             && remembered.server.id == stored.server.id
             && remembered.server.uri != uri
         {
             remembered.server.uri = uri.clone();
-            if let Err(error) = auth::store(&remembered) {
+            if let Err(error) = auth::store(self.inner.slug, &remembered) {
                 log::warn!("plex: cannot keep the new address: {error:#}");
             }
         }

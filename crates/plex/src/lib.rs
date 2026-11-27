@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use music::{
     AccountChoice, AccountChoices, AccountKind, Capabilities, Catalog, InputSource, MusicApi as _,
     MusicProvider, PlaybackFactory, PromptSink, ProviderSession, RadioSeed, Shape, SignIn,
-    SignInFailure, SignInProblem, SignInPrompt,
+    SignInFailure, SignInProblem, SignInPrompt, credentials,
 };
 
 use crate::auth::{Credentials, Section, Server, User};
@@ -27,6 +27,8 @@ pub use lyrics::PlexLyrics;
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
 /// cache, so it must not change.
 pub(crate) const NAME: &str = "Plex";
+/// The slug of the provider and of its first account.
+pub(crate) const SLUG: &str = "plex";
 
 /// How often the sign-in pin is asked whether the listener has approved it yet.
 const POLL: Duration = Duration::from_millis(1500);
@@ -35,16 +37,30 @@ const PATIENCE: Duration = Duration::from_secs(15 * 60);
 /// What Plex calls a music library.
 const MUSIC: &str = "artist";
 
-pub struct PlexProvider;
+/// One Plex account and the server it was pointed at. The first account goes by the provider's
+/// own slug, and every further one by a slug of its own, which also names the folder its sign-in
+/// is kept in.
+pub struct PlexProvider {
+    slug: &'static str,
+}
 
 impl PlexProvider {
     pub fn new() -> Self {
-        Self
+        Self { slug: SLUG }
+    }
+
+    /// The account kept under `slug`, one of the provider's further accounts.
+    fn slot(slug: &'static str) -> Self {
+        Self { slug }
     }
 
     /// Signs in to plex.tv in the listener's browser window, then settles on one server and one
     /// music library, asking only when the account has more than one of either.
-    async fn link(prompt: &PromptSink, input: &mut InputSource) -> Result<ProviderSession> {
+    async fn link(
+        slug: &'static str,
+        prompt: &PromptSink,
+        input: &mut InputSource,
+    ) -> Result<ProviderSession> {
         let http = reqwest::Client::builder()
             .https_only(true)
             .build()
@@ -106,12 +122,12 @@ impl PlexProvider {
         };
 
         stored.section = Self::section(&http, &client_id, &stored.server, prompt, input).await?;
-        let client = PlexClient::new(stored.clone(), client_id)?;
+        let client = PlexClient::new(stored.clone(), client_id, slug)?;
         let profile = client
             .profile()
             .await
             .context("cannot reach the plex server")?;
-        auth::store(&stored)?;
+        auth::store(slug, &stored)?;
         Ok(session(client, profile))
     }
 
@@ -168,17 +184,17 @@ impl PlexProvider {
         }
     }
 
-    async fn restore_stored() -> Result<Option<ProviderSession>> {
-        let Some(stored) = auth::load() else {
+    async fn restore_stored(slug: &'static str) -> Result<Option<ProviderSession>> {
+        let Some(stored) = auth::load(slug) else {
             return Ok(None);
         };
-        let client = PlexClient::new(stored, auth::client_id()?)?;
+        let client = PlexClient::new(stored, auth::client_id()?, slug)?;
         match client.profile().await {
             Ok(profile) => Ok(Some(session(client, profile))),
             Err(error) if music::trouble::offline(&format!("{error:#}")) => Err(error),
             Err(error) if error.chain().any(|cause| cause.is::<SignInFailure>()) => {
                 log::warn!("plex: the stored sign-in was refused: {error:#}");
-                auth::forget();
+                auth::forget(slug);
                 Err(error)
             }
             Err(error) => {
@@ -202,7 +218,25 @@ impl MusicProvider for PlexProvider {
     }
 
     fn slug(&self) -> &'static str {
-        "plex"
+        self.slug
+    }
+
+    fn keeps_several(&self) -> bool {
+        true
+    }
+
+    fn spare(&self) -> Option<Arc<dyn MusicProvider>> {
+        Some(Arc::new(Self::slot(credentials::fresh(SLUG))))
+    }
+
+    fn siblings(&self) -> Vec<Arc<dyn MusicProvider>> {
+        match self.slug == SLUG {
+            true => credentials::slots(SLUG)
+                .into_iter()
+                .map(|slug| Arc::new(Self::slot(slug)) as Arc<dyn MusicProvider>)
+                .collect(),
+            false => Vec::new(),
+        }
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
@@ -210,17 +244,21 @@ impl MusicProvider for PlexProvider {
     }
 
     fn stored(&self) -> bool {
-        auth::load().is_some()
+        auth::load(self.slug).is_some()
     }
 
     fn location(&self) -> Option<String> {
-        auth::load().map(|stored| stored.server.name)
+        auth::load(self.slug).map(|stored| stored.server.name)
+    }
+
+    fn account_name(&self) -> Option<String> {
+        auth::load(self.slug).map(|stored| stored.server.name)
     }
 
     /// The host of the server's last address, since a self-hosted library has no address in common
     /// with anyone else's.
     fn reach(&self) -> Option<String> {
-        let uri = auth::load()?.server.uri;
+        let uri = auth::load(self.slug)?.server.uri;
         let host = uri.split_once("://").map_or(uri.as_str(), |(_, rest)| rest);
         let host = match host.strip_prefix('[') {
             Some(bracketed) => bracketed.split(']').next()?,
@@ -230,16 +268,16 @@ impl MusicProvider for PlexProvider {
     }
 
     fn offline_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
-        let stored = auth::load()?;
+        let stored = auth::load(self.slug)?;
         let client = auth::client_id()
-            .and_then(|id| PlexClient::new(stored, id))
+            .and_then(|id| PlexClient::new(stored, id, self.slug))
             .inspect_err(|error| log::warn!("plex: cannot build an offline client: {error:#}"))
             .ok()?;
         Some(Arc::new(Factory::new(client)))
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        Self::restore_stored().await
+        Self::restore_stored(self.slug).await
     }
 
     async fn sign_in(
@@ -251,11 +289,11 @@ impl MusicProvider for PlexProvider {
         if !matches!(method, SignIn::Default) {
             anyhow::bail!("plex signs in through plex.tv");
         }
-        Self::link(&prompt, &mut input).await
+        Self::link(self.slug, &prompt, &mut input).await
     }
 
     fn sign_out(&self) {
-        auth::forget();
+        auth::forget(self.slug);
     }
 }
 
