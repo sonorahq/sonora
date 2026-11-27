@@ -25,6 +25,9 @@ const LONGEST_WAIT: Duration = Duration::from_secs(30 * 60);
 pub(super) enum Submit {
     /// Send everything waiting to this account.
     Account(Account),
+    /// Send everything waiting now, to the account last handed over. A kept listen asks this, so
+    /// it can never hand back an account the row has since held or forgotten.
+    Wake,
     /// Stop sending, since the service was switched off. Its listens keep waiting.
     Hold,
     /// Drop every waiting listen and stop sending, since the account was unlinked.
@@ -161,8 +164,8 @@ impl Sender {
         }
     }
 
-    /// Keeps a listen, then asks for everything waiting to go to `account`. When the listen
-    /// cannot be kept it is sent once on its own.
+    /// Keeps a listen, then wakes the task to send everything waiting. `account` is used only when
+    /// the listen cannot be kept and goes out once on its own.
     pub(super) fn play(&self, account: Account, play: Play) {
         let (service, backlog) = (self.service.clone(), self.backlog.clone());
         let (verdicts, asked) = (self.verdicts.clone(), self.asked.clone());
@@ -171,7 +174,7 @@ impl Sender {
             let copy = play.clone();
             match blocking(move || backlog.push(id, &copy)).await {
                 Ok(()) => {
-                    asked.send(Submit::Account(account)).ok();
+                    asked.send(Submit::Wake).ok();
                 }
                 Err(error) => {
                     log::warn!(
@@ -222,6 +225,7 @@ async fn send(
                 account = Some(given);
                 wait = None;
             }
+            Some(Submit::Wake) => wait = None,
             Some(Submit::Hold) => account = None,
             Some(Submit::Forget) => {
                 account = None;
