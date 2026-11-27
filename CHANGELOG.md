@@ -41,6 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Right-click an artist or album name in a song list to open its own menu, or drag it to the sidebar to pin it.
 - The macOS app is signed and notarized by Apple, so it opens on the first try without the Terminal workaround.
 - Traffic light controls left settings, while `traffic_light_controls` in settings.json keeps them.
+- Window corners left settings, while `window_rounding` in settings.json keeps them.
 - Sonora does less rendering work while you scroll through songs or use the equalizer.
 - YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.
 - Settings use much less CPU while the Now playing or Lyrics preview is on screen.
