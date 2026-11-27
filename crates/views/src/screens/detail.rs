@@ -557,7 +557,12 @@ impl DetailView {
             .children(overflow);
 
         let cover = header.and_then(|header| header.cover.clone());
-        let pin = self.detail.read(cx).id().map(|id| {
+        let detail = self.detail.read(cx);
+        let pin = match kind {
+            Collection::Album => detail.album().map(|album| album.id.as_str()),
+            Collection::Playlist => detail.id(),
+        }
+        .map(|id| {
             let kind = match kind {
                 Collection::Album => PinKind::Album,
                 Collection::Playlist => PinKind::Playlist,
@@ -612,11 +617,12 @@ impl DetailView {
         let id = detail.id()?.to_owned();
 
         let (target, saved, busy) = match detail.header()?.kind {
-            Collection::Album => (
-                Saveable::Album(detail.album()?.clone()),
-                library.read(cx).saved_album(&id),
-                library.read(cx).pending_album(&id),
-            ),
+            Collection::Album => {
+                let album = detail.album()?.clone();
+                let saved = library.read(cx).saved_album(&album.id);
+                let busy = library.read(cx).pending_album(&album.id);
+                (Saveable::Album(album), saved, busy)
+            }
             Collection::Playlist => {
                 let known = library.read(cx).playlist(&id).cloned();
                 let playlist = known.clone().or_else(|| detail.playlist().cloned())?;

@@ -756,6 +756,30 @@ pub fn catalog<'r, 'a>(value: &'r Resource<'a>) -> Option<&'r Resource<'a>> {
     value.relationships.catalog.rows().first()
 }
 
+/// The catalog album behind a library album: its own catalog link, or else the album of the
+/// first of its tracks that Apple still matches to the catalog.
+///
+/// The tracks only count for an album with no date added. That is one whose own entry Apple
+/// removed while its songs stayed, which drops its catalog link and hides it from the library
+/// listing, so the catalog id is the only one anything else knows it by. An album the listing
+/// still shows keeps its library id, as the listing does. The tracks are only there when the
+/// album was read with `tracks`, their `catalog` and the catalog songs' `albums`.
+pub fn catalog_album<'r, 'a>(value: &'r Resource<'a>) -> Option<&'r Resource<'a>> {
+    if let Some(linked) = catalog(value) {
+        return Some(linked);
+    }
+    let attributes = value.attributes.as_ref()?;
+    if text(&attributes.date_added).is_some() {
+        return None;
+    }
+    value
+        .relationships
+        .tracks
+        .rows()
+        .iter()
+        .find_map(|track| catalog(track)?.relationships.albums.rows().first())
+}
+
 /// A non-empty string field.
 pub fn text(field: &Leaf) -> Option<String> {
     field
@@ -963,19 +987,20 @@ pub fn album(value: &Resource) -> Option<Album> {
     })
 }
 
-/// One library album, which opens through the catalog release it came from or its library id
-/// when not in the catalog. An album Apple says holds no songs and that has no catalog release
-/// is skipped. It is what stays behind after every song of it was removed, with a name and
-/// nothing else.
+/// One library album, which opens through the catalog release it came from, found through its
+/// tracks when Apple dropped the album's own link, or its library id when not in the catalog.
+/// An album Apple says holds no songs and that has no catalog release is skipped. It is what
+/// stays behind after every song of it was removed, with a name and nothing else.
 pub fn library_album(value: &Resource) -> Option<Album> {
     let emptied = value
         .attributes
         .as_ref()
         .is_some_and(|attributes| attributes.track_count.as_u64() == Some(0));
-    if emptied && catalog(value).is_none() {
+    let linked = catalog_album(value);
+    if emptied && linked.is_none() {
         return None;
     }
-    let mut album = match catalog(value) {
+    let mut album = match linked {
         Some(found) => {
             let id = found.id.as_str()?;
             match album(found) {
@@ -1219,6 +1244,36 @@ pub fn pins(answer: &Answer, owner: &str) -> Vec<(String, PinTarget)> {
             Some((pin.id.as_str()?.to_owned(), target))
         })
         .collect()
+}
+
+/// Where a pinned library album really leads when the pin list could not link it: the uri of
+/// the catalog album behind it and that album's cover.
+#[derive(Clone)]
+pub struct PinLink {
+    uri: String,
+    cover: Option<String>,
+}
+
+impl PinLink {
+    /// Points a pin target at the catalog album. The catalog cover stands in for the library
+    /// one Apple does not keep for such an album.
+    pub fn apply(&self, target: &mut PinTarget) {
+        target.uri.clone_from(&self.uri);
+        if target.cover.is_none() {
+            target.cover.clone_from(&self.cover);
+        }
+    }
+}
+
+/// The link of a pin to the catalog album `album`, read through [`catalog_album`].
+pub fn pin_link(album: &Resource) -> Option<PinLink> {
+    Some(PinLink {
+        uri: pin_uri(PinTargetKind::Album, album.id.as_str()?)?,
+        cover: album
+            .attributes
+            .as_ref()
+            .and_then(|attributes| artwork(attributes, ART)),
+    })
 }
 
 /// The library id of the artist in a library search answer whose catalog artist is `id`. The
