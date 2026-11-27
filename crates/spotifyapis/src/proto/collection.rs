@@ -8,6 +8,7 @@ use prost::Message as _;
 
 pub const UPDATE_TOPIC: &str = "hm://collection/collection";
 const PAGING: &str = "/collection/v2/paging";
+const DELTA: &str = "/collection/v2/delta";
 const WRITE: &str = "/collection/v2/write";
 const CONTENT: &str = "application/vnd.collection-v2.spotify.proto";
 
@@ -45,6 +46,30 @@ pub struct PageResponse {
     // pub sync_token: String,
 }
 
+/// Asks for the changes to a set since a sync token. Sync tokens are millisecond timestamps,
+/// and Spotify answers only for one younger than 90 days.
+#[derive(prost::Message)]
+pub struct DeltaRequest {
+    #[prost(string, tag = "1")]
+    pub username: String,
+    #[prost(string, tag = "2")]
+    pub set: String,
+    #[prost(string, tag = "3")]
+    pub last_sync_token: String,
+}
+
+/// The current state of every item changed since the token, removals included. Spotify leaves
+/// `delta_update_possible` false and the items empty for a token it no longer answers for.
+#[derive(prost::Message)]
+pub struct DeltaResponse {
+    #[prost(bool, tag = "1")]
+    pub delta_update_possible: bool,
+    #[prost(message, repeated, tag = "2")]
+    pub items: Vec<CollectionItem>,
+    #[prost(string, tag = "3")]
+    pub sync_token: String,
+}
+
 #[derive(prost::Message)]
 pub struct WriteRequest {
     #[prost(string, tag = "1")]
@@ -80,6 +105,13 @@ impl Session {
     pub async fn collection_page(&self, request: &PageRequest) -> Result<PageResponse> {
         let bytes = http::read_proto(self, PAGING, CONTENT, request).await?;
         Ok(PageResponse::decode(bytes)?)
+    }
+
+    /// Reads what changed in a collection set since a sync token. Unlike a paging read, which
+    /// can come from a regional copy that lags behind writes made elsewhere, it is current.
+    pub async fn collection_delta(&self, request: &DeltaRequest) -> Result<DeltaResponse> {
+        let bytes = http::read_proto(self, DELTA, CONTENT, request).await?;
+        Ok(DeltaResponse::decode(bytes)?)
     }
 
     /// Applies updates to the saved collection or pins.
