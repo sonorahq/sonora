@@ -95,7 +95,21 @@ enum SecretInput {
 
 pub struct ProviderInfo {
     pub slug: &'static str,
+    /// The provider the account belongs to, the same for every account of one provider.
+    pub kind: &'static str,
     pub name: &'static str,
+    /// What tells the account apart from the provider's other accounts, for a provider that
+    /// keeps one account per server: the server's own name or the username, never its address.
+    pub label: Option<String>,
+    /// The account's place among the provider's accounts that share its `label`, from 2 on, so
+    /// a list can still tell them apart. The first of them has none.
+    pub number: Option<usize>,
+    /// Whether the provider has more than one account stored, so a list has to tell them apart
+    /// by `label`.
+    pub several: bool,
+    /// Whether this is the empty slot that adds another account to a provider that already has
+    /// one.
+    pub spare: bool,
     pub options: Vec<SignIn>,
     pub web_sign_in: bool,
     pub protected: bool,
@@ -175,10 +189,29 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Self {
         let remembered = settings.read(cx).provider().to_string();
+        let providers: Vec<Arc<dyn MusicProvider>> = providers
+            .into_iter()
+            .flat_map(|provider| {
+                let siblings = provider.siblings();
+                std::iter::once(provider).chain(siblings)
+            })
+            .collect();
         let local_folders = settings.read(cx).local_folders().to_vec();
+        // a further account signed out since leaves its slug behind, and its provider's first
+        // account takes over, handing on from there like any account that cannot be opened
         let active = providers
             .iter()
-            .position(|provider| provider.slug() == remembered);
+            .position(|provider| provider.slug() == remembered)
+            .or_else(|| {
+                let kind = music::credentials::kind(&remembered);
+                (kind != remembered)
+                    .then(|| {
+                        providers
+                            .iter()
+                            .position(|provider| provider.slug() == kind)
+                    })
+                    .flatten()
+            });
         let local_playback = local_provider.playback_factory();
         let mut session = Self {
             state: SessionState::SignedOut,
@@ -223,6 +256,7 @@ impl Session {
             libraries: None,
             libraries_task: None,
         };
+        session.keep_spares();
         session.restore_local(cx);
         session
     }
@@ -350,27 +384,133 @@ impl Session {
             .collect()
     }
 
+    /// Every account slot worth showing, the accounts of one provider together and in the order
+    /// they were added. A provider that keeps several accounts shows each stored one and a single
+    /// empty slot to add another, and an empty slot shows anyway while it signs in or failed to.
     pub fn providers(&self) -> impl Iterator<Item = ProviderInfo> + '_ {
-        self.providers
+        let stored: Vec<bool> = self
+            .providers
             .iter()
-            .enumerate()
-            .map(|(index, provider)| ProviderInfo {
-                slug: provider.slug(),
-                name: provider.name(),
-                options: provider.sign_in_options(),
-                // Asked in this order because answering `supported` starts a child process once
-                // on Linux, and only a provider that signs in with cookies is worth it.
-                web_sign_in: provider.web_sign_in().is_some() && webview::supported(),
-                protected: provider.protected(),
-                stored: provider.stored(),
-                guest: provider.stored_guest(),
-                active: self.active == Some(index),
-                pending: self.awaiting == Some(index),
-                error: match &self.error {
-                    Some((failed, failure)) if *failed == index => Some(failure.clone()),
-                    _ => None,
-                },
+            .map(|provider| provider.stored())
+            .collect();
+        let mut kinds: Vec<&'static str> = Vec::new();
+        for provider in &self.providers {
+            let kind = music::credentials::kind(provider.slug());
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        let mut shown: Vec<(usize, bool)> = Vec::new();
+        for kind in kinds {
+            let slots: Vec<usize> = (0..self.providers.len())
+                .filter(|&index| music::credentials::kind(self.providers[index].slug()) == kind)
+                .collect();
+            let accounts = slots.iter().filter(|&&index| stored[index]).count();
+            let busy = |index: usize| {
+                self.active == Some(index)
+                    || self.awaiting == Some(index)
+                    || self
+                        .error
+                        .as_ref()
+                        .is_some_and(|(failed, _)| *failed == index)
+            };
+            let mut empty = false;
+            for &index in &slots {
+                let keep = stored[index] || busy(index);
+                if keep {
+                    empty |= !stored[index];
+                    shown.push((index, accounts > 1));
+                }
+            }
+            if !empty && let Some(&index) = slots.iter().find(|&&index| !stored[index]) {
+                shown.push((index, accounts > 1));
+            }
+        }
+        shown.sort_by_key(|&(index, _)| {
+            let kind = music::credentials::kind(self.providers[index].slug());
+            let first = self
+                .providers
+                .iter()
+                .position(|provider| music::credentials::kind(provider.slug()) == kind);
+            (first, !stored[index], index)
+        });
+        let labels: Vec<Option<String>> = shown
+            .iter()
+            .map(|&(index, _)| {
+                let provider = &self.providers[index];
+                provider
+                    .keeps_several()
+                    .then(|| provider.account_name())
+                    .flatten()
             })
+            .collect();
+        let numbers: Vec<Option<usize>> = (0..shown.len())
+            .map(|place| {
+                let label = labels[place].as_ref()?;
+                let kind = music::credentials::kind(self.providers[shown[place].0].slug());
+                let before = (0..place)
+                    .filter(|&earlier| {
+                        labels[earlier].as_ref() == Some(label)
+                            && music::credentials::kind(self.providers[shown[earlier].0].slug())
+                                == kind
+                    })
+                    .count();
+                (before > 0).then_some(before + 1)
+            })
+            .collect();
+        shown.into_iter().zip(labels.into_iter().zip(numbers)).map(
+            move |((index, several), (label, number))| {
+                let provider = &self.providers[index];
+                let kind = music::credentials::kind(provider.slug());
+                let spare = !stored[index]
+                    && self.providers.iter().enumerate().any(|(other, sibling)| {
+                        stored[other] && music::credentials::kind(sibling.slug()) == kind
+                    });
+                ProviderInfo {
+                    slug: provider.slug(),
+                    kind,
+                    name: provider.name(),
+                    label,
+                    number,
+                    several,
+                    spare,
+                    options: provider.sign_in_options(),
+                    // Asked in this order because answering `supported` starts a child process once
+                    // on Linux, and only a provider that signs in with cookies is worth it.
+                    web_sign_in: provider.web_sign_in().is_some() && webview::supported(),
+                    protected: provider.protected(),
+                    stored: stored[index],
+                    guest: provider.stored_guest(),
+                    active: self.active == Some(index),
+                    pending: self.awaiting == Some(index),
+                    error: match &self.error {
+                        Some((failed, failure)) if *failed == index => Some(failure.clone()),
+                        _ => None,
+                    },
+                }
+            },
+        )
+    }
+
+    /// Adds an empty account slot to every provider that keeps several accounts and has none
+    /// left, so there is always one to sign another server in to. A slot only joins the end of
+    /// the list, which keeps every index the session holds pointing at the same account.
+    fn keep_spares(&mut self) {
+        let mut spares = Vec::new();
+        for provider in &self.providers {
+            let kind = music::credentials::kind(provider.slug());
+            if !provider.keeps_several() || provider.slug() != kind {
+                continue;
+            }
+            let free = self
+                .providers
+                .iter()
+                .any(|slot| music::credentials::kind(slot.slug()) == kind && !slot.stored());
+            if !free {
+                spares.extend(provider.spare());
+            }
+        }
+        self.providers.extend(spares);
     }
 
     /// The providers with an account stored. A stored guest session is not an account, so it is
@@ -573,12 +713,16 @@ impl Session {
         self.restore(cx);
     }
 
-    /// The provider whose stored account can be limited to one library of its server. A guest
-    /// session has no account to limit.
+    /// The provider whose stored account can be limited to one library of its server: the one in
+    /// use when it can, otherwise the first such account. A guest session has no account to limit.
     fn library_provider(&self) -> Option<&Arc<dyn MusicProvider>> {
-        self.providers.iter().find(|provider| {
+        let scoped = |provider: &&Arc<dyn MusicProvider>| {
             provider.has_libraries() && provider.stored() && !provider.stored_guest()
-        })
+        };
+        self.active
+            .map(|index| &self.providers[index])
+            .filter(scoped)
+            .or_else(|| self.providers.iter().find(scoped))
     }
 
     /// Whether a stored account can be limited to one library of its server.
@@ -1151,6 +1295,7 @@ impl Session {
         self.error = self.error.take().filter(|(failed, _)| *failed != index);
         self.passed.clear();
         let slug = self.providers[index].slug();
+        self.keep_spares();
         self.settings.update(cx, |settings, cx| {
             settings.set_provider(slug, cx);
         });

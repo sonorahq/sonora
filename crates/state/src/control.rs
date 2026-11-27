@@ -735,6 +735,7 @@ impl Control {
             ProviderCommand::List => Value::Providers(
                 session
                     .providers()
+                    .filter(|info| !info.spare)
                     .map(|info| wire::Provider {
                         slug: info.slug.to_owned(),
                         stored: info.stored,
