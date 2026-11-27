@@ -13,7 +13,7 @@ use gpui::accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::prelude::StatefulInteractiveElement as _;
 use gpui::{
-    AnyElement, App, Context, Entity, Hsla, InteractiveElement as _, IntoElement as _,
+    AnyElement, App, Context, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
 use music::{Arrival, Track};
@@ -546,9 +546,12 @@ impl TrackSource {
         let library = library.clone();
         let source = self.provider.clone();
         let at = cell.row;
+        // Every album opens in the same screen, so a button keyed by its row would carry the
+        // last album's heart over and play a swap from it.
+        let key = (ElementId::from("toggle-liked-track"), id);
 
         Some(
-            Button::new(("toggle-liked-track", cell.row))
+            Button::new(key)
                 .ghost()
                 .backgroundless()
                 .small()
