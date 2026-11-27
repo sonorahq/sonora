@@ -499,16 +499,28 @@ impl SettingsView {
         cx.notify();
     }
 
+    /// The opacity slider. It sets how solid the window is over the desktop, so it starts at
+    /// 100%. With an image behind the window it sets how strongly the image shows instead, and
+    /// runs the other way: 100% is the whole picture and 0% none of it.
     pub(super) fn opacity_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let look = self.look(cx);
-        let overrides = self.settings.read(cx).theme_overrides();
+        let (overrides, backed) = {
+            let settings = self.settings.read(cx);
+            (
+                settings.theme_overrides(),
+                settings.background_image().is_some(),
+            )
+        };
         let transparency = match look.transparent {
             true => look.transparency,
             false => 0.,
         };
-        let value = 1. - transparency / MAX_TRANSPARENCY;
-        let percent = ((1. - transparency) * 100.).round() as i64;
+        let value = match backed {
+            true => transparency / MAX_TRANSPARENCY,
+            false => 1. - transparency / MAX_TRANSPARENCY,
+        };
+        let percent = (value * 100.).round() as i64;
 
         let control = div()
             .flex()
@@ -526,7 +538,10 @@ impl SettingsView {
                             .value(t!("unit-percent", value = percent))
                             .colors(theme.progress_bar, theme.muted, theme.foreground)
                             .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                                let transparency = (1. - *fraction) * MAX_TRANSPARENCY;
+                                let transparency = match backed {
+                                    true => *fraction,
+                                    false => 1. - *fraction,
+                                } * MAX_TRANSPARENCY;
                                 let transparent = transparency > 0.;
                                 this.settings.update(cx, |settings, cx| {
                                     settings.set_transparent(transparent, cx);

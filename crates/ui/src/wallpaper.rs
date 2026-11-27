@@ -9,9 +9,9 @@ use image::{
 
 use crate::artwork::bgra;
 
-/// The transparency a window takes when an image is first laid behind it. Any more and the
-/// muted text is lost over a bright picture.
-pub const WALLPAPER_TRANSPARENCY: f32 = 0.35;
+/// The transparency a window takes when an image is first laid behind it: all of it, so the
+/// picture shows at full strength and the listener takes it down from there.
+pub const WALLPAPER_TRANSPARENCY: f32 = 1.;
 /// The longest side a window background is held at, which a 4K screen fits inside and every
 /// GPU takes as one texture.
 const MAX_EDGE: u32 = 4096;

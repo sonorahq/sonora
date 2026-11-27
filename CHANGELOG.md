@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Settings → Appearance has a Background image. Pick a picture or an animated GIF and it shows behind the whole app, and Opacity sets how much of it shows.
+- Settings → Appearance has a Background image. Pick a picture or an animated GIF and it shows behind the whole app, and Opacity sets how strongly it shows.
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
 - Settings → Player bar has an Island option that floats the player bar as a rounded pill over the page in any layout, on wide windows only or whenever it fits, in the middle of the page or of the window. Every layout keeps it low with a thin progress line that opens with both times under the pointer, and it holds still while the pointer is on it, so its buttons stay put as a sidebar opens.
 - The Minimal player bar layout puts the song over a thin progress line, and resting the pointer on the line opens it with both times.
