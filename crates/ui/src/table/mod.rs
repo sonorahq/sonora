@@ -1108,9 +1108,9 @@ impl<S: TableSource> TableState<S> {
                                 let reach = inner.min(text)
                                     * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
                                 let skeleton = match (column.spec.width, column.carries) {
-                                    (Width::Thumb, _) => {
-                                        Skeleton::new().size(theme.metrics.thumb).into_any_element()
-                                    }
+                                    (Width::Thumb, _) => Skeleton::new()
+                                        .size(theme.metrics.table_thumb)
+                                        .into_any_element(),
                                     (_, Some(_)) => stacked_skeleton(reach, cx),
                                     _ => Skeleton::new().w(reach).h(bar).into_any_element(),
                                 };

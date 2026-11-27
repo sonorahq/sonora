@@ -69,7 +69,7 @@ impl RenderOnce for Thumb {
 
         Artwork::new(self.url)
             .id(("artwork", self.row))
-            .size(theme.metrics.thumb)
+            .size(theme.metrics.table_thumb)
     }
 }
 
@@ -82,7 +82,7 @@ impl RenderOnce for Face {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
 
-        Avatar::new(self.url).size(theme.metrics.thumb)
+        Avatar::new(self.url).size(theme.metrics.table_thumb)
     }
 }
 

@@ -2,6 +2,8 @@ use gpui::{Pixels, SharedString, TextRun, Window, px};
 use i18n::t;
 
 const HEADER: f32 = 0.75;
+/// The text size the metrics below are drawn at. Another size scales each by its share of this.
+const DESIGN: f32 = 14.;
 
 pub const LEADING: f32 = 1.25;
 
@@ -106,6 +108,8 @@ pub struct Metrics {
     pub table_row: Pixels,
     /// A table row that stacks a second line under its title, a little taller than `table_row`.
     pub table_stack: Pixels,
+    /// The cover in a table row, which follows the text size the way the rows do.
+    pub table_thumb: Pixels,
     pub header: Pixels,
     pub pad: Pixels,
     pub inset: Pixels,
@@ -129,16 +133,20 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    /// Table rows and their covers follow the text size both ways, so a smaller text packs a
+    /// table tighter. Everything else keeps its size and only grows once the text would no
+    /// longer fit it.
     pub fn new(base: Pixels, rows: RowSize) -> Self {
         let text = base / px(1.);
+        let zoom = |design: f32| px((design * text / DESIGN).round());
         let roomy = |step: f32, lines: f32| px(step.max((text * lines).round()));
         let row = roomy(42., 2.4);
-        let scaled = |height: Pixels| px((height / px(1.) * rows.scale()).round());
 
         Self {
             row,
-            table_row: scaled(row),
-            table_stack: scaled(roomy(47., 3.35)),
+            table_row: zoom(42. * rows.scale()),
+            table_stack: zoom(47. * rows.scale()),
+            table_thumb: zoom(34.),
             header: px((row / px(1.) * HEADER).round()),
             pad: px(8.),
             inset: px(24.),
