@@ -111,7 +111,9 @@ pub(crate) fn playlist_card(
             }
         })
         .warm(move |_, cx| warmed.update(cx, |playback, cx| playback.warm_origin(&origin, cx)))
-        .press(move |_, _, cx| open_playlist(&opened.id, &opened.name, &pressed, cx))
+        .press(move |_, _, cx| {
+            open_playlist(&opened.id, &opened.name, &pressed, cx);
+        })
         .menu(CardMenu::opener(
             Item::Playlist(playlist.clone()),
             playback.clone(),
@@ -120,13 +122,21 @@ pub(crate) fn playlist_card(
 }
 
 /// Opens a playlist's page, or plays a station, which has no page worth opening, as in the
-/// provider's own app: a press starts it, or pauses and resumes it while it plays.
-pub(crate) fn open_playlist(id: &str, name: &str, playback: &Entity<Playback>, cx: &mut App) {
+/// provider's own app: a press starts it, or pauses and resumes it while it plays. Says whether
+/// it played, which leaves the listener where they were.
+pub(crate) fn open_playlist(
+    id: &str,
+    name: &str,
+    playback: &Entity<Playback>,
+    cx: &mut App,
+) -> bool {
     if !Sonora::global(cx).session.read(cx).endless(id) {
-        return navigate(Destination::Playlist(id.to_owned().into()), cx);
+        navigate(Destination::Playlist(id.to_owned().into()), cx);
+        return false;
     }
     let origin = Origin::playlist(id.to_owned()).named(name.to_owned());
     playback.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
+    true
 }
 
 /// The cover the library has for one of the listener's playlists, such as the mosaic it painted

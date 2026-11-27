@@ -368,7 +368,7 @@ impl SearchView {
             .filter(|_| self.panel_open(window, cx))
             .and_then(|at| self.offers(cx).into_iter().nth(at));
         match picked {
-            Some(offer) => self.take(offer, cx),
+            Some(offer) => self.take(offer, window, cx),
             None => {
                 let query = self.typed.clone();
                 self.run(&query, cx);
@@ -378,7 +378,7 @@ impl SearchView {
 
     /// Acts on a panel row. A hit, from the history or suggested, opens the way it does in the
     /// results and moves to the top of the history.
-    fn take(&mut self, offer: Offer, cx: &mut Context<Self>) {
+    fn take(&mut self, offer: Offer, window: &mut Window, cx: &mut Context<Self>) {
         match offer {
             Offer::Link(query) => {
                 Sonora::global(cx)
@@ -388,7 +388,7 @@ impl SearchView {
                 self.close_panel(cx);
             }
             Offer::Recent(hit) | Offer::Hit(hit) => {
-                self.open_hit(*hit, cx);
+                self.open_hit(*hit, window, cx);
                 self.close_panel(cx);
             }
         }
@@ -442,9 +442,9 @@ impl SearchView {
                 return Card::new(SharedString::from(offer.key()), label)
                     .tucked()
                     .fallback("icons/search.svg")
-                    .press(move |_, _, cx| {
+                    .press(move |_, window, cx| {
                         cx.stop_propagation();
-                        take.update(cx, |this, cx| this.take(taken.clone(), cx))
+                        take.update(cx, |this, cx| this.take(taken.clone(), window, cx))
                             .ok();
                     })
                     .chosen(chosen)
@@ -703,7 +703,7 @@ impl SearchView {
     fn activate_hit(&mut self, _: &Activate, window: &mut Window, cx: &mut Context<Self>) {
         if self.on_best {
             if let Some(best) = self.search.read(cx).best().cloned() {
-                self.open_hit(best, cx);
+                self.open_hit(best, window, cx);
             }
             return;
         }
@@ -718,13 +718,14 @@ impl SearchView {
         let Some(hit) = self.result_hits(stacked, cx).get(at).cloned() else {
             return;
         };
-        self.open_hit(hit, cx);
+        self.open_hit(hit, window, cx);
     }
 
     /// What choosing a hit does: a song plays its radio, or pauses and resumes when it is the one
     /// playing, and anything else opens its page. Either way the hit moves to the top of the
-    /// search history.
-    fn open_hit(&mut self, hit: Hit, cx: &mut Context<Self>) {
+    /// search history. A station plays rather than opens, and the field lets go so the keys
+    /// steer playback again.
+    fn open_hit(&mut self, hit: Hit, window: &mut Window, cx: &mut Context<Self>) {
         hit.remember(cx);
         match hit {
             Hit::Song(track) => {
@@ -740,7 +741,11 @@ impl SearchView {
                 }
             }
             Hit::Album(album) => navigate(Destination::Album(album.id.into()), cx),
-            Hit::Playlist(list) => cards::open_playlist(&list.id, &list.name, &self.playback, cx),
+            Hit::Playlist(list) => {
+                if cards::open_playlist(&list.id, &list.name, &self.playback, cx) {
+                    self.leave_field(window, cx);
+                }
+            }
         }
     }
 
@@ -1327,7 +1332,11 @@ fn pressed(
                 }
             }
             Hit::Album(album) => navigate(Destination::Album(album.id.clone().into()), cx),
-            Hit::Playlist(list) => cards::open_playlist(&list.id, &list.name, &this.playback, cx),
+            Hit::Playlist(list) => {
+                if cards::open_playlist(&list.id, &list.name, &this.playback, cx) {
+                    this.leave_field(window, cx);
+                }
+            }
         })
         .ok();
     }
