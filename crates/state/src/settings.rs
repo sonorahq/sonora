@@ -737,8 +737,13 @@ struct Appearance {
     ))]
     window_rounding: String,
     window_controls: bool,
+    /// Whether the window controls Sonora draws are colored dots. Set only in settings.json.
     #[cfg(not(target_os = "macos"))]
     traffic_light_controls: bool,
+    /// Whether the dots swap minimize and maximize, so they keep the order of the plain controls
+    /// with close at the outer edge. Set only in settings.json.
+    #[cfg(not(target_os = "macos"))]
+    traffic_light_reversed: bool,
     controls_on_left: bool,
     reduce_motion: String,
     motion_pace: String,
@@ -1065,6 +1070,8 @@ impl Default for Appearance {
             window_controls: true,
             #[cfg(not(target_os = "macos"))]
             traffic_light_controls: false,
+            #[cfg(not(target_os = "macos"))]
+            traffic_light_reversed: false,
             controls_on_left: false,
             reduce_motion: Stillness::default().id().to_owned(),
             motion_pace: Pace::default().id().to_owned(),
@@ -1764,6 +1771,12 @@ impl AppSettings {
     #[cfg(not(target_os = "macos"))]
     pub fn traffic_light_controls(&self) -> bool {
         self.values.appearance.traffic_light_controls
+    }
+
+    /// Whether the traffic light controls swap minimize and maximize.
+    #[cfg(not(target_os = "macos"))]
+    pub fn traffic_light_reversed(&self) -> bool {
+        self.values.appearance.traffic_light_reversed
     }
 
     pub fn controls_on_left(&self) -> bool {
@@ -2750,12 +2763,6 @@ impl AppSettings {
 
     pub fn set_window_controls(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.values.appearance.window_controls = shown;
-        self.schedule_save(cx);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn set_traffic_light_controls(&mut self, traffic_light: bool, cx: &mut Context<Self>) {
-        self.values.appearance.traffic_light_controls = traffic_light;
         self.schedule_save(cx);
     }
 

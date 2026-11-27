@@ -517,7 +517,7 @@ impl SettingsView {
     )]
     fn decoration_slots(&self, cx: &App) -> Vec<Slot> {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let mut slots = vec![Slot::ServerSideDecorations, Slot::Side, Slot::TrafficLights];
+        let mut slots = vec![Slot::ServerSideDecorations, Slot::Side];
         // Server-side decorations put the compositor in charge of the frame, so window
         // rounding is only ever this app's call with client-side ones.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -525,12 +525,7 @@ impl SettingsView {
             slots.push(Slot::WindowRounding);
         }
         #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
-        let slots = vec![
-            Slot::Decorations,
-            Slot::Side,
-            Slot::TrafficLights,
-            Slot::WindowRounding,
-        ];
+        let slots = vec![Slot::Decorations, Slot::Side, Slot::WindowRounding];
         #[cfg(target_os = "macos")]
         let slots = vec![Slot::Decorations, Slot::WindowRounding];
         slots
@@ -618,10 +613,9 @@ impl SettingsView {
         )
     }
 
-    /// Whether Sonora draws the window's controls itself, which the side and the traffic light
-    /// look only shape while it does. On Linux and FreeBSD it reads the decorations the window
-    /// got, as the title bar does, since a compositor may answer a request for server-side ones
-    /// with the client's own.
+    /// Whether Sonora draws the window's controls itself, which the side only shapes while it
+    /// does. On Linux and FreeBSD it reads the decorations the window got, as the title bar does,
+    /// since a compositor may answer a request for server-side ones with the client's own.
     #[cfg(not(target_os = "macos"))]
     fn own_controls(&self, window: &Window, cx: &App) -> bool {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -638,33 +632,6 @@ impl SettingsView {
             self.settings.read(cx).window_controls()
         };
         shown
-    }
-
-    /// The traffic light look of the window controls, off and held while Sonora draws no
-    /// controls of its own.
-    #[cfg(not(target_os = "macos"))]
-    pub(super) fn traffic_light_controls_row(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let on = self.settings.read(cx).traffic_light_controls();
-        let shown = self.own_controls(window, cx);
-
-        super::Row::new(
-            t!("settings-traffic-light-controls"),
-            Switch::new("traffic-light-controls", on && shown)
-                .name(t!("settings-traffic-light-controls"))
-                .disabled(!shown)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.settings.update(cx, |settings, cx| {
-                        settings.set_traffic_light_controls(!on, cx)
-                    });
-                }))
-                .into_any_element(),
-        )
-        .disabled(!shown)
-        .into_any_element()
     }
 
     /// The window's corners as one card per rounding, each showing a corner at that radius.

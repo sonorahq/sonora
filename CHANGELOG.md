@@ -31,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
+- `"traffic_light_reversed": true` under `appearance` in settings.json swaps minimise and maximise in the traffic light window controls, so on the right they read minimise, maximise, close like the plain ones.
 
 ### Changed
 
@@ -38,6 +39,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Song lists show each song's artists under its title, on an album only where they differ from the album's. Turn the Artist column back on from the column header, and pick a row height under Settings → Appearance.
 - Right-click an artist or album name in a song list to open its own menu, or drag it to the sidebar to pin it.
 - The macOS app is signed and notarized by Apple, so it opens on the first try without the Terminal workaround.
+- Traffic light controls left settings, while `traffic_light_controls` in settings.json keeps them.
 - Sonora does less rendering work while you scroll through songs or use the equalizer.
 - YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.
 - Settings use much less CPU while the Now playing or Lyrics preview is on screen.

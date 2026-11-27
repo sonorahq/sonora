@@ -169,8 +169,6 @@ enum Slot {
     Decorations,
     #[cfg(not(target_os = "macos"))]
     Side,
-    #[cfg(not(target_os = "macos"))]
-    TrafficLights,
     #[cfg(any(
         target_os = "windows",
         target_os = "linux",
@@ -1117,11 +1115,6 @@ impl SettingsView {
                 t!("settings-controls-side"),
                 t!("settings-controls-side-detail"),
             ),
-            #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => (
-                t!("settings-traffic-light-controls"),
-                t!("settings-traffic-light-controls-detail"),
-            ),
             #[cfg(any(
                 target_os = "windows",
                 target_os = "linux",
@@ -1352,8 +1345,6 @@ impl SettingsView {
             Slot::Decorations => self.decorations_row(cx),
             #[cfg(not(target_os = "macos"))]
             Slot::Side => self.side_row(window, cx),
-            #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => self.traffic_light_controls_row(window, cx),
             #[cfg(any(
                 target_os = "windows",
                 target_os = "linux",
