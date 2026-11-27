@@ -42,10 +42,6 @@ const END_SLACK: Duration = Duration::from_secs(3);
 #[derive(Default)]
 pub struct TealFm {
     tokens: Mutex<Option<Tokens>>,
-    /// The [`Play::order`] of the newest play whose status was written. Status writes hold it for
-    /// their whole request, so they land one at a time and an older play never overwrites a newer
-    /// one.
-    status: tokio::sync::Mutex<Option<u64>>,
 }
 
 impl TealFm {
@@ -177,17 +173,11 @@ impl Service for TealFm {
         })
     }
 
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
-        let mut newest = self.status.lock().await;
-        if newest.is_some_and(|newest| play.order < newest) {
-            return Ok(());
-        }
-        *newest = Some(play.order);
-
+    async fn now_playing(&self, account: &Account, play: &Play, position: Duration) -> Result<()> {
         let now = SystemTime::now();
         let lasts = match play.duration.is_zero() {
             true => STATUS_FALLBACK,
-            false => play.duration,
+            false => play.duration.saturating_sub(position),
         };
         let agent = agent();
         let status = Status {
@@ -204,6 +194,21 @@ impl Service for TealFm {
                 collection: STATUS,
                 rkey: STATUS_KEY,
                 record: &status,
+            },
+        )
+        .await
+    }
+
+    /// Deletes the status record, which every teal.fm reader takes as nothing playing. Deleting
+    /// a record that is already gone succeeds.
+    async fn stopped(&self, account: &Account) -> Result<()> {
+        self.write(
+            account,
+            "com.atproto.repo.deleteRecord",
+            &Delete {
+                repo: &account.key,
+                collection: STATUS,
+                rkey: STATUS_KEY,
             },
         )
         .await
@@ -310,6 +315,13 @@ struct Put<'a, T> {
 }
 
 #[derive(Serialize)]
+struct Delete<'a> {
+    repo: &'a str,
+    collection: &'a str,
+    rkey: &'a str,
+}
+
+#[derive(Serialize)]
 struct Record<'a> {
     #[serde(rename = "$type")]
     kind: &'static str,
@@ -351,7 +363,7 @@ impl<'a> View<'a> {
                 artist_name: clip(&play.artist),
             }],
             release_name: play.release().map(clip),
-            duration: (!play.duration.is_zero()).then_some(play.duration.as_secs()),
+            duration: play.seconds(),
             submission_client_agent: agent,
             played_time: played,
         }

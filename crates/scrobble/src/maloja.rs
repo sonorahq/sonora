@@ -60,7 +60,7 @@ impl Service for Maloja {
                     artists: std::slice::from_ref(&play.artist),
                     title: &play.title,
                     album: play.release(),
-                    length: play.duration.as_secs(),
+                    length: play.seconds(),
                     time: play.timestamp(),
                 })
                 .send()
@@ -89,7 +89,8 @@ struct New<'a> {
     title: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     album: Option<&'a str>,
-    length: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    length: Option<u64>,
     time: i64,
 }
 

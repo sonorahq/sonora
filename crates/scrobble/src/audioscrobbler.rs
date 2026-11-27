@@ -122,17 +122,19 @@ impl Service for AudioScrobbler {
         })
     }
 
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
+    async fn now_playing(&self, account: &Account, play: &Play, _: Duration) -> Result<()> {
         let mut form = vec![
             ("method".to_owned(), "track.updateNowPlaying".to_owned()),
             ("artist".to_owned(), play.artist.clone()),
             ("track".to_owned(), play.title.clone()),
-            ("duration".to_owned(), play.duration.as_secs().to_string()),
         ];
+        if let Some(seconds) = play.seconds() {
+            form.push(("duration".to_owned(), seconds.to_string()));
+        }
         if let Some(album) = play.release() {
             form.push(("album".to_owned(), album.to_owned()));
         }
-        self.call(account, form).await
+        self.call(account, form).await.map(|_| ())
     }
 
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
@@ -142,15 +144,22 @@ impl Service for AudioScrobbler {
                 form.push((self.slot("artist", index), play.artist.clone()));
                 form.push((self.slot("track", index), play.title.clone()));
                 form.push((self.slot("timestamp", index), play.timestamp().to_string()));
-                form.push((
-                    self.slot("duration", index),
-                    play.duration.as_secs().to_string(),
-                ));
+                if let Some(seconds) = play.seconds() {
+                    form.push((self.slot("duration", index), seconds.to_string()));
+                }
                 if let Some(album) = play.release() {
                     form.push((self.slot("album", index), album.to_owned()));
                 }
             }
-            self.call(account, form).await?;
+            let answer = self.call(account, form).await?;
+            let ignored = answer.scrobbles.as_ref().map_or(0, ignored);
+            if ignored > 0 {
+                log::warn!(
+                    "scrobble: {} ignored {ignored} of {} listens",
+                    self.id,
+                    batch.len()
+                );
+            }
         }
         Ok(())
     }
@@ -166,10 +175,10 @@ impl AudioScrobbler {
         }
     }
 
-    async fn call(&self, account: &Account, mut form: Vec<(String, String)>) -> Result<()> {
+    async fn call(&self, account: &Account, mut form: Vec<(String, String)>) -> Result<Answer> {
         form.push(("api_key".to_owned(), account.key.clone()));
         form.push(("sk".to_owned(), account.session.clone()));
-        post(self.endpoint, &account.secret, form).await.map(|_| ())
+        post(self.endpoint, &account.secret, form).await
     }
 }
 
@@ -178,6 +187,8 @@ struct Answer {
     error: Option<u32>,
     message: Option<String>,
     session: Option<Granted>,
+    /// What `track.scrobble` says about the batch, kept loose since only one count is read.
+    scrobbles: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -265,4 +276,17 @@ fn parameter(request: &str, name: &str) -> Option<String> {
         let (key, value) = pair.split_once('=')?;
         (key == name).then(|| percent_decode_str(value).decode_utf8_lossy().into_owned())
     })
+}
+
+/// How many listens of a batch the service dropped. It answers success even when its filters
+/// dropped every listen, and only this count tells. Last.fm spells it as a number and GNU FM may
+/// spell it as a string, so both are read.
+fn ignored(scrobbles: &serde_json::Value) -> u64 {
+    let Some(ignored) = scrobbles.pointer("/@attr/ignored") else {
+        return 0;
+    };
+    ignored
+        .as_u64()
+        .or_else(|| ignored.as_str()?.parse().ok())
+        .unwrap_or(0)
 }
