@@ -1000,10 +1000,12 @@ impl Savable for Track {
         library.set_saved(item, saved);
     }
 
-    /// Puts the track onto the shelf's own pages where the library is a set apart from the
-    /// favorites. Apple Music, the one such provider, adds a favorited song to the library
-    /// itself, so the Songs page lists it without a reload, at the end Apple will list it.
+    /// Announces the favorite and puts the track onto the shelf's own pages where the library
+    /// is a set apart from the favorites. Apple Music, the one such provider, adds a favorited
+    /// song to the library itself, so the Songs page lists it without a reload, at the end
+    /// Apple will list it.
     fn admit(library: &mut Library, track: Self, cx: &mut Context<Library>) {
+        cx.emit(LibraryEvent::TrackSaved);
         let Some(id) = track.id.clone() else {
             return;
         };
@@ -1147,6 +1149,8 @@ pub enum LibraryEvent {
         track: String,
     },
     TracksHidden(Vec<String>),
+    /// The provider agreed to favorite a track the listener liked in Sonora.
+    TrackSaved,
     /// A playlist a failed change may have altered in part, or whose cover changed, so a page
     /// showing it loads it again.
     PlaylistChanged(String),

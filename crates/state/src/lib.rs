@@ -329,6 +329,7 @@ pub fn init(
         Downloads::new(
             session.clone(),
             playback.clone(),
+            &library,
             &network,
             database.clone(),
             io.clone(),
