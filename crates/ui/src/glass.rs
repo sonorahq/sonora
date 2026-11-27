@@ -61,9 +61,10 @@ pub fn popover_surface<E: Styled>(element: E, cx: &App) -> E {
 
 /// Styles chrome that stays over scrolling content, the player bar and a table's head: a wide,
 /// saturated blur mixed most of the way to the popover colour at the window's own opacity. On a
-/// see-through window the bar then hides what scrolls under it as well as on an opaque one, and
-/// still lets the desktop through as much as the page does, whatever passes under it. The caller
-/// asks `blurring` first, since without the blur the text would sit on the bare page.
+/// see-through window the bar then hides most of what scrolls under it, and over the page's own
+/// ground lets the desktop through as much as the page does. Artwork under it hides the desktop
+/// itself, and the bar keeps a little of that density there, as glass would. The caller asks
+/// `blurring` first, since without the blur the text would sit on the bare page.
 pub fn bar_surface<E: Styled>(element: E, cx: &App) -> E {
     let theme = cx.theme();
     element
