@@ -10,9 +10,7 @@ use music::{
 use opensubsonic::data::{Agent, Cue, CueLine, StructuredLyrics};
 
 use crate::auth::{self, Credentials};
-use crate::{NAME, SubsonicClient};
-
-const SLUG: &str = "subsonic";
+use crate::{NAME, SLUG, SubsonicClient};
 
 /// The same tier as lyrics read from a local file, since these are most often the tags of the
 /// user's own files.
@@ -33,10 +31,10 @@ impl SubsonicLyrics {
         }
     }
 
-    /// A client for the stored sign-in, kept until the credentials change. This provider has no
-    /// session handle, so it reads the same file the session was restored from.
-    fn client(&self) -> Result<Option<SubsonicClient>> {
-        let Some(stored) = auth::load() else {
+    /// A client for the sign-in of the account `slug`, kept until the credentials change. This
+    /// provider has no session handle, so it reads the same file the session was restored from.
+    fn client(&self, slug: &str) -> Result<Option<SubsonicClient>> {
+        let Some(stored) = auth::load(slug) else {
             return Ok(None);
         };
         let identity = identity(&stored);
@@ -78,10 +76,11 @@ impl LyricsProvider for SubsonicLyrics {
     }
 
     async fn search(&self, query: &LyricsQuery) -> Result<Vec<LyricsHit>> {
-        let Some(id) = query.id_for(SLUG) else {
+        let Some(track) = query.key_for(SLUG) else {
             return Ok(Vec::new());
         };
-        let Some(client) = self.client()? else {
+        let id = track.id.as_str();
+        let Some(client) = self.client(track.provider)? else {
             return Ok(Vec::new());
         };
         let sheets = match client.lyrics_by_song(id).await {

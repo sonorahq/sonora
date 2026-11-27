@@ -49,6 +49,7 @@ mod sound;
 mod storage;
 mod themes;
 
+pub(crate) use accounts::add_server;
 pub use header::SettingsHeader;
 use layout::section_title;
 pub(crate) use layout::{Heading, Layout, frame};
@@ -367,6 +368,7 @@ impl SettingsView {
         let outputs = Sonora::global(cx).outputs.clone();
         let soloist = Sonora::global(cx).soloist.clone();
         let updates = Sonora::global(cx).updates.clone();
+        accounts::install(cx);
         cx.observe(&updates, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&drm, |this, _, cx| this.remeasure(cx)).detach();
@@ -376,8 +378,12 @@ impl SettingsView {
             .detach();
         cx.observe(&outputs, |this, _, cx| this.remeasure(cx))
             .detach();
-        cx.observe(&session, |this, _, cx| this.remeasure(cx))
-            .detach();
+        cx.observe(&session, |this, session, cx| {
+            // the library row follows the account in use, which may switch under the page
+            this.selected_library = session.read(cx).library();
+            this.remeasure(cx);
+        })
+        .detach();
         cx.observe(&scrobbling, |this, _, cx| this.remeasure(cx))
             .detach();
         cx.observe(&settings, |this, _, cx| {

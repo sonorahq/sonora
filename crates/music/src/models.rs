@@ -687,11 +687,17 @@ pub struct LyricsQuery {
 }
 
 impl LyricsQuery {
+    /// The track's id when it belongs to `provider`, on whichever of its accounts.
     pub fn id_for(&self, provider: &str) -> Option<&str> {
+        self.key_for(provider).map(|track| track.id.as_str())
+    }
+
+    /// The track and the slug of the account it belongs to, when that account is one of
+    /// `provider`'s.
+    pub fn key_for(&self, provider: &str) -> Option<&TrackKey> {
         self.track
             .as_ref()
-            .filter(|track| track.provider == provider)
-            .map(|track| track.id.as_str())
+            .filter(|track| crate::credentials::kind(track.provider) == provider)
     }
 }
 

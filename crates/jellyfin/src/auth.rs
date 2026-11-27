@@ -18,6 +18,11 @@ pub struct Credentials {
     /// The id this install signs in under. Jellyfin keeps one token per device id, so it is made
     /// once at sign-in and kept with the token it belongs to.
     pub device_id: String,
+    /// The name the server goes by in its own dashboard, which tells this account apart from
+    /// one on another server. A sign-in kept before it was asked for has none until the account
+    /// is next opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
 }
 
 /// A fresh device id, made once per sign-in.
@@ -64,13 +69,14 @@ pub fn normalize_server(raw: &str) -> Result<String> {
     })
 }
 
-fn path() -> PathBuf {
-    credentials::dir("jellyfin").join(credentials::FILE)
+/// Where the account with slug `slug` keeps its sign-in.
+fn path(slug: &str) -> PathBuf {
+    credentials::dir(slug).join(credentials::FILE)
 }
 
-/// The kept sign-in, or `None` when there is none or it is missing a part.
-pub fn load() -> Option<Credentials> {
-    let bytes = std::fs::read(path()).ok()?;
+/// The sign-in kept for the account `slug`, or `None` when there is none or it is missing a part.
+pub fn load(slug: &str) -> Option<Credentials> {
+    let bytes = std::fs::read(path(slug)).ok()?;
     let mut credentials: Credentials = serde_json::from_slice(&bytes).ok()?;
     credentials.server = normalize_server(&credentials.server).ok()?;
     match credentials.user_id.is_empty() || credentials.token.is_empty() {
@@ -79,14 +85,14 @@ pub fn load() -> Option<Credentials> {
     }
 }
 
-pub fn store(stored: &Credentials) -> Result<()> {
+pub fn store(slug: &str, stored: &Credentials) -> Result<()> {
     let bytes =
         serde_json::to_vec_pretty(stored).context("cannot serialize jellyfin credentials")?;
-    credentials::write(&path(), &bytes).context("cannot store jellyfin credentials")
+    credentials::write(&path(slug), &bytes).context("cannot store jellyfin credentials")
 }
 
-pub fn forget() {
-    credentials::remove(&path());
+pub fn forget(slug: &str) {
+    credentials::remove(&path(slug));
 }
 
 #[cfg(test)]

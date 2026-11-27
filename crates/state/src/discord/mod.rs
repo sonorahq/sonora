@@ -327,7 +327,9 @@ impl Discord {
 
         let provider = track.id.as_deref().and_then(|id| session.provider_for(id));
         let named = provider.map(|provider| Source {
-            badge: settings.discord_badge().then(|| provider.slug()),
+            badge: settings
+                .discord_badge()
+                .then(|| music::credentials::kind(provider.slug())),
             listening: listening(settings.discord_name(), track, provider.listening_to()),
             name: provider.name(),
         });

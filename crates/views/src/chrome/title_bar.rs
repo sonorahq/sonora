@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::Decorations;
 use gpui::accesskit::Role;
@@ -9,14 +11,14 @@ use gpui::{
 };
 use ui::TrafficLightControls;
 use ui::WindowControls;
-use ui::{ActiveTheme as _, Badge, Button, MenuItem, Picker, Popovers, Spin};
+use ui::{ActiveTheme as _, Badge, Button, Menu, MenuItem, Picker, Popovers, Spin, SubmenuState};
 
 use crate::chrome::SidebarRight;
 use crate::chrome::downloads::DownloadsButton;
 use i18n::t;
 use input::Refresh;
 use router::{Destination, Navigation, Screen, SettingsPage, navigate, open_settings};
-use state::{AppSettings, Sonora};
+use state::{AppSettings, ProviderInfo, Session, Sonora};
 
 const SYSTEM_ZOOMS: bool = cfg!(target_os = "windows");
 /// The rule between the current screen's controls and the account and sidebar segment.
@@ -93,6 +95,9 @@ pub(crate) struct TitleBar {
     downloads: Entity<DownloadsButton>,
     /// The account menu's group, so it closes when another of the bar's menus opens.
     popovers: Popovers,
+    /// The account menu's submenu for each provider with several accounts, by the provider's
+    /// slug, kept between frames so an open one stays open.
+    providers: HashMap<&'static str, SubmenuState>,
 }
 
 impl EventEmitter<TitleBarEvent> for TitleBar {}
@@ -119,6 +124,7 @@ impl TitleBar {
             spin: Spin::default(),
             downloads: cx.new(DownloadsButton::new),
             popovers: Popovers::default(),
+            providers: HashMap::new(),
         }
     }
 
@@ -235,32 +241,90 @@ impl TitleBar {
             )
     }
 
+    /// Keeps one submenu state for every provider that keeps an account per server and has one,
+    /// and drops the states of providers that no longer do.
+    fn keep_provider_menus(&mut self, cx: &App) {
+        let kinds: Vec<&'static str> = Sonora::global(cx)
+            .session
+            .read(cx)
+            .providers()
+            .filter(|info| info.spare || info.several)
+            .map(|info| info.kind)
+            .collect();
+        self.providers.retain(|kind, _| kinds.contains(kind));
+        for kind in kinds {
+            self.providers.entry(kind).or_default();
+        }
+    }
+
     /// The account button and the menu it opens: the connected services to switch between, a
     /// stored guest session, offline, a way to manage them, then History and Settings. Guest mode
     /// itself starts from its provider's sign-in.
     fn account(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = Sonora::global(cx).session.clone();
         let local_only = session.read(cx).local_only();
-        let guest = session.read(cx).providers().find(|info| info.guest);
-        let mut services: Vec<MenuItem> = session
-            .read(cx)
-            .connected()
-            .map(|info| {
-                let slug = info.slug;
-                let session = session.clone();
-
-                MenuItem::new(SharedString::from(format!("account-{slug}")), info.name)
-                    .icon(crate::shared::provider_logo(slug))
-                    .selected(info.active)
-                    .on_click(move |_, _, cx| {
-                        let before = session.read(cx).provider_slug();
-                        session.update(cx, |session, cx| session.switch(slug, cx));
-                        if session.read(cx).provider_slug() != before {
-                            open_startup(cx);
-                        }
-                    })
-            })
+        let infos: Vec<ProviderInfo> = session.read(cx).providers().collect();
+        let guest = infos.iter().find(|info| info.guest);
+        let mut groups: Vec<Vec<&ProviderInfo>> = Vec::new();
+        for info in infos.iter().filter(|info| info.stored && !info.guest) {
+            match groups.iter_mut().find(|group| group[0].kind == info.kind) {
+                Some(group) => group.push(info),
+                None => groups.push(vec![info]),
+            }
+        }
+        let spares: Vec<(&'static str, &'static str)> = infos
+            .iter()
+            .filter(|info| info.spare)
+            .map(|info| (info.kind, info.slug))
             .collect();
+        // a provider that keeps an account per server opens a submenu of its accounts, each under
+        // the name that tells it apart, and a way to add another. Any other switches at once.
+        let mut services: Vec<MenuItem> = Vec::new();
+        for group in groups {
+            let (kind, name) = (group[0].kind, group[0].name);
+            let spare = spares
+                .iter()
+                .find(|(spared, _)| *spared == kind)
+                .map(|(_, slug)| *slug);
+            let Some(state) = self.providers.get(kind).cloned() else {
+                services.extend(group.into_iter().map(|info| {
+                    switch_item(&session, info.slug, info.name.into(), info.active)
+                        .icon(crate::shared::provider_logo(info.slug))
+                }));
+                continue;
+            };
+            let active = group.iter().any(|info| info.active);
+            let accounts = group.iter().map(|info| {
+                let label = crate::shared::account_label(info)
+                    .unwrap_or_else(|| SharedString::from(info.name));
+                switch_item(&session, info.slug, label, info.active)
+            });
+            let add = spare.map(|spare| {
+                MenuItem::new(
+                    SharedString::from(format!("account-{kind}-add")),
+                    t!("settings-provider-add-server"),
+                )
+                .icon("icons/plus.svg")
+                .on_click(move |_, _, cx| crate::screens::settings::add_server(spare, cx))
+            });
+            let rule = add
+                .as_ref()
+                .map(|_| MenuItem::separator(SharedString::from(format!("account-{kind}-rule"))));
+            services.push(
+                MenuItem::new(SharedString::from(format!("account-{kind}-group")), name)
+                    .icon(crate::shared::provider_logo(kind))
+                    .selected(active)
+                    .submenu(
+                        Menu::new(SharedString::from(format!("account-{kind}-menu")))
+                            .w(Picker::REGULAR)
+                            .name(name)
+                            .items(accounts)
+                            .items(rule)
+                            .items(add),
+                        state,
+                    ),
+            );
+        }
         if let Some(info) = guest {
             let slug = info.slug;
             let session = session.clone();
@@ -368,6 +432,7 @@ impl TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.keep_provider_menus(cx);
         let theme = cx.theme();
         let height = ui::snapped(theme.metrics.title_bar, window);
         let navigation = self.options.navigation;
@@ -616,4 +681,24 @@ fn titlebar_double_click(window: &Window) {
     window.titlebar_double_click();
     #[cfg(not(target_os = "macos"))]
     window.zoom_window();
+}
+
+/// The account menu row that switches to the account `slug`, and opens the start screen once the
+/// switch takes.
+fn switch_item(
+    session: &Entity<Session>,
+    slug: &'static str,
+    label: SharedString,
+    active: bool,
+) -> MenuItem {
+    let session = session.clone();
+    MenuItem::new(SharedString::from(format!("account-{slug}")), label)
+        .selected(active)
+        .on_click(move |_, _, cx| {
+            let before = session.read(cx).provider_slug();
+            session.update(cx, |session, cx| session.switch(slug, cx));
+            if session.read(cx).provider_slug() != before {
+                open_startup(cx);
+            }
+        })
 }

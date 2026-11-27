@@ -61,6 +61,7 @@ nav-library = Your Library
 sidebar-library = Library
 nav-settings = Settings
 account-manage = Manage accounts
+account-label-numbered = { $label } ({ $number })
 nav-songs = Songs
 nav-albums = Albums
 nav-playlists = Playlists

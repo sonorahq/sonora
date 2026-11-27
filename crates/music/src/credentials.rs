@@ -1,6 +1,6 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Mutex, Once, PoisonError};
 
 use anyhow::{Context as _, Result};
 
@@ -18,8 +18,16 @@ const MOVED: &[(&str, &[&str])] = &[
     ("youtube", &[FILE, "cookies.json"]),
 ];
 
+/// What joins a provider's slug to the suffix that names one of its further accounts, as in
+/// `subsonic-19a3f2b1c4d`. No provider's own slug contains it.
+const SLOT: char = '-';
+
 /// Runs the move out of the cache folder once per process, before the first provider looks.
 static MIGRATION: Once = Once::new();
+
+/// The slugs [`fresh`] handed out in this process. A slot has no folder until it signs in, so
+/// this is what keeps two empty slots from sharing a slug.
+static TAKEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Sonora's cache root, `$XDG_CACHE_HOME/sonora`, falling back to the temp dir. It holds only
 /// what Sonora can fetch again, since cleaners and the system are free to empty it.
@@ -34,6 +42,48 @@ pub fn root() -> PathBuf {
 pub fn dir(slug: &str) -> PathBuf {
     MIGRATION.call_once(migrate);
     accounts().join(slug)
+}
+
+/// The provider a slug belongs to. A provider's first account goes by the provider's own slug,
+/// and every further account by that slug with a suffix, so this strips the suffix.
+pub fn kind(slug: &str) -> &str {
+    slug.split_once(SLOT).map_or(slug, |(kind, _)| kind)
+}
+
+/// The slugs of the further accounts of provider `kind` that have a sign-in kept on disk, oldest
+/// first. The provider's first account, under its own slug, is not among them.
+pub fn slots(kind: &str) -> Vec<&'static str> {
+    MIGRATION.call_once(migrate);
+    let prefix = format!("{kind}{SLOT}");
+    let Ok(entries) = std::fs::read_dir(accounts()) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.len() > prefix.len() && name.starts_with(&prefix))
+        .filter(|name| accounts().join(name).join(FILE).is_file())
+        .collect();
+    found.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    found.into_iter().map(leak).collect()
+}
+
+/// A slug for one more account of provider `kind` that no account folder uses yet. Its suffix
+/// counts milliseconds, so [`slots`] lists accounts in the order they were added.
+pub fn fresh(kind: &str) -> &'static str {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    let mut taken = TAKEN.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut stamp = now;
+    loop {
+        let slug = format!("{kind}{SLOT}{stamp:x}");
+        if !accounts().join(&slug).exists() && !taken.contains(&slug) {
+            taken.push(slug.clone());
+            return leak(slug);
+        }
+        stamp += 1;
+    }
 }
 
 /// Writes a credential file readable by the owner alone, creating its folder first. The bytes
@@ -163,4 +213,10 @@ fn sync_folder(folder: &Path) {
     }
     #[cfg(not(unix))]
     let _ = folder;
+}
+
+/// Gives a slug the static lifetime every provider's slug has. A process makes only a handful of
+/// them, one per account slot.
+fn leak(slug: String) -> &'static str {
+    Box::leak(slug.into_boxed_str())
 }

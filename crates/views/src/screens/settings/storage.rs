@@ -80,7 +80,12 @@ impl SettingsView {
     /// The row that opens the folder the active provider's downloads are saved in as plain
     /// audio files. The folder is made when nothing was downloaded yet.
     pub(super) fn open_downloads_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let provider = self.session.read(cx).provider_slug();
+        // every account of a provider keeps its downloads in the provider's own folder
+        let provider = self
+            .session
+            .read(cx)
+            .provider_slug()
+            .map(music::credentials::kind);
         let vault = self.playback.read(cx).vault().clone();
 
         outward("open-downloads", t!("settings-downloads-open"), None, cx)
