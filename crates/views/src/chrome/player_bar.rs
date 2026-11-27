@@ -34,6 +34,8 @@ const VOLUME_TIGHT: f32 = 72.;
 /// How wide a small icon button draws: `SMALL_INSET` on each side of a 16 px icon. Every button
 /// on the classic bar's right side is one, the sessions picker included.
 const ICON_BUTTON: f32 = 32.;
+/// The icon inside one of those buttons.
+const ICON_GLYPH: f32 = 16.;
 /// The classic bar's spacing in rems: its `px_5` at either end, its `gap_4` between the three
 /// columns, the right side's `gap_2` between its groups, the `gap_1` between the panel buttons
 /// and the volume group's `gap_1` between the mute button and the slider.
@@ -557,11 +559,14 @@ impl PlayerBar {
         }
     }
 
-    /// How tall a row stands that holds a thumbnail with the slim seek line under it and no
-    /// more: the minimal row along the window's foot, and the island's pill in every layout.
+    /// How tall a row stands that holds a thumbnail or the title and artist lines, whichever is
+    /// taller, with the slim seek line under it and no more: the minimal row along the window's
+    /// foot, and the island's pill in every layout.
     fn slim_height(cx: &App) -> Pixels {
-        let metrics = cx.theme().metrics;
-        metrics.thumb + metrics.pad * (LINE_DROP + MINIMAL_INSET) * 2.
+        let theme = cx.theme();
+        let metrics = theme.metrics;
+        let lines = (theme.text(ui::Text::Body) + theme.text(ui::Text::Small)) * ui::LEADING;
+        metrics.thumb.max(lines) + metrics.pad * (LINE_DROP + MINIMAL_INSET) * 2.
     }
 
     /// How wide the row of the bar along the window's foot is inside its padding.
@@ -674,6 +679,13 @@ impl PlayerBar {
     /// so the first and last buttons sit as far from the edge as from the top and bottom.
     fn island_pad(pill: Pixels, cx: &App) -> Pixels {
         (pill - cx.theme().metrics.control) / 2.
+    }
+
+    /// The padding before a cover that starts the island's pill: as far in as the icon of the
+    /// button that ends the pill, so the two ends mirror each other. On a round end that also
+    /// leaves the cover's corner nearly as much room along the curve as above and below it.
+    fn island_lead(pill: Pixels, cx: &App) -> Pixels {
+        Self::island_pad(pill, cx) + px(ICON_BUTTON - ICON_GLYPH) / 2.
     }
 
     /// The height the workspace reserves, shared by the overlay's bottom scroll clearance: the
@@ -983,6 +995,9 @@ impl PlayerBar {
                 let column = div().flex().flex_col().items_center().flex_none().w(middle);
                 let column = match slim {
                     Some(_) => column
+                        .h_full()
+                        .justify_end()
+                        .pb(theme.metrics.pad * MINIMAL_INSET)
                         .child(under_line(div().flex_none().child(transport), slim))
                         .child(Self::slim_line(seek, cx)),
                     None => column.gap_1().child(transport).child(seek),
@@ -1097,10 +1112,15 @@ impl Render for PlayerBar {
         let (base, row) = match floating {
             true => {
                 let pill = ui::snapped(Self::slim_height(cx), window);
-                let pad = Self::island_pad(pill, cx);
+                let pad = ui::snapped(Self::island_pad(pill, cx), window);
+                // Every layout but the minimal row starts the pill with the cover.
+                let lead = match layout == PlayerBarLayout::Minimal {
+                    true => pad,
+                    false => ui::snapped(Self::island_lead(pill, cx), window),
+                };
                 let span = self.span.unwrap_or_else(|| window.viewport_size().width);
-                let base = base.flex().w_full().h(pill).flex_none().px(pad);
-                (base, span - clear * 2. - pad * 2.)
+                let base = base.flex().w_full().h(pill).flex_none().pl(lead).pr(pad);
+                (base, span - clear * 2. - pad - lead)
             }
             false => (Self::frame(base, window, cx), Self::strip_row(window)),
         };
@@ -1140,7 +1160,12 @@ impl Render for PlayerBar {
                         .h_full()
                         .flex()
                         .flex_col()
-                        .justify_center()
+                        // In the island the slim line keeps the inset under it that it has in
+                        // the other layouts, and the title and artist stand on it.
+                        .map(|this| match floating {
+                            true => this.justify_end().pb(theme.metrics.pad * MINIMAL_INSET),
+                            false => this.justify_center(),
+                        })
                         .child({
                             let shown = self.playback.read(cx).shown_track(cx);
                             let details = track_details(
@@ -1196,7 +1221,9 @@ impl Render for PlayerBar {
                             .flex_col()
                             .flex_1()
                             .min_w_0()
-                            .justify_center()
+                            .h_full()
+                            .justify_end()
+                            .pb(theme.metrics.pad * MINIMAL_INSET)
                             .child(
                                 under_line(
                                     div().flex().items_center().gap(rems(COVER_GAP)),
