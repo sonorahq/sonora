@@ -62,6 +62,9 @@ const SKELETON_UNDER: f32 = 0.6;
 /// How far a skeleton bar reaches across its cell, stepped by row and column so the column
 /// edges do not line up into a grid.
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
+/// The widest a skeleton bar's cell counts as, in body text ems, so a bar in a wide column stays
+/// about as long as the text that will replace it.
+const SKELETON_TEXT: f32 = 16.;
 
 pub const ROW_GROUP: &str = "table-row";
 /// The line height, in ems, of a title and of the folded line under it, tighter than body text
@@ -1077,6 +1080,7 @@ impl<S: TableSource> TableState<S> {
         let first = self.viewport.first(head, row_height);
         let last = (first + self.viewport.rows(row_height)).min(count);
         let bar = theme.metrics.table_row * SKELETON_BAR;
+        let text = theme.text(Text::Body) * SKELETON_TEXT;
 
         (first..last)
             .map(|display| {
@@ -1098,8 +1102,8 @@ impl<S: TableSource> TableState<S> {
                             .enumerate()
                             .map(|(ix, column)| {
                                 let inner = self.delegate.inner_width(ix);
-                                let reach =
-                                    inner * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
+                                let reach = inner.min(text)
+                                    * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
                                 let skeleton = match (column.spec.width, column.carries) {
                                     (Width::Thumb, _) => {
                                         Skeleton::new().size(theme.metrics.thumb).into_any_element()
