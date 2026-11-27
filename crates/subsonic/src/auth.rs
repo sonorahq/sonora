@@ -42,8 +42,9 @@ pub fn sign(username: &str, password: &str) -> Signature {
     signature
 }
 
-fn path() -> PathBuf {
-    credentials::dir("subsonic").join(credentials::FILE)
+/// Where the account with slug `slug` keeps its sign-in.
+fn path(slug: &str) -> PathBuf {
+    credentials::dir(slug).join(credentials::FILE)
 }
 
 pub fn normalize_server(raw: &str) -> Result<String> {
@@ -58,8 +59,9 @@ pub fn normalize_server(raw: &str) -> Result<String> {
     Ok(with_scheme)
 }
 
-pub fn load() -> Option<Credentials> {
-    let bytes = std::fs::read(path()).ok()?;
+/// The sign-in kept for the account `slug`, or `None` when there is none or it names no user.
+pub fn load(slug: &str) -> Option<Credentials> {
+    let bytes = std::fs::read(path(slug)).ok()?;
     let mut credentials: Credentials = serde_json::from_slice(&bytes).ok()?;
     credentials.server = normalize_server(&credentials.server).ok()?;
     match credentials.username.is_empty() {
@@ -68,14 +70,14 @@ pub fn load() -> Option<Credentials> {
     }
 }
 
-pub fn store(stored: &Credentials) -> Result<()> {
+pub fn store(slug: &str, stored: &Credentials) -> Result<()> {
     let bytes =
         serde_json::to_vec_pretty(stored).context("cannot serialize subsonic credentials")?;
-    credentials::write(&path(), &bytes).context("cannot store subsonic credentials")
+    credentials::write(&path(slug), &bytes).context("cannot store subsonic credentials")
 }
 
-pub fn forget() {
-    credentials::remove(&path());
+pub fn forget(slug: &str) {
+    credentials::remove(&path(slug));
 }
 
 #[cfg(test)]

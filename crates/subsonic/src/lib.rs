@@ -13,7 +13,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use music::{
     Capabilities, Catalog, Library, MusicApi as _, MusicProvider, PlaybackFactory, ProviderSession,
-    RadioSeed, Shape, SignIn,
+    RadioSeed, Shape, SignIn, credentials,
 };
 
 use crate::playback::Factory;
@@ -23,19 +23,31 @@ pub use lyrics::SubsonicLyrics;
 /// The name the provider and its lyrics source go by. It is saved in settings and in the lyrics
 /// cache, so it must not change.
 pub(crate) const NAME: &str = "Subsonic";
+/// The slug of the provider and of its first account.
+pub(crate) const SLUG: &str = "subsonic";
 
 /// The collections `getSimilarSongs` takes the id of. A playlist is not one, so its radio is
 /// blended from the radios of its songs.
 const RADIO_SEEDS: &[RadioSeed] = &[RadioSeed::Album, RadioSeed::Artist];
 
-pub struct SubsonicProvider;
+/// One account on a Subsonic server. The first account goes by the provider's own slug, and
+/// every further one by a slug of its own, which also names the folder its sign-in is kept in.
+pub struct SubsonicProvider {
+    slug: &'static str,
+}
 
 impl SubsonicProvider {
     pub fn new() -> Self {
-        Self
+        Self { slug: SLUG }
+    }
+
+    /// The account kept under `slug`, one of the provider's further accounts.
+    fn slot(slug: &'static str) -> Self {
+        Self { slug }
     }
 
     async fn connect(
+        slug: &'static str,
         server: String,
         username: String,
         password: String,
@@ -55,14 +67,17 @@ impl SubsonicProvider {
             .context("cannot reach the subsonic server")?;
         let covers = client.takes_playlist_covers().await;
         let smart = client.takes_smart_playlists().await;
-        auth::store(&auth::Credentials {
-            server,
-            username,
-            password,
-            signature: Some(signature),
-            // a fresh sign-in starts on the whole server; a library is chosen afterwards
-            library: None,
-        })?;
+        auth::store(
+            slug,
+            &auth::Credentials {
+                server,
+                username,
+                password,
+                signature: Some(signature),
+                // a fresh sign-in starts on the whole server; a library is chosen afterwards
+                library: None,
+            },
+        )?;
         Ok(ProviderSession {
             profile,
             api: Arc::new(client.clone()),
@@ -81,13 +96,13 @@ impl SubsonicProvider {
         })
     }
 
-    async fn restore_stored() -> Result<Option<ProviderSession>> {
-        let Some(mut remembered) = auth::load() else {
+    async fn restore_stored(slug: &'static str) -> Result<Option<ProviderSession>> {
+        let Some(mut remembered) = auth::load(slug) else {
             return Ok(None);
         };
         if remembered.signature.is_none() {
             remembered.signature = Some(auth::sign(&remembered.username, &remembered.password));
-            if let Err(error) = auth::store(&remembered) {
+            if let Err(error) = auth::store(slug, &remembered) {
                 log::warn!("subsonic: cannot keep the cover signature: {error:#}");
             }
         }
@@ -127,13 +142,13 @@ impl SubsonicProvider {
 
 /// The library the stored account reads, when it is scoped to one. The picker names the
 /// choice from this before the server is asked anything.
-fn selected_library() -> Option<Library> {
-    auth::load().and_then(|remembered| remembered.library)
+fn selected_library(slug: &str) -> Option<Library> {
+    auth::load(slug).and_then(|remembered| remembered.library)
 }
 
 /// Every library the stored server offers the account, for the settings picker.
-async fn libraries() -> Result<Vec<Library>> {
-    let remembered = auth::load().context("no subsonic account is stored")?;
+async fn libraries(slug: &str) -> Result<Vec<Library>> {
+    let remembered = auth::load(slug).context("no subsonic account is stored")?;
     let signature = remembered
         .signature
         .clone()
@@ -151,10 +166,10 @@ async fn libraries() -> Result<Vec<Library>> {
 /// Points the stored account at one library, or back at the whole server with `None`. This
 /// only persists the choice: the live session rebuilds itself to apply it, so no request in
 /// flight changes scope under the user.
-fn select_library(library: Option<Library>) -> Result<()> {
-    let mut remembered = auth::load().context("no subsonic account is stored")?;
+fn select_library(slug: &str, library: Option<Library>) -> Result<()> {
+    let mut remembered = auth::load(slug).context("no subsonic account is stored")?;
     remembered.library = library;
-    auth::store(&remembered)
+    auth::store(slug, &remembered)
 }
 
 impl Default for SubsonicProvider {
@@ -170,7 +185,25 @@ impl MusicProvider for SubsonicProvider {
     }
 
     fn slug(&self) -> &'static str {
-        "subsonic"
+        self.slug
+    }
+
+    fn keeps_several(&self) -> bool {
+        true
+    }
+
+    fn spare(&self) -> Option<Arc<dyn MusicProvider>> {
+        Some(Arc::new(Self::slot(credentials::fresh(SLUG))))
+    }
+
+    fn siblings(&self) -> Vec<Arc<dyn MusicProvider>> {
+        match self.slug == SLUG {
+            true => credentials::slots(SLUG)
+                .into_iter()
+                .map(|slug| Arc::new(Self::slot(slug)) as Arc<dyn MusicProvider>)
+                .collect(),
+            false => Vec::new(),
+        }
     }
 
     fn has_libraries(&self) -> bool {
@@ -178,15 +211,15 @@ impl MusicProvider for SubsonicProvider {
     }
 
     fn library(&self) -> Option<Library> {
-        selected_library()
+        selected_library(self.slug)
     }
 
     async fn libraries(&self) -> Result<Vec<Library>> {
-        libraries().await
+        libraries(self.slug).await
     }
 
     fn choose_library(&self, library: Option<Library>) -> Result<()> {
-        select_library(library)
+        select_library(self.slug, library)
     }
 
     fn sign_in_options(&self) -> Vec<SignIn> {
@@ -198,17 +231,22 @@ impl MusicProvider for SubsonicProvider {
     }
 
     fn stored(&self) -> bool {
-        auth::load().is_some()
+        auth::load(self.slug).is_some()
     }
 
     fn location(&self) -> Option<String> {
-        auth::load().map(|credentials| credentials.server)
+        auth::load(self.slug).map(|credentials| credentials.server)
+    }
+
+    /// The username, since a Subsonic server has no name of its own to show.
+    fn account_name(&self) -> Option<String> {
+        auth::load(self.slug).map(|credentials| credentials.username)
     }
 
     /// The configured server's host, since a self-hosted library has no address in common with
     /// anyone else's.
     fn reach(&self) -> Option<String> {
-        let server = auth::load()?.server;
+        let server = auth::load(self.slug)?.server;
         let host = server
             .split_once("://")
             .map_or(server.as_str(), |(_, rest)| rest);
@@ -217,7 +255,7 @@ impl MusicProvider for SubsonicProvider {
     }
 
     fn offline_playback(&self) -> Option<Arc<dyn PlaybackFactory>> {
-        let remembered = auth::load()?;
+        let remembered = auth::load(self.slug)?;
         let signature = remembered
             .signature
             .clone()
@@ -235,7 +273,7 @@ impl MusicProvider for SubsonicProvider {
     }
 
     async fn restore(&self) -> Result<Option<ProviderSession>> {
-        Self::restore_stored().await
+        Self::restore_stored(self.slug).await
     }
 
     async fn sign_in(
@@ -258,10 +296,10 @@ impl MusicProvider for SubsonicProvider {
         if password.is_empty() {
             anyhow::bail!("the subsonic password is empty");
         }
-        Self::connect(server, username, password).await
+        Self::connect(self.slug, server, username, password).await
     }
 
     fn sign_out(&self) {
-        auth::forget();
+        auth::forget(self.slug);
     }
 }
