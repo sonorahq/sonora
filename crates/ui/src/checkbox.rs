@@ -23,6 +23,8 @@ pub struct Checkbox {
     label: Option<SharedString>,
     /// What a screen reader calls the checkbox in place of its label.
     name: Option<SharedString>,
+    /// Whether the checkbox is its own node in the accessibility tree.
+    announced: bool,
     on_click: Option<Click>,
 }
 
@@ -38,8 +40,16 @@ impl Checkbox {
             disabled: false,
             label: None,
             name: None,
+            announced: true,
             on_click: None,
         }
+    }
+
+    /// Leaves the checkbox out of the accessibility tree, for a row that already reports the
+    /// choice and its name itself. Without it the reader hears a second, nameless checkbox.
+    pub fn silent(mut self) -> Self {
+        self.announced = false;
+        self
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -89,6 +99,7 @@ impl RenderOnce for Checkbox {
             disabled,
             label,
             name,
+            announced,
             on_click,
         } = self;
         let theme = *cx.theme();
@@ -151,10 +162,12 @@ impl RenderOnce for Checkbox {
         };
 
         let mut checkbox = base
-            .role(gpui::accesskit::Role::CheckBox)
-            .aria_toggled(gpui::accesskit::Toggled::from(checked))
-            .when_some(name.or_else(|| label.clone()), |this, name| {
-                this.aria_label(name)
+            .when(announced, |this| {
+                this.role(gpui::accesskit::Role::CheckBox)
+                    .aria_toggled(gpui::accesskit::Toggled::from(checked))
+                    .when_some(name.or_else(|| label.clone()), |this, name| {
+                        this.aria_label(name)
+                    })
             })
             .flex()
             .items_center()
