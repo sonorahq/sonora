@@ -117,7 +117,7 @@ impl Seek for Audio {
 }
 
 /// Opens a local file and builds its decoder.
-fn decode(id: &str) -> Result<rodio::Decoder<Media>> {
+fn decode(id: &str) -> Result<rodio::Decoder<'static, Media>> {
     let path =
         wire::path_from_track_id(id).ok_or_else(|| anyhow!("{id} is not a local track id"))?;
     let mut file =

@@ -15,10 +15,11 @@ use music::{
     ReleaseType, Track,
 };
 use serde::{Deserialize, Serialize};
+use symphonia::core::codecs::CodecParameters;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::{MetadataOptions, StandardTagKey};
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::{MetadataContainer, MetadataOptions, StandardTag};
 
 use super::id3;
 
@@ -334,28 +335,33 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
     if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
         hint.with_extension(ext);
     }
-    let fmt_opts = FormatOptions::default();
-    let meta_opts = MetadataOptions::default();
-    let mut probed = symphonia::default::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
+    let mut format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .ok()?;
 
     let mut duration = std::time::Duration::ZERO;
-    for track in probed.format.tracks() {
-        if track.codec_params.codec == symphonia::core::codecs::CODEC_TYPE_NULL {
+    for track in format.tracks() {
+        let Some(CodecParameters::Audio(params)) = &track.codec_params else {
             continue;
-        }
-        if let (Some(n_frames), Some(tb)) =
-            (track.codec_params.n_frames, track.codec_params.time_base)
+        };
+        if let Some(time) = track
+            .time_base
+            .zip(track.duration)
+            .and_then(|(tb, length)| tb.calc_duration(length))
         {
-            let time = tb.calc_time(n_frames);
-            duration = std::time::Duration::from_secs(time.seconds)
-                .saturating_add(std::time::Duration::from_secs_f64(time.frac));
+            let (seconds, nanos) = time.parts();
+            duration = u64::try_from(seconds)
+                .map(|seconds| std::time::Duration::new(seconds, nanos))
+                .unwrap_or_default();
             if !duration.is_zero() {
                 break;
             }
-        } else if let (Some(n_frames), Some(rate)) =
-            (track.codec_params.n_frames, track.codec_params.sample_rate)
+        } else if let (Some(n_frames), Some(rate)) = (track.num_frames, params.sample_rate)
             && rate > 0
         {
             duration = std::time::Duration::from_secs_f64(n_frames as f64 / rate as f64);
@@ -382,82 +388,55 @@ fn probe_symphonia_at(path: &Path, skip: u64) -> Option<FallbackProbe> {
     let mut compilation = false;
     let mut cover_data = None;
 
-    let mut collect_metadata = |rev: &symphonia::core::meta::MetadataRevision| {
-        for tag in rev.tags() {
-            let clean_val = |v: &symphonia::core::meta::Value| {
-                let s = v.to_string();
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_owned())
-                }
+    let mut collect_metadata = |container: &MetadataContainer| {
+        for tag in &container.tags {
+            let Some(std) = &tag.std else { continue };
+            let text = || {
+                let trimmed = tag.raw.value.to_string().trim().to_owned();
+                (!trimmed.is_empty()).then_some(trimmed)
             };
-            match tag.std_key {
-                Some(StandardTagKey::TrackTitle) if title.is_none() => {
-                    title = clean_val(&tag.value);
+            match std {
+                StandardTag::TrackTitle(_) if title.is_none() => title = text(),
+                StandardTag::Artist(_) if artist.is_none() => artist = text(),
+                StandardTag::Album(_) if album.is_none() => album = text(),
+                StandardTag::AlbumArtist(_) if album_artist.is_none() => album_artist = text(),
+                StandardTag::TrackNumber(n) if track_number == 0 => {
+                    track_number = u32::try_from(*n).unwrap_or_default();
                 }
-                Some(StandardTagKey::Artist) if artist.is_none() => {
-                    artist = clean_val(&tag.value);
+                StandardTag::DiscNumber(n) if disc_number == 0 => {
+                    disc_number = u32::try_from(*n).unwrap_or_default();
                 }
-                Some(StandardTagKey::Album) if album.is_none() => {
-                    album = clean_val(&tag.value);
+                StandardTag::MusicBrainzReleaseType(_) => release.extend(text()),
+                StandardTag::Genre(_) => genres.extend(text()),
+                StandardTag::Mood(_) => moods.extend(text()),
+                StandardTag::Bpm(_) if bpm.is_none() => {
+                    bpm = parse_bpm(&tag.raw.value.to_string());
                 }
-                Some(StandardTagKey::AlbumArtist) if album_artist.is_none() => {
-                    album_artist = clean_val(&tag.value);
-                }
-                Some(StandardTagKey::TrackNumber) if track_number == 0 => {
-                    if let Ok(n) = tag.value.to_string().parse() {
-                        track_number = n;
-                    }
-                }
-                Some(StandardTagKey::DiscNumber) if disc_number == 0 => {
-                    if let Ok(n) = tag.value.to_string().parse() {
-                        disc_number = n;
-                    }
-                }
-                Some(StandardTagKey::MusicBrainzReleaseType) => {
-                    release.extend(clean_val(&tag.value));
-                }
-                Some(StandardTagKey::Genre) => {
-                    genres.extend(clean_val(&tag.value));
-                }
-                Some(StandardTagKey::Mood) => {
-                    moods.extend(clean_val(&tag.value));
-                }
-                Some(StandardTagKey::Bpm) if bpm.is_none() => {
-                    bpm = parse_bpm(&tag.value.to_string());
-                }
-                Some(StandardTagKey::Composer) => {
-                    composers.extend(clean_val(&tag.value));
-                }
-                Some(StandardTagKey::Language) => {
-                    languages.extend(clean_val(&tag.value));
-                }
-                Some(StandardTagKey::Label) if label.is_none() => {
-                    label = clean_val(&tag.value);
-                }
-                Some(StandardTagKey::Compilation) => {
-                    compilation |= flagged(&tag.value.to_string());
-                }
-                Some(StandardTagKey::Date) if release_date.is_none() => {
-                    release_date = music::ReleaseDate::parse(&tag.value.to_string());
+                StandardTag::Composer(_) => composers.extend(text()),
+                StandardTag::Language(_) => languages.extend(text()),
+                StandardTag::Label(_) if label.is_none() => label = text(),
+                StandardTag::CompilationFlag(on) => compilation |= *on,
+                StandardTag::RecordingDate(_) | StandardTag::ReleaseDate(_)
+                    if release_date.is_none() =>
+                {
+                    release_date = music::ReleaseDate::parse(&tag.raw.value.to_string());
                 }
                 _ => {}
             }
         }
         if cover_data.is_none()
-            && let Some(visual) = rev.visuals().first()
+            && let Some(visual) = container.visuals.first()
         {
-            cover_data = Some((visual.data.to_vec(), visual.media_type.clone()));
+            let media_type = visual.media_type.clone().unwrap_or_default();
+            cover_data = Some((visual.data.to_vec(), media_type));
         }
     };
 
-    if let Some(meta) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-        collect_metadata(meta);
-    }
-    if let Some(meta) = probed.format.metadata().current() {
-        collect_metadata(meta);
+    if let Some(revision) = format.metadata().current() {
+        collect_metadata(&revision.media);
+        for track in &revision.per_track {
+            collect_metadata(&track.metadata);
+        }
     }
 
     Some(FallbackProbe {
