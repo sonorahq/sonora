@@ -1254,6 +1254,13 @@ fn audio_loop<F: Fetch>(
                         }
                     }
                 }
+                // The decoder already crossed onto this track, which an unline that came too
+                // late to stop the join can line up a second time.
+                Job::Queue { id, .. }
+                    if joining
+                        .as_ref()
+                        .and_then(|join| join.next.as_ref())
+                        .is_some_and(|(next, _)| *next == id) => {}
                 Job::Queue { id, loaded } => queued = Some((id, loaded)),
                 Job::Unqueue => queued = None,
                 Job::Stop => {
