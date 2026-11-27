@@ -707,9 +707,9 @@ impl Control {
         };
         let library = self.library.read(cx).state(Shelf::Streaming);
         let ranked = search::rank(
-            library.tracks(),
-            library.albums(),
-            library.playlists(),
+            &[library.tracks()],
+            &[library.albums()],
+            &[library.playlists()],
             &catalog,
             &HashMap::new(),
             &query.text,

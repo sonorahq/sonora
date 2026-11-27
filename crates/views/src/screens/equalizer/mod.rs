@@ -466,7 +466,7 @@ impl EqualizerView {
             .left()
             .width(width)
             .map(|picker| match room {
-                Room::Wide | Room::Vast => picker.w(width),
+                Room::Wide | Room::Vast | Room::Grand => picker.w(width),
                 Room::Roomy => picker.flex_1().min_w_0(),
                 Room::Tight | Room::Snug => match advanced {
                     true => picker.w_full(),

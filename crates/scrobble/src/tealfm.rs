@@ -1,12 +1,12 @@
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use super::{Account, Link, Play, Secret, Service};
+use super::{Account, Link, Play, Rejected, Secret, Service};
 
 /// The record each listen becomes in the user's repository.
 const PLAY: &str = "fm.teal.feed.play";
@@ -17,6 +17,8 @@ const STATUS_KEY: &str = "self";
 const STATUS_FALLBACK: Duration = Duration::from_secs(600);
 /// The longest string, in bytes, the play lexicon accepts for a name.
 const NAME_LIMIT: usize = 256;
+/// The alphabet of the sortable base32 that record keys of the TID form are written in.
+const TID_ALPHABET: &[u8; 32] = b"234567abcdefghijklmnopqrstuvwxyz";
 const APP_PASSWORDS: &str = "https://bsky.app/settings/app-passwords";
 /// The directory that resolves `did:plc` identities to their documents.
 const PLC: &str = "https://plc.directory";
@@ -42,10 +44,6 @@ const END_SLACK: Duration = Duration::from_secs(3);
 #[derive(Default)]
 pub struct TealFm {
     tokens: Mutex<Option<Tokens>>,
-    /// The [`Play::order`] of the newest play whose status was written. Status writes hold it for
-    /// their whole request, so they land one at a time and an older play never overwrites a newer
-    /// one.
-    status: tokio::sync::Mutex<Option<u64>>,
 }
 
 impl TealFm {
@@ -177,17 +175,11 @@ impl Service for TealFm {
         })
     }
 
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
-        let mut newest = self.status.lock().await;
-        if newest.is_some_and(|newest| play.order < newest) {
-            return Ok(());
-        }
-        *newest = Some(play.order);
-
+    async fn now_playing(&self, account: &Account, play: &Play, position: Duration) -> Result<()> {
         let now = SystemTime::now();
         let lasts = match play.duration.is_zero() {
             true => STATUS_FALLBACK,
-            false => play.duration,
+            false => play.duration.saturating_sub(position),
         };
         let agent = agent();
         let status = Status {
@@ -209,6 +201,21 @@ impl Service for TealFm {
         .await
     }
 
+    /// Deletes the status record, which every teal.fm reader takes as nothing playing. Deleting
+    /// a record that is already gone succeeds.
+    async fn stopped(&self, account: &Account) -> Result<()> {
+        self.write(
+            account,
+            "com.atproto.repo.deleteRecord",
+            &Delete {
+                repo: &account.key,
+                collection: STATUS,
+                rkey: STATUS_KEY,
+            },
+        )
+        .await
+    }
+
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
         let agent = agent();
         for play in plays {
@@ -216,12 +223,16 @@ impl Service for TealFm {
                 kind: PLAY,
                 view: View::of(play, &agent, Some(datetime(play.at)?)),
             };
+            // the key comes from the play, so a retry after a lost answer rewrites the same record
+            // rather than adding a second listen
+            let rkey = tid(play.at);
             self.write(
                 account,
-                "com.atproto.repo.createRecord",
-                &Create {
+                "com.atproto.repo.putRecord",
+                &Put {
                     repo: &account.key,
                     collection: PLAY,
+                    rkey: &rkey,
                     record: &record,
                 },
             )
@@ -295,18 +306,18 @@ struct Endpoint {
 }
 
 #[derive(Serialize)]
-struct Create<'a, T> {
-    repo: &'a str,
-    collection: &'a str,
-    record: &'a T,
-}
-
-#[derive(Serialize)]
 struct Put<'a, T> {
     repo: &'a str,
     collection: &'a str,
     rkey: &'a str,
     record: &'a T,
+}
+
+#[derive(Serialize)]
+struct Delete<'a> {
+    repo: &'a str,
+    collection: &'a str,
+    rkey: &'a str,
 }
 
 #[derive(Serialize)]
@@ -351,7 +362,7 @@ impl<'a> View<'a> {
                 artist_name: clip(&play.artist),
             }],
             release_name: play.release().map(clip),
-            duration: (!play.duration.is_zero()).then_some(play.duration.as_secs()),
+            duration: play.seconds(),
             submission_client_agent: agent,
             played_time: played,
         }
@@ -388,6 +399,13 @@ async fn post(
         || matches!(refusal.error.as_str(), "ExpiredToken" | "InvalidToken")
     {
         return Ok(Sent::Expired);
+    }
+    if status == StatusCode::BAD_REQUEST {
+        return Err(Rejected(format!(
+            "{method} ({status}): {} {}",
+            refusal.error, refusal.message
+        ))
+        .into());
     }
     bail!(
         "the atproto server refused {method} ({status}): {} {}",
@@ -540,4 +558,19 @@ fn clip(text: &str) -> &str {
         .find(|&end| text.is_char_boundary(end))
         .unwrap_or(0);
     &text[..end]
+}
+
+/// The record key of a play, a TID made from the moment the play started. The microseconds give
+/// its time and the nanoseconds within that microsecond its clock id, so the same play always
+/// gets the same key.
+fn tid(at: SystemTime) -> String {
+    let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let micros = u64::try_from(since.as_micros()).unwrap_or(u64::MAX) & ((1 << 53) - 1);
+    let mut value = (micros << 10) | u64::from(since.subsec_nanos() % 1000);
+    let mut key = [TID_ALPHABET[0]; 13];
+    for slot in key.iter_mut().rev() {
+        *slot = TID_ALPHABET[(value & 31) as usize];
+        value >>= 5;
+    }
+    key.iter().map(|&byte| char::from(byte)).collect()
 }

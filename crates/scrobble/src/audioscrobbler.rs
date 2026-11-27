@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-use super::{Account, KeyRefused, Link, Play, Secret, Service};
+use super::{Account, KeyRefused, Link, Play, Rejected, Secret, Service};
 
 /// The loopback address the browser hands the token back on.
 const PORT: u16 = 8990;
@@ -20,6 +20,9 @@ const WAIT: Duration = Duration::from_secs(300);
 const LASTFM_BATCH: usize = 50;
 /// The error codes that refuse the key rather than the request: invalid, then suspended.
 const KEY_REFUSED: [u32; 2] = [10, 26];
+/// The error codes that refuse the listens themselves: invalid parameters, then an invalid
+/// resource. Sending them again cannot help.
+const REJECTED: [u32; 2] = [6, 7];
 
 const PAGE: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
     <html><body>Sonora is connected. You can close this window.</body></html>";
@@ -73,6 +76,10 @@ impl Service for AudioScrobbler {
         self.signup
     }
 
+    fn batch(&self) -> usize {
+        self.batch
+    }
+
     async fn connect(&self, secret: Secret) -> Result<Account> {
         let (key, shared) = match secret {
             Secret::Keys { key, secret } => (key.trim().to_owned(), secret.trim().to_owned()),
@@ -122,17 +129,19 @@ impl Service for AudioScrobbler {
         })
     }
 
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
+    async fn now_playing(&self, account: &Account, play: &Play, _: Duration) -> Result<()> {
         let mut form = vec![
             ("method".to_owned(), "track.updateNowPlaying".to_owned()),
             ("artist".to_owned(), play.artist.clone()),
             ("track".to_owned(), play.title.clone()),
-            ("duration".to_owned(), play.duration.as_secs().to_string()),
         ];
+        if let Some(seconds) = play.seconds() {
+            form.push(("duration".to_owned(), seconds.to_string()));
+        }
         if let Some(album) = play.release() {
             form.push(("album".to_owned(), album.to_owned()));
         }
-        self.call(account, form).await
+        self.call(account, form).await.map(|_| ())
     }
 
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
@@ -142,15 +151,22 @@ impl Service for AudioScrobbler {
                 form.push((self.slot("artist", index), play.artist.clone()));
                 form.push((self.slot("track", index), play.title.clone()));
                 form.push((self.slot("timestamp", index), play.timestamp().to_string()));
-                form.push((
-                    self.slot("duration", index),
-                    play.duration.as_secs().to_string(),
-                ));
+                if let Some(seconds) = play.seconds() {
+                    form.push((self.slot("duration", index), seconds.to_string()));
+                }
                 if let Some(album) = play.release() {
                     form.push((self.slot("album", index), album.to_owned()));
                 }
             }
-            self.call(account, form).await?;
+            let answer = self.call(account, form).await?;
+            let ignored = answer.scrobbles.as_ref().map_or(0, ignored);
+            if ignored > 0 {
+                log::warn!(
+                    "scrobble: {} ignored {ignored} of {} listens",
+                    self.id,
+                    batch.len()
+                );
+            }
         }
         Ok(())
     }
@@ -166,10 +182,10 @@ impl AudioScrobbler {
         }
     }
 
-    async fn call(&self, account: &Account, mut form: Vec<(String, String)>) -> Result<()> {
+    async fn call(&self, account: &Account, mut form: Vec<(String, String)>) -> Result<Answer> {
         form.push(("api_key".to_owned(), account.key.clone()));
         form.push(("sk".to_owned(), account.session.clone()));
-        post(self.endpoint, &account.secret, form).await.map(|_| ())
+        post(self.endpoint, &account.secret, form).await
     }
 }
 
@@ -178,6 +194,8 @@ struct Answer {
     error: Option<u32>,
     message: Option<String>,
     session: Option<Granted>,
+    /// What `track.scrobble` says about the batch, kept loose since only one count is read.
+    scrobbles: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -241,6 +259,9 @@ async fn post(endpoint: &str, secret: &str, mut form: Vec<(String, String)>) -> 
         if KEY_REFUSED.contains(&code) {
             return Err(KeyRefused { code, message }.into());
         }
+        if REJECTED.contains(&code) {
+            return Err(Rejected(format!("({code}) {message}")).into());
+        }
         bail!("the scrobbling service refused the request ({code}): {message}");
     }
     Ok(answer)
@@ -265,4 +286,17 @@ fn parameter(request: &str, name: &str) -> Option<String> {
         let (key, value) = pair.split_once('=')?;
         (key == name).then(|| percent_decode_str(value).decode_utf8_lossy().into_owned())
     })
+}
+
+/// How many listens of a batch the service dropped. It answers success even when its filters
+/// dropped every listen, and only this count tells. Last.fm spells it as a number and GNU FM may
+/// spell it as a string, so both are read.
+fn ignored(scrobbles: &serde_json::Value) -> u64 {
+    let Some(ignored) = scrobbles.pointer("/@attr/ignored") else {
+        return 0;
+    };
+    ignored
+        .as_u64()
+        .or_else(|| ignored.as_str()?.parse().ok())
+        .unwrap_or(0)
 }

@@ -52,7 +52,7 @@ impl Layout {
         let metrics = cx.theme().metrics;
         let margin = match Chrome::room(window, cx) {
             Room::Tight | Room::Snug => metrics.pad * 2.,
-            Room::Roomy | Room::Wide | Room::Vast => metrics.inset,
+            Room::Roomy | Room::Wide | Room::Vast | Room::Grand => metrics.inset,
         };
         let content = Chrome::content(window, cx);
         let header = cx.try_global::<HeaderHeight>().and_then(|height| height.0);

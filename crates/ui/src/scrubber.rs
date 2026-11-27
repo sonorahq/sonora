@@ -18,6 +18,8 @@ const BUBBLE: f32 = 7.;
 const LIFT: Pixels = px(12.);
 /// How far one screen reader step moves the slider, as a share of its length.
 const STEP: f32 = 0.05;
+/// The smallest a thumb that grows as a layer is drawn, since a layer cannot scale to nothing.
+const LEAST_SCALE: f32 = 0.01;
 
 type Slide = Box<dyn Fn(&f32, &mut Window, &mut App) + 'static>;
 type Release = Box<dyn Fn(&MouseUpEvent, &mut Window, &mut App) + 'static>;
@@ -159,9 +161,10 @@ impl Scrubber {
         self
     }
 
-    /// Lays the line, its fill and the thumb out off the device pixel grid while `off` holds, so a
-    /// thickness or thumb size that animates moves smoothly rather than a pixel at a time. Leave it
-    /// off at rest, where the grid keeps their edges crisp.
+    /// Lays the line and its fill out off the device pixel grid while `off` holds, so a thickness
+    /// that animates moves smoothly rather than a pixel at a time. The thumb then keeps its full
+    /// size and is scaled as a finished layer, the way a lyric line grows, so it keeps its round
+    /// shape at every step. Leave it off at rest, where the grid keeps their edges crisp.
     pub fn off_grid(mut self, off: bool) -> Self {
         self.off_grid = off;
         self
@@ -282,7 +285,19 @@ impl RenderOnce for Scrubber {
             on_release,
         } = self;
         let line = track(pad) * thickness;
-        let dot = pin * thumb_scale;
+        let layered = off_grid && thumb_scale != 1.;
+        let dot = match layered {
+            true => pin,
+            false => pin * thumb_scale,
+        };
+        let knob = move |node: Div| {
+            node.size(dot)
+                .rounded_full()
+                .bg(thumb)
+                .when(layered, |node| {
+                    node.layer_scale(thumb_scale.max(LEAST_SCALE))
+                })
+        };
         let overrides = std::mem::take(base.style());
         // gpui rounds the lengths of every node that keeps the grid, so each node of the line has
         // to leave it, not only the root.
@@ -401,16 +416,13 @@ impl RenderOnce for Scrubber {
                                 .bg(color)
                         }))
                         .when(enabled, |this| {
-                            this.child(
+                            this.child(knob(
                                 lay(div())
                                     .absolute()
                                     .left((line - dot) / 2.)
                                     .bottom(relative(fraction))
-                                    .mb(Pixels::ZERO - dot / 2.)
-                                    .size(dot)
-                                    .rounded_full()
-                                    .bg(thumb),
-                            )
+                                    .mb(Pixels::ZERO - dot / 2.),
+                            ))
                         })
                         .when_some(bubble, |this, (at, text)| {
                             this.child(
@@ -477,16 +489,13 @@ impl RenderOnce for Scrubber {
                                 .bg(color)
                         }))
                         .when(enabled, |this| {
-                            this.child(
+                            this.child(knob(
                                 lay(div())
                                     .absolute()
                                     .top((line - dot) / 2.)
                                     .left(relative(fraction))
-                                    .ml(Pixels::ZERO - dot / 2.)
-                                    .size(dot)
-                                    .rounded_full()
-                                    .bg(thumb),
-                            )
+                                    .ml(Pixels::ZERO - dot / 2.),
+                            ))
                         })
                         .when_some(bubble, |this, (at, text)| {
                             this.child(

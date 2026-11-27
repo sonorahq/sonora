@@ -37,6 +37,7 @@ commands it sends to other devices and reads the queue Spotify reports.
 | Profiles | `GET /user-profile-view/v3/profile/{user}` | Loads a profile, follower and following counts, and public playlists. |
 | Saved music | `POST /collection/v2/paging` | Reads pages of saved music. |
 | Library pins | `POST /collection/v2/paging` · `ylpin` | Reads the account's Spotify pins. |
+| Library pins | `POST /collection/v2/delta` · `ylpin` | Reads pin changes of the last 89 days, since a paging read can lag behind a pin made through another region. |
 | Saved music and pins | `POST /collection/v2/write` | Updates saved music and pins. |
 | Playlists | `POST /playlist/spotify.list.v1.ListReadService/GetLists` | Reads playlist details, dated entries and contributors, library pages, and Browse sections. Also batches summaries. |
 | Playlists | `POST /playlist/v2/playlist` | Creates a playlist. |

@@ -56,44 +56,44 @@ impl Rounding {
 /// How tall table rows stand, as a share of the height the text alone asks for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RowSize {
+    Compact,
     #[default]
-    Standard,
-    Comfortable,
+    Regular,
     Spacious,
 }
 
 impl RowSize {
-    pub const ALL: [Self; 3] = [Self::Standard, Self::Comfortable, Self::Spacious];
+    pub const ALL: [Self; 3] = [Self::Compact, Self::Regular, Self::Spacious];
 
     pub fn id(self) -> &'static str {
         match self {
-            Self::Standard => "standard",
-            Self::Comfortable => "comfortable",
+            Self::Compact => "compact",
+            Self::Regular => "regular",
             Self::Spacious => "spacious",
         }
     }
 
     pub fn label(self) -> SharedString {
         match self {
-            Self::Standard => t!("row-size-standard"),
-            Self::Comfortable => t!("row-size-comfortable"),
+            Self::Compact => t!("row-size-compact"),
+            Self::Regular => t!("row-size-regular"),
             Self::Spacious => t!("row-size-spacious"),
         }
     }
 
-    /// Reads a saved id, keeping the standard height for a missing or unknown one.
+    /// Reads a saved id, keeping the regular height for a missing or unknown one.
     pub fn from_id(id: &str) -> Self {
         match id {
-            "comfortable" => Self::Comfortable,
+            "compact" => Self::Compact,
             "spacious" => Self::Spacious,
-            _ => Self::Standard,
+            _ => Self::Regular,
         }
     }
 
     fn scale(self) -> f32 {
         match self {
-            Self::Standard => 1.,
-            Self::Comfortable => 1.1,
+            Self::Compact => 1.,
+            Self::Regular => 1.1,
             Self::Spacious => 1.2,
         }
     }

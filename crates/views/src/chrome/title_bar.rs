@@ -389,9 +389,11 @@ impl Render for TitleBar {
         let decorated = cfg!(not(target_os = "macos")) && controls;
         let leading = decorated && settings.controls_on_left();
         #[cfg(not(target_os = "macos"))]
-        let traffic_light = settings.traffic_light_controls();
+        let traffic_light = settings
+            .traffic_light_controls()
+            .then(|| settings.traffic_light_reversed());
         #[cfg(target_os = "macos")]
-        let traffic_light = false;
+        let traffic_light = None;
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let radius = crate::chrome::window_radius(settings, cx, window);
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -515,12 +517,14 @@ impl Render for TitleBar {
                 this.child(
                     div()
                         .flex_none()
-                        .when(cfg!(target_os = "windows") && !traffic_light, |this| {
-                            this.h_full().self_stretch()
-                        })
-                        .when(!cfg!(target_os = "windows") || traffic_light, |this| {
-                            this.pr_2()
-                        })
+                        .when(
+                            cfg!(target_os = "windows") && traffic_light.is_none(),
+                            |this| this.h_full().self_stretch(),
+                        )
+                        .when(
+                            !cfg!(target_os = "windows") || traffic_light.is_some(),
+                            |this| this.pr_2(),
+                        )
                         .child(window_controls(false, traffic_light)),
                 )
             })
@@ -594,10 +598,14 @@ fn open_startup(cx: &mut App) {
     navigate(screen.destination(), cx);
 }
 
-fn window_controls(leading: bool, traffic_light: bool) -> AnyElement {
+/// The window controls Sonora draws. `traffic_light` holds whether the dots are reversed when
+/// they are drawn as traffic lights, and is `None` for the plain controls.
+fn window_controls(leading: bool, traffic_light: Option<bool>) -> AnyElement {
     match traffic_light {
-        true => TrafficLightControls::new(leading).into_any_element(),
-        false => WindowControls::new(leading).into_any_element(),
+        Some(reversed) => TrafficLightControls::new(leading)
+            .reversed(reversed)
+            .into_any_element(),
+        None => WindowControls::new(leading).into_any_element(),
     }
 }
 

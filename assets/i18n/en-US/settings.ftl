@@ -12,7 +12,15 @@ settings-player-bar-layout-detail = Arrange the track information, playback cont
 settings-player-bar-classic = Classic
 settings-player-bar-compact = Compact
 settings-player-bar-centered = Centered
+settings-player-bar-minimal = Minimal
 settings-player-bar-island = Island
+settings-player-bar-island-detail = Float the player bar over the page as a rounded pill in the layout you picked, on wide windows only or whenever the window has room for it
+settings-player-bar-island-off = Off
+settings-player-bar-island-wide = Wide windows
+settings-player-bar-island-fits = When it fits
+settings-player-bar-island-page = Center on page
+settings-player-bar-island-page-detail = Keep the island in the middle of the page between the sidebars. Off, it stays in the middle of the window
+settings-player-bar-island-page-needs-island = Turn on Island to choose where it stands
 settings-player-bar-transparent = Transparent player bar
 settings-player-bar-transparent-detail = Let pages and sidebars scroll underneath a frosted player bar
 settings-player-bar-transparent-needs-blur = Turn on Blur UI to let pages scroll underneath a frosted player bar
@@ -183,10 +191,6 @@ settings-server-side-decorations-detail = Let the compositor draw the title bar,
 settings-typeface-loading = Loading…
 settings-window-controls = Window controls
 settings-window-controls-detail = Draw minimise, maximise and close in the title bar
-settings-traffic-light-controls = Traffic light controls
-settings-traffic-light-controls-detail = Draw minimise, maximise and close as colored dots
-settings-window-rounding = Window corners
-settings-window-rounding-detail = How rounded the window's own corners are
 settings-controls-side = Controls side
 settings-controls-side-detail = Which end of the title bar the controls sit on
 settings-close-to-tray = Keep running in the background
@@ -408,6 +412,8 @@ settings-karaoke-lyrics = Karaoke
 settings-karaoke-lyrics-detail = Highlight lyrics word by word when timing is available
 settings-blur-lyrics = Blur inactive lines
 settings-blur-lyrics-detail = Blur upcoming and previous lines in the lyrics panel
+settings-scroll-plain-lyrics = Auto-scroll plain lyrics
+settings-scroll-plain-lyrics-detail = Scroll lyrics without timing over the length of the song
 settings-lyrics-sample-first = Arbitrary data
 settings-lyrics-sample-second = Insert funny text right here
 settings-lyrics-sample-japanese = ここに面白い文章を入れてください
@@ -524,8 +530,8 @@ corners-rounded = Rounded
 corners-round = Round
 
 # row height
-row-size-standard = Standard
-row-size-comfortable = Comfortable
+row-size-compact = Compact
+row-size-regular = Regular
 row-size-spacious = Spacious
 
 # motion

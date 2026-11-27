@@ -12,10 +12,10 @@ use ui::{Scrubber, ScrubberState, clock, tabular};
 
 use crate::shared::transport::{clock_ems, end_clock, fraction, moved};
 
-/// How thick the island's seek line draws at rest and wide open, as multiples of the usual track.
+/// How thick the slim seek line draws at rest and wide open, as multiples of the usual track.
 const ISLAND_THIN: f32 = 0.6;
 const ISLAND_THICK: f32 = 1.5;
-/// How far above the bottom of the seek row the island's clocks stand, in pads: just over the
+/// How far above the bottom of the seek row the slim line's clocks stand, in pads: just over the
 /// open line, whose middle is the row's.
 const CLOCK_LIFT: f32 = 2.25;
 /// The seek bar's track and thumb in pads, as `ui::Scrubber` draws them.
@@ -28,8 +28,9 @@ struct SeekLine(Option<Pixels>);
 
 impl Global for SeekLine {}
 
-/// The player bar's elapsed clock, seek bar and remaining or total clock. In the island the
-/// clocks stand above the line instead and show only while it is open. It follows the
+/// The player bar's elapsed clock, seek bar and remaining or total clock. Along the slim line of
+/// the island and the minimal row the clocks stand above the line instead and show only while
+/// it is open. It follows the
 /// position on its own and redraws only when a clock reads differently or the bar would move by
 /// a device pixel, so the rest of the player bar does not draw on every position report.
 pub(crate) struct Timeline {
@@ -45,9 +46,8 @@ pub(crate) struct Timeline {
     scale: f32,
     /// What the last render drew, so a report that changes none of it draws nothing.
     drawn: Option<Drawn>,
-    /// How far the island's seek line has opened, from 0 for a thin bare line to 1 for a thick one
-    /// with both clocks above it. `None` outside the island, where the clocks stand at either end
-    /// of the bar.
+    /// How far the slim seek line has opened, from 0 for a thin bare line to 1 for a thick one
+    /// with both clocks above it. `None` for the full seek bar, with the clocks at either end.
     spread: Option<f32>,
 }
 
@@ -91,8 +91,8 @@ impl Timeline {
         }
     }
 
-    /// Draws the seek bar the island's way when `spread` is set, `None` for the clocks at either
-    /// end. It redraws only when that changes.
+    /// Draws the slim seek line opened as far as `spread` says, or the full seek bar for `None`.
+    /// It redraws only when that changes.
     pub fn spread(&mut self, spread: Option<f32>, cx: &mut Context<Self>) {
         if self.spread != spread {
             self.spread = spread;
@@ -188,8 +188,8 @@ impl Render for Timeline {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
         let empty = muted.opacity(0.3);
-        // The island's clocks take the room the cover and title leave, so they read a step larger
-        // and a little brighter than the tiny muted ones beside a classic bar's line.
+        // The slim line's clocks take the room of what stands over it, so they read a step larger
+        // and a little brighter than the tiny muted ones beside a full seek bar.
         let (clock_text, ink) = match self.spread {
             Some(_) => (theme.text(ui::Text::Small), theme.foreground.opacity(0.7)),
             None => (theme.text(ui::Text::Tiny), muted),
@@ -229,12 +229,12 @@ impl Render for Timeline {
             }
             false => clock_label("player-duration", clock(total), align_end),
         };
-        // The island's line rests thin and bare, and swells with its clocks as it opens. Its
+        // The slim line rests thin and bare, and swells with its clocks as it opens. Its
         // thumb is part of the line rather than a dot of its own: at rest it is as thick as the
         // line and its colour, and it grows and lightens to a full thumb as the line opens. The
         // line and thumb follow the spring past either end, while colours stay within it. While
-        // the spring moves they are laid out off the pixel grid, so they swell smoothly rather
-        // than a pixel at a time.
+        // the spring moves the line is laid out off the pixel grid and the thumb grows as a
+        // scaled layer, so both swell smoothly rather than a pixel at a time.
         let (thickness, pin, dot, moving) = match self.spread {
             Some(spread) => {
                 let thickness = ISLAND_THIN + (ISLAND_THICK - ISLAND_THIN) * spread;

@@ -132,10 +132,6 @@ settings-server-side-decorations-detail = Разрешить композито�
 settings-typeface-loading = Загрузка…
 settings-window-controls = Кнопки окна
 settings-window-controls-detail = Рисовать свернуть, развернуть и закрыть в заголовке окна
-settings-traffic-light-controls = Кнопки-светофор
-settings-traffic-light-controls-detail = Рисовать свернуть, развернуть и закрыть как цветные точки
-settings-window-rounding = Скругление окна
-settings-window-rounding-detail = Насколько скруглены углы окна
 settings-controls-side = Сторона кнопок
 settings-controls-side-detail = С какой стороны заголовка расположены кнопки
 settings-close-to-tray = Играть после закрытия
@@ -429,8 +425,8 @@ corners-rounded = Скруглённые
 corners-round = Круглые
 
 # row height
-row-size-standard = Обычные
-row-size-comfortable = Свободные
+row-size-compact = Компактные
+row-size-regular = Обычные
 row-size-spacious = Просторные
 
 # motion

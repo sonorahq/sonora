@@ -6,13 +6,15 @@ use gpui::prelude::*;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, Entity, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    Render, SharedString, Stateful, Task,
+    AnyElement, App, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Pixels, Point, Render, SharedString, Stateful, Task,
 };
 use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
 use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
-use state::{AppSettings, Playback, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora};
+use state::{
+    AppSettings, Playback, PlayerBarIsland, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora,
+};
 use ui::{Artwork, Button, Flight, Pinnable, Popup, Room, Scrollbar, ScrubberState, Sprung};
 
 use crate::chrome::sessions_button::SessionsButton;
@@ -32,6 +34,8 @@ const VOLUME_TIGHT: f32 = 72.;
 /// How wide a small icon button draws: `SMALL_INSET` on each side of a 16 px icon. Every button
 /// on the classic bar's right side is one, the sessions picker included.
 const ICON_BUTTON: f32 = 32.;
+/// The icon inside one of those buttons.
+const ICON_GLYPH: f32 = 16.;
 /// The classic bar's spacing in rems: its `px_5` at either end, its `gap_4` between the three
 /// columns, the right side's `gap_2` between its groups, the `gap_1` between the panel buttons
 /// and the volume group's `gap_1` between the mute button and the slider.
@@ -51,28 +55,33 @@ const SEEK_FLOOR: f32 = 220.;
 /// The room a side of the classic bar keeps for the track's title once the volume has folded,
 /// as a share of the cover metric.
 const TITLE_ROOM: f32 = 1.4;
+/// The transport's `gap_2` between its buttons, and the centred bar's `gap_3` between its cover
+/// and its transport, in rems.
+const TRANSPORT_GAP: f32 = 0.5;
+const WING_GAP: f32 = 0.75;
 /// The stacked bar's `gap_2` between its two rows, in rems.
 const STACK_GAP: f32 = 0.5;
-/// The island's `gap_5` between its transport, its middle and its tools, in rems.
-const ISLAND_GAP: f32 = 1.25;
+/// The minimal row's `gap_5` between its transport, its middle and its tools, in rems.
+const MINIMAL_GAP: f32 = 1.25;
+/// The least the minimal row's middle keeps for the cover and the title beside it, as a share
+/// of the cover metric.
+const MINIMAL_MIDDLE: f32 = 1.3;
+/// How far below what stands over it the middle of the slim seek line stands, and as far again
+/// the row's content runs on below it, in pads.
+const LINE_DROP: f32 = 0.5;
+/// The space inside the minimal bar above its content and below it, in pads.
+const MINIMAL_INSET: f32 = 1.;
 /// How far the island keeps from the sheet's sides and the window's foot, in pads.
 const ISLAND_CLEAR: f32 = 1.5;
-/// The least the island's middle keeps for the cover and the title beside it, as a share of the
-/// cover metric.
-const ISLAND_MIDDLE: f32 = 1.3;
-/// The widest the island grows, so it stays a pill on a wide sheet rather than a bar.
+/// The widest the island grows in every layout, so it stays a pill on a wide sheet rather than a
+/// bar.
 const ISLAND_MAX: f32 = 800.;
 /// The width of the line along the top of a see-through bar, the same as its `border_t_1`.
 const EDGE: Pixels = px(1.);
-/// How far below the cover the middle of the island's seek line stands, and as far again the
-/// island's content runs on below it, in pads.
-const LINE_DROP: f32 = 0.5;
-/// The space inside the island above its content and below it, in pads.
-const ISLAND_INSET: f32 = 1.;
 /// How tall the seek bar's hit area stands, in pads, as `ui::Scrubber` lays it out. Its line
 /// sits in the middle of it.
 const SEEK_HIT: f32 = 3.;
-/// How long the pointer rests on the island's seek line before the line opens.
+/// How long the pointer rests on the slim seek line before the line opens.
 const SEEK_DWELL: Duration = Duration::from_millis(40);
 /// How long the spring that opens and shuts the seek line takes, with the cover and title fading
 /// out and back as it goes, and how far it swells past open before it settles.
@@ -118,14 +127,26 @@ pub(crate) struct PlayerBar {
     /// over the button where the bar has no room for one beside it.
     rising: RisingVolume,
     over_volume: Option<f32>,
-    /// How far the island's seek line has opened on its spring, 0 shut and 1 open with a little
-    /// swing past either end, and whether it is headed for open. It opens once the pointer has
-    /// rested on the line and shuts when it leaves.
+    /// How far the slim seek line has opened on its spring, 0 shut and 1 open with a
+    /// little swing past either end, and whether it is headed for open. It opens once the pointer
+    /// has rested on the line and shuts when it leaves.
     seek_open: Sprung,
     opening: bool,
     /// The wait before the line opens, kept so the pointer leaving the line drops it.
     dwell: Option<Task<()>>,
+    /// How wide the workspace stands the island this frame, clear space included, while the bar
+    /// floats as one.
+    span: Option<Pixels>,
+    /// Whether the pointer rests on the bar, which holds a floating island where it stands.
+    held: bool,
 }
+
+/// Says that the pointer came to rest on the bar or left it. The workspace holds a floating
+/// island still while the pointer is on it, so its buttons stay under the pointer as a sidebar
+/// comes or goes, and lets it move on once the pointer leaves.
+pub(crate) struct Held;
+
+impl EventEmitter<Held> for PlayerBar {}
 
 impl VolumeHost for PlayerBar {
     fn volume(&mut self) -> &mut RisingVolume {
@@ -175,10 +196,41 @@ impl PlayerBar {
             seek_open: Sprung::at(0.),
             opening: false,
             dwell: None,
+            span: None,
+            held: false,
         }
     }
 
-    /// Opens the island's seek line once the pointer has rested on it for `SEEK_DWELL`, and shuts
+    /// Whether the pointer rests on the bar.
+    pub(crate) fn held(&self) -> bool {
+        self.held
+    }
+
+    /// Follows the pointer onto the bar and off it. Leaving shuts the slim seek line
+    /// and drops the seek bar's hover. Only a floating island is held, so a bar along the
+    /// window's foot never stirs the workspace.
+    fn hovered(&mut self, hovered: bool, window: &Window, cx: &mut Context<Self>) {
+        if !hovered {
+            self.aim_seek(false, cx);
+            self.timeline.update(cx, |timeline, cx| timeline.leave(cx));
+        }
+        let held = hovered && Self::floating(window, cx);
+        if self.held != held {
+            self.held = held;
+            cx.emit(Held);
+        }
+    }
+
+    /// Hears how wide the workspace stands the island this frame, clear space included, or that
+    /// the bar runs along the window's foot. The classic layout splits the island's row by it.
+    pub(crate) fn stand(&mut self, span: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.span != span {
+            self.span = span;
+            cx.notify();
+        }
+    }
+
+    /// Opens the slim seek line once the pointer has rested on it for `SEEK_DWELL`, and shuts
     /// it as soon as the pointer is off it, unless a drag on it is still going.
     fn aim_seek(&mut self, on_seek: bool, cx: &mut Context<Self>) {
         if on_seek {
@@ -227,7 +279,7 @@ impl PlayerBar {
         let pad = cx.theme().metrics.pad;
         self.timeline
             .update(cx, |timeline, cx| timeline.hover(event.position, cx));
-        let on_seek = Self::floating(window, cx) && self.timeline.read(cx).over_seek();
+        let on_seek = Self::slim(window, cx) && self.timeline.read(cx).over_seek();
         self.aim_seek(on_seek, cx);
         let volume = self.volume.hovered(event.position, pad);
 
@@ -360,9 +412,9 @@ impl PlayerBar {
             .min_w_0()
             .child(Self::tuck(
                 self.artwork(window, cx),
+                Self::cover(window, cx),
                 Self::cover_room(cx),
                 window,
-                cx,
             ))
             .when(room, |this| this.child(self.details(cx)))
     }
@@ -380,7 +432,7 @@ impl PlayerBar {
     /// The playing cover keeps its album link and context menu in every layout.
     fn artwork(&self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
-        let artwork = Self::cover_side(window, cx);
+        let artwork = Self::cover(window, cx);
         let away = cx.try_global::<CoverAway>().is_some_and(|away| away.0);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
@@ -434,18 +486,18 @@ impl PlayerBar {
 }
 
 impl PlayerBar {
-    /// Splits the classic bar's row: how wide the seek bar's column in the middle is, and how
-    /// the volume draws. The two sides always share what is left evenly, so the middle stays
-    /// centred. While the middle has `SEEK_KEEP` the row splits in even thirds. Narrower, the
+    /// Splits the classic bar's row, `row` wide inside the bar's padding: how wide the seek bar's
+    /// column in the middle is, and how the volume draws. The two sides always share what is left
+    /// evenly, so the middle stays centred. While the middle has `SEEK_KEEP` the row splits in even thirds. Narrower, the
     /// volume slider gives way first, down to `VOLUME_TIGHT`, then the middle, down to
     /// `SEEK_LEAST`, and only then does the volume fold into a button whose slider rises on
     /// hover. From there the middle gives the track's title `TITLE_ROOM`, down to
     /// `SEEK_FLOOR`. `tools` counts the icon buttons before the volume.
-    fn classic(window: &Window, tools: usize, cx: &gpui::App) -> (Pixels, Volume) {
+    fn classic(row: Pixels, window: &Window, tools: usize, cx: &gpui::App) -> (Pixels, Volume) {
         let title = cx.theme().metrics.cover * TITLE_ROOM;
         let rem = window.rem_size();
         let button = px(ICON_BUTTON);
-        let row = window.viewport_size().width - rem * (BAR_PAD + COLUMN_GAP) * 2.;
+        let row = row - rem * COLUMN_GAP * 2.;
         let tools = button * tools as f32 + rem * TOOL_GAP * tools.saturating_sub(1) as f32;
         // The right side without its slider: the buttons, the mute and fullscreen buttons and
         // the gaps between them.
@@ -467,45 +519,110 @@ impl PlayerBar {
         (middle, Volume::Rising)
     }
 
-    /// Centered and the island need room for all their controls in one row; smaller windows keep
-    /// every control reachable in the shared responsive layout. Only the whole window's width
-    /// determines the choice.
-    fn stacked(window: &Window, layout: PlayerBarLayout) -> bool {
-        let room = match layout {
-            PlayerBarLayout::Centered | PlayerBarLayout::Island => Room::Wide,
-            _ => Room::Roomy,
-        };
-        !Chrome::window_room(window).fits(room)
+    /// The layout the settings pick for the bar.
+    fn layout(cx: &App) -> PlayerBarLayout {
+        Sonora::global(cx).settings.read(cx).player_bar_layout()
     }
 
-    /// The narrowest the island's pill draws: every control, sized the way the classic bar sizes
-    /// its right side, around a middle that keeps `ISLAND_MIDDLE` for the cover and the title.
-    fn island_least(window: &Window, cx: &App) -> Pixels {
+    /// The narrowest window `layout` lays out in one row. Centered and minimal need room for all
+    /// their controls in it, and below its room every control stays reachable in the shared
+    /// stacked layout.
+    fn one_row(layout: PlayerBarLayout) -> Room {
+        match layout {
+            PlayerBarLayout::Centered | PlayerBarLayout::Minimal => Room::Wide,
+            PlayerBarLayout::Classic | PlayerBarLayout::Compact => Room::Roomy,
+        }
+    }
+
+    /// Whether `layout` stacks into two rows at this width. Only the whole window's width
+    /// determines the choice.
+    fn stacked(window: &Window, layout: PlayerBarLayout) -> bool {
+        !Chrome::window_room(window).fits(Self::one_row(layout))
+    }
+
+    /// Whether the bar draws the slim seek line, which opens under the pointer with its clocks
+    /// over it: in the island whatever its layout, and in the minimal row along the window's
+    /// foot.
+    fn slim(window: &Window, cx: &App) -> bool {
+        let layout = Self::layout(cx);
+        Self::floating(window, cx)
+            || (layout == PlayerBarLayout::Minimal && !Self::stacked(window, layout))
+    }
+
+    /// How tall `layout` stands in one row along the window's foot.
+    fn row_height(layout: PlayerBarLayout, cx: &App) -> Pixels {
+        let metrics = cx.theme().metrics;
+        match layout {
+            PlayerBarLayout::Classic | PlayerBarLayout::Centered => metrics.player_bar,
+            PlayerBarLayout::Compact => metrics.row + metrics.pad * 2.,
+            PlayerBarLayout::Minimal => Self::slim_height(cx),
+        }
+    }
+
+    /// How tall a row stands that holds a thumbnail or the title and artist lines, whichever is
+    /// taller, with the slim seek line under it and no more: the minimal row along the window's
+    /// foot, and the island's pill in every layout.
+    fn slim_height(cx: &App) -> Pixels {
+        let theme = cx.theme();
+        let metrics = theme.metrics;
+        let lines = (theme.text(ui::Text::Body) + theme.text(ui::Text::Small)) * ui::LEADING;
+        metrics.thumb.max(lines) + metrics.pad * (LINE_DROP + MINIMAL_INSET) * 2.
+    }
+
+    /// How wide the row of the bar along the window's foot is inside its padding.
+    fn strip_row(window: &Window) -> Pixels {
+        window.viewport_size().width - window.rem_size() * BAR_PAD * 2.
+    }
+
+    /// The clear space the island keeps around its pill, above and below as on the sheet's
+    /// sides.
+    fn clear(cx: &App) -> Pixels {
+        cx.theme().metrics.pad * ISLAND_CLEAR
+    }
+
+    /// The narrowest the island's pill draws around `layout`. The minimal row counts every
+    /// control, sized the way the classic bar sizes its right side, around a middle that keeps
+    /// `MINIMAL_MIDDLE` for the cover and the title. The other layouts take as much as the
+    /// narrowest window they lay out in one row.
+    fn island_least(layout: PlayerBarLayout, window: &Window, cx: &App) -> Pixels {
+        if layout != PlayerBarLayout::Minimal {
+            return Self::one_row(layout).least();
+        }
+        Self::island_pad(Self::slim_height(cx), cx) * 2.
+            + Self::transport_width(window)
+            + window.rem_size() * MINIMAL_GAP * 2.
+            + cx.theme().metrics.cover * MINIMAL_MIDDLE
+            + Self::rising_side(window, cx)
+    }
+
+    /// How wide the small transport stands: five icon buttons `TRANSPORT_GAP` apart.
+    fn transport_width(window: &Window) -> Pixels {
+        px(ICON_BUTTON) * 5. + window.rem_size() * TRANSPORT_GAP * 4.
+    }
+
+    /// How wide the bar's right side stands with its volume folded into a button: the icon
+    /// buttons `TOOL_GAP` apart, then the mute and fullscreen buttons `SIDE_GAP` on from them.
+    fn rising_side(window: &Window, cx: &App) -> Pixels {
         let rem = window.rem_size();
-        let (pill, _) = Self::island(cx);
         let button = px(ICON_BUTTON);
-        let row = |count: f32, gap: f32| button * count + rem * gap * (count - 1.).max(0.);
         let tools = Self::tool_count(window, cx) as f32;
-        let right = row(tools, TOOL_GAP) + button * 2. + rem * SIDE_GAP * 2.;
-        Self::island_pad(pill, cx) * 2.
-            + row(5., SIDE_GAP)
-            + rem * ISLAND_GAP * 2.
-            + cx.theme().metrics.cover * ISLAND_MIDDLE
-            + right
+        button * tools + rem * TOOL_GAP * (tools - 1.).max(0.) + button * 2. + rem * SIDE_GAP * 2.
     }
 
     /// Whether the whole island fits on a sheet `sheet_width` wide. One that does not widens over
     /// the sidebars and stands centred on the window instead.
     pub(crate) fn island_fits(sheet_width: Pixels, window: &Window, cx: &App) -> bool {
-        let (_, clear) = Self::island(cx);
-        (sheet_width - clear * 2.).min(px(ISLAND_MAX)) >= Self::island_least(window, cx)
+        let layout = Self::layout(cx);
+        (sheet_width - Self::clear(cx) * 2.).min(px(ISLAND_MAX))
+            >= Self::island_least(layout, window, cx)
     }
 
     /// Where the island's bar stands across the window, as its left edge and its width, clear
     /// space included, for a sheet starting at `sheet_left` and `sheet_width` wide. The pill
     /// takes the sheet's width up to `ISLAND_MAX`, and never less than every control needs nor
-    /// more than the window has. `shift` runs from 0, centred on the sheet, to 1, centred on the
-    /// window, so the pill can glide between the two as [`island_fits`](Self::island_fits) turns.
+    /// more than the window has. `shift` runs from 0, centred on the sheet, to 1,
+    /// centred on the window, so the pill can glide between the two as
+    /// [`island_fits`](Self::island_fits) turns.
     pub(crate) fn island_span(
         sheet_left: Pixels,
         sheet_width: Pixels,
@@ -513,24 +630,34 @@ impl PlayerBar {
         window: &Window,
         cx: &App,
     ) -> (Pixels, Pixels) {
-        let (_, clear) = Self::island(cx);
+        let layout = Self::layout(cx);
+        let clear = Self::clear(cx);
         let viewport = window.viewport_size().width;
         let room = (viewport - clear * 2.).max(Pixels::ZERO);
         let width = (sheet_width - clear * 2.)
             .min(px(ISLAND_MAX))
-            .max(Self::island_least(window, cx))
+            .max(Self::island_least(layout, window, cx))
             .min(room);
         let on_sheet = sheet_left + sheet_width / 2.;
         let centre = on_sheet + (viewport / 2. - on_sheet) * shift;
         (centre - width / 2. - clear, width + clear * 2.)
     }
 
-    /// Whether the bar floats over the page as an island. The workspace then stands it over the
-    /// page's sheet where [`island_span`](Self::island_span) puts it, and lets the page run under
-    /// it to the window's foot whatever the bar's transparency.
+    /// Whether the bar floats over the page as an island: the settings ask for one at this
+    /// width, the layout lays out in one row here and the window has room for its pill. The
+    /// workspace then stands it over the page's sheet where [`island_span`](Self::island_span)
+    /// puts it, and lets the page run under it to the window's foot whatever the bar's
+    /// transparency.
     pub(crate) fn floating(window: &Window, cx: &App) -> bool {
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
-        layout == PlayerBarLayout::Island && !Self::stacked(window, layout)
+        let settings = Sonora::global(cx).settings.read(cx);
+        let layout = settings.player_bar_layout();
+        let wanted = match settings.player_bar_island() {
+            PlayerBarIsland::Off => false,
+            PlayerBarIsland::Wide => Chrome::window_room(window).fits(Room::Grand),
+            PlayerBarIsland::Fits => true,
+        };
+        let room = window.viewport_size().width - Self::clear(cx) * 2.;
+        wanted && !Self::stacked(window, layout) && room >= Self::island_least(layout, window, cx)
     }
 
     /// How far below its place in a full-height bar the fullscreen button sits, which is where
@@ -538,7 +665,7 @@ impl PlayerBar {
     /// much, so the button stays under the pointer when the player opens and closes.
     pub(crate) fn fullscreen_drop(window: &Window, cx: &gpui::App) -> Pixels {
         let theme = *cx.theme();
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        let layout = Self::layout(cx);
         let spare = theme.metrics.player_bar - Self::height(window, cx);
         let drop = match Self::stacked(window, layout) {
             // The button's row is centred under the cover's row and the gap between the two.
@@ -548,32 +675,37 @@ impl PlayerBar {
         ui::snapped((drop / 2.).max(Pixels::ZERO), window)
     }
 
-    /// The island's pill height and the clear space the bar keeps around it, above and below as
-    /// on the sheet's sides. The pill holds the cover with the seek line under it and no more.
-    fn island(cx: &App) -> (Pixels, Pixels) {
-        let metrics = cx.theme().metrics;
-        let pill = metrics.thumb + metrics.pad * (LINE_DROP + ISLAND_INSET) * 2.;
-        (pill, metrics.pad * ISLAND_CLEAR)
-    }
-
     /// The padding inside the island's round ends, which centres a control's height on the curve
     /// so the first and last buttons sit as far from the edge as from the top and bottom.
     fn island_pad(pill: Pixels, cx: &App) -> Pixels {
         (pill - cx.theme().metrics.control) / 2.
     }
 
-    /// The height the workspace reserves, shared by the overlay's bottom scroll clearance.
+    /// The padding before a cover that starts the island's pill: as far in as the icon of the
+    /// button that ends the pill, so the two ends mirror each other. On a round end that also
+    /// leaves the cover's corner nearly as much room along the curve as above and below it.
+    fn island_lead(pill: Pixels, cx: &App) -> Pixels {
+        Self::island_pad(pill, cx) + px(ICON_BUTTON - ICON_GLYPH) / 2.
+    }
+
+    /// The height the workspace reserves, shared by the overlay's bottom scroll clearance: the
+    /// island's pill with the clear space around it while the bar floats, and the bar's own
+    /// height otherwise.
     pub(crate) fn height(window: &Window, cx: &gpui::App) -> Pixels {
+        match Self::floating(window, cx) {
+            true => ui::snapped(Self::slim_height(cx) + Self::clear(cx) * 2., window),
+            false => Self::strip_height(window, cx),
+        }
+    }
+
+    /// The height of a bar along the window's foot in the layout it has at this width, which the
+    /// narrow fullscreen player gives its own bar whether or not the workspace's floats.
+    pub(crate) fn strip_height(window: &Window, cx: &gpui::App) -> Pixels {
         let theme = *cx.theme();
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
-        let height = match (Self::stacked(window, layout), layout) {
-            (true, _) => theme.metrics.player_bar + theme.metrics.pad * 3.,
-            (false, PlayerBarLayout::Compact) => theme.metrics.row + theme.metrics.pad * 2.,
-            (false, PlayerBarLayout::Island) => {
-                let (pill, gap) = Self::island(cx);
-                pill + gap * 2.
-            }
-            _ => theme.metrics.player_bar,
+        let layout = Self::layout(cx);
+        let height = match Self::stacked(window, layout) {
+            true => theme.metrics.player_bar + theme.metrics.pad * 3.,
+            false => Self::row_height(layout, cx),
         };
         ui::snapped(height, window)
     }
@@ -612,27 +744,35 @@ impl PlayerBar {
             .when(Self::picker_shown(cx), |this| this.child(sessions))
     }
 
-    /// How the bar draws its volume control at this width, in whatever layout it has.
+    /// How a bar along the window's foot draws its volume control at this width, in whatever
+    /// layout it has. The narrow fullscreen player draws its own the same way.
     pub(crate) fn volume(window: &Window, cx: &App) -> Volume {
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        Self::volume_in(Self::strip_row(window), window, cx)
+    }
+
+    /// How the bar draws its volume control with `row` across inside its padding.
+    fn volume_in(row: Pixels, window: &Window, cx: &App) -> Volume {
+        let layout = Self::layout(cx);
         match (Self::stacked(window, layout), layout) {
             // A narrow bar keeps its seek bar long and folds the volume into the mute button.
             (true, _) => Volume::Rising,
             (false, PlayerBarLayout::Classic) => {
-                Self::classic(window, Self::tool_count(window, cx), cx).1
+                Self::classic(row, window, Self::tool_count(window, cx), cx).1
             }
-            // The island keeps to a pill, so its volume is a button with a slider that rises.
-            (false, PlayerBarLayout::Island) => Volume::Rising,
+            // The minimal row keeps to its low height, so its volume is a button with a slider
+            // that rises.
+            (false, PlayerBarLayout::Minimal) => Volume::Rising,
             (false, _) => Volume::Slider(px(VOLUME_WIDTH)),
         }
     }
 
-    /// How big the playing cover draws at this width: a thumbnail in an unstacked compact bar or
-    /// island, which leave no height for more, and a row's height everywhere else.
+    /// How big the playing cover draws in a bar along the window's foot at this width: a
+    /// thumbnail in an unstacked compact or minimal bar, which leave no height for more, and a
+    /// row's height everywhere else.
     pub(crate) fn cover_side(window: &Window, cx: &App) -> Pixels {
         let theme = cx.theme();
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
-        let small = matches!(layout, PlayerBarLayout::Compact | PlayerBarLayout::Island);
+        let layout = Self::layout(cx);
+        let small = matches!(layout, PlayerBarLayout::Compact | PlayerBarLayout::Minimal);
         let side = match small && !Self::stacked(window, layout) {
             true => theme.metrics.thumb,
             false => theme.metrics.row,
@@ -640,11 +780,21 @@ impl PlayerBar {
         ui::snapped(side, window)
     }
 
+    /// How big the bar's own playing cover draws: a thumbnail in the island, whose pill leaves
+    /// no height for more in any layout, and what [`cover_side`](Self::cover_side) says along
+    /// the window's foot.
+    fn cover(window: &Window, cx: &App) -> Pixels {
+        match Self::floating(window, cx) {
+            true => ui::snapped(cx.theme().metrics.thumb, window),
+            false => Self::cover_side(window, cx),
+        }
+    }
+
     /// How far above the bar's middle a stacked bar's cover and title row sits, half of the seek
     /// row and the gap over it. The narrow fullscreen player lowers that row by as much while
     /// its controls sleep, so it rests centred in the bar. An unstacked bar is already centred.
     pub(crate) fn title_lift(window: &Window, cx: &App) -> Pixels {
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        let layout = Self::layout(cx);
         match Self::stacked(window, layout) {
             true => {
                 let lift = (window.rem_size() * STACK_GAP + cx.theme().metrics.control_small) / 2.;
@@ -723,47 +873,64 @@ impl PlayerBar {
             .map_or(1., |room| room.0.clamp(0., 1.))
     }
 
-    /// Tucks the cover that starts a now playing row away by `room`. It keeps its size and spot
-    /// and fades, while what follows it slides over its place, so a cover a flight targets never
-    /// changes its bounds. With no room left it answers no pointer either.
+    /// Tucks the cover, `side` across, that starts a now playing row away by `room`. It keeps
+    /// its size and spot and fades, while what follows it slides over its place, so a cover a
+    /// flight targets never changes its bounds. With no room left it answers no pointer either.
     pub(crate) fn tuck(
         cover: Stateful<Div>,
+        side: Pixels,
         room: f32,
         window: &Window,
-        cx: &App,
     ) -> Stateful<Div> {
         if room >= 1. {
             return cover;
         }
-        let taken = Self::cover_side(window, cx) + window.rem_size() * COVER_GAP;
+        let taken = side + window.rem_size() * COVER_GAP;
         cover
             .mr(Pixels::ZERO - taken * (1. - room))
             .opacity(room)
             .when(room <= 0., |this| this.invisible())
     }
 
-    /// Gives `base` the bar's height and padding for the layout it has at this width.
+    /// Gives `base` the height and padding of a bar along the window's foot in the layout it has
+    /// at this width.
     fn frame(base: Stateful<Div>, window: &Window, cx: &App) -> Stateful<Div> {
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
+        let layout = Self::layout(cx);
         base.flex()
             .w_full()
-            .h(Self::height(window, cx))
+            .h(Self::strip_height(window, cx))
             .flex_none()
             .px_5()
             .when(Self::stacked(window, layout), |this| this.py_2())
     }
 
-    /// Lays `parts` out in `base` the way the bar is laid out at this width, for every layout
-    /// but an unstacked centred one, which the bar draws itself. `base` is sized and padded here.
+    /// Lays `parts` out in `base` as a bar along the window's foot is laid out at this width,
+    /// for every layout but an unstacked centred or minimal one, which the bar draws itself.
+    /// `base` is sized and padded here.
     pub(crate) fn arrange(
         base: Stateful<Div>,
         parts: BarParts,
         window: &Window,
         cx: &App,
     ) -> Stateful<Div> {
-        let theme = *cx.theme();
-        let layout = Sonora::global(cx).settings.read(cx).player_bar_layout();
         let base = Self::frame(base, window, cx);
+        Self::lay_out(base, parts, Self::strip_row(window), None, window, cx)
+    }
+
+    /// Lays `parts` out in `base`, already sized and padded with `row` across inside, the way
+    /// the layout lays them out at this width. `slim` is how far the island's slim seek line has
+    /// opened, which the classic middle sets under its transport and the compact row low in the
+    /// pill, and `None` along the window's foot.
+    fn lay_out(
+        base: Stateful<Div>,
+        parts: BarParts,
+        row: Pixels,
+        slim: Option<f32>,
+        window: &Window,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let theme = *cx.theme();
+        let layout = Self::layout(cx);
         let BarParts {
             now_playing,
             transport,
@@ -803,28 +970,42 @@ impl PlayerBar {
                 .gap_3()
                 .child(now_playing.max_w(theme.metrics.cover * 1.6))
                 .child(transport)
-                .child(div().flex_1().min_w_0().child(seek))
+                .child(match slim {
+                    // The island's slim line keeps the inset under it that it has under the
+                    // other layouts' controls, so it stands as low in every pill and its clocks
+                    // have room over it.
+                    Some(_) => div()
+                        .flex()
+                        .flex_col()
+                        .justify_end()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .pb(theme.metrics.pad * MINIMAL_INSET)
+                        .child(Self::slim_line(seek, cx)),
+                    None => div().flex_1().min_w_0().child(seek),
+                })
                 .children(tools)
                 .child(sound)
                 .child(corner),
             // The two sides share what the middle leaves them evenly, so the transport and the
             // seek bar stay centred. `classic` works out how wide the middle is.
             _ => {
-                let (middle, _) = Self::classic(window, Self::tool_count(window, cx), cx);
+                let (middle, _) = Self::classic(row, window, Self::tool_count(window, cx), cx);
+                let column = div().flex().flex_col().items_center().flex_none().w(middle);
+                let column = match slim {
+                    Some(_) => column
+                        .h_full()
+                        .justify_end()
+                        .pb(theme.metrics.pad * MINIMAL_INSET)
+                        .child(under_line(div().flex_none().child(transport), slim))
+                        .child(Self::slim_line(seek, cx)),
+                    None => column.gap_1().child(transport).child(seek),
+                };
                 base.items_center()
                     .gap_4()
                     .child(now_playing)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap_1()
-                            .flex_none()
-                            .w(middle)
-                            .child(transport)
-                            .child(seek),
-                    )
+                    .child(column)
                     .child(
                         div()
                             .flex()
@@ -840,6 +1021,15 @@ impl PlayerBar {
             }
         }
     }
+
+    /// Sets the slim seek line under what stands over it. The seek bar's hit area stands taller
+    /// than its line, which sits in the middle of it, and overlaps what stands over it and the
+    /// bar's inset by as much on either side, so in the flow it takes only `LINE_DROP` above the
+    /// line's middle and as much below.
+    fn slim_line(seek: impl IntoElement, cx: &App) -> Div {
+        let overlap = cx.theme().metrics.pad * (SEEK_HIT / 2. - LINE_DROP);
+        div().flex_none().w_full().my(-overlap).child(seek)
+    }
 }
 
 impl Render for PlayerBar {
@@ -847,8 +1037,26 @@ impl Render for PlayerBar {
         let theme = *cx.theme();
         let layout = self.settings.read(cx).player_bar_layout();
         let stacked = Self::stacked(window, layout);
-        // Equal wings keep the title centered while reserving the original volume slider width.
-        let centered_wing = theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.;
+        let floating = Self::floating(window, cx);
+        // A pill that is gone leaves no pointer resting on it.
+        if !floating {
+            self.held = false;
+        }
+        // Equal wings keep the title centered. Along the window's foot they reserve the volume
+        // slider's width, and in the island, whose volume folds into a button, they hold the
+        // cover and the transport.
+        let centered_wing = match floating {
+            true => {
+                let left = Self::cover(window, cx)
+                    + window.rem_size() * WING_GAP
+                    + Self::transport_width(window);
+                left.max(Self::rising_side(window, cx))
+            }
+            false => theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.,
+        };
+        // The island keeps to the minimal row's width in every layout, so its volume is a button
+        // with a slider that rises, as the minimal row's is.
+        let island_volume = floating.then_some(Volume::Rising);
         let sides = match SidebarRight::available(window) {
             true => Some(self.side_buttons(cx)),
             false => None,
@@ -864,9 +1072,9 @@ impl Render for PlayerBar {
             .when(picker, |this| this.child(self.sessions.clone()))
             .children(sides);
 
-        // Only the island has a seek line that opens. Another layout, or a window too narrow
-        // for the island, starts it shut the next time.
-        let opened = match Self::floating(window, cx) {
+        // Only the slim seek line opens. A bar that draws the full seek bar starts it shut the
+        // next time.
+        let opened = match Self::slim(window, cx) {
             true => {
                 let spring = ui::spring(ui::paced(SEEK_SPRING).as_secs_f32(), SEEK_BOUNCE);
                 let target = f32::from(u8::from(self.opening));
@@ -892,7 +1100,30 @@ impl Render for PlayerBar {
             cx,
         )
         .occlude()
-        .on_mouse_move(cx.listener(Self::hover));
+        .on_mouse_move(cx.listener(Self::hover))
+        .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+            this.hovered(*hovered, window, cx);
+        }));
+
+        // The island's pill takes its layout's own height and keeps the controls clear of its
+        // round ends, with as much row inside as the workspace gives it. A bar runs along the
+        // window's foot.
+        let clear = Self::clear(cx);
+        let (base, row) = match floating {
+            true => {
+                let pill = ui::snapped(Self::slim_height(cx), window);
+                let pad = ui::snapped(Self::island_pad(pill, cx), window);
+                // Every layout but the minimal row starts the pill with the cover.
+                let lead = match layout == PlayerBarLayout::Minimal {
+                    true => pad,
+                    false => ui::snapped(Self::island_lead(pill, cx), window),
+                };
+                let span = self.span.unwrap_or_else(|| window.viewport_size().width);
+                let base = base.flex().w_full().h(pill).flex_none().pl(lead).pr(pad);
+                (base, span - clear * 2. - pad - lead)
+            }
+            false => (Self::frame(base, window, cx), Self::strip_row(window)),
+        };
 
         let context_menu = self.context_menu.clone().map(|(track, position)| {
             Popup::new(position, self.track_menu.for_track(&track, cx)).on_close(cx.listener(
@@ -904,9 +1135,11 @@ impl Render for PlayerBar {
         });
 
         let content = match (stacked, layout) {
-            (false, PlayerBarLayout::Centered) => Self::frame(base, window, cx)
+            (false, PlayerBarLayout::Centered) => base
                 .items_center()
-                .py(theme.metrics.pad)
+                // The island's pill is only as tall as the slim line lets it be, with no room
+                // for a bar's padding.
+                .when(!floating, |this| this.py(theme.metrics.pad))
                 .gap_3()
                 .child(
                     div()
@@ -927,13 +1160,33 @@ impl Render for PlayerBar {
                         .h_full()
                         .flex()
                         .flex_col()
-                        .justify_center()
+                        // In the island the slim line keeps the inset under it that it has in
+                        // the other layouts, and the title and artist stand on it.
+                        .map(|this| match floating {
+                            true => this.justify_end().pb(theme.metrics.pad * MINIMAL_INSET),
+                            false => this.justify_center(),
+                        })
                         .child({
                             let shown = self.playback.read(cx).shown_track(cx);
-                            track_details(shown.as_ref(), &self.playback, true, Self::menu_at, cx)
-                                .w_full()
+                            let details = track_details(
+                                shown.as_ref(),
+                                &self.playback,
+                                true,
+                                Self::menu_at,
+                                cx,
+                            )
+                            .w_full();
+                            // Over the island's slim line the two lines stand flush and fade
+                            // as it opens, its clocks taking their place.
+                            match floating {
+                                true => under_line(details.gap_0(), opened),
+                                false => details,
+                            }
                         })
-                        .child(div().flex_none().w_full().child(seek)),
+                        .child(match floating {
+                            true => Self::slim_line(seek, cx),
+                            false => div().flex_none().w_full().child(seek),
+                        }),
                 )
                 .child(
                     div()
@@ -945,95 +1198,64 @@ impl Render for PlayerBar {
                         .justify_end()
                         .gap_2()
                         .child(buttons)
-                        .child(self.sound(Volume::Slider(px(VOLUME_WIDTH)), cx))
+                        .child(self.sound(
+                            island_volume.unwrap_or(Volume::Slider(px(VOLUME_WIDTH))),
+                            cx,
+                        ))
                         .child(self.fullscreen_button(cx)),
                 ),
-            // The wrapper takes the whole bar's height and answers no pointer, so the page shows
-            // and scrolls around the pill that floats in it.
-            (false, PlayerBarLayout::Island) => {
-                let (pill, clear) = Self::island(cx);
-                let overlap = theme.metrics.pad * (SEEK_HIT / 2. - LINE_DROP);
+            (false, PlayerBarLayout::Minimal) => {
                 let shown = self.playback.read(cx).shown_track(cx);
-                div()
-                    .id("player-island")
-                    .flex()
-                    .w_full()
-                    .h(Self::height(window, cx))
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .px(clear)
+                base.items_center()
+                    .gap(rems(MINIMAL_GAP))
                     .child(
-                        base.on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                            if !*hovered {
-                                this.aim_seek(false, cx);
-                                this.timeline.update(cx, |timeline, cx| timeline.leave(cx));
-                            }
-                        }))
-                        .flex()
-                        .items_center()
-                        .gap(rems(ISLAND_GAP))
-                        .w_full()
-                        .h(ui::snapped(pill, window))
-                        .px(Self::island_pad(pill, cx))
-                        .child(
-                            div()
-                                .flex_none()
-                                .child(transport(&self.playback, false, cx)),
-                        )
-                        .child(
-                            // The seek bar runs under the cover and the title both. Opening
-                            // it fades them out and puts its clocks in their place.
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(rems(COVER_GAP))
-                                        .opacity((1. - opened.unwrap_or_default()).clamp(0., 1.))
-                                        // Opacity leaves the row under the pointer, so once it
-                                        // has faded all the way it is hidden for good measure and
-                                        // a click on the clocks cannot reach its links.
-                                        .when(opened.is_some_and(|open| open >= 1.), |this| {
-                                            this.invisible()
-                                        })
-                                        .child(self.artwork(window, cx))
-                                        .child(
-                                            track_details(
-                                                shown.as_ref(),
-                                                &self.playback,
-                                                false,
-                                                Self::menu_at,
-                                                cx,
-                                            )
-                                            // The two lines stand flush, so they read as one block
-                                            // beside the island's small cover.
-                                            .gap_0()
-                                            .flex_1()
-                                            .min_w_0(),
-                                        ),
+                        div()
+                            .flex_none()
+                            .child(transport(&self.playback, false, cx)),
+                    )
+                    .child(
+                        // The seek bar runs under the cover and the title both. Opening
+                        // it fades them out and puts its clocks in their place.
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .justify_end()
+                            .pb(theme.metrics.pad * MINIMAL_INSET)
+                            .child(
+                                under_line(
+                                    div().flex().items_center().gap(rems(COVER_GAP)),
+                                    opened,
                                 )
-                                // The seek bar's hit area stands taller than its line, which sits
-                                // in the middle of it. The row overlaps the cover's row and the
-                                // pill's inset by as much on either side, so in the flow it takes
-                                // only `LINE_DROP` above the line's middle and as much below.
-                                .child(div().flex_none().w_full().my(-overlap).child(seek)),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .gap_2()
-                                .child(buttons)
-                                .child(self.sound(Volume::Rising, cx))
-                                .child(self.fullscreen_button(cx)),
-                        ),
+                                .child(self.artwork(window, cx))
+                                .child(
+                                    track_details(
+                                        shown.as_ref(),
+                                        &self.playback,
+                                        false,
+                                        Self::menu_at,
+                                        cx,
+                                    )
+                                    // The two lines stand flush, so they read as one block
+                                    // beside the row's small cover.
+                                    .gap_0()
+                                    .flex_1()
+                                    .min_w_0(),
+                                ),
+                            )
+                            .child(Self::slim_line(seek, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_2()
+                            .child(buttons)
+                            .child(self.sound(Volume::Rising, cx))
+                            .child(self.fullscreen_button(cx)),
                     )
             }
             _ => {
@@ -1050,15 +1272,45 @@ impl Render for PlayerBar {
                         .into_any_element(),
                     seek: seek.into_any_element(),
                     tools: Some(buttons.into_any_element()),
-                    sound: self.sound(Self::volume(window, cx), cx),
+                    sound: self.sound(
+                        island_volume.unwrap_or_else(|| Self::volume_in(row, window, cx)),
+                        cx,
+                    ),
                     corner: self.fullscreen_button(cx),
                 };
-                Self::arrange(base, parts, window, cx)
+                let slim = opened.filter(|_| floating);
+                Self::lay_out(base, parts, row, slim, window, cx)
             }
+        };
+        // The island's wrapper takes the whole bar's height and answers no pointer, so the page
+        // shows and scrolls around the pill that floats in it.
+        let content = match floating {
+            true => div()
+                .id("player-island")
+                .flex()
+                .w_full()
+                .h(Self::height(window, cx))
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .px(clear)
+                .child(content),
+            false => content,
         };
 
         content
             .relative()
             .when_some(context_menu, |this, menu| this.child(menu))
     }
+}
+
+/// Fades what stands over the slim seek line as the line opens to `opened`, its clocks taking
+/// its place. Opacity leaves it under the pointer, so once it has faded all the way it is hidden
+/// for good measure and a click on the clocks cannot reach its links.
+fn under_line<E: Styled + FluentBuilder>(element: E, opened: Option<f32>) -> E {
+    element
+        .opacity((1. - opened.unwrap_or_default()).clamp(0., 1.))
+        .when(opened.is_some_and(|open| open >= 1.), |this| {
+            this.invisible()
+        })
 }

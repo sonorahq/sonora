@@ -249,18 +249,6 @@ impl SettingsView {
     pub(super) fn yielding_row(&self, title: SharedString, control: AnyElement) -> AnyElement {
         Row::new(title, control).yielding().into_any_element()
     }
-
-    /// A row whose choice is drawn as option cards: the label on a row of its own, then the
-    /// cards across the column under it.
-    pub(super) fn stacked(&self, title: SharedString, cards: impl IntoElement) -> AnyElement {
-        div()
-            .flex()
-            .flex_col()
-            .pb_3()
-            .child(Row::new(title, div().into_any_element()))
-            .child(cards)
-            .into_any_element()
-    }
 }
 
 /// What an option card says to screen readers. The card draws its name but puts nothing in the
@@ -451,7 +439,7 @@ pub(super) fn grid(columns: u16, window: &Window, cx: &App) -> Div {
         Room::Tight => columns.min(2),
         Room::Snug => columns.min(3),
         Room::Roomy => columns.min(4),
-        Room::Wide | Room::Vast => columns,
+        Room::Wide | Room::Vast | Room::Grand => columns,
     };
     div().grid().grid_cols(columns.max(1)).gap_3()
 }

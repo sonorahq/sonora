@@ -62,6 +62,9 @@ const SKELETON_UNDER: f32 = 0.6;
 /// How far a skeleton bar reaches across its cell, stepped by row and column so the column
 /// edges do not line up into a grid.
 const SKELETON_REACH: [f32; 5] = [0.6, 0.85, 0.45, 0.7, 0.55];
+/// The widest a skeleton bar's cell counts as, in body text ems, so a bar in a wide column stays
+/// about as long as the text that will replace it.
+const SKELETON_TEXT: f32 = 16.;
 
 pub const ROW_GROUP: &str = "table-row";
 /// The line height, in ems, of a title and of the folded line under it, tighter than body text
@@ -96,6 +99,9 @@ pub struct Cell<F> {
     pub row: usize,
     /// The folded column this cell draws on a second line under its own value.
     pub carries: Option<F>,
+    /// Whether the row folds a column under its title, so a text column can step down a size and
+    /// let the title lead.
+    pub stacked: bool,
 }
 
 impl<F> Cell<F> {
@@ -1077,6 +1083,7 @@ impl<S: TableSource> TableState<S> {
         let first = self.viewport.first(head, row_height);
         let last = (first + self.viewport.rows(row_height)).min(count);
         let bar = theme.metrics.table_row * SKELETON_BAR;
+        let text = theme.text(Text::Body) * SKELETON_TEXT;
 
         (first..last)
             .map(|display| {
@@ -1098,8 +1105,8 @@ impl<S: TableSource> TableState<S> {
                             .enumerate()
                             .map(|(ix, column)| {
                                 let inner = self.delegate.inner_width(ix);
-                                let reach =
-                                    inner * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
+                                let reach = inner.min(text)
+                                    * SKELETON_REACH[(display + ix) % SKELETON_REACH.len()];
                                 let skeleton = match (column.spec.width, column.carries) {
                                     (Width::Thumb, _) => {
                                         Skeleton::new().size(theme.metrics.thumb).into_any_element()
@@ -1325,7 +1332,7 @@ impl<S: TableSource> TableState<S> {
             .when_else(
                 blurring(cx),
                 // The menu material is nearly opaque, so a see-through window takes the
-                // player bar's thin fill instead and the head stays as clear as the page.
+                // player bar's surface instead and the head stays as clear as the page.
                 |this| match theme.transparent {
                     true => bar_surface(this, cx),
                     false => popover_surface(this, cx),
@@ -1495,6 +1502,7 @@ impl<S: TableSource> TableState<S> {
                 };
                 let selected = marked.contains(&row);
                 let playing = self.delegate.source.playing(row, cx);
+                let stacked = self.delegate.stacked();
                 let cells: Vec<AnyElement> = (0..self.delegate.columns.len())
                     .map(|ix| {
                         let column = &self.delegate.columns[ix];
@@ -1506,6 +1514,7 @@ impl<S: TableSource> TableState<S> {
                             display,
                             row,
                             carries: column.carries.map(|spec| spec.field),
+                            stacked,
                         };
                         self.delegate.source.cell(cell, cx)
                     })
@@ -1645,6 +1654,7 @@ impl<S: TableSource> TableState<S> {
                     display,
                     row,
                     carries: None,
+                    stacked: false,
                 };
                 cells.push(self.delegate.source.cell(cell, cx));
             }

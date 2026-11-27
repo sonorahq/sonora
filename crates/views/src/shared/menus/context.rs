@@ -1290,11 +1290,16 @@ pub(crate) fn item_menu(
 ) -> Menu {
     let library = Sonora::global(cx).library.clone();
     let built = match pin.kind {
-        PinKind::Album => library
-            .read(cx)
-            .album(&pin.id)
-            .cloned()
-            .map(|album| album_menu(album, playback.clone(), tracks, cx)),
+        PinKind::Album => Some(album_menu(
+            library
+                .read(cx)
+                .album(&pin.id)
+                .cloned()
+                .unwrap_or_else(|| pinned_album(pin)),
+            playback.clone(),
+            tracks,
+            cx,
+        )),
         PinKind::Playlist => library
             .read(cx)
             .playlist(&pin.id)
@@ -1315,6 +1320,17 @@ pub(crate) fn item_menu(
     };
 
     built.unwrap_or_else(|| sparse_menu(pin, playback, cx))
+}
+
+/// An album pinned from outside the library, such as from a song's row, rebuilt from what its
+/// pin keeps so it still gets the full album menu.
+fn pinned_album(pin: &Pin) -> Album {
+    Album {
+        id: pin.id.clone(),
+        name: pin.title.clone(),
+        cover: pin.cover.clone(),
+        ..Default::default()
+    }
 }
 
 pub(crate) fn pinned_artist(pin: &Pin) -> SavedArtist {

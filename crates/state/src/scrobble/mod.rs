@@ -3,10 +3,12 @@
 //! One entity drives every service at once. [`Scrobbling`] holds a [`ScrobbleRow`] per service, follows
 //! [`Playback`] and fans the same listen out to whichever rows are linked and turned on. The
 //! provider the track came from hears about it too, so a server such as Navidrome keeps its own
-//! play counts and now-playing list.
+//! play counts and now-playing list. A listen waits in a backlog until its service takes it, so
+//! one made offline is sent once the service can be reached.
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
+use futures::future::join_all;
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{MusicApi, Report, Track};
 use scrobble::{self, Account, KeyRefused, Link, Play, Secret, Service};
@@ -14,8 +16,16 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
+use storage::Database;
+
 use crate::playback::PlaybackEvent;
-use crate::{AppSettings, Io, Outcome, Playback, PlaybackState, Session, Toast, Toasts, join};
+use crate::{
+    AppSettings, Io, Network, Outcome, Playback, PlaybackState, Reconnected, Session, Toast,
+    Toasts, join,
+};
+use backlog::{Backlog, Submit};
+
+mod backlog;
 
 /// What the settings row says when a link did not go through. The failure itself is in the log.
 const FAILED: &str = "settings-scrobble-failed";
@@ -24,6 +34,17 @@ const KEY_REFUSED: &str = "settings-scrobble-key-refused";
 
 /// One state report on its way to the provider that served the track.
 type Reported = (Arc<dyn MusicApi>, String, Report, Duration);
+/// One change of what a service shows as playing, on its way to that service's queue.
+type Told = (Account, Now);
+
+/// What a service should show as playing right now.
+enum Now {
+    /// This play, at this position.
+    Playing(Play, Duration),
+    /// Nothing, after a pause or the end of playback.
+    Stopped,
+}
+
 /// Whether one answer from a service refused the API key. It carries the session it was sent
 /// with, so an answer that arrives after the account was replaced is dropped.
 struct Verdict {
@@ -58,6 +79,15 @@ pub struct ScrobbleRow {
     /// Whether the service refused the stored key on its last answer. Submissions go on, so the
     /// row recovers by itself once the key is accepted again.
     refused: bool,
+    /// The queue that tells this service what plays. See [`tell`].
+    now: mpsc::UnboundedSender<Told>,
+    /// Whether the service was last told that something plays, so a pause, an end or a quit
+    /// has a status to take back.
+    shown: bool,
+    /// Keeps this service's listens and sends them.
+    submit: backlog::Sender,
+    /// The account the sender was last handed, `None` while it holds the listens back.
+    handed: Option<Account>,
 }
 
 impl ScrobbleRow {
@@ -99,6 +129,34 @@ impl ScrobbleRow {
     fn live(&self) -> bool {
         self.account.linked() && self.enabled
     }
+
+    /// Queues what the service should show as playing.
+    fn tell(&mut self, now: Now) {
+        self.shown = matches!(now, Now::Playing(..));
+        self.now.send((self.account.clone(), now)).ok();
+    }
+
+    /// Takes back a status this service still shows.
+    fn hide(&mut self) {
+        if self.shown {
+            self.tell(Now::Stopped);
+        }
+    }
+
+    /// Hands the sender the account while the service is live, or holds the listens back while
+    /// it is not. The sender hears only a change, unless `again` asks it to try what waits now.
+    fn hand(&mut self, again: bool) {
+        let account = self.live().then(|| self.account.clone());
+        if !again && account == self.handed {
+            return;
+        }
+        self.handed = account.clone();
+        let submit = match account {
+            Some(account) => Submit::Account(account),
+            None => Submit::Hold,
+        };
+        self.submit.ask(submit);
+    }
 }
 
 pub struct Scrobbling {
@@ -110,8 +168,11 @@ pub struct Scrobbling {
     play: Option<Play>,
     current: Option<String>,
     started: SystemTime,
-    /// How many plays have begun since launch, which numbers each one as its [`Play::order`].
-    plays: u64,
+    /// How long the current play has played in the stretches that already ended. Seeks add
+    /// nothing, so skipping ahead never earns a listen.
+    listened: Duration,
+    /// When the stretch playing right now began, `None` while paused or loading.
+    since: Option<Instant>,
     /// Whether the current play has already gone to the provider it came from.
     reported: bool,
     /// Where the current track was last heard, for the report that says it stopped.
@@ -119,8 +180,8 @@ pub struct Scrobbling {
     /// The queue that sends state reports one at a time. A segue puts a stop and the next start
     /// back to back, and the start has to land last or the server forgets the new track.
     reports: mpsc::UnboundedSender<Reported>,
-    /// Where submissions say whether the service took the key, which `_hearing` applies.
-    verdicts: mpsc::UnboundedSender<Verdict>,
+    /// Applies what the services' answers say about the stored key. The row tasks hold the
+    /// senders, so it runs as long as they do.
     _hearing: Task<()>,
     link: Option<Task<()>>,
     waiting: Option<AbortHandle>,
@@ -131,9 +192,16 @@ impl Scrobbling {
         playback: Entity<Playback>,
         session: Entity<Session>,
         settings: Entity<AppSettings>,
+        network: &Entity<Network>,
+        database: Database,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
+        // the network coming back is the likeliest moment for waiting listens to get through
+        cx.subscribe(network, |this, _, _: &Reconnected, _| {
+            this.rows.iter_mut().for_each(|row| row.hand(true))
+        })
+        .detach();
         cx.subscribe(&playback, |this, _, event, cx| match event {
             PlaybackEvent::StartedPlayback => this.begin(cx),
             PlaybackEvent::EndedPlayback => this.end(cx),
@@ -141,21 +209,10 @@ impl Scrobbling {
         })
         .detach();
         cx.observe(&playback, |this, _, cx| this.tick(cx)).detach();
-        // a play is earned by the time listened, which moves on position reports
+        // whether a play has earned its listen is checked on every position report
         let ticks = playback.read(cx).ticks().clone();
         cx.observe(&ticks, |this, _, cx| this.tick(cx)).detach();
-
-        let rows = scrobble::services()
-            .into_iter()
-            .map(|service| ScrobbleRow {
-                service,
-                account: Account::default(),
-                enabled: true,
-                state: ScrobbleState::Off,
-                sent: false,
-                refused: false,
-            })
-            .collect();
+        cx.on_app_quit(|this, _| this.quit()).detach();
 
         let (verdicts, mut heard) = mpsc::unbounded_channel::<Verdict>();
         let hearing = cx.spawn(async move |this, cx| {
@@ -167,6 +224,28 @@ impl Scrobbling {
             }
         });
 
+        let backlog = Backlog::new(database);
+        let rows = scrobble::services()
+            .into_iter()
+            .map(|service| ScrobbleRow {
+                now: tell(&io, service.clone(), verdicts.clone()),
+                submit: backlog::Sender::new(
+                    &io,
+                    service.clone(),
+                    backlog.clone(),
+                    verdicts.clone(),
+                ),
+                handed: None,
+                service,
+                account: Account::default(),
+                enabled: true,
+                state: ScrobbleState::Off,
+                sent: false,
+                refused: false,
+                shown: false,
+            })
+            .collect();
+
         let mut scrobbling = Self {
             playback,
             session,
@@ -176,11 +255,11 @@ impl Scrobbling {
             play: None,
             current: None,
             started: SystemTime::now(),
-            plays: 0,
+            listened: Duration::ZERO,
+            since: None,
             reported: false,
             position: Duration::ZERO,
             reports: send_reports(&io),
-            verdicts,
             _hearing: hearing,
             link: None,
             waiting: None,
@@ -203,8 +282,12 @@ impl Scrobbling {
             .unwrap_or_default()
     }
 
-    /// Turns submissions to one service on or off. The link survives either way.
+    /// Turns submissions to one service on or off. The link survives either way, and a service
+    /// switched off stops showing the current track.
     pub fn set_enabled(&mut self, service: &str, enabled: bool, cx: &mut Context<Self>) {
+        if !enabled && let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
+            row.hide();
+        }
         self.settings.update(cx, |settings, cx| {
             settings.set_scrobbling(service, enabled, cx)
         });
@@ -239,6 +322,7 @@ impl Scrobbling {
                 match linked {
                     Ok(account) => {
                         let id = this.rows[index].id();
+                        this.rows[index].hide();
                         this.rows[index].account = account;
                         this.rows[index].state = ScrobbleState::Off;
                         this.rows[index].refused = false;
@@ -261,11 +345,15 @@ impl Scrobbling {
         }));
     }
 
-    /// Forgets one service's account. A link still running is dropped first.
+    /// Forgets one service's account and the listens still waiting for it, taking back its status
+    /// first while the account can still sign the request. A link still running is dropped first.
     pub fn disconnect(&mut self, service: &str, cx: &mut Context<Self>) {
         self.stop();
         scrobble::forget(service);
         if let Some(row) = self.rows.iter_mut().find(|row| row.id() == service) {
+            row.hide();
+            row.submit.ask(Submit::Forget);
+            row.handed = None;
             row.account = Account::default();
             row.refused = false;
         }
@@ -331,6 +419,7 @@ impl Scrobbling {
 
         for row in &mut self.rows {
             row.enabled = settings.scrobbling_on(row.id());
+            row.hand(false);
             if row.linking() {
                 continue;
             }
@@ -382,78 +471,133 @@ impl Scrobbling {
         if !resumed {
             self.current = track.id.clone();
             self.started = SystemTime::now();
-            self.plays += 1;
+            self.listened = Duration::ZERO;
+            self.since = None;
             self.reported = false;
             for row in &mut self.rows {
                 row.sent = false;
             }
         }
-        self.play = played(track, self.started, self.plays);
+        self.play = played(track, self.started);
         self.position = playback.position();
+        self.listening(true);
         self.report(Report::Playing, cx);
-        let Some(play) = self.play.clone() else {
-            return;
-        };
+        self.show(cx);
+    }
 
+    /// Tells every live service that the current play is playing from the last position heard.
+    /// A service that should not hear it takes back whatever it still shows.
+    fn show(&mut self, cx: &App) {
         let muted = self.muted(cx);
-        for row in &self.rows {
-            if muted || !row.live() {
-                continue;
+        for row in &mut self.rows {
+            match (&self.play, muted || !row.live()) {
+                (Some(play), false) => row.tell(Now::Playing(play.clone(), self.position)),
+                _ => row.hide(),
             }
-            let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
-            let verdicts = self.verdicts.clone();
-            self.io.spawn(async move {
-                let answer = service.now_playing(&account, &play).await;
-                if let Err(error) = &answer {
-                    log::warn!(
-                        "scrobble: cannot report the current track to {}: {error:#}",
-                        service.id()
-                    );
-                }
-                judge(&verdicts, service.id(), &account, &answer);
-            });
         }
     }
 
     /// Reports a pause or a landed seek to the provider, for the track `begin` saw start. A
-    /// track restored paused at launch was never reported, so it stays quiet until it plays.
+    /// pause takes the status back from the services, and a seek moves it to the new position.
+    /// A track restored paused at launch was never reported, so it stays quiet until it plays.
     fn moved(&mut self, cx: &mut Context<Self>) {
         let playback = self.playback.read(cx);
         let id = playback.track().and_then(|track| track.id.as_ref());
         if self.current.is_none() || id != self.current.as_ref() {
             return;
         }
-        let report = match playback.state() {
-            PlaybackState::Playing => Report::Playing,
-            _ => Report::Paused,
-        };
+        let playing = *playback.state() == PlaybackState::Playing;
         self.position = playback.position();
-        self.report(report, cx);
+        self.listening(playing);
+        match playing {
+            true => {
+                self.report(Report::Playing, cx);
+                self.show(cx);
+            }
+            false => {
+                self.report(Report::Paused, cx);
+                self.rows.iter_mut().for_each(ScrobbleRow::hide);
+            }
+        }
     }
 
     /// Tells the provider the track stopped where it was last heard, since `Playback` has
-    /// already reset its position by the time the end arrives.
+    /// already reset its position by the time the end arrives, and takes the status back from
+    /// the services. The next track, if one follows, shows its own a moment later.
     fn end(&mut self, cx: &mut Context<Self>) {
         self.report(Report::Stopped, cx);
         self.play = None;
         self.current = None;
         self.reported = false;
+        self.listened = Duration::ZERO;
+        self.since = None;
         for row in &mut self.rows {
             row.sent = false;
+            row.hide();
         }
     }
 
-    /// Submits the play to every service that has not had it yet, once it has run long enough.
+    /// Opens or closes the stretch of listening as playback starts or stops moving.
+    fn listening(&mut self, playing: bool) {
+        match (playing, self.since) {
+            (true, None) => self.since = Some(Instant::now()),
+            (false, Some(since)) => {
+                self.listened += since.elapsed();
+                self.since = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// How long the current play has actually played, the running stretch included.
+    fn time_listened(&self) -> Duration {
+        self.listened + self.since.map_or(Duration::ZERO, |since| since.elapsed())
+    }
+
+    /// Takes back every status still shown, for the app to wait on as it quits. The wait is
+    /// short, so a slow service keeps the track until its status runs out by itself.
+    fn quit(&mut self) -> impl Future<Output = ()> + use<> {
+        let io = &self.io;
+        let stopping: Vec<_> = self
+            .rows
+            .iter_mut()
+            .filter(|row| row.shown)
+            .map(|row| {
+                row.shown = false;
+                let (service, account) = (row.service.clone(), row.account.clone());
+                io.spawn(async move {
+                    if let Err(error) = service.stopped(&account).await {
+                        log::warn!(
+                            "scrobble: cannot take the status back from {}: {error:#}",
+                            service.id()
+                        );
+                    }
+                })
+            })
+            .collect();
+        async move {
+            join_all(stopping).await;
+        }
+    }
+
+    /// Submits the play to every service that has not had it yet, once it has played long
+    /// enough.
     fn tick(&mut self, cx: &mut Context<Self>) {
+        if self.play.is_none() {
+            return;
+        }
+        let playback = self.playback.read(cx);
+        let current = playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref();
+        let playing = current && *playback.state() == PlaybackState::Playing;
+        if current {
+            self.position = playback.position();
+        }
+        self.listening(playing);
+        let played = self.time_listened();
         let Some(play) = self.play.as_ref() else {
             return;
         };
-        let playback = self.playback.read(cx);
-        if playback.track().and_then(|track| track.id.as_ref()) == self.current.as_ref() {
-            self.position = playback.position();
-        }
-        let played = playback.position();
-        if *playback.state() != PlaybackState::Playing || !play.earned(played) {
+        if !playing || !play.earned(played) {
             return;
         }
 
@@ -475,21 +619,7 @@ impl Scrobbling {
                 continue;
             }
             row.sent = true;
-
-            let (service, account, play) = (row.service.clone(), row.account.clone(), play.clone());
-            let verdicts = self.verdicts.clone();
-            self.io.spawn(async move {
-                let answer = service
-                    .scrobble(&account, std::slice::from_ref(&play))
-                    .await;
-                if let Err(error) = &answer {
-                    log::warn!(
-                        "scrobble: cannot submit the track to {}: {error:#}",
-                        service.id()
-                    );
-                }
-                judge(&verdicts, service.id(), &account, &answer);
-            });
+            row.submit.play(row.account.clone(), play.clone());
         }
     }
 
@@ -551,7 +681,7 @@ fn judge(
 }
 
 /// Turns a track into a listen. A track with no artist or no title is not submittable anywhere.
-fn played(track: &Track, at: SystemTime, order: u64) -> Option<Play> {
+fn played(track: &Track, at: SystemTime) -> Option<Play> {
     let artist = track
         .artist_refs
         .first()
@@ -567,7 +697,6 @@ fn played(track: &Track, at: SystemTime, order: u64) -> Option<Play> {
         album: Some(track.album.clone()).filter(|album| !album.is_empty()),
         duration: track.duration,
         at,
-        order,
     })
 }
 
@@ -580,6 +709,39 @@ fn send_reports(io: &Io) -> mpsc::UnboundedSender<Reported> {
             if let Err(error) = client.report(&id, report, position).await {
                 log::warn!("scrobble: cannot report the track to its provider: {error:#}");
             }
+        }
+    });
+    sender
+}
+
+/// Starts the task that tells one service what plays, one call at a time and in the order they
+/// were queued, so a late answer can never bring back a status already taken back. Changes that
+/// pile up behind a slow call collapse into the newest. It ends when the row drops its sender.
+fn tell(
+    io: &Io,
+    service: Arc<dyn Service>,
+    verdicts: mpsc::UnboundedSender<Verdict>,
+) -> mpsc::UnboundedSender<Told> {
+    let (sender, mut queued) = mpsc::unbounded_channel::<Told>();
+    io.spawn(async move {
+        while let Some(mut told) = queued.recv().await {
+            while let Ok(newer) = queued.try_recv() {
+                told = newer;
+            }
+            let (account, now) = told;
+            let answer = match &now {
+                Now::Playing(play, position) => {
+                    service.now_playing(&account, play, *position).await
+                }
+                Now::Stopped => service.stopped(&account).await,
+            };
+            if let Err(error) = &answer {
+                log::warn!(
+                    "scrobble: cannot tell {} what is playing: {error:#}",
+                    service.id()
+                );
+            }
+            judge(&verdicts, service.id(), &account, &answer);
         }
     });
     sender

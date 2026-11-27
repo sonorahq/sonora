@@ -100,6 +100,8 @@ enum Slot {
     VisualizerScreens,
     VisualizerAbsolute,
     PlayerBarLayout,
+    PlayerBarIsland,
+    PlayerBarIslandPage,
     PlayerBarTransparent,
     PlayerBarTimeLeft,
     FullscreenControlsAutohide,
@@ -107,6 +109,7 @@ enum Slot {
     Lyrics,
     Karaoke,
     BlurLyrics,
+    ScrollPlainLyrics,
     Romanized,
     PanelLyricsSize,
     FullscreenLyricsSize,
@@ -167,15 +170,6 @@ enum Slot {
     Decorations,
     #[cfg(not(target_os = "macos"))]
     Side,
-    #[cfg(not(target_os = "macos"))]
-    TrafficLights,
-    #[cfg(any(
-        target_os = "windows",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "macos"
-    ))]
-    WindowRounding,
     Motion,
     Pace,
     Saver,
@@ -812,7 +806,7 @@ impl SettingsView {
     fn groups(&self, page: SettingsPage, cx: &App) -> Vec<Group> {
         match page {
             SettingsPage::Providers => self.accounts_groups(),
-            SettingsPage::Appearance => self.appearance_groups(cx),
+            SettingsPage::Appearance => self.appearance_groups(),
             SettingsPage::PlayerBar => self.player_bar_groups(),
             SettingsPage::NowPlaying => self.now_playing_groups(cx),
             SettingsPage::Lyrics => self.lyrics_groups(cx),
@@ -1026,6 +1020,14 @@ impl SettingsView {
                 t!("settings-player-bar-layout"),
                 t!("settings-player-bar-layout-detail"),
             ),
+            Slot::PlayerBarIsland => (
+                t!("settings-player-bar-island"),
+                t!("settings-player-bar-island-detail"),
+            ),
+            Slot::PlayerBarIslandPage => (
+                t!("settings-player-bar-island-page"),
+                t!("settings-player-bar-island-page-detail"),
+            ),
             Slot::PlayerBarTransparent => (
                 t!("settings-player-bar-transparent"),
                 t!("settings-player-bar-transparent-detail"),
@@ -1079,6 +1081,10 @@ impl SettingsView {
                 t!("settings-blur-lyrics"),
                 t!("settings-blur-lyrics-detail"),
             ),
+            Slot::ScrollPlainLyrics => (
+                t!("settings-scroll-plain-lyrics"),
+                t!("settings-scroll-plain-lyrics-detail"),
+            ),
             Slot::Font => (
                 t!("settings-typeface"),
                 format!(
@@ -1106,21 +1112,6 @@ impl SettingsView {
             Slot::Side => (
                 t!("settings-controls-side"),
                 t!("settings-controls-side-detail"),
-            ),
-            #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => (
-                t!("settings-traffic-light-controls"),
-                t!("settings-traffic-light-controls-detail"),
-            ),
-            #[cfg(any(
-                target_os = "windows",
-                target_os = "linux",
-                target_os = "freebsd",
-                target_os = "macos"
-            ))]
-            Slot::WindowRounding => (
-                t!("settings-window-rounding"),
-                t!("settings-window-rounding-detail"),
             ),
             Slot::AdaptiveMenu => (
                 t!("settings-adaptive-menu"),
@@ -1319,6 +1310,8 @@ impl SettingsView {
             Slot::Ambient => self.ambient_row(cx),
             Slot::Visualizer => self.visualizer_row(cx),
             Slot::PlayerBarLayout => div().into_any_element(),
+            Slot::PlayerBarIsland => self.player_bar_island_row(cx),
+            Slot::PlayerBarIslandPage => self.player_bar_island_page_row(cx),
             Slot::PlayerBarTransparent => self.player_bar_transparent_row(cx),
             Slot::PlayerBarTimeLeft => self.player_bar_time_left_row(cx),
             Slot::VisualizerScreens => self.visualizer_screens_row(cx),
@@ -1330,6 +1323,7 @@ impl SettingsView {
             Slot::PanelLyricsSize => self.panel_lyrics_size_row(cx),
             Slot::FullscreenLyricsSize => self.fullscreen_lyrics_size_row(cx),
             Slot::BlurLyrics => self.blur_lyrics_row(cx),
+            Slot::ScrollPlainLyrics => self.scroll_plain_lyrics_row(cx),
             Slot::Font => self.font_row(cx),
             Slot::Motion => self.motion_row(cx),
             Slot::Pace => self.pace_row(cx),
@@ -1340,15 +1334,6 @@ impl SettingsView {
             Slot::Decorations => self.decorations_row(cx),
             #[cfg(not(target_os = "macos"))]
             Slot::Side => self.side_row(window, cx),
-            #[cfg(not(target_os = "macos"))]
-            Slot::TrafficLights => self.traffic_light_controls_row(window, cx),
-            #[cfg(any(
-                target_os = "windows",
-                target_os = "linux",
-                target_os = "freebsd",
-                target_os = "macos"
-            ))]
-            Slot::WindowRounding => self.window_rounding_row(window, cx),
             Slot::AdaptiveMenu => self.adaptive_menu_row(cx),
             Slot::Normalisation => self.playback_row(cx),
             Slot::Gapless => self.gapless_row(cx),

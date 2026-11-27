@@ -80,7 +80,14 @@ const SCHEMA: &str = "
         value TEXT NOT NULL,
         added_at INTEGER NOT NULL,
         PRIMARY KEY (provider, kind, set_id)
-    );";
+    );
+    CREATE TABLE IF NOT EXISTS scrobble_backlog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        service TEXT NOT NULL,
+        play TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scrobble_backlog_service
+        ON scrobble_backlog (service, id);";
 
 #[derive(Clone)]
 pub struct Database {

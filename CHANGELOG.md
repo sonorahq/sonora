@@ -9,14 +9,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Lyrics without timing scroll on their own over the length of the song, so the last line shows ten seconds before it ends. Scroll them yourself and they carry on from there at the same pace until you press the follow button. Turn it off under Settings → Lyrics → Auto-scroll plain lyrics.
+- Search finds your local files while you are signed in to a streaming service, and marks each local song, album, playlist and artist with the same badge as the library.
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
-- Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
+- Settings → Player bar has an Island option that floats the player bar as a rounded pill over the page in any layout, on wide windows only or whenever it fits, in the middle of the page or of the window. Every layout keeps it low with a thin progress line that opens with both times under the pointer, and it holds still while the pointer is on it, so its buttons stay put as a sidebar opens.
+- The Minimal player bar layout puts the song over a thin progress line, and resting the pointer on the line opens it with both times.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The Playlists tab filters by track count too, so you can hide short playlists or keep only long ones.
 - The AUR, Nix and Homebrew packages install tab completion for the `sonora` command in bash, zsh and fish, and Homebrew puts `sonora` on your PATH.
 - Settings → About has a Check for updates button that tells you in a toast whether a newer Sonora is out, and shows when Sonora last checked.
 - Sonora scrobbles to teal.fm. Connect it under Settings → Integrations with your Bluesky or other ATProto handle and an app password, and teal.fm also shows what you are playing right now.
+- Scrobbles made offline or while Last.fm, Libre.fm, ListenBrainz, Maloja or teal.fm is down are kept and sent once the service can be reached again, even after a restart.
 - `sonora add --at N` and the control socket place a search hit or a link at a chosen position in the queue, with 1 playing next.
 - `sonora queue remove`, `queue move` and `queue clear` edit the play order from the command line and the control socket, addressing rows by the id shown in `sonora queue --json`.
 - Start a radio from a playlist, album or artist through its menu, on every service that has song radio. It keeps going with songs like the ones in it.
@@ -28,12 +32,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Smart shuffle switched on in the Spotify app plays its recommended songs on Sonora through Spotify Connect, each marked with a sparkle in the queue and the player bar.
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
+- `"traffic_light_reversed": true` under `appearance` in settings.json swaps minimise and maximise in the traffic light window controls, so on the right they read minimise, maximise, close like the plain ones.
 
 ### Changed
 
+- Downloaded playlists stay in step with the service. Songs added to one, here or anywhere else, download in the background when Sonora starts, right after you add or like them in Sonora, and every hour, and songs taken out of it lose their download.
 - Song lists show each song's artists under its title, on an album only where they differ from the album's. Turn the Artist column back on from the column header, and pick a row height under Settings → Appearance.
 - Right-click an artist or album name in a song list to open its own menu, or drag it to the sidebar to pin it.
 - The macOS app is signed and notarized by Apple, so it opens on the first try without the Terminal workaround.
+- Traffic light controls left settings, while `traffic_light_controls` in settings.json keeps them.
+- Window corners left settings, while `window_rounding` in settings.json keeps them.
 - Sonora does less rendering work while you scroll through songs or use the equalizer.
 - YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.
 - Settings use much less CPU while the Now playing or Lyrics preview is on screen.
@@ -64,7 +72,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Spotify Browse focuses on music. Home, Browse, large playlists, artist discographies and wide Search can show results as they load.
 - Reopening a Spotify playlist or Browse category fetches its latest contents.
 - Built-in Spotify playback can reuse cached tracks for offline downloads. Spotify downloads adjust their pace when the service asks them to slow down, and the downloads list counts down to when they go on.
-- Pins you add or remove in Sonora stay in Sonora on Spotify, while pins you make in Spotify's own apps still show up.
 - Scrollbars fade in as you scroll and fade out once you stop, instead of popping in and out.
 - The settings search suggests matching settings in a panel under the field as you type, like the Search page does. Pick one with the arrow keys or a click to jump to it and light it up for a moment, or press Enter to list every match.
 - Settings name each group of options in a column beside it, with a thin line between groups instead of headings and wide gaps.
@@ -85,10 +92,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The `sonora` command controls Sonora on Windows, instead of saying Sonora is not running while it is.
+- Skipping ahead in a song no longer counts toward its scrobble, so a song is scrobbled only once you have actually listened to half of it or four minutes.
+- The page's frame and the sidebar's edge fade with the window's opacity instead of staying bright on a see-through window.
+- The player bar draws the same at every window height under fractional display scaling, instead of its seek line and times shifting by a pixel as you resize.
 - The Italian and Korean translations are complete, so no screen falls back to English.
 - Japanese, Chinese and Korean text on Linux is drawn at the weight the rest of the interface uses, instead of looking bold everywhere.
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
 - An Apple Music album you took out of your library can be added back from its menu, and pinning it from its page no longer fails.
+- Removing a YouTube Music favorite you liked as a music video now takes it out of your likes, instead of the heart filling again on the next reload.
 
 - YouTube Music tracks start right away again for a signed-in account, in the 256 kbps stream on Premium, instead of waiting several seconds or failing with "could not be played".
 - Interrupted or failed app updates, Soloist installs, theme saves and offline downloads no longer leave partial files behind.
@@ -126,6 +138,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A see-through window keeps its theme: the sidebars and bars stay their own colour beside the page, and buttons and the player bar no longer change shade the moment opacity drops below 100%.
 - The bottom edge of the fullscreen player no longer lets the desktop show through on a see-through window with the ambient background.
 - Opening and closing the fullscreen player on a see-through window no longer turns the window clearer halfway through, and the blur under its controls fades in instead of snapping on.
+- A transparent player bar stays readable on a see-through window at any opacity: what scrolls under it shows only as a soft glow of its colours, and the bar lets the desktop through as much as the page does.
 - Play, pause and volume on another device show at once, and the volume slider no longer jumps back and replays your drag while the device catches up. A drag sets the device's volume once you let go.
 - Playing an album, playlist or radio while a cast device or another Jellyfin session has playback plays the songs after it there too, instead of only the one you picked.
 - Your Discord status shows what plays on another Jellyfin session, instead of hiding with Hide during Spotify Connect or showing the song paused here.
