@@ -1830,6 +1830,21 @@ impl Render for FullscreenView {
             ),
             false => (spectrum, None),
         };
+        // The panel's scrollbar runs down its right edge, which the corner's leave button
+        // stands over from `Room::Wide` up, so the bar stops at the corner's top. A closed panel
+        // keeps the clearance while it fades out where it stood.
+        let clearance = match narrow || (self.panel.is_none() && leaving.is_none()) {
+            true => Pixels::ZERO,
+            false => {
+                let corner = self.root_origin.get().y
+                    + self.root_bounds.get().size.height
+                    + PlayerBar::fullscreen_drop(window, cx)
+                    - snapped(theme.metrics.player_bar, window);
+                (self.panel_bounds.get().bottom() - corner).max(Pixels::ZERO)
+            }
+        };
+        self.aside
+            .update(cx, |aside, cx| aside.set_bar_clearance(clearance, cx));
         let perches = match self.panel.is_some() {
             true => self.aside.update(cx, |aside, cx| aside.perches(window, cx)),
             false => Vec::new(),
