@@ -17,7 +17,9 @@ toast-track-moved = { $name }(으)로 이동됨
 toast-track-removed-unnamed = 플레이리스트에서 제거됨
 toast-playlist-failed = 변경 사항을 저장하지 못했습니다.
 toast-playlist-busy = 다른 변경 작업이 아직 진행 중입니다.
+toast-playlist-load-before-removing = 트랙을 제거하기 전에 전체 플레이리스트를 불러오세요.
 toast-playlist-signed-out = 플레이리스트를 변경하려면 로그인하세요.
+toast-guest-refused = 해당 작업을 수행하려면 { $name } 계정에 로그인하세요.
 toast-playlist-imported = { $name } 가져옴
 toast-playlist-imported-partly = 라이브러리에 없는 { $count ->
         [one] 1곡을
@@ -39,6 +41,7 @@ toast-queued-artist = 재생 목록에 아티스트 추가됨
 toast-next-artist = 바로 다음에 아티스트 재생
 toast-last-artist = 맨 마지막에 아티스트 재생
 toast-queue-failed = 재생 목록에 추가하지 못했습니다.
+toast-transfer-failed = 해당 기기에서 재생할 수 없습니다.
 toast-queue-local-elsewhere = 로컬 파일은 다른 기기의 재생 목록에 추가할 수 없습니다.
 toast-queued-tracks = 재생 목록에 { $count }트랙 추가됨
 toast-next-tracks = 바로 다음에 { $count }트랙 재생
@@ -187,6 +190,10 @@ toast-library-scanned = { $count ->
    *[other] 라이브러리 스캔 완료, { $count }곡을 찾았습니다.
 }
 toast-scan-failed = 음악 폴더를 스캔하지 못했습니다.
+toast-scan-issues = { $count ->
+    [one] 음악 파일 또는 폴더 1개를 읽을 수 없습니다.
+   *[other] 음악 파일 또는 폴더 { $count }개를 읽을 수 없습니다.
+}
 toast-folder-removed = { $name } 제거됨
 toast-folder-missing = 디스크에 { $name }이(가) 더 이상 존재하지 않습니다.
 toast-history-removed = { $count ->

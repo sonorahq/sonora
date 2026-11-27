@@ -5,6 +5,7 @@ members-picked = 현재 재생 중인 곡을 대기열에 추가함
 # login
 login-restoring = 저장된 세션 확인 중…
 login-authorizing = 브라우저에서 인증을 기다리는 중…
+login-browser-confirmed = 로그인이 완료되었습니다. Sonora로 돌아가도 됩니다.
 login-signed-in = { $name }(으)로 로그인됨
 login-failed-title = 로그인 실패
 login-window-title = { $provider }에 로그인
@@ -65,6 +66,8 @@ login-providers = 음악 서비스
 login-welcome-title = Sonora에 오신 것을 환영합니다!
 login-welcome-detail = 나중에 설정에서 음악 서비스를 더 추가할 수 있습니다.
 login-or = 또는
+login-offline-title = 오프라인
+login-offline-use = 오프라인으로 계속하기
 
 # album and playlist pages
 
@@ -147,6 +150,7 @@ song-eyebrow = 곡
 song-view-album = 앨범 보기
 song-about = 이 곡에 대하여
 song-album = 앨범
+song-album-artist = 앨범 아티스트
 song-released = 발매일
 song-streams = 스트리밍 수
 song-position = 트랙 위치
@@ -158,6 +162,9 @@ song-credits = 크레딧
 song-performed-by = 아티스트
 song-details = 장르 및 상세 정보
 song-genres = 장르
+song-tempo = 템포
+song-moods = 분위기
+song-tags = 태그
 song-language = 언어
 song-content = 콘텐츠 등급
 song-explicit = 성인용(Explicit)

@@ -43,6 +43,7 @@ unit-percent = { $value }%
 unit-db = { $value } dB
 unit-hz = { $value } Hz
 unit-khz = { $value } kHz
+unit-bpm = { $value } BPM
 unit-kbps = { $value } kbps
 unit-gb = { $value } GB
 unit-mb = { $value } MB
@@ -103,6 +104,7 @@ downloads-left = { $count ->
    *[other] { $count }곡 남음
 }
 downloads-eta = 약 { $minutes }분 남음
+downloads-paused = 서비스에서 일시정지됨, { $seconds }초 후 다시 시작
 downloads-cancel = 다운로드 취소
 downloads-cancel-all = 모든 다운로드 취소
 app-sign-out = 로그아웃
@@ -219,8 +221,9 @@ date-minute-ago = 1분 전
 date-minutes-ago = { $count }분 전
 date-today = 오늘 { $time }
 date-yesterday = 어제 { $time }
-date-time = { $date }, { $time }
-date-full = { $year }년 { $month } { $day }일
+date-time = { $date }, {$time }
+date-month-year = { $year }년 { $month }
+date-full = { $year }년 { $month } {$day }일
 month-1 = 1월
 month-2 = 2월
 month-3 = 3월

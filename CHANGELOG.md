@@ -82,6 +82,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The Italian and Korean translations are complete, so no screen falls back to English.
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
 
 - YouTube Music tracks start right away again for a signed-in account, in the 256 kbps stream on Premium, instead of waiting several seconds or failing with "could not be played".
