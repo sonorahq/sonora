@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use reqwest::header::AUTHORIZATION;
@@ -11,6 +13,8 @@ const SETTINGS: &str = "https://listenbrainz.org/settings/";
 /// How many listens the endpoint takes in one call.
 const BATCH: usize = 50;
 const CLIENT: &str = "Sonora";
+/// The version both the player and the submitting client report, since Sonora is both.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct ListenBrainz;
 
@@ -70,14 +74,19 @@ impl Service for ListenBrainz {
         })
     }
 
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
+    async fn now_playing(&self, account: &Account, play: &Play, _: Duration) -> Result<()> {
         submit(account, "playing_now", &[listen(play, false)]).await
     }
 
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
         for batch in plays.chunks(BATCH) {
             let listens: Vec<Listen<'_>> = batch.iter().map(|play| listen(play, true)).collect();
-            submit(account, "single", &listens).await?;
+            // `single` carries exactly one listen, and several go as an `import`
+            let kind = match listens.len() {
+                1 => "single",
+                _ => "import",
+            };
+            submit(account, kind, &listens).await?;
         }
         Ok(())
     }
@@ -130,9 +139,12 @@ fn listen(play: &Play, timed: bool) -> Listen<'_> {
             track_name: &play.title,
             release_name: play.release(),
             additional_info: Extra {
-                duration_ms: play.duration.as_millis().min(u64::MAX as u128) as u64,
+                duration_ms: (!play.duration.is_zero())
+                    .then(|| play.duration.as_millis().min(u64::MAX as u128) as u64),
                 media_player: CLIENT,
+                media_player_version: VERSION,
                 submission_client: CLIENT,
+                submission_client_version: VERSION,
             },
         },
     }
@@ -169,7 +181,10 @@ struct Metadata<'a> {
 
 #[derive(Serialize)]
 struct Extra {
-    duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
     media_player: &'static str,
+    media_player_version: &'static str,
     submission_client: &'static str,
+    submission_client_version: &'static str,
 }

@@ -86,6 +86,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Skipping ahead in a song no longer counts toward its scrobble, so a song is scrobbled only once you have actually listened to half of it or four minutes.
 - The page's frame and the sidebar's edge fade with the window's opacity instead of staying bright on a see-through window.
 - The player bar draws the same at every window height under fractional display scaling, instead of its seek line and times shifting by a pixel as you resize.
 - The Italian and Korean translations are complete, so no screen falls back to English.

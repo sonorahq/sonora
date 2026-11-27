@@ -68,14 +68,11 @@ pub struct Play {
     pub album: Option<String>,
     pub duration: Duration,
     pub at: SystemTime,
-    /// Counts up with each new play since launch, and a resumed play keeps its number. It orders
-    /// plays where `at` cannot, since the wall clock may be set back.
-    pub order: u64,
 }
 
 impl Play {
-    /// Whether `played` has earned the listen a submission. A track under thirty seconds never
-    /// earns one, however long it ran.
+    /// Whether `played`, the time actually listened with seeks left out, has earned the listen a
+    /// submission. A track under thirty seconds never earns one, however long it ran.
     pub fn earned(&self, played: Duration) -> bool {
         self.duration >= MIN_LENGTH
             && (played >= FULL_PLAY || played.as_secs_f64() * 2. >= self.duration.as_secs_f64())
@@ -94,6 +91,11 @@ impl Play {
     /// The album, dropped when the provider left it empty.
     fn release(&self) -> Option<&str> {
         self.album.as_deref().filter(|album| !album.is_empty())
+    }
+
+    /// The length in whole seconds, or `None` when the provider did not know it.
+    fn seconds(&self) -> Option<u64> {
+        (!self.duration.is_zero()).then_some(self.duration.as_secs())
     }
 }
 
@@ -193,10 +195,18 @@ pub trait Service: Send + Sync {
         play.earned(played)
     }
 
-    /// Tells the service what is playing right now. A service with no such concept keeps the
-    /// default and makes no request.
-    async fn now_playing(&self, account: &Account, play: &Play) -> Result<()> {
-        let _ = (account, play);
+    /// Tells the service what is playing right now and where playback stands in it. It runs on
+    /// every start, resume and seek, one call at a time per service, in the order they happened.
+    /// A service with no such concept keeps the default and makes no request.
+    async fn now_playing(&self, account: &Account, play: &Play, position: Duration) -> Result<()> {
+        let _ = (account, play, position);
+        Ok(())
+    }
+
+    /// Takes back the last `now_playing` after a pause, the end of playback or a quit. A service
+    /// whose now-playing report runs out by itself keeps the default and makes no request.
+    async fn stopped(&self, account: &Account) -> Result<()> {
+        let _ = account;
         Ok(())
     }
 
