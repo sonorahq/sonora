@@ -20,7 +20,7 @@ use crate::drag::{Edge, drop_gap, drop_marker};
 use crate::filters::FilterChange;
 use crate::glass::{bar_surface, blurring, popover_surface};
 use crate::menu::{Menu, MenuItem};
-use crate::metrics::{snapped, text_width};
+use crate::metrics::{Metrics, snapped, text_width};
 use crate::motion::Glowing as _;
 use crate::pin::{DraggedPin, Pin, Pinnable, Spot};
 use crate::popup::Popup;
@@ -87,6 +87,8 @@ pub struct Cell<F> {
     pub align: TextAlign,
     pub display: usize,
     pub row: usize,
+    /// The folded column this cell draws on a second line under its own value.
+    pub carries: Option<F>,
 }
 
 impl<F> Cell<F> {
@@ -207,6 +209,12 @@ pub trait TableSource: 'static {
     }
 
     fn is_loading(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Whether every row stands as tall as a stacked one, even when no column folded under the
+    /// title, so a row that names more under its title fits like its neighbours.
+    fn tall(&self) -> bool {
         false
     }
 
@@ -435,11 +443,27 @@ impl<S: TableSource> TableDelegate<S> {
         self.order.len()
     }
 
+    /// The fields the rows show, a folded one included, since it still draws under the title.
     fn visible(&self) -> Vec<S::Field> {
         self.columns
             .iter()
-            .map(|column| column.spec.field)
+            .flat_map(|column| {
+                [
+                    Some(column.spec.field),
+                    column.carries.map(|spec| spec.field),
+                ]
+            })
+            .flatten()
             .collect()
+    }
+
+    /// How tall a row stands, a little taller once a column folded under the title or the source
+    /// asks for tall rows.
+    fn row_height(&self, metrics: Metrics) -> Pixels {
+        match self.stacked() || self.source.tall() {
+            true => metrics.table_stack,
+            false => metrics.table_row,
+        }
     }
 
     fn relayout(&mut self, cx: &App) {
@@ -626,6 +650,11 @@ impl<S: TableSource> TableDelegate<S> {
         if self.anchor.is_some_and(|row| !self.marked.contains(&row)) {
             self.anchor = self.selected;
         }
+    }
+
+    /// Whether a column folded under the title, which makes every row two lines tall.
+    fn stacked(&self) -> bool {
+        self.columns.iter().any(|column| column.carries.is_some())
     }
 
     fn inner_width(&self, col_ix: usize) -> Pixels {
@@ -993,7 +1022,7 @@ impl<S: TableSource> TableState<S> {
         };
 
         let metrics = cx.theme().metrics;
-        let row = snapped(metrics.row, window);
+        let row = snapped(self.delegate.row_height(metrics), window);
         let head = snapped(metrics.header, window);
         let top = head + row * display as f32;
         let above = self.viewport.top + head;
@@ -1152,6 +1181,7 @@ impl<S: TableSource> TableState<S> {
                 spec: column.spec,
                 width: *width,
                 floor: column.floor,
+                carries: column.carries,
             })
             .collect();
         let Some(widths) = stretch(&anchor, resize.column, to - resize.origin.get()) else {
@@ -1466,6 +1496,7 @@ impl<S: TableSource> TableState<S> {
                             align: column.spec.align,
                             display,
                             row,
+                            carries: column.carries.map(|spec| spec.field),
                         };
                         self.delegate.source.cell(cell, cx)
                     })
@@ -1604,6 +1635,7 @@ impl<S: TableSource> TableState<S> {
                     align: column.spec.align,
                     display,
                     row,
+                    carries: None,
                 };
                 cells.push(self.delegate.source.cell(cell, cx));
             }
@@ -1693,7 +1725,7 @@ impl<S: TableSource> Render for TableState<S> {
         self.delegate.measure(window, cx);
 
         let metrics = cx.theme().metrics;
-        let row = snapped(metrics.row, window);
+        let row = snapped(self.delegate.row_height(metrics), window);
         let head = snapped(metrics.header, window);
         let placeholders = self.placeholders(row, cx);
         let height = self.height(head, row, self.delegate.row_count().max(placeholders));

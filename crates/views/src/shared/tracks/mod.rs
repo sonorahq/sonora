@@ -5,10 +5,11 @@ mod sort;
 use i18n::t;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
-use crate::shared::menus::{ItemMenu, TrackColumns};
+use crate::shared::menus::{Item, ItemMenu, TrackColumns};
 use gpui::accesskit::Role;
 use gpui::prelude::FluentBuilder as _;
 use gpui::prelude::StatefulInteractiveElement as _;
@@ -16,11 +17,11 @@ use gpui::{
     AnyElement, App, Context, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, div,
 };
-use music::{Arrival, Track};
+use music::{Album, Arrival, ArtistRef, Track};
 use router::Destination;
 use state::{
-    Detail, History, Library, LibraryPart, Network, Origin, Playback, Progress, Reorder, Shelf,
-    Sonora,
+    ArtistDetail, Detail, History, Library, LibraryPart, Network, Origin, Playback, Progress,
+    Reorder, Shelf, Sonora,
 };
 use ui::{
     ArrowRing, Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, RowMoves, Scrollbar,
@@ -200,6 +201,8 @@ pub(crate) struct TrackSource {
     reach: Reach,
     album: Option<Entity<Detail>>,
     playlist: Option<Entity<Detail>>,
+    /// The artist whose page lists the tracks, whose name the rows leave out.
+    artist: Option<Entity<ArtistDetail>>,
     history: Option<Entity<History>>,
     menu: ItemMenu,
     table: Option<WeakEntity<TableState<TrackSource>>>,
@@ -247,6 +250,7 @@ impl TrackSource {
             reach: Reach::default(),
             album: None,
             playlist: None,
+            artist: None,
             history: None,
             menu: ItemMenu::new(playlist_scrollbar, cx),
             table: None,
@@ -430,6 +434,11 @@ impl TrackSource {
         self
     }
 
+    pub(crate) fn with_artist(mut self, detail: Entity<ArtistDetail>) -> Self {
+        self.artist = Some(detail);
+        self
+    }
+
     pub(crate) fn with_history(mut self, history: Entity<History>) -> Self {
         self.history = Some(history);
         self
@@ -444,17 +453,37 @@ impl TrackSource {
         )
     }
 
-    fn album_cell(&self, cell: &Cell<TrackField>, track: &Track, color: Hsla) -> AnyElement {
-        let Some(album) = track.album_id.clone() else {
+    /// The album's name, which opens the album and, right-clicked, the album's own menu.
+    fn album_cell(
+        &self,
+        cell: &Cell<TrackField>,
+        track: &Track,
+        color: Hsla,
+        cx: &App,
+    ) -> AnyElement {
+        let Some(id) = track.album_id.clone() else {
             return cells::dim(cell, track.album.clone(), color);
         };
+        let album = Sonora::global(cx)
+            .library
+            .read(cx)
+            .album(&id)
+            .cloned()
+            .unwrap_or_else(|| Album {
+                id: id.clone(),
+                name: track.album.clone(),
+                artists: track.album_artist.clone(),
+                cover: track.cover.clone(),
+                ..Album::default()
+            });
 
         cells::link(
             cell,
             "album",
             track.album.clone(),
             color,
-            Destination::Album(album.into()),
+            Destination::Album(id.into()),
+            Some(Item::Album(album)),
         )
     }
 
@@ -514,6 +543,7 @@ impl TrackSource {
         cell: &Cell<TrackField>,
         track: &Track,
         color: Option<Hsla>,
+        detail: Hsla,
         cx: &App,
     ) -> AnyElement {
         cells::title(
@@ -521,7 +551,14 @@ impl TrackSource {
             track.name.clone(),
             color,
             track.explicit.then(|| t!("song-explicit")),
-            None,
+            self.names_artists(cell, track, cx).then(|| {
+                cells::artists_under(
+                    track.artist_refs.clone(),
+                    track.artists.clone(),
+                    detail,
+                    cx.theme(),
+                )
+            }),
             match self.marks_local(cx)
                 && track.id.as_deref().is_some_and(|id| Shelf::of(id).local())
             {
@@ -530,6 +567,45 @@ impl TrackSource {
             },
             self.liked_button(cell, track, cx),
         )
+    }
+
+    /// Whether the title names the track's artists under it. An album page has no artist column
+    /// and names them only on a track whose artists differ from the album's. Any other table names
+    /// them once it folded its artist column, unless they are the artist whose page it is.
+    fn names_artists(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> bool {
+        match self.album.is_some() {
+            true => !track.artists.is_empty() && !self.credits_page_artists(track, cx),
+            false => {
+                cell.carries == Some(TrackField::Artists) && !self.credits_page_artists(track, cx)
+            }
+        }
+    }
+
+    /// Whether a track credits exactly the artists its page is about, an album's own artists or the
+    /// artist whose page lists it, so naming them on its row would only repeat the page.
+    fn credits_page_artists(&self, track: &Track, cx: &App) -> bool {
+        let page = match (&self.album, &self.artist) {
+            (Some(album), _) => album
+                .read(cx)
+                .header()
+                .map(|header| (lowered(&header.artist_refs), header.artist.clone())),
+            (None, Some(artist)) => artist.read(cx).artist().map(|artist| {
+                (
+                    BTreeSet::from([artist.name.to_lowercase()]),
+                    Some(artist.name.clone()),
+                )
+            }),
+            (None, None) => None,
+        };
+        let Some((names, joined)) = page else {
+            return false;
+        };
+        match names.is_empty() || track.artist_refs.is_empty() {
+            true => {
+                joined.is_some_and(|joined| joined.to_lowercase() == track.artists.to_lowercase())
+            }
+            false => names == lowered(&track.artist_refs),
+        }
     }
 
     fn liked_button(&self, cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<AnyElement> {
@@ -825,9 +901,9 @@ impl TableSource for TrackSource {
 
         match cell.field {
             TrackField::Cover => cells::artwork(&cell, track.cover.clone()),
-            TrackField::Title => self.title_cell(&cell, track, title, cx),
+            TrackField::Title => self.title_cell(&cell, track, title, detail, cx),
             TrackField::Artists => self.artist_cell(&cell, track, detail),
-            TrackField::Album => self.album_cell(&cell, track, detail),
+            TrackField::Album => self.album_cell(&cell, track, detail, cx),
             TrackField::Genre => cells::dim(&cell, track.genres.join(", "), detail),
             TrackField::AddedAt => cells::credited(
                 &cell,
@@ -856,6 +932,12 @@ impl TableSource for TrackSource {
     }
 
     fn picking(&self) -> bool {
+        true
+    }
+
+    /// A track list keeps one row height whether or not its artists sit under the titles, so
+    /// turning the artist column on or narrowing the window never resizes the rows.
+    fn tall(&self) -> bool {
         true
     }
 
@@ -972,6 +1054,14 @@ fn download_mark(cell: &Cell<TrackField>, track: &Track, cx: &App) -> Option<Any
 pub(crate) fn follow_downloads<T: 'static>(cx: &mut Context<T>) {
     let downloads = Sonora::global(cx).downloads.clone();
     cx.observe(&downloads, |_, _, cx| cx.notify()).detach();
+}
+
+/// The lowercased names of a credit, to compare credits regardless of capitalisation and order.
+fn lowered(artists: &[ArtistRef]) -> BTreeSet<String> {
+    artists
+        .iter()
+        .map(|artist| artist.name.to_lowercase())
+        .collect()
 }
 
 #[cfg(test)]

@@ -31,6 +31,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Song lists show each song's artists under its title, on an album only where they differ from the album's. Turn the Artist column back on from the column header, and pick a row height under Settings → Appearance.
+- Right-click an artist or album name in a song list to open its own menu, or drag it to the sidebar to pin it.
 - The macOS app is signed and notarized by Apple, so it opens on the first try without the Terminal workaround.
 - Sonora does less rendering work while you scroll through songs or use the equalizer.
 - YouTube Music comes first in the list of streaming services, and its row says it also works as a guest.

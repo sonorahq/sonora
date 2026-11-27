@@ -6,20 +6,21 @@ use std::time::Duration;
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, Hsla, MouseButton, Pixels, SharedString,
-    Stateful, Task, Window, div, px, svg,
+    AnyElement, App, Context, Div, ElementId, Entity, Hsla, MouseButton, MouseDownEvent, Pixels,
+    SharedString, Stateful, Task, Window, div, px, relative, rems, svg,
 };
 use i18n::t;
-use music::{ArtistRef, Contributor};
+use music::{ArtistRef, Contributor, SavedArtist};
 use router::{Destination, Link as _, navigate};
-use state::Playback;
+use state::{Playback, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Badge, Cell, InlineLink, InlineLinks, ROW_GROUP, Theme,
-    clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Badge, Cell, InlineLink, InlineLinks, Pin, PinKind,
+    Pinnable, ROW_GROUP, Text, Theme, clock, tabular,
 };
 
 use crate::chrome::Chrome;
 use crate::shared::hero::release_date_label;
+use crate::shared::menus::{CardMenu, Item};
 
 const PLAY: &str = "icons/play.svg";
 const PLAYING: &str = "icons/music-2.svg";
@@ -27,6 +28,9 @@ const PAUSE: &str = "icons/pause.svg";
 const UNAVAILABLE: &str = "icons/play-off.svg";
 const HOVER_PRELOAD_DELAY: Duration = Duration::from_millis(200);
 const PERSON: &str = "icons/user.svg";
+/// The line height of a title and the artists under it, tighter than body text so the two read
+/// as one entry.
+const STACKED_LEADING: f32 = 1.1;
 
 pub(crate) type Tap = Box<dyn Fn(&mut App)>;
 
@@ -254,12 +258,15 @@ pub(crate) fn transport<F>(cell: &Cell<F>, resting: AnyElement, hover: Transport
         .into_any_element()
 }
 
+/// A cell that opens `to` when clicked. With a `menu` item it hauls that item when dragged and
+/// opens the item's menu when right-clicked, in place of the row's.
 pub(crate) fn link<F>(
     cell: &Cell<F>,
     id: &'static str,
     value: impl Into<SharedString>,
     color: Hsla,
     to: Destination,
+    menu: Option<Item>,
 ) -> AnyElement {
     let value = value.into();
     line(cell, Some(color))
@@ -268,6 +275,15 @@ pub(crate) fn link<F>(
         .aria_label(value.clone())
         .hover(|style| style.underline())
         .link(to)
+        .when_some(menu.as_ref().and_then(Item::pin), Pinnable::pin)
+        .when_some(menu, |this, item| {
+            this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                cx.stop_propagation();
+                window.prevent_default();
+                let playback = Sonora::global(cx).playback.clone();
+                CardMenu::opener(item.clone(), playback)(event, window, cx);
+            })
+        })
         .child(value)
         .into_any_element()
 }
@@ -287,6 +303,31 @@ pub(crate) fn artist_links(
         color,
     )
     .on_click(|id, cx| navigate(Destination::Artist(id), cx))
+    .on_secondary(artist_menu_at)
+    .pin_with(|link| {
+        let id = link.value.as_deref()?;
+        Some(Pin::new(PinKind::Artist, id, link.label.as_ref()))
+    })
+}
+
+/// Opens an artist's menu where the pointer is, for a right click on the artist's name.
+fn artist_menu_at(link: &InlineLink, event: &MouseDownEvent, window: &mut Window, cx: &mut App) {
+    let Some(id) = link.value.as_deref() else {
+        return;
+    };
+    let sonora = Sonora::global(cx);
+    let artist = sonora
+        .library
+        .read(cx)
+        .artist(id)
+        .cloned()
+        .unwrap_or_else(|| SavedArtist {
+            id: id.to_owned(),
+            name: link.label.to_string(),
+            ..SavedArtist::default()
+        });
+    let playback = sonora.playback.clone();
+    CardMenu::opener(Item::Artist(artist), playback)(event, window, cx);
 }
 
 pub(crate) fn artists<F>(
@@ -423,36 +464,37 @@ pub(crate) fn count(value: u64) -> SharedString {
     SharedString::from(grouped)
 }
 
+/// A track's title with its badges, and `under` on a second, smaller line when the table folded
+/// a column under the title.
 pub(crate) fn title<F>(
     cell: &Cell<F>,
     value: impl Into<SharedString>,
     color: Option<Hsla>,
     explicit: Option<SharedString>,
-    press: Option<Tap>,
+    under: Option<AnyElement>,
     status: Option<AnyElement>,
     is_liked: Option<AnyElement>,
 ) -> AnyElement {
     let value = value.into();
     let text = div()
         .id(("track-title", cell.row))
-        .role(match press.is_some() {
-            true => Role::Link,
-            false => Role::Paragraph,
-        })
+        .role(Role::Paragraph)
         .aria_label(value.clone())
         .min_w_0()
         .truncate()
-        .child(value)
-        .when_some(press, |this, press| {
-            this.cursor_pointer()
-                .hover(|style| style.underline())
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    press(cx);
-                })
-        });
+        .child(value);
 
-    line(cell, color)
+    let top = match under.is_some() {
+        // the line is exactly as tall as its text, so a badge or the heart button beside the title
+        // overhangs it instead of pushing the artists down
+        true => div()
+            .w_full()
+            .min_w_0()
+            .h(rems(STACKED_LEADING))
+            .line_height(relative(STACKED_LEADING)),
+        false => line(cell, color),
+    };
+    let top = top
         .flex()
         .items_center()
         .gap_1p5()
@@ -468,7 +510,40 @@ pub(crate) fn title<F>(
             )
         })
         .when_some(status, |this, status| this.child(status))
-        .when_some(is_liked, |this, is_liked| this.child(is_liked))
+        .when_some(is_liked, |this, is_liked| this.child(is_liked));
+
+    let Some(under) = under else {
+        return top.into_any_element();
+    };
+    cell.middle()
+        .flex_col()
+        .items_start()
+        .justify_center()
+        .gap_1p5()
+        .when_some(color, |this, color| this.text_color(color))
+        .child(top)
+        .child(under)
+        .into_any_element()
+}
+
+/// The artists of a track as a second, smaller line under its title.
+pub(crate) fn artists_under(
+    artists: Vec<ArtistRef>,
+    fallback: impl Into<SharedString>,
+    color: Hsla,
+    theme: &Theme,
+) -> AnyElement {
+    div()
+        .w_full()
+        .min_w_0()
+        // not clipped, since the tight line would cut off the underline of a hovered link, and the
+        // links fit their own width
+        .flex()
+        .text_size(theme.text(Text::Small))
+        .line_height(relative(STACKED_LEADING))
+        .child(
+            artist_links(SharedString::new_static("artist"), artists, fallback, color).truncate(),
+        )
         .into_any_element()
 }
 

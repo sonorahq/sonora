@@ -114,7 +114,7 @@ pub use lazy::Lazy;
 pub use level_meter::LevelMeter;
 pub use linger::{Linger, lingers};
 pub use menu::{MENU_CONTEXT, Menu, MenuItem, MenuSearch, SubmenuState, close_menu};
-pub use metrics::{LEADING, Metrics, Rounding, Text, snapped, text_width, tucked};
+pub use metrics::{LEADING, Metrics, Rounding, RowSize, Text, snapped, text_width, tucked};
 pub use modal::{Modal, corners};
 pub use motion::{
     Entrance, Fading, Glow, Glowed, Glowing, HoverFade, Motion, Motioned, PRESS_SCALE,

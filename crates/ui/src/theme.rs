@@ -8,7 +8,7 @@ use gpui::{
 use i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::metrics::{Metrics, Rounding, Text};
+use crate::metrics::{Metrics, Rounding, RowSize, Text};
 use crate::palette::CoverPalette;
 
 pub const MIN_FONT: f32 = 10.;
@@ -119,6 +119,8 @@ pub struct Look {
     pub kind: ThemeKind,
     pub rounding: Rounding,
     pub font: f32,
+    /// How tall table rows stand.
+    pub rows: RowSize,
     pub transparent: bool,
     pub transparency: f32,
     /// Whether the frosted treatments are painted. See `ui::blurring`.
@@ -895,7 +897,7 @@ impl Theme {
             theme.see_through(theme.opacity);
         }
         theme.font_size = base;
-        theme.metrics = Metrics::new(base);
+        theme.metrics = Metrics::new(base, look.rows);
         theme.transparent = look.transparent;
         theme.blur = look.blur;
         theme.blur_window = look.blur_window;
@@ -1087,6 +1089,7 @@ mod tests {
             kind: ThemeKind::Dark,
             rounding: Rounding::Subtle,
             font: 14.,
+            rows: RowSize::default(),
             transparent: false,
             transparency: 0.,
             blur: false,

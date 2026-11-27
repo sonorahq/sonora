@@ -65,6 +65,16 @@ impl Item {
             Self::Track(track) => menus.for_track(track, cx),
         }
     }
+
+    /// The pin the item hauls when it is dragged, as its card or row does.
+    pub(crate) fn pin(&self) -> Option<Pin> {
+        match self {
+            Self::Album(album) => album.pin(),
+            Self::Playlist(playlist) => playlist.pin(),
+            Self::Artist(artist) => artist.pin(),
+            Self::Track(track) => track.pin(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]

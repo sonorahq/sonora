@@ -5,7 +5,9 @@ use gpui::{
     App, Bounds, Context, Entity, EntityId, Pixels, ScrollHandle, SharedString, Window,
     WindowBounds, WindowOptions, div, px, size, svg,
 };
-use ui::{ActiveTheme as _, Look, Rounding, Scrollbar, Scroller, Text, Theme, ThemeKind, eyebrow};
+use ui::{
+    ActiveTheme as _, Look, Rounding, RowSize, Scrollbar, Scroller, Text, Theme, ThemeKind, eyebrow,
+};
 
 const INTER: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -137,6 +139,7 @@ fn main() {
                     kind: ThemeKind::Dark,
                     rounding: Rounding::Rounded,
                     font: 14.,
+                    rows: RowSize::default(),
                     transparent: false,
                     transparency: 0.,
                     blur: false,

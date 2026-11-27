@@ -166,6 +166,8 @@ settings-provider-last-used = Last used
 settings-entries = Sidebar entries
 settings-entries-detail = The sections listed in the sidebar
 settings-entries-pick = Choose entries
+settings-row-size = Row height
+settings-row-size-detail = How tall the rows of song lists stand
 settings-language = Language
 settings-language-detail = The language Sonora uses across the interface
 settings-language-system = System
@@ -520,6 +522,11 @@ corners-square = Square
 corners-subtle = Subtle
 corners-rounded = Rounded
 corners-round = Round
+
+# row height
+row-size-standard = Standard
+row-size-comfortable = Comfortable
+row-size-spacious = Spacious
 
 # motion
 motion-system = System
