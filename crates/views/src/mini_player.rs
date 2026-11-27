@@ -39,6 +39,9 @@ impl VolumeHost for MiniPlayer {
     fn playback(&self) -> &Entity<Playback> {
         &self.playback
     }
+    fn released(&mut self, cx: &mut Context<Self>) {
+        self.wake(cx);
+    }
 }
 
 impl MiniPlayer {
