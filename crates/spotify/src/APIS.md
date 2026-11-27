@@ -2,13 +2,12 @@
 
 Wire schemas and endpoint constants live in [spotifyapis](../../../spotifyapis/src/proto).
 
-Relative HTTP paths use Spotify’s regional API host. Search and Lyrics send `app-platform: Linux`. Lyrics also requires a User-Agent, and Profile uses an Accept header to request protobuf.
-
 ## HTTP calls that use JSON
 
 | Area | Endpoint | Use |
 | --- | --- | --- |
 | Discovery and offline recovery | `GET apresolve.spotify.com/v2?type=accesspoint&type=dealer&type=spclient` | Finds regional servers and checks whether Spotify is reachable. |
+| Spotify profile rankings | `POST api-partner.spotify.com/pathfinder/v2/query` | Reads personal track and artist rankings for Spotify’s three preset periods. |
 | OAuth | `POST accounts.spotify.com/api/token` | Exchanges or refreshes sign-in tokens. Sends form data and receives JSON. |
 | Playlist cover upload | `POST image-upload.spotify.com/v4/playlist` | Sends a JPEG and receives an upload token. |
 | Connect player commands | `POST /connect-state/v1/player/command/from/{from}/to/{to}` | Sends playback and queue commands as gzipped JSON. Forward queue jumps name the target in `skip_next`. History jumps use `play` with the selected track and its context when available. |

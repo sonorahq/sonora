@@ -13,6 +13,7 @@ mod playlists;
 mod profiles;
 mod search;
 mod session;
+mod stats;
 mod wire;
 
 use std::sync::Arc;

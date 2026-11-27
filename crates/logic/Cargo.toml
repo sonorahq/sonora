@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 fastrand.workspace = true
 futures.workspace = true
+jiff.workspace = true
 log.workspace = true
 lyrics.workspace = true
 music.workspace = true

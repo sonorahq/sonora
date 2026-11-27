@@ -321,6 +321,11 @@ impl TitleBar {
                             .on_click(|_, _, cx| navigate(Destination::History, cx)),
                     )
                     .item(
+                        MenuItem::new("account-stats", t!("nav-stats"))
+                            .icon("icons/gauge.svg")
+                            .on_click(|_, _, cx| navigate(Destination::Stats, cx)),
+                    )
+                    .item(
                         MenuItem::new("account-settings", t!("nav-settings"))
                             .icon("icons/settings.svg")
                             .on_click(|_, _, cx| open_settings(cx)),

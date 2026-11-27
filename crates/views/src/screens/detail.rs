@@ -773,12 +773,12 @@ impl DetailView {
         let tabs = match albums > 0 && artists > 0 {
             false => None,
             true => {
-                let opened = opened.clone();
+                let choices = [RailTab::Albums, RailTab::Artists];
                 Some(
                     div()
                         .flex()
                         .gap_1()
-                        .children([RailTab::Albums, RailTab::Artists].into_iter().map(|tab| {
+                        .children(choices.into_iter().map(|tab| {
                             let opened = opened.clone();
                             Button::new(tab.id())
                                 .label(tab.label())
@@ -818,6 +818,7 @@ impl DetailView {
                 tile: card,
                 columns,
                 tabs,
+                note: None,
             },
             window,
             cx,

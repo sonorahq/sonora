@@ -147,6 +147,17 @@ pub(crate) async fn metadata(session: &Session, uris: &[String]) -> Result<HashM
         .context("cannot read track metadata")
 }
 
+/// Hydrates stats tracks with the descriptive tags used by the rankings.
+pub(super) async fn stats_metadata(
+    session: &Session,
+    uris: &[String],
+) -> Result<HashMap<String, Track>> {
+    project_batch(session, uris, TRACK_DETAILS, BATCH, false, |data, uri| {
+        take_track_details(data, uri, true)
+    })
+    .await
+}
+
 /// Hydrates independent track IDs, retaining tracks from every successful batch.
 pub(super) async fn available_tracks(
     session: &Session,
@@ -185,6 +196,15 @@ pub(super) fn take_track(
     data: &mut HashMap<MetadataKey, MetadataPayload>,
     uri: &str,
 ) -> Option<Track> {
+    take_track_details(data, uri, false)
+}
+
+/// Projects catalogue fields and optionally keeps the raw tags used by stats.
+fn take_track_details(
+    data: &mut HashMap<MetadataKey, MetadataPayload>,
+    uri: &str,
+    tags: bool,
+) -> Option<Track> {
     let mut track = track_from(uri, &take(data, ExtensionKind::TrackV4, uri)?);
     if let Some(descriptors) = take::<TrackDescriptors>(data, ExtensionKind::TrackDescriptor, uri) {
         for descriptor in descriptors.descriptors {
@@ -197,6 +217,17 @@ pub(super) fn take_track(
                     && !values.iter().any(|word| word.eq_ignore_ascii_case(label))
                 {
                     values.push(label.to_owned());
+                }
+            }
+            if tags && !descriptor.categories.contains(&1) {
+                let text = descriptor.text.trim();
+                let tag = text
+                    .strip_prefix("spotify:concept:")
+                    .unwrap_or(text)
+                    .replace('_', " ")
+                    .to_lowercase();
+                if !tag.is_empty() && tag != "track" && !track.tags.contains(&tag) {
+                    track.tags.push(tag);
                 }
             }
         }

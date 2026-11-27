@@ -122,6 +122,19 @@ impl MusicApi for SpotifyClient {
             .context("track metadata is missing")
     }
 
+    async fn descriptors(&self, ids: &[String]) -> Result<HashMap<String, music::Descriptors>> {
+        crate::stats::descriptors(&self.session, ids).await
+    }
+
+    fn stats_periods(&self) -> &'static [music::StatsPeriod] {
+        use music::StatsPeriod::*;
+        &[Weeks, Months, Year]
+    }
+
+    async fn stats(&self, period: music::StatsPeriod) -> Result<music::ListeningStats> {
+        crate::stats::stats(&self.session, period).await
+    }
+
     async fn tracks_by_id(&self, ids: &[String]) -> Result<HashMap<String, Track>> {
         collection::available_tracks(&self.session, ids).await
     }

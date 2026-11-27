@@ -81,6 +81,23 @@ pub struct ScanReport {
     /// Original file IDs proving the folder scope of each durable album alias.
     pub album_move_paths: std::collections::HashMap<String, Vec<String>>,
 }
+/// What a provider says a track is about and how it sounds, for filtering a list by it. Every
+/// part may be empty, and a track the provider does not describe has none.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Descriptors {
+    /// Genres and other descriptive words, lowercase, as the provider words them.
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+    /// The Fluent keys of the feelings the audio carries, such as `stats-mood-energetic`.
+    pub moods: Vec<String>,
+    /// Beats per minute, where the provider analysed the audio.
+    pub bpm: Option<f32>,
+    /// Positivity from 0 to 1, where the provider analysed the audio.
+    pub valence: Option<f32>,
+    /// Intensity from 0 to 1, where the provider analysed the audio.
+    pub energy: Option<f32>,
+}
 
 /// A song or episode as a provider lists it. The default is an unplayable track with no id, so a
 /// caller that builds one from `..Default::default()` sets `playable` itself.
