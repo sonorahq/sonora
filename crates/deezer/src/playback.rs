@@ -16,7 +16,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use engine::{self, Fetch, Loudness};
 use music::vault::{Recording, Shelf};
-use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
+use music::{Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Quality};
 use reqwest::header::HeaderMap;
 use rodio::Source as _;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ pub struct Loaded {
     leap: Option<Arc<ranged::File<Striped>>>,
     duration: Option<Duration>,
     loudness: Option<Loudness>,
+    encoding: Option<Encoding>,
 }
 
 pub struct Factory {
@@ -79,6 +80,8 @@ struct Facts {
     effective_id: String,
     duration_s: Option<u64>,
     lufs: Option<f32>,
+    #[serde(default)]
+    encoding: Option<Encoding>,
 }
 
 /// What a download asks Deezer for a fresh url of the stream it is fetching with.
@@ -115,6 +118,7 @@ impl Deezer {
             leap: None,
             duration: facts.duration_s.map(Duration::from_secs),
             loudness: facts.lufs.map(|lufs| Loudness { lufs, peak: None }),
+            encoding: facts.encoding,
         })
     }
 
@@ -167,6 +171,7 @@ impl Fetch for Deezer {
             return Ok(loaded);
         }
         let opened = self.client.open_stream(id, self.quality).await?;
+        let encoding = encoding(opened.format);
         let total = opened.response.content_length();
         let reach = self.reach(id, &opened);
         let body = match &self.shelf {
@@ -175,6 +180,7 @@ impl Fetch for Deezer {
                     effective_id: opened.effective_id.clone(),
                     duration_s: opened.duration.map(|duration| duration.as_secs()),
                     lufs: opened.loudness.map(|loudness| loudness.lufs),
+                    encoding,
                 };
                 shelf.keep(
                     id,
@@ -193,6 +199,7 @@ impl Fetch for Deezer {
             stream,
             duration: opened.duration,
             loudness: opened.loudness,
+            encoding,
         })
     }
 
@@ -202,6 +209,10 @@ impl Fetch for Deezer {
 
     fn loudness(&self, loaded: &Loaded) -> Option<Loudness> {
         loaded.loudness
+    }
+
+    fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
+        loaded.encoding
     }
 
     async fn downloaded(&self, loaded: &Loaded) {
@@ -267,5 +278,33 @@ impl Fetch for Deezer {
             return Some((Decoded::new(decoder), Duration::ZERO));
         }
         Some((Decoded::new(decoder), start))
+    }
+}
+
+/// The format Deezer actually served, with no bitrate inferred for user uploads.
+fn encoding(format: &str) -> Option<Encoding> {
+    match format {
+        "FLAC_24" => Some(Encoding::Flac { depth: 24, rate: 0 }),
+        "FLAC" => Some(Encoding::Flac { depth: 16, rate: 0 }),
+        "MP3_320" => Some(Encoding::Mp3 { kbps: 320 }),
+        "MP3_128" => Some(Encoding::Mp3 { kbps: 128 }),
+        "MP3_MISC" => Some(Encoding::Mp3 { kbps: 0 }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_the_actual_deezer_stream_format() {
+        assert_eq!(
+            encoding("FLAC_24"),
+            Some(Encoding::Flac { depth: 24, rate: 0 })
+        );
+        assert_eq!(encoding("MP3_320"), Some(Encoding::Mp3 { kbps: 320 }));
+        assert_eq!(encoding("MP3_MISC"), Some(Encoding::Mp3 { kbps: 0 }));
+        assert_eq!(encoding("unsupported"), None);
     }
 }

@@ -80,6 +80,17 @@ devices-session-people = { $count ->
     }
 fullscreen-artwork = Artwork
 fullscreen-panels = Now playing views
+player-audio-quality-lossless = { $format } { $depth }bit/{ $rate }kHz
+player-audio-quality-lossless-spoken = { $format }, { $depth } bit, { $rate } kilohertz
+player-audio-quality-depth = { $format } { $depth }bit
+player-audio-quality-depth-spoken = { $format }, { $depth } bit
+player-audio-quality-rate = { $format } { $rate }kHz
+player-audio-quality-rate-spoken = { $format }, { $rate } kilohertz
+player-audio-quality-lossy = { $format } { $kbps }kbps
+player-audio-quality-lossy-spoken = { $format }, { $kbps } kilobits per second
+player-audio-quality-format = { $format }
+player-audio-quality-format-spoken = Audio format { $format }
+player-audio-quality-hires-spoken = Hi-res audio: { $quality }
 
 # play button
 play-pause = Pause

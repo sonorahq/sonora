@@ -27,7 +27,7 @@ use crate::chrome::{
     Aside, BarParts, COVER_GAP, PlayerBar, SessionsButton, TitleBarOptions, Volume, jam, members,
 };
 use crate::shared::menus::ItemMenu;
-use crate::shared::now_playing::track_details;
+use crate::shared::now_playing::{audio_quality_badge, track_details};
 use crate::shared::transport::{
     Backdrops, COVER_FLIGHT, CoverFade, CoverRoom, ShellSwap, clock_ems, end_clock, fraction, like,
     moved, transport,
@@ -771,6 +771,16 @@ impl FullscreenView {
         let frosted = ambient::shown(cx);
         let shown = self.playback.read(cx).shown_track(cx);
         let track = shown.as_ref();
+        let quality_badge = match Sonora::global(cx).settings.read(cx).player_bar_badge() {
+            true => audio_quality_badge(
+                self.playback
+                    .read(cx)
+                    .track_signal()
+                    .and_then(|signal| signal),
+                "fullscreen-audio-quality",
+            ),
+            false => None,
+        };
         let title = match track {
             Some(track) => SharedString::from(track.name.clone()),
             None => t!("player-nothing-playing"),
@@ -903,6 +913,16 @@ impl FullscreenView {
                         .when(shadowed, |this| this.text_shadow(shadow))
                         .on_click(|id, cx| navigate(Destination::Artist(id), cx)),
                     ),
+                )
+            })
+            .when_some(quality_badge, |this, badge| {
+                this.child(
+                    div()
+                        .mt(theme.metrics.pad)
+                        .flex()
+                        .w_full()
+                        .justify_center()
+                        .child(badge),
                 )
             })
             .children(self.adder(cx))

@@ -990,7 +990,10 @@ impl<F: Fetch> Playing<F> {
         let gain = normalisation(normalise, fetch.loudness(&loaded));
         let (channels, rate) = (source.channels(), source.sample_rate());
         let track = TrackSignal {
-            encoding: fetch.encoding(&loaded),
+            encoding: fetch.encoding(&loaded).map(|encoding| match encoding {
+                Encoding::Flac { depth, rate: 0 } => Encoding::Flac { depth, rate },
+                encoding => encoding,
+            }),
             rate,
             channels,
             normalisation: match normalise {

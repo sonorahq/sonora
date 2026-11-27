@@ -7637,6 +7637,7 @@ version = "0.50.3"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "engine",
  "fastrand",
  "futures",
@@ -7651,6 +7652,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sound",
+ "symphonia",
  "tokio",
 ]
 

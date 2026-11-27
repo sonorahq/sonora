@@ -12,7 +12,7 @@ use music::escape;
 use music::order;
 use music::smart::SmartPlaylistUpdate;
 use music::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Genre,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Codec, CoverSize, Encoding, Genre,
     GenreDetail, GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail,
     RadioSeed, Report, SUGGESTIONS, SavedArtist, SmartPlaylist, SmartRules, Track, Transcode,
     UserProfile, distinct_covers, iso_8601_to_epoch,
@@ -140,6 +140,8 @@ pub struct Details {
     /// The track's ReplayGain, which OpenSubsonic servers such as Navidrome report and plain
     /// Subsonic servers do not.
     pub loudness: Option<Loudness>,
+    /// The file's encoding when the server reports enough metadata to identify it.
+    pub encoding: Option<Encoding>,
     /// The artist and title, which a plain download's file is named after.
     pub label: Option<String>,
 }
@@ -1959,11 +1961,70 @@ impl SubsonicClient {
             Some(artist) if !artist.is_empty() => format!("{artist} - {}", song.title.trim()),
             _ => song.title.trim().to_owned(),
         };
+        let encoding = subsonic_encoding(
+            song.content_type.as_deref(),
+            song.suffix.as_deref(),
+            song.bit_rate,
+            song.bit_depth,
+            song.sampling_rate,
+        );
         Details {
             duration,
             loudness,
+            encoding,
             label: Some(label),
         }
+    }
+}
+
+/// Reads a Subsonic file format and its figures without inventing missing metadata.
+pub(super) fn subsonic_encoding(
+    content_type: Option<&str>,
+    suffix: Option<&str>,
+    bit_rate: Option<i32>,
+    bit_depth: Option<i32>,
+    sample_rate: Option<i32>,
+) -> Option<Encoding> {
+    let content_type = content_type.unwrap_or_default().to_ascii_lowercase();
+    let suffix = suffix.unwrap_or_default().to_ascii_lowercase();
+    let kbps = bit_rate
+        .and_then(|bit_rate| u32::try_from(bit_rate).ok())
+        .unwrap_or_default();
+    let depth = bit_depth.and_then(|depth| u8::try_from(depth).ok());
+    let rate = sample_rate.and_then(|rate| u32::try_from(rate).ok());
+
+    match (content_type.as_str(), suffix.as_str()) {
+        (content_type, suffix) if content_type.contains("flac") || suffix == "flac" => {
+            Some(Encoding::Flac {
+                depth: depth.unwrap_or_default(),
+                rate: rate.unwrap_or_default(),
+            })
+        }
+        (content_type, suffix) if content_type.contains("mpeg") || suffix == "mp3" => {
+            Some(Encoding::Mp3 { kbps })
+        }
+        (content_type, suffix) if content_type.contains("opus") || suffix == "opus" => {
+            Some(Encoding::Opus { kbps })
+        }
+        (content_type, _) if content_type.contains("vorbis") => Some(Encoding::Vorbis { kbps }),
+        (content_type, suffix)
+            if content_type.contains("aac") || content_type.contains("mp4a") || suffix == "aac" =>
+        {
+            Some(Encoding::Aac { kbps })
+        }
+        (content_type, suffix) if content_type.contains("alac") || suffix == "alac" => {
+            Some(Encoding::Alac { depth: depth? })
+        }
+        (content_type, suffix)
+            if content_type.contains("wav")
+                || content_type.contains("aiff")
+                || matches!(suffix, "wav" | "aif" | "aiff") =>
+        {
+            Some(Encoding::Pcm {
+                depth: depth.unwrap_or_default(),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -2077,6 +2138,55 @@ mod tests {
     use super::*;
 
     const COVERS: &str = "https://navidrome.example/rest/getCoverArt?u=de%40ep.me&t=token&s=salt&v=1.16.1&c=sonora&f=json";
+
+    #[test]
+    fn identifies_subsonic_formats_from_server_metadata() {
+        assert_eq!(
+            subsonic_encoding(Some("audio/mpeg"), Some("mp3"), Some(320), None, None),
+            Some(Encoding::Mp3 { kbps: 320 })
+        );
+        assert_eq!(
+            subsonic_encoding(
+                Some("audio/flac"),
+                Some("flac"),
+                None,
+                Some(24),
+                Some(96_000)
+            ),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000
+            })
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/wav"), Some("wav"), None, None, None),
+            Some(Encoding::Pcm { depth: 0 })
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/aac"), Some("aac"), None, None, None),
+            Some(Encoding::Aac { kbps: 0 })
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/mp4"), Some("m4a"), None, None, None),
+            None
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/mp4"), Some("m4a"), None, Some(16), None),
+            None
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/alac"), Some("m4a"), None, Some(16), None),
+            Some(Encoding::Alac { depth: 16 })
+        );
+        assert_eq!(
+            subsonic_encoding(None, Some("alac"), None, Some(24), None),
+            Some(Encoding::Alac { depth: 24 })
+        );
+        assert_eq!(
+            subsonic_encoding(Some("audio/ogg"), Some("ogg"), None, None, None),
+            None
+        );
+    }
 
     #[test]
     fn cover_at_drops_the_size_for_the_original() {

@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 engine.workspace = true
 fastrand.workspace = true
 futures.workspace = true
@@ -20,6 +21,7 @@ rodio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sound.workspace = true
+symphonia.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

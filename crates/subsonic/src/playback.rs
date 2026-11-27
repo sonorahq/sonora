@@ -8,22 +8,34 @@
 //! download to get there. It starts a second download at the target through a
 //! [`ranged::File`], as long as the server said how long the file is and that it answers ranges.
 
-use std::sync::{Arc, OnceLock};
+use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use bytes::Bytes;
 use engine::{self, Fetch, Loudness};
 use music::vault::{Recording, Shelf};
-use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
+use music::{Codec, Encoding, PlaybackConfig, PlaybackEvents, PlaybackFactory, Player, Transcode};
 use serde::{Deserialize, Serialize};
 use sound::aac::Aac;
 use sound::decode::{Decoded, Media};
 use sound::mp4::{Input, Prepared, Remote};
 use sound::ranged;
-use sound::stream::{Plain, Stream};
+use sound::stream::{Plain, Source, Stream};
+use symphonia::core::{
+    codecs::{
+        CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS,
+        CODEC_TYPE_VORBIS,
+    },
+    formats::FormatOptions,
+    io::{MediaSource, MediaSourceStream},
+    meta::MetadataOptions,
+    probe::Hint,
+};
 
-use crate::client::{Details, SubsonicClient};
+use crate::client::{Details, SubsonicClient, subsonic_encoding};
 
 /// A track downloading, and what the server says about its length and loudness.
 #[derive(Clone)]
@@ -76,22 +88,128 @@ struct Subsonic {
     shelf: Option<Shelf>,
 }
 
+/// Identifies the bytes the server actually returned, using the requested codec only when the
+/// response type is ambiguous. The catalog encoding is not evidence about a converted stream.
+fn served_encoding(transcode: Transcode, content_type: Option<&str>) -> Option<Encoding> {
+    let response = subsonic_encoding(content_type, None, None, None, None);
+    response.or_else(|| match transcode.codec {
+        Some(Codec::Mp3) => Some(Encoding::Mp3 { kbps: 0 }),
+        Some(Codec::Opus) => Some(Encoding::Opus { kbps: 0 }),
+        Some(Codec::Aac) => Some(Encoding::Aac { kbps: 0 }),
+        None => None,
+    })
+}
+
+/// Reads codec resolution from served audio headers, without relying on catalog metadata.
+fn probe_encoding(reader: impl MediaSource + 'static) -> Option<Encoding> {
+    let stream = MediaSourceStream::new(Box::new(reader), Default::default());
+    let probed = symphonia::default::get_probe()
+        .format(
+            &Hint::new(),
+            stream,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .ok()?;
+    encoding_from_params(&probed.format.default_track()?.codec_params)
+}
+
+fn encoding_from_params(params: &symphonia::core::codecs::CodecParameters) -> Option<Encoding> {
+    let depth = params
+        .bits_per_sample
+        .or(params.bits_per_coded_sample)
+        .and_then(|depth| u8::try_from(depth).ok())
+        .unwrap_or_default();
+    let rate = params.sample_rate.unwrap_or_default();
+    match params.codec {
+        CODEC_TYPE_FLAC => Some(Encoding::Flac { depth, rate }),
+        CODEC_TYPE_ALAC => Some(Encoding::Alac { depth }),
+        CODEC_TYPE_AAC => Some(Encoding::Aac { kbps: 0 }),
+        CODEC_TYPE_MP3 => Some(Encoding::Mp3 { kbps: 0 }),
+        CODEC_TYPE_OPUS => Some(Encoding::Opus { kbps: 0 }),
+        CODEC_TYPE_VORBIS => Some(Encoding::Vorbis { kbps: 0 }),
+        _ => None,
+    }
+}
+
+/// Completes missing resolution fields from the track catalog only for an original download.
+/// Transcoded streams must never inherit the original track's depth or sample rate.
+fn catalog_resolution(
+    served: Option<Encoding>,
+    catalog: Option<Encoding>,
+    original: bool,
+) -> Option<Encoding> {
+    let served = served?;
+    if !original {
+        return Some(served);
+    }
+    let catalog = catalog?;
+    Some(match (served, catalog) {
+        (
+            Encoding::Flac { depth, rate },
+            Encoding::Flac {
+                depth: known_depth,
+                rate: known_rate,
+            },
+        ) => Encoding::Flac {
+            depth: if depth == 0 { known_depth } else { depth },
+            rate: if rate == 0 { known_rate } else { rate },
+        },
+        (Encoding::Alac { depth }, Encoding::Alac { depth: known_depth }) => Encoding::Alac {
+            depth: if depth == 0 { known_depth } else { depth },
+        },
+        (Encoding::Pcm { depth }, Encoding::Pcm { depth: known_depth }) => Encoding::Pcm {
+            depth: if depth == 0 { known_depth } else { depth },
+        },
+        (served, _) => served,
+    })
+}
+
+/// Observes a bounded prefix so a short download's encoding is known before its cache facts
+/// are finalized. An incomplete prefix leaves the response metadata fallback intact.
+struct ServedResponse {
+    response: reqwest::Response,
+    facts: Arc<Mutex<Facts>>,
+    prefix: Vec<u8>,
+}
+
+impl Source for ServedResponse {
+    async fn chunk(&mut self) -> Result<Option<Bytes>> {
+        let chunk = self
+            .response
+            .chunk()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("cannot read the served audio")?;
+        if let Some(chunk) = &chunk {
+            const PROBE_LIMIT: usize = 256 * 1024;
+            let remaining = PROBE_LIMIT.saturating_sub(self.prefix.len());
+            self.prefix
+                .extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            if remaining > 0
+                && !self.prefix.is_empty()
+                && let Some(encoding) = probe_encoding(Cursor::new(self.prefix.clone()))
+            {
+                match self.facts.lock() {
+                    Ok(mut facts) => facts.encoding = Some(encoding),
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding: {error}")
+                    }
+                }
+            }
+        }
+        Ok(chunk)
+    }
+}
+
 /// What the server said about a track, kept beside it in the vault.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Facts {
     duration_ms: Option<u64>,
     lufs: Option<f32>,
     peak: Option<f32>,
-}
-
-impl From<Details> for Facts {
-    fn from(details: Details) -> Self {
-        Self {
-            duration_ms: details.duration.map(|duration| duration.as_millis() as u64),
-            lufs: details.loudness.map(|loudness| loudness.lufs),
-            peak: details.loudness.and_then(|loudness| loudness.peak),
-        }
-    }
+    #[serde(default)]
+    encoding: Option<Encoding>,
 }
 
 impl Subsonic {
@@ -122,6 +240,7 @@ impl Subsonic {
                 lufs,
                 peak: facts.peak,
             }),
+            encoding: facts.encoding,
             label: None,
         });
         Some(Loaded {
@@ -152,7 +271,7 @@ impl Fetch for Subsonic {
         if let Some(loaded) = self.recall(id).await {
             return Ok(loaded);
         }
-        let told = Arc::new(OnceLock::new());
+        let facts = Arc::new(Mutex::new(Facts::default()));
         let (stream, details) = tokio::join!(
             async {
                 let original = self.transcode == Transcode::default();
@@ -161,19 +280,51 @@ impl Fetch for Subsonic {
                     false => &self.client.http,
                 };
                 let response = self.client.open_stream(http, id, self.transcode).await?;
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|content_type| content_type.to_str().ok())
+                    .map(str::to_owned);
+                let fallback_encoding = served_encoding(self.transcode, content_type.as_deref());
+                match facts.lock() {
+                    Ok(mut facts) => facts.encoding = fallback_encoding,
+                    Err(error) => {
+                        log::warn!("playback: cannot retain the served encoding for {id}: {error}")
+                    }
+                }
                 let total = response.content_length();
                 let remote = Remote::new(&response);
                 let seekable = original && ranged::ranges(&response);
+                let source = ServedResponse {
+                    response,
+                    facts: facts.clone(),
+                    prefix: Vec::new(),
+                };
                 let body = match &self.shelf {
                     Some(shelf) => {
-                        let told = told.clone();
-                        let facts = move || {
-                            let facts = told.get().cloned().map(Facts::from);
-                            serde_json::to_vec(&facts).ok()
+                        let facts = facts.clone();
+                        let fact_id = id.to_owned();
+                        let serialize_facts = move || {
+                            let facts = match facts.lock() {
+                                Ok(facts) => facts.clone(),
+                                Err(error) => {
+                                    log::warn!(
+                                        "playback: cannot read the kept facts for {fact_id}: {error}"
+                                    );
+                                    return None;
+                                }
+                            };
+                            serde_json::to_vec(&Some(facts))
+                                .inspect_err(|error| {
+                                    log::warn!(
+                                        "playback: cannot serialize the kept facts for {fact_id}: {error}"
+                                    )
+                                })
+                                .ok()
                         };
-                        shelf.keep(id, &self.variant(), facts, response)
+                        shelf.keep(id, &self.variant(), serialize_facts, source)
                     }
-                    None => Recording::through(response),
+                    None => Recording::through(source),
                 };
                 let mut stream = Stream::pulling(body, total, Plain).primed().await?;
                 let prepared = Prepared::load(
@@ -181,18 +332,43 @@ impl Fetch for Subsonic {
                     remote.as_ref().map(|remote| (&self.client.http, remote)),
                 )
                 .await?;
+                let encoding = match facts.lock() {
+                    Ok(facts) => facts.encoding,
+                    Err(error) => {
+                        log::warn!("playback: cannot read the served encoding for {id}: {error}");
+                        fallback_encoding
+                    }
+                };
                 let file = remote
                     .filter(|_| seekable)
                     .and_then(|remote| remote.file("subsonic", id, self.media.clone(), &stream));
-                anyhow::Ok((stream, prepared, file))
+                anyhow::Ok((stream, prepared, file, encoding))
             },
             async {
                 let details = self.client.details(id).await;
-                told.set(details.clone()).ok();
+                match facts.lock() {
+                    Ok(mut facts) => {
+                        facts.duration_ms =
+                            details.duration.map(|duration| duration.as_millis() as u64);
+                        facts.lufs = details.loudness.map(|loudness| loudness.lufs);
+                        facts.peak = details.loudness.and_then(|loudness| loudness.peak);
+                    }
+                    Err(error) => {
+                        log::warn!("playback: cannot retain track details for {id}: {error}")
+                    }
+                }
                 details
             },
         );
-        let (stream, prepared, file) = stream?;
+        let (stream, prepared, file, encoding) = stream?;
+        let mut details = details;
+        let catalog_encoding = details.encoding;
+        let encoding = catalog_resolution(
+            encoding,
+            catalog_encoding,
+            self.transcode == Transcode::default(),
+        );
+        details.encoding = encoding;
         Ok(Loaded {
             stream,
             details,
@@ -211,6 +387,10 @@ impl Fetch for Subsonic {
 
     fn loudness(&self, loaded: &Loaded) -> Option<Loudness> {
         loaded.details.loudness
+    }
+
+    fn encoding(&self, loaded: &Loaded) -> Option<Encoding> {
+        loaded.details.encoding
     }
 
     async fn downloaded(&self, loaded: &Loaded) {
@@ -271,5 +451,133 @@ impl Fetch for Subsonic {
     /// every seek starts a fresh one that knows the length if the download has ended by then.
     fn reopen_to_seek(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_the_served_encoding_instead_of_the_catalog_encoding() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Opus),
+                    bitrate: Some(160),
+                },
+                Some("audio/mpeg"),
+            ),
+            Some(Encoding::Mp3 { kbps: 0 })
+        );
+        assert_eq!(
+            served_encoding(Transcode::default(), Some("audio/flac")),
+            Some(Encoding::Flac { depth: 0, rate: 0 })
+        );
+    }
+
+    #[test]
+    fn unknown_served_container_does_not_inherit_the_original_encoding() {
+        assert_eq!(
+            served_encoding(Transcode::default(), Some("audio/mp4")),
+            None
+        );
+        assert_eq!(served_encoding(Transcode::default(), None), None);
+    }
+
+    #[test]
+    fn requested_codec_identifies_an_ambiguous_served_container() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Aac),
+                    bitrate: Some(256),
+                },
+                Some("audio/mp4"),
+            ),
+            Some(Encoding::Aac { kbps: 0 })
+        );
+    }
+
+    #[test]
+    fn decoder_metadata_recovers_lossless_resolution() {
+        let mut params = symphonia::core::codecs::CodecParameters::new();
+        params
+            .for_codec(CODEC_TYPE_FLAC)
+            .with_sample_rate(96_000)
+            .with_bits_per_sample(24);
+        assert_eq!(
+            encoding_from_params(&params),
+            Some(Encoding::Flac {
+                depth: 24,
+                rate: 96_000,
+            })
+        );
+    }
+
+    #[test]
+    fn requested_bitrate_is_not_reported_as_the_served_bitrate() {
+        assert_eq!(
+            served_encoding(
+                Transcode {
+                    codec: Some(Codec::Aac),
+                    bitrate: Some(256),
+                },
+                None,
+            ),
+            Some(Encoding::Aac { kbps: 0 })
+        );
+    }
+
+    #[test]
+    fn catalog_resolution_recovers_missing_16_bit_depth_for_original_flac() {
+        assert_eq!(
+            catalog_resolution(
+                Some(Encoding::Flac {
+                    depth: 0,
+                    rate: 44_100
+                }),
+                Some(Encoding::Flac {
+                    depth: 16,
+                    rate: 44_100,
+                }),
+                true,
+            ),
+            Some(Encoding::Flac {
+                depth: 16,
+                rate: 44_100,
+            })
+        );
+        assert_eq!(
+            catalog_resolution(
+                Some(Encoding::Flac {
+                    depth: 0,
+                    rate: 44_100
+                }),
+                Some(Encoding::Flac {
+                    depth: 16,
+                    rate: 44_100,
+                }),
+                false,
+            ),
+            Some(Encoding::Flac {
+                depth: 0,
+                rate: 44_100
+            })
+        );
+    }
+
+    #[test]
+    fn cached_facts_keep_the_served_encoding() {
+        let facts = Facts {
+            encoding: served_encoding(Transcode::default(), Some("audio/mpeg")),
+            ..Facts::default()
+        };
+        let saved = serde_json::to_vec(&Some(facts)).unwrap();
+        let restored: Option<Facts> = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            restored.and_then(|facts| facts.encoding),
+            Some(Encoding::Mp3 { kbps: 0 })
+        );
     }
 }

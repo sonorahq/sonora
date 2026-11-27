@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Plex is a new provider. Sign in with your Plex account and play, search, rate, make playlists, start song radio and read lyrics from your own Plex Media Server.
 - Settings → Player bar has an Island layout that floats the player as a rounded pill over the page, and resting the pointer on its thin progress line opens it with both times.
+- The Player Bar settings can hide or show audio-quality badges.
+- The player shows a track's format and bitrate, or lossless bit depth and sample rate when available.
 - In a Jam or a Session, the player shows the face of whoever queued the song playing now, and the Members panel rings them.
 - The Albums tab filters by track count, so you can leave out singles and EPs or keep only long albums.
 - The Playlists tab filters by track count too, so you can hide short playlists or keep only long ones.

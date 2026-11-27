@@ -656,6 +656,8 @@ struct Appearance {
     visualizer_screens: VisualizerScreens,
     player_bar_layout: String,
     player_bar_transparent: bool,
+    /// Whether audio-quality badges appear beside track metadata.
+    player_bar_badge: bool,
     /// Whether the player bar's right clock counts down what is left of the track instead of
     /// showing its length.
     player_bar_time_left: bool,
@@ -980,6 +982,7 @@ impl Default for Appearance {
             visualizer_screens: VisualizerScreens::default(),
             player_bar_layout: PlayerBarLayout::default().id().to_owned(),
             player_bar_transparent: true,
+            player_bar_badge: true,
             player_bar_time_left: false,
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
@@ -1543,6 +1546,11 @@ impl AppSettings {
     /// `player_bar_translucent`, which also needs the blur.
     pub fn player_bar_transparent(&self) -> bool {
         self.values.appearance.player_bar_transparent
+    }
+
+    /// Whether audio-quality badges are shown beside track metadata.
+    pub fn player_bar_badge(&self) -> bool {
+        self.values.appearance.player_bar_badge
     }
 
     /// Whether the player bar is drawn see-through with pages scrolling under it. It takes Blur
@@ -2526,6 +2534,12 @@ impl AppSettings {
     /// Lets the page scroll under the player bar, or restores the solid bar below the page.
     pub fn set_player_bar_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
         self.values.appearance.player_bar_transparent = transparent;
+        self.schedule_save(cx);
+    }
+
+    /// Shows or hides audio-quality badges and saves the appearance preference.
+    pub fn set_player_bar_badge(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.appearance.player_bar_badge = shown;
         self.schedule_save(cx);
     }
 
