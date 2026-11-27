@@ -294,6 +294,7 @@ impl TableSource for PlaylistSource {
                     playlist.owner.clone(),
                     muted,
                     Destination::User(playlist.owner_id.clone().into()),
+                    None,
                 ),
             },
             PlaylistField::TrackCount => match playlist.track_count == 0 && !playlist.owned {

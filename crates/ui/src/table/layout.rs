@@ -10,6 +10,9 @@ const MIN_FLEX: Pixels = px(96.);
 const MIN_RIGID: Pixels = px(48.);
 const MIN_TABLE: Pixels = px(160.);
 const COMFORT: Pixels = px(164.);
+/// How many times its usual room a column wants once another folds under it, so a narrow table
+/// drops a column before the titles start to cut off.
+const STACKED_COMFORT: f32 = 2.;
 
 pub(super) const PADDING: Pixels = px(8.);
 pub(super) const TRAIL: Pixels = px(4.);
@@ -80,6 +83,9 @@ pub struct ColumnSpec<F: 'static> {
     pub rank: u8,
     /// Whether the column stays out of the table until the listener turns it on.
     pub optional: bool,
+    /// Whether the column draws under the highest ranked filling column while the listener keeps it
+    /// off, or once the table runs short of room for it and the filling columns beside it.
+    pub folds: bool,
 }
 
 impl<F: Copy + 'static> ColumnSpec<F> {
@@ -99,6 +105,7 @@ impl<F: Copy + 'static> ColumnSpec<F> {
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
             optional: false,
+            folds: false,
         }
     }
 
@@ -227,6 +234,8 @@ pub struct Resolved<F: 'static> {
     pub spec: &'static ColumnSpec<F>,
     pub width: Pixels,
     pub floor: Pixels,
+    /// The folding column this one draws under its own value, when the table ran short of room.
+    pub carries: Option<&'static ColumnSpec<F>>,
 }
 
 struct Track<F: 'static> {
@@ -266,7 +275,15 @@ pub fn resolve<F: 'static>(
     if visible.is_empty() {
         visible.extend(specs.iter().enumerate().take(1));
     }
-    crowd(&mut visible, available, metrics, &head);
+    let turned_off = specs
+        .iter()
+        .enumerate()
+        .find(|(ix, spec)| {
+            spec.folds && layout.hides(spec) && !blank.get(*ix).copied().unwrap_or(false)
+        })
+        .map(|(_, spec)| spec);
+    let folded = crowd(&mut visible, available, metrics, &head, turned_off);
+    let host = folded.and_then(|_| host_of(&visible));
 
     let mut tracks = seed(visible, available, metrics, layout, &head);
     fit(&mut tracks, available);
@@ -274,6 +291,7 @@ pub fn resolve<F: 'static>(
     tracks
         .into_iter()
         .map(|track| Resolved {
+            carries: folded.filter(|_| host.is_some_and(|host| std::ptr::eq(host, track.spec))),
             spec: track.spec,
             width: track.width,
             floor: track.floor,
@@ -294,34 +312,80 @@ fn ordered<F: 'static>(specs: &'static [ColumnSpec<F>], layout: &Layout) -> Vec<
     anchored.into_iter().chain(movable).collect()
 }
 
+/// Drops the lowest ranked columns until the rest fit, starting from the column already `folded`
+/// out, if any. When the next one to go is a filling column, a folding column still in the table
+/// leaves first and is returned, so its value can move under the title. Once something folded,
+/// the other filling columns also leave until the title has twice its usual room.
 fn crowd<F: 'static>(
     visible: &mut Vec<Seat<F>>,
     available: Pixels,
     metrics: Metrics,
     head: &impl Fn(usize) -> Pixels,
-) {
+    folded: Option<&'static ColumnSpec<F>>,
+) -> Option<&'static ColumnSpec<F>> {
+    let mut folded = folded;
     while movable(visible) > 1 {
-        let wanted = visible
-            .iter()
-            .map(|(ix, spec)| spec.comfort(metrics, head(*ix)))
-            .fold(Pixels::ZERO, |total, comfort| total + comfort);
-        if wanted <= available {
-            return;
-        }
+        let host = folded.and_then(|_| host_of(visible));
+        let wanted = |boost: f32| {
+            visible
+                .iter()
+                .map(|(ix, spec)| {
+                    let comfort = spec.comfort(metrics, head(*ix));
+                    match host.is_some_and(|host| std::ptr::eq(host, *spec)) {
+                        true => comfort * boost,
+                        false => comfort,
+                    }
+                })
+                .fold(Pixels::ZERO, |total, comfort| total + comfort)
+        };
+        let lowest = |eligible: &dyn Fn(&ColumnSpec<F>) -> bool| {
+            visible
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, spec))| !spec.anchored && eligible(spec))
+                .min_by(|(left, (_, one)), (right, (_, other))| {
+                    one.rank.cmp(&other.rank).then(right.cmp(left))
+                })
+                .map(|(at, _)| at)
+        };
 
-        let evicted = visible
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, spec))| !spec.anchored)
-            .min_by(|(left, (_, one)), (right, (_, other))| {
-                one.rank.cmp(&other.rank).then(right.cmp(left))
+        // a text column beside a host short of its room goes before any column of lower rank
+        let crowded_text = (host.is_some() && wanted(STACKED_COMFORT) > available)
+            .then(|| {
+                lowest(&|spec| {
+                    spec.width.fills() && host.is_none_or(|host| !std::ptr::eq(host, spec))
+                })
             })
-            .map(|(at, _)| at);
+            .flatten();
+        let evicted = match crowded_text {
+            Some(at) => Some(at),
+            None if wanted(1.) > available => lowest(&|_| true),
+            None => None,
+        };
         let Some(evicted) = evicted else {
-            return;
+            break;
+        };
+        let folding = visible.iter().position(|(_, spec)| spec.folds);
+        let evicted = match (folding, visible[evicted].1.width.fills()) {
+            (Some(at), true) => {
+                folded = Some(visible[at].1);
+                at
+            }
+            _ => evicted,
         };
         visible.remove(evicted);
     }
+    folded
+}
+
+/// The column a folded one draws under, the highest ranked filling column left in the table.
+fn host_of<F: 'static>(visible: &[Seat<F>]) -> Option<&'static ColumnSpec<F>> {
+    visible
+        .iter()
+        .filter(|(_, spec)| spec.width.fills())
+        .rev()
+        .max_by_key(|(_, spec)| spec.rank)
+        .map(|(_, spec)| *spec)
 }
 
 fn movable<F: 'static>(visible: &[Seat<F>]) -> usize {
@@ -622,6 +686,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
             optional: false,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Cover,
@@ -634,6 +699,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
             optional: false,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Title,
@@ -646,6 +712,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::ESSENTIAL,
             optional: false,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Artist,
@@ -658,6 +725,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::SPARE,
             optional: false,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Genre,
@@ -670,6 +738,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::SPARE,
             optional: true,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Added,
@@ -682,6 +751,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::NICE,
             optional: false,
+            folds: false,
         },
         ColumnSpec {
             field: Field::Length,
@@ -694,6 +764,7 @@ mod tests {
             first: Sort::Ascending,
             rank: rank::USEFUL,
             optional: false,
+            folds: false,
         },
     ];
 

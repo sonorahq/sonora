@@ -3,9 +3,11 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Div, Element, ElementId, GlobalElementId, Hsla,
-    InspectorElementId, LayoutId, Pixels, SharedString, Size, Stateful, Style, StyleRefinement,
-    Window, div, px,
+    InspectorElementId, LayoutId, MouseButton, MouseDownEvent, Pixels, SharedString, Size,
+    Stateful, Style, StyleRefinement, Window, div, px,
 };
+
+use crate::pin::{Pin, Pinnable};
 
 /// What a truncated line puts between its links.
 const SEPARATOR: &str = ", ";
@@ -34,6 +36,18 @@ impl InlineLink {
 }
 
 type ClickHandler = Rc<dyn Fn(SharedString, &mut App) + 'static>;
+type SecondaryHandler = Rc<dyn Fn(&InlineLink, &MouseDownEvent, &mut Window, &mut App) + 'static>;
+type PinFor = Rc<dyn Fn(&InlineLink, &App) -> Option<Pin> + 'static>;
+
+/// What a link does when it is clicked, right-clicked and dragged.
+#[derive(Clone, Default)]
+struct Handlers {
+    click: Option<ClickHandler>,
+    secondary: Option<SecondaryHandler>,
+    pin: Option<PinFor>,
+    /// The pin of each link, by its place in the line, resolved from `pin` once a render.
+    pins: Rc<[Option<Pin>]>,
+}
 
 /// A comma-separated line of links, such as a track's artists. A truncated line shows the leading
 /// links that fit whole and ends in ", …" when some are left out, and when not even the first
@@ -47,7 +61,7 @@ pub struct InlineLinks {
     color: Hsla,
     text_size: Option<Pixels>,
     clip: bool,
-    on_click: Option<ClickHandler>,
+    handlers: Handlers,
 }
 
 impl InlineLinks {
@@ -65,7 +79,7 @@ impl InlineLinks {
             color,
             text_size: None,
             clip: false,
-            on_click: None,
+            handlers: Handlers::default(),
         }
     }
 
@@ -80,7 +94,23 @@ impl InlineLinks {
     }
 
     pub fn on_click(mut self, handler: impl Fn(SharedString, &mut App) + 'static) -> Self {
-        self.on_click = Some(Rc::new(handler));
+        self.handlers.click = Some(Rc::new(handler));
+        self
+    }
+
+    /// What a right click on a link with a value does, in place of the menu of whatever holds the
+    /// line.
+    pub fn on_secondary(
+        mut self,
+        handler: impl Fn(&InlineLink, &MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.handlers.secondary = Some(Rc::new(handler));
+        self
+    }
+
+    /// The pin a link with a value hauls when it is dragged, in place of whatever holds the line.
+    pub fn pin_with(mut self, pin: impl Fn(&InlineLink, &App) -> Option<Pin> + 'static) -> Self {
+        self.handlers.pin = Some(Rc::new(pin));
         self
     }
 }
@@ -92,7 +122,7 @@ impl Styled for InlineLinks {
 }
 
 impl RenderOnce for InlineLinks {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             mut base,
             id,
@@ -101,8 +131,15 @@ impl RenderOnce for InlineLinks {
             color,
             text_size,
             clip,
-            on_click,
+            handlers,
         } = self;
+        let handlers = Handlers {
+            pins: items
+                .iter()
+                .map(|item| handlers.pin.as_ref().and_then(|pin| pin(item, cx)))
+                .collect(),
+            ..handlers
+        };
         let overrides = std::mem::take(base.style());
 
         // A clipped list ellipsizes its text rather than hiding overflow, so a text shadow
@@ -128,15 +165,15 @@ impl RenderOnce for InlineLinks {
                 }
             }
             (1, _) => links.children(items.into_iter().map(|item| {
-                link(&id, 0, 1, item, on_click.clone(), clip)
+                link(&id, 0, 1, item, handlers.clone(), clip)
                     .flex_shrink(1.)
                     .into_any_element()
             })),
-            (_, true) => links.child(Fitted::new(id, items, on_click)),
+            (_, true) => links.child(Fitted::new(id, items, handlers)),
             (_, false) => links.children(items.into_iter().enumerate().map(|(index, item)| {
                 joined(
                     index,
-                    link(&id, index, count, item, on_click.clone(), false),
+                    link(&id, index, count, item, handlers.clone(), false),
                 )
             })),
         };
@@ -164,7 +201,7 @@ enum Fit {
 struct Fitted {
     id: SharedString,
     items: Vec<InlineLink>,
-    on_click: Option<ClickHandler>,
+    handlers: Handlers,
     child: Option<AnyElement>,
 }
 
@@ -178,11 +215,11 @@ struct Measured {
 }
 
 impl Fitted {
-    fn new(id: SharedString, items: Vec<InlineLink>, on_click: Option<ClickHandler>) -> Self {
+    fn new(id: SharedString, items: Vec<InlineLink>, handlers: Handlers) -> Self {
         Self {
             id,
             items,
-            on_click,
+            handlers,
             child: None,
         }
     }
@@ -211,7 +248,7 @@ impl Fitted {
                     index,
                     count,
                     item.clone(),
-                    self.on_click.clone(),
+                    self.handlers.clone(),
                     true,
                 );
                 match fit {
@@ -366,11 +403,11 @@ fn link(
     index: usize,
     count: usize,
     item: InlineLink,
-    on_click: Option<ClickHandler>,
+    handlers: Handlers,
     clip: bool,
 ) -> Stateful<Div> {
     let InlineLink { label, value } = item;
-    let linking = on_click.is_some();
+    let linking = handlers.click.is_some();
     let item = div()
         .id(ElementId::NamedInteger(id.clone(), index as u64))
         .aria_position_in_set(index + 1)
@@ -389,7 +426,16 @@ fn link(
             })
             .hover(|style| style.underline())
             .cursor_pointer()
-            .when_some(on_click, |this, handler| {
+            .when_some(handlers.pins.get(index).cloned().flatten(), Pinnable::pin)
+            .when_some(handlers.secondary, |this, handler| {
+                let link = InlineLink::new(label.clone(), Some(value.clone()));
+                this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    handler(&link, event, window, cx);
+                })
+            })
+            .when_some(handlers.click, |this, handler| {
                 this.on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     handler(value.clone(), cx);

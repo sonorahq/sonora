@@ -53,9 +53,59 @@ impl Rounding {
     }
 }
 
+/// How tall table rows stand, as a share of the height the text alone asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowSize {
+    #[default]
+    Standard,
+    Comfortable,
+    Spacious,
+}
+
+impl RowSize {
+    pub const ALL: [Self; 3] = [Self::Standard, Self::Comfortable, Self::Spacious];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Comfortable => "comfortable",
+            Self::Spacious => "spacious",
+        }
+    }
+
+    pub fn label(self) -> SharedString {
+        match self {
+            Self::Standard => t!("row-size-standard"),
+            Self::Comfortable => t!("row-size-comfortable"),
+            Self::Spacious => t!("row-size-spacious"),
+        }
+    }
+
+    /// Reads a saved id, keeping the standard height for a missing or unknown one.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "comfortable" => Self::Comfortable,
+            "spacious" => Self::Spacious,
+            _ => Self::Standard,
+        }
+    }
+
+    fn scale(self) -> f32 {
+        match self {
+            Self::Standard => 1.,
+            Self::Comfortable => 1.1,
+            Self::Spacious => 1.2,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Metrics {
     pub row: Pixels,
+    /// A table row, as tall as the chosen `RowSize` makes it.
+    pub table_row: Pixels,
+    /// A table row that stacks a second line under its title, a little taller than `table_row`.
+    pub table_stack: Pixels,
     pub header: Pixels,
     pub pad: Pixels,
     pub inset: Pixels,
@@ -74,18 +124,21 @@ pub struct Metrics {
 
 impl Default for Metrics {
     fn default() -> Self {
-        Self::new(px(14.))
+        Self::new(px(14.), RowSize::default())
     }
 }
 
 impl Metrics {
-    pub fn new(base: Pixels) -> Self {
+    pub fn new(base: Pixels, rows: RowSize) -> Self {
         let text = base / px(1.);
         let roomy = |step: f32, lines: f32| px(step.max((text * lines).round()));
         let row = roomy(42., 2.4);
+        let scaled = |height: Pixels| px((height / px(1.) * rows.scale()).round());
 
         Self {
             row,
+            table_row: scaled(row),
+            table_stack: scaled(roomy(47., 3.35)),
             header: px((row / px(1.) * HEADER).round()),
             pad: px(8.),
             inset: px(24.),

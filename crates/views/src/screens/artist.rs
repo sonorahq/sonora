@@ -200,7 +200,8 @@ impl ArtistView {
                     Some(Origin::artist(detail.id()?).named(name))
                 }
             })
-            .with_liked(Sonora::global(cx).library.clone());
+            .with_liked(Sonora::global(cx).library.clone())
+            .with_artist(detail.clone());
             let source = source.table(cx.weak_entity());
             let mut delegate = TableDelegate::new(source, width, cx);
             delegate.set_layout(saved, cx);

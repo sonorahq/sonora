@@ -8,7 +8,7 @@ use router::NavEntry;
 use state::SYSTEM_FONT;
 use ui::{
     ActiveTheme as _, Button, Look, MAX_FONT, MAX_TRANSPARENCY, MIN_FONT, MenuItem, OptionCard,
-    Pace, Picker, Rounding, Scrubber, Stillness, Switch, Theme, ThemeKind,
+    Pace, Picker, Rounding, RowSize, Scrubber, Stillness, Switch, Theme, ThemeKind,
 };
 
 use super::rows::{Announced as _, chip, chips, grid, outward, segmented};
@@ -30,6 +30,7 @@ const TYPEFACE_BATCH: usize = 3;
 /// control.
 const SEPARATOR: f32 = 0.7;
 const ENTRIES: &str = "entries";
+const ROW_SIZE: &str = "row-size";
 
 impl SettingsView {
     /// The Appearance page: the theme, the icons and corners as cards, then how the interface
@@ -43,6 +44,7 @@ impl SettingsView {
             Group::new("settings-corners").cards(Slot::Corners),
             Group::new("settings-group-interface").rows([
                 Slot::Font,
+                Slot::RowSize,
                 Slot::Motion,
                 Slot::Pace,
                 Slot::Entries,
@@ -532,6 +534,30 @@ impl SettingsView {
         #[cfg(target_os = "macos")]
         let slots = vec![Slot::Decorations, Slot::WindowRounding];
         slots
+    }
+
+    /// How tall table rows stand, one of three heights.
+    pub(super) fn row_size_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let look = self.look(cx);
+        let overrides = self.settings.read(cx).theme_overrides();
+
+        let choices = segmented(
+            ROW_SIZE,
+            RowSize::ALL.map(|rows| (rows, rows.label())),
+            look.rows,
+            cx.listener(move |this, rows: &RowSize, _, cx| {
+                let rows = *rows;
+                this.settings
+                    .update(cx, |settings, cx| settings.set_row_size(rows, cx));
+                Theme::set(Look { rows, ..look }, &overrides, cx);
+                cx.notify();
+            }),
+        );
+
+        self.row(
+            t!("settings-row-size"),
+            choices.name(t!("settings-row-size")).into_any_element(),
+        )
     }
 
     pub(super) fn entries_row(&self, cx: &mut Context<Self>) -> AnyElement {

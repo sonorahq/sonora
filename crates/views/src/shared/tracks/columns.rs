@@ -42,12 +42,16 @@ const TITLE: ColumnSpec<TrackField> = ColumnSpec {
     ..COLUMN
 };
 
+/// The artists of a track, off until the listener turns the column on. While it is off, or once a
+/// narrow table has no room for it, the artists draw under the title.
 const ARTISTS: ColumnSpec<TrackField> = ColumnSpec {
     field: TrackField::Artists,
     key: "artists",
     header: "column-artist",
     width: Width::Fill(0.212),
     rank: HANDY,
+    folds: true,
+    optional: true,
     ..COLUMN
 };
 
@@ -139,11 +143,6 @@ const ALBUM_TITLE: ColumnSpec<TrackField> = ColumnSpec {
     ..TITLE
 };
 
-const ALBUM_ARTISTS: ColumnSpec<TrackField> = ColumnSpec {
-    width: Width::Fill(0.335),
-    ..ARTISTS
-};
-
 const ALBUM_PLAYCOUNT: ColumnSpec<TrackField> = ColumnSpec {
     width: Width::Fixed(ALBUM_PLAYS),
     ..PLAYS
@@ -201,16 +200,11 @@ pub(crate) const ARTIST_COLUMNS_LEAN: &[ColumnSpec<TrackField>] = &[
     DURATION,
 ];
 
-pub(crate) const ALBUM_COLUMNS: &[ColumnSpec<TrackField>] = &[
-    INDEX,
-    ALBUM_TITLE,
-    ALBUM_ARTISTS,
-    ALBUM_PLAYCOUNT,
-    ALBUM_DURATION,
-];
+pub(crate) const ALBUM_COLUMNS: &[ColumnSpec<TrackField>] =
+    &[INDEX, ALBUM_TITLE, ALBUM_PLAYCOUNT, ALBUM_DURATION];
 
 pub(crate) const ALBUM_COLUMNS_LEAN: &[ColumnSpec<TrackField>] =
-    &[INDEX, ALBUM_TITLE, ALBUM_ARTISTS, ALBUM_DURATION];
+    &[INDEX, ALBUM_TITLE, ALBUM_DURATION];
 
 pub(crate) fn playlist_columns(blend: bool, shared: bool) -> &'static [ColumnSpec<TrackField>] {
     match (blend, shared) {

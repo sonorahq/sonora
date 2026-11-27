@@ -115,6 +115,8 @@ settings-startup-detail = Экран, который Sonora открывает �
 settings-entries = Разделы боковой панели
 settings-entries-detail = Разделы, которые видны в боковой панели
 settings-entries-pick = Выбрать разделы
+settings-row-size = Высота рядов
+settings-row-size-detail = Насколько высокие ряды в списках песен
 settings-language = Язык
 settings-language-detail = Язык интерфейса Sonora
 settings-language-system = Системный
@@ -425,6 +427,11 @@ corners-square = Прямые
 corners-subtle = Лёгкие
 corners-rounded = Скруглённые
 corners-round = Круглые
+
+# row height
+row-size-standard = Обычные
+row-size-comfortable = Свободные
+row-size-spacious = Просторные
 
 # motion
 motion-system = Как в системе

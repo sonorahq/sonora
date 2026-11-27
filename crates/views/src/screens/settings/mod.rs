@@ -155,6 +155,7 @@ enum Slot {
     Startup,
     Provider,
     Entries,
+    RowSize,
     Language,
     Tray,
     TrayIcon,
@@ -975,6 +976,7 @@ impl SettingsView {
             Slot::Startup => (t!("settings-startup"), t!("settings-startup-detail")),
             Slot::Provider => (t!("settings-provider"), t!("settings-provider-detail")),
             Slot::Entries => (t!("settings-entries"), t!("settings-entries-detail")),
+            Slot::RowSize => (t!("settings-row-size"), t!("settings-row-size-detail")),
             Slot::Language => (t!("settings-language"), t!("settings-language-detail")),
             Slot::Tray => (
                 t!("settings-close-to-tray"),
@@ -1300,6 +1302,7 @@ impl SettingsView {
             Slot::Startup => self.startup_row(cx),
             Slot::Provider => self.provider_row(cx),
             Slot::Entries => self.entries_row(cx),
+            Slot::RowSize => self.row_size_row(cx),
             Slot::Language => self.language_row(cx),
             Slot::Tray => self.tray_row(cx),
             Slot::TrayIcon => self.tray_icon_row(cx),

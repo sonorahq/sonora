@@ -9,7 +9,9 @@ use gpui::{
 use i18n::t;
 use router::Destination;
 use state::{Outcome, Toast, Toasts};
-use ui::{ActiveTheme as _, Button, Look, Rounding, Text, Theme, ThemeKind, eyebrow, heading};
+use ui::{
+    ActiveTheme as _, Button, Look, Rounding, RowSize, Text, Theme, ThemeKind, eyebrow, heading,
+};
 use views::ToastStack;
 
 const INTER: &[u8] = include_bytes!(concat!(
@@ -245,6 +247,7 @@ fn main() {
                     kind: ThemeKind::Dark,
                     rounding: Rounding::Rounded,
                     font: 14.,
+                    rows: RowSize::default(),
                     transparent: false,
                     transparency: 0.,
                     blur: false,
