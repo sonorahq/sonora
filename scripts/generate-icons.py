@@ -89,10 +89,13 @@ class Master:
 
 
 def stroke_for(pixels, master):
-    """Thickens small glyphs using their displayed size, before any Retina scaling."""
+    """Raises small glyphs to the optical minimum for their displayed size, before any Retina scaling.
+
+    The master stroke wins when it is already thicker, so bars never merge at small sizes.
+    """
     for limit, width in OPTICAL_STROKE:
         if pixels <= limit:
-            return width * master.stroke / 2
+            return max(width, master.stroke)
     return master.stroke
 
 
@@ -192,7 +195,7 @@ def template_svg(master):
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{master.span:g}"'
         f' height="{master.span:g}" viewBox="0 0 {master.span:g} {master.span:g}">\n'
-        f"{master.glyph(TRAY_STROKE)}\n"
+        f"{master.glyph(max(TRAY_STROKE, master.stroke))}\n"
         f"</svg>\n"
     )
 

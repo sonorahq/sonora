@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Copy the full lyrics from the song details page.
 
+### Changed
+
+- The app icon has thicker lines, so it reads better in the Dock, taskbar and tray.
+
 ## [0.51.0] - 2026-11-28
 
 ### Added
