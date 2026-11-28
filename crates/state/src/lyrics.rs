@@ -217,21 +217,33 @@ impl Lyrics {
             let cached = cached.await.unwrap_or_default();
             let providers = cached.pending(asked, &query, &enabled);
             let mut hits = cached.held(&enabled, &providers);
-            if !providers.is_empty() {
-                let (sender, mut incoming) = tokio::sync::mpsc::unbounded_channel();
-                let search = query.clone();
-                let worker = io.spawn(async move { gather(providers, search, sender).await });
-                while let Some((_, mut found)) = incoming.recv().await {
-                    hits.append(&mut found);
+            let all_failed = match providers.is_empty() {
+                true => false,
+                false => {
+                    let (sender, mut incoming) = tokio::sync::mpsc::unbounded_channel();
+                    let search = query.clone();
+                    let worker = io.spawn(async move { gather(providers, search, sender).await });
+                    while let Some((_, mut found)) = incoming.recv().await {
+                        hits.append(&mut found);
+                    }
+                    join(worker)
+                        .await
+                        .map_err(|error| LyricsState::Failed(error.to_string()))?
+                        .is_empty()
                 }
-                join(worker)
-                    .await
-                    .map_err(|error| LyricsState::Failed(error.to_string()))?;
+            };
+            if all_failed {
+                hits = cached.held(&enabled, &[]);
             }
 
             let instrumental = lyrics::instrumental(&query, &hits);
             let ranked = ordered(&query, hits, &priority, worded_first);
             let state = state_for(&ranked, instrumental);
+            if all_failed && state == LyricsState::Missing {
+                return Err(LyricsState::Failed(
+                    "all lyrics providers failed".to_owned(),
+                ));
+            }
             ranked.into_iter().next().map(|hit| hit.lyrics).ok_or(state)
         })
     }

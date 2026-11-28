@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use music::{AlbumDetail, ArtistProfile, Track};
 use tokio::task::AbortHandle;
 
 use crate::catalog::SongPage;
 use crate::{Io, LyricsState, Session, SessionEvent, Sonora, join};
+
+/// Signals a change to the song page itself.
+pub struct SongPageChanged;
 
 pub struct SongDetail {
     id: Option<String>,
@@ -20,6 +23,8 @@ pub struct SongDetail {
     lyrics_task: Option<Task<()>>,
 }
 
+impl EventEmitter<SongPageChanged> for SongDetail {}
+
 impl SongDetail {
     pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&session, |this, _, event, cx| match event {
@@ -31,7 +36,7 @@ impl SongDetail {
             }
             SessionEvent::SignedOut => {
                 this.clear();
-                cx.notify();
+                Self::page_changed(cx);
             }
             SessionEvent::Reconnected | SessionEvent::WentOffline => {}
             SessionEvent::LocalChanged => {
@@ -129,12 +134,12 @@ impl SongDetail {
         self.clear();
         self.id = Some(id.to_owned());
         let Some(catalog) = self.session.read(cx).catalog(id) else {
-            cx.notify();
+            Self::page_changed(cx);
             return;
         };
         if let Some(page) = catalog.peek_song(id) {
             self.page = Some(page);
-            cx.notify();
+            Self::page_changed(cx);
             return;
         }
         self.load(id.to_owned(), false, cx);
@@ -155,12 +160,12 @@ impl SongDetail {
     /// asked again.
     fn load(&mut self, id: String, fresh: bool, cx: &mut Context<Self>) {
         let Some(catalog) = self.session.read(cx).catalog(&id) else {
-            cx.notify();
+            Self::page_changed(cx);
             return;
         };
 
         self.loading = true;
-        cx.notify();
+        Self::page_changed(cx);
         let request = self.io.spawn({
             let id = id.clone();
             async move {
@@ -183,10 +188,15 @@ impl SongDetail {
                     Ok(page) => this.page = Some(page),
                     Err(reason) => this.error = Some(reason),
                 }
-                cx.notify();
+                Self::page_changed(cx);
             })
             .ok();
         }));
+    }
+
+    fn page_changed(cx: &mut Context<Self>) {
+        cx.emit(SongPageChanged);
+        cx.notify();
     }
 
     fn clear(&mut self) {

@@ -7,7 +7,7 @@ use gpui::{
 use i18n::t;
 use music::{Credit, Track};
 use router::{Destination, Link as _};
-use state::{LyricsState, Outcome, Playback, SongDetail, Sonora, Toasts};
+use state::{LyricsState, Outcome, Playback, SongDetail, SongPageChanged, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, Fact, Glowing as _, InfoCard, Initials, Popup, Scrollbar,
     Scroller, Skeleton, Tails as _, Text, clock,
@@ -67,15 +67,15 @@ impl SongView {
         playback: Entity<Playback>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&detail, |this, _, cx| {
+        cx.subscribe(&detail, |this, _, _: &SongPageChanged, cx| {
             this.scrollbar
                 .read(cx)
                 .scroll()
                 .set_offset(gpui::Point::default());
             this.about_open = false;
-            cx.notify();
         })
         .detach();
+        cx.observe(&detail, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
