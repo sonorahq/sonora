@@ -133,7 +133,7 @@ impl Pins {
         }
     }
 
-    /// Every pin of the live providers, laid out the way the user asked for. The list is built
+    /// Every pin of the providers in use, laid out the way the user asked for. The list is built
     /// once per change and shared afterwards.
     pub fn entries(&self, cx: &App) -> Rc<Vec<Pin>> {
         self.laid
@@ -146,7 +146,7 @@ impl Pins {
             .clone()
     }
 
-    /// Everything the live shelves hold that is not pinned: albums, artists and playlists, laid
+    /// Everything the shelves in use hold that is not pinned: albums, artists and playlists, laid
     /// out the same way the pins above them are. Nothing else a provider lists belongs here,
     /// since the sidebar can only open these three. Built once per change, like `entries`.
     pub fn library(&self, cx: &App) -> Rc<Vec<Pin>> {
@@ -155,13 +155,13 @@ impl Pins {
             .clone()
     }
 
-    /// A digest of the albums, artists and playlists the live shelves list, with the names
+    /// A digest of the albums, artists and playlists the shelves in use list, with the names
     /// and covers the sidebar shows for them.
     fn fingerprint(&self, cx: &App) -> u64 {
         let mut hasher = DefaultHasher::new();
         let library = self.library.read(cx);
         for shelf in [Shelf::Streaming, Shelf::Local] {
-            if self.session.read(cx).client_of(shelf).is_none() {
+            if !self.session.read(cx).shelf_in_use(shelf) {
                 continue;
             }
             let held = library.state(shelf);
@@ -195,7 +195,7 @@ impl Pins {
         let library = self.library.read(cx);
         let mut rest = Vec::new();
         for shelf in [Shelf::Streaming, Shelf::Local] {
-            if self.session.read(cx).client_of(shelf).is_none() {
+            if !self.session.read(cx).shelf_in_use(shelf) {
                 continue;
             }
             let held = library.state(shelf);

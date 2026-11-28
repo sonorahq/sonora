@@ -636,15 +636,27 @@ impl Session {
         self.local_provider.slug()
     }
 
+    /// The providers whose shelves are in use, an account kept offline included.
     pub fn active_slugs(&self) -> Vec<&'static str> {
         let mut slugs = Vec::new();
-        if self.client.is_some() {
+        if self.shelf_in_use(Shelf::Streaming) {
             slugs.extend(self.provider_slug());
         }
-        if self.local_client.is_some() {
+        if self.shelf_in_use(Shelf::Local) {
             slugs.push(self.local_slug());
         }
         slugs
+    }
+
+    /// Whether `shelf` belongs to an account in use, reached live or kept offline. An offline
+    /// account has no client, yet its pins and what its library kept are still the listener's.
+    pub fn shelf_in_use(&self, shelf: Shelf) -> bool {
+        match shelf {
+            Shelf::Streaming => {
+                self.client.is_some() || matches!(self.state, SessionState::Offline(_))
+            }
+            Shelf::Local => self.local_client.is_some(),
+        }
     }
 
     pub fn slug_for(&self, id: &str) -> Option<&'static str> {
