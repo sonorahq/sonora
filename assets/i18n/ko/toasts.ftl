@@ -173,6 +173,7 @@ toast-downloads-cancelled = { $count ->
 toast-settings-broken = 변경 사항을 저장하려면 settings.json의 { $name }번째 줄을 수정하세요.
 toast-tray-unavailable = 아이콘을 표시할 시스템 트레이가 없습니다.
 toast-link-copied = 링크가 복사되었습니다.
+toast-lyrics-copied = 가사가 복사되었습니다.
 toast-link-sign-in = 이 링크를 열려면 { $name }에 로그인하세요.
 toast-keybind-taken = { $name }에서 해당 단축키가 해제되었습니다.
 toast-link-unreadable = Sonora에서 열 수 있는 경로가 아닌 링크입니다.
