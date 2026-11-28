@@ -25,11 +25,14 @@ pub(crate) const CACHE_GB: u32 = 2;
 /// The bounds of that setting.
 pub const CACHE_GB_RANGE: (u32, u32) = (1, 64);
 /// What a keychain error says when the desktop has no Secret Service at all, rather than one
-/// that is locked, busy or declined. Only these count as having no keychain to ask.
-const NO_SERVICE: [&str; 3] = [
+/// that is locked, busy or declined. Only these count as having no keychain to ask. Inside
+/// Flatpak or Snap the keychain is reached through the Secret portal, which a desktop with no
+/// keyring behind it does not offer.
+const NO_SERVICE: [&str; 4] = [
     "org.freedesktop.DBus.Error.ServiceUnknown",
     "org.freedesktop.DBus.Error.NameHasNoOwner",
     "address error",
+    "`org.freedesktop.portal.Secret` was not found",
 ];
 
 /// A size in gigabytes as the bytes the vault counts in.
