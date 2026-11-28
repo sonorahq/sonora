@@ -98,6 +98,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Pinned playlists, albums and artists stay in the sidebar when Sonora starts without a connection, so your downloads can be opened and played offline.
 - On Windows, the media overlay no longer shows the previous song's cover next to the new song while its own cover loads.
 - Apple Music libraries, favorites and playlists with more than 4,000 songs load in full, instead of stopping at the first 4,000.
 - On Windows, a scrollbar no longer gets stuck so the mouse wheel jumps back to one spot, and with the wheel set to scroll one screen at a time it moves a screen per notch instead of to the far end.
