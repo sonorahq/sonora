@@ -1065,8 +1065,12 @@ impl FullscreenView {
             ),
             sound: sound.into_any_element(),
             corner: div()
+                .flex()
                 .flex_none()
+                .items_center()
+                .gap(PlayerBar::corner_gap())
                 .when_some(drowse(idle), |this, blur| this.blur(blur))
+                .child(PlayerBar::corner_spacer(cx))
                 .child(self.leave(idle, false, true, cx))
                 .into_any_element(),
         };

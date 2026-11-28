@@ -1,13 +1,14 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    Context, Entity, MouseUpEvent, Pixels, ScrollEvent, Window, deferred, div, px, relative,
+    Context, Entity, MouseButton, MouseUpEvent, Pixels, ScrollEvent, Window, deferred, div, px,
+    relative,
 };
 use i18n::t;
 use state::Playback;
 use ui::{
     ActiveTheme as _, Button, Fading as _, GLASS_BLUR, GLASS_FILL, Rising as _, Scrubber,
-    ScrubberState,
+    ScrubberState, Theme,
 };
 
 use crate::shared::transport::{NOTCH, percent, volume_icon};
@@ -168,6 +169,19 @@ pub(crate) fn rising_volume<V: VolumeHost>(
     cx: &mut Context<V>,
 ) -> gpui::Div {
     let theme = *cx.theme();
+    rising_volume_in(volume, playback, frosted, px(VOLUME_RISE), &theme, cx)
+}
+
+/// Variant of [`rising_volume`] using an explicit slider height and local palette `theme`,
+/// allowing compact hosts such as the floating mini player to stay inside their window bounds.
+pub(crate) fn rising_volume_in<V: VolumeHost>(
+    volume: &RisingVolume,
+    playback: &Entity<Playback>,
+    frosted: bool,
+    rise: Pixels,
+    theme: &Theme,
+    cx: &mut Context<V>,
+) -> gpui::Div {
     let hazy = frosted && ui::blurring(cx);
     let zone = px(ZONE);
     let level = playback.read(cx).shown_volume(cx);
@@ -235,18 +249,20 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                     true => this.bg(theme.popover.opacity(GLASS_FILL)),
                     false => this.bg(theme.popover),
                 })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_scroll(cx.listener(turn_volume))
                 .on_hover(cx.listener(|this: &mut V, hovering: &bool, _, cx| {
                     this.volume().over_panel = *hovering;
                     cx.notify();
                 }))
                 .child(
-                    div().h(px(VOLUME_RISE)).flex().child(
+                    div().h(rise).flex().child(
                         Scrubber::new(&volume.slider, level)
                             .vertical()
                             .name(t!("equalizer-status-volume"))
                             .value(percent(level))
                             .colors(theme.progress_bar, empty, theme.foreground)
+                            .popover(theme.popover, theme.border, theme.popover_foreground)
                             .lift(VOLUME_BUBBLE_LIFT)
                             .when_some(bubble, |this, (at, text)| this.bubble(at, text))
                             .on_move(cx.listener(|this: &mut V, fraction: &f32, _, cx| {
@@ -277,6 +293,7 @@ pub(crate) fn rising_volume<V: VolumeHost>(
                     .pb(theme.metrics.control_small + px(GAP) * 2.)
                     .flex()
                     .justify_center()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_scroll(cx.listener(turn_volume))
                     .on_hover(cx.listener(|this: &mut V, hovering: &bool, _, cx| {
                         this.volume().over_zone = *hovering;

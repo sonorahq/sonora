@@ -36,6 +36,9 @@ actions!(
         OpenSearch,
         OpenSettings,
         ToggleFullscreen,
+        ToggleMiniPlayer,
+        ExpandMiniPlayer,
+        CloseMiniPlayer,
         ToggleQueue,
         ToggleLyrics,
         TogglePowerbar,
@@ -60,6 +63,8 @@ actions!(
 );
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
+/// The context of the floating mini player window.
+pub const MINI_PLAYER_CONTEXT: &str = "MiniPlayer";
 /// The context of the cover viewer, open above an album, playlist or artist page.
 pub const COVER_VIEWER_CONTEXT: &str = "CoverViewer";
 pub const SEARCH_CONTEXT: &str = "Search";
@@ -182,6 +187,7 @@ fn shared() -> Vec<KeyBinding> {
         KeyBinding::new("=", ZoomIn, Some(COVER_VIEWER_CONTEXT)),
         KeyBinding::new("-", ZoomOut, Some(COVER_VIEWER_CONTEXT)),
         KeyBinding::new("0", ZoomReset, Some(COVER_VIEWER_CONTEXT)),
+        KeyBinding::new("escape", CloseMiniPlayer, Some(MINI_PLAYER_CONTEXT)),
     ]
 }
 

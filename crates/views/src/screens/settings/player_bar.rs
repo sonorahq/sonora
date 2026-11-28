@@ -1,12 +1,16 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Hsla, Pixels, Window, div, linear_color_stop, linear_gradient,
-    relative,
+    AnyElement, App, Context, Div, Hsla, Pixels, SharedString, Window, div, linear_color_stop,
+    linear_gradient, relative,
 };
 use i18n::t;
-use state::{PlayerBarIsland, PlayerBarLayout};
-use ui::{ActiveTheme as _, OptionCard, Switch};
+use state::{
+    AppSettings, MiniPlayerLyricsMode, MiniPlayerLyricsSize, MiniPlayerOrientation, MiniPlayerSize,
+    PlayerBarIsland, PlayerBarLayout,
+};
+use ui::{ActiveTheme as _, OptionCard, Rounding, Switch};
 
+use super::appearance::corner;
 use super::rows::{Announced as _, grid, segmented};
 use super::{Group, Row, SettingsView, Slot};
 
@@ -16,14 +20,39 @@ const SEE_THROUGH: f32 = 0.55;
 
 impl SettingsView {
     /// The Player bar page: the layout cards under the page's own title, then when the bar
-    /// floats as an island and where, the bar's material and its clock, all in one group.
-    pub(super) fn player_bar_groups(&self) -> Vec<Group> {
-        vec![Group::untitled().cards(Slot::PlayerBarLayout).rows([
-            Slot::PlayerBarIsland,
-            Slot::PlayerBarIslandPage,
-            Slot::PlayerBarTransparent,
-            Slot::PlayerBarTimeLeft,
-        ])]
+    /// floats as an island and where, the bar's material and its clock, followed by the floating
+    /// mini player options.
+    pub(super) fn player_bar_groups(&self, cx: &App) -> Vec<Group> {
+        let prefs = self.settings.read(cx).mini_player();
+        let mut mini_rows = vec![
+            Slot::MiniPlayerAmbient,
+            Slot::MiniPlayerAlwaysOnTop,
+            Slot::MiniPlayerMinimizeMain,
+            Slot::MiniPlayerShuffle,
+            Slot::MiniPlayerRepeat,
+            Slot::MiniPlayerVolume,
+            Slot::MiniPlayerOrientation,
+            Slot::MiniPlayerLyricsMode,
+        ];
+        if prefs.lyrics_mode != MiniPlayerLyricsMode::Off {
+            mini_rows.push(Slot::MiniPlayerLyricsSize);
+        }
+        if prefs.lyrics_mode == MiniPlayerLyricsMode::Fullscreen {
+            mini_rows.push(Slot::MiniPlayerLyricsKaraoke);
+            mini_rows.push(Slot::MiniPlayerLyricsBlur);
+        }
+        mini_rows.push(Slot::MiniPlayerSize);
+
+        vec![
+            Group::untitled().cards(Slot::PlayerBarLayout).rows([
+                Slot::PlayerBarIsland,
+                Slot::PlayerBarIslandPage,
+                Slot::PlayerBarTransparent,
+                Slot::PlayerBarTimeLeft,
+            ]),
+            Group::new("settings-group-mini-player").rows(mini_rows),
+            Group::new("settings-mini-player-rounding").cards(Slot::MiniPlayerRounding),
+        ]
     }
 
     /// When the bar floats as an island, as one segmented control.
@@ -155,6 +184,239 @@ impl SettingsView {
             false => t!("settings-player-bar-transparent-needs-blur"),
         })
         .into_any_element()
+    }
+
+    fn mini_player_switch_row(
+        &self,
+        id: &'static str,
+        title_key: &'static str,
+        detail_key: &'static str,
+        on: bool,
+        set: fn(&mut AppSettings, bool, &mut Context<AppSettings>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let title = i18n::lookup(title_key, None);
+        Row::new(
+            title.clone(),
+            Switch::new(id, on)
+                .name(title)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| set(settings, !on, cx));
+                }))
+                .into_any_element(),
+        )
+        .detail(i18n::lookup(detail_key, None))
+        .into_any_element()
+    }
+
+    pub(super) fn mini_player_ambient_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().ambient;
+        self.mini_player_switch_row(
+            "mini-player-ambient",
+            "settings-mini-player-ambient",
+            "settings-mini-player-ambient-detail",
+            on,
+            AppSettings::set_mini_player_ambient,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_always_on_top_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().always_on_top;
+        self.mini_player_switch_row(
+            "mini-player-always-on-top",
+            "settings-mini-player-always-on-top",
+            "settings-mini-player-always-on-top-detail",
+            on,
+            AppSettings::set_mini_player_always_on_top,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_minimize_main_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().minimize_main;
+        self.mini_player_switch_row(
+            "mini-player-minimize-main",
+            "settings-mini-player-minimize-main",
+            "settings-mini-player-minimize-main-detail",
+            on,
+            AppSettings::set_mini_player_minimize_main,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_shuffle_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().shuffle_button;
+        self.mini_player_switch_row(
+            "mini-player-shuffle",
+            "settings-mini-player-shuffle",
+            "settings-mini-player-shuffle-detail",
+            on,
+            AppSettings::set_mini_player_shuffle,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_repeat_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().repeat_button;
+        self.mini_player_switch_row(
+            "mini-player-repeat",
+            "settings-mini-player-repeat",
+            "settings-mini-player-repeat-detail",
+            on,
+            AppSettings::set_mini_player_repeat,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_volume_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().volume_button;
+        self.mini_player_switch_row(
+            "mini-player-volume",
+            "settings-mini-player-volume",
+            "settings-mini-player-volume-detail",
+            on,
+            AppSettings::set_mini_player_volume,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_orientation_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.settings.read(cx).mini_player().orientation;
+        self.mini_player_segmented_row(
+            "mini-player-orientation",
+            (
+                "settings-mini-player-orientation",
+                "settings-mini-player-orientation-detail",
+            ),
+            MiniPlayerOrientation::ALL.map(|orientation| (orientation, orientation.key())),
+            chosen,
+            AppSettings::set_mini_player_orientation,
+            cx,
+        )
+    }
+
+    fn mini_player_segmented_row<T, const N: usize>(
+        &self,
+        id: &'static str,
+        keys: (&'static str, &'static str),
+        options: [(T, &'static str); N],
+        chosen: T,
+        set: fn(&mut AppSettings, T, &mut Context<AppSettings>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement
+    where
+        T: Copy + Eq + 'static,
+    {
+        let (title_key, detail_key) = keys;
+        let title = i18n::lookup(title_key, None);
+        let choices = segmented(
+            id,
+            options.map(|(value, key)| (value, i18n::lookup(key, None))),
+            chosen,
+            cx.listener(move |this, value: &T, _, cx| {
+                let value = *value;
+                this.settings
+                    .update(cx, |settings, cx| set(settings, value, cx));
+            }),
+        );
+        Row::new(title.clone(), choices.name(title).into_any_element())
+            .detail(i18n::lookup(detail_key, None))
+            .into_any_element()
+    }
+
+    pub(super) fn mini_player_lyrics_mode_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.settings.read(cx).mini_player().lyrics_mode;
+        self.mini_player_segmented_row(
+            "mini-player-lyrics-mode",
+            (
+                "settings-mini-player-lyrics-mode",
+                "settings-mini-player-lyrics-mode-detail",
+            ),
+            MiniPlayerLyricsMode::ALL.map(|mode| (mode, mode.key())),
+            chosen,
+            AppSettings::set_mini_player_lyrics_mode,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_lyrics_size_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.settings.read(cx).mini_player().lyrics_size;
+        self.mini_player_segmented_row(
+            "mini-player-lyrics-size",
+            (
+                "settings-mini-player-lyrics-size",
+                "settings-mini-player-lyrics-size-detail",
+            ),
+            MiniPlayerLyricsSize::ALL.map(|size| (size, size.key())),
+            chosen,
+            AppSettings::set_mini_player_lyrics_size,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_lyrics_karaoke_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().lyrics_karaoke;
+        self.mini_player_switch_row(
+            "mini-player-lyrics-karaoke",
+            "settings-mini-player-lyrics-karaoke",
+            "settings-mini-player-lyrics-karaoke-detail",
+            on,
+            AppSettings::set_mini_player_lyrics_karaoke,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_lyrics_blur_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.settings.read(cx).mini_player().lyrics_blur;
+        self.mini_player_switch_row(
+            "mini-player-lyrics-blur",
+            "settings-mini-player-lyrics-blur",
+            "settings-mini-player-lyrics-blur-detail",
+            on,
+            AppSettings::set_mini_player_lyrics_blur,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_size_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = self.settings.read(cx).mini_player().size;
+        self.mini_player_segmented_row(
+            "mini-player-size",
+            (
+                "settings-mini-player-size",
+                "settings-mini-player-size-detail",
+            ),
+            MiniPlayerSize::ALL.map(|size| (size, size.key())),
+            chosen,
+            AppSettings::set_mini_player_size,
+            cx,
+        )
+    }
+
+    pub(super) fn mini_player_rounding_row(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let current = self.settings.read(cx).mini_player().rounding;
+        let offered = Rounding::ALL;
+        grid(offered.len() as u16, window, cx)
+            .children(offered.into_iter().enumerate().map(|(place, rounding)| {
+                OptionCard::new(SharedString::from(format!("mini-player-{}", rounding.id())))
+                    .choice(rounding.label(), current == rounding, place, offered.len())
+                    .thumb(corner(rounding, cx))
+                    .label(rounding.label())
+                    .selected(current == rounding)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.update(cx, |settings, cx| {
+                            settings.set_mini_player_rounding(rounding, cx)
+                        });
+                        cx.notify();
+                    }))
+            }))
+            .into_any_element()
     }
 }
 

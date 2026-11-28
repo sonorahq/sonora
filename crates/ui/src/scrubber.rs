@@ -101,6 +101,7 @@ pub struct Scrubber {
     filled: Hsla,
     empty: Hsla,
     thumb: Hsla,
+    popover: Option<(Hsla, Hsla, Hsla)>,
     enabled: bool,
     vertical: bool,
     /// What a screen reader calls the slider.
@@ -131,6 +132,7 @@ impl Scrubber {
             filled: gpui::white(),
             empty: gpui::black(),
             thumb: gpui::white(),
+            popover: None,
             enabled: true,
             vertical: false,
             name: None,
@@ -190,6 +192,12 @@ impl Scrubber {
         self.filled = filled;
         self.empty = empty;
         self.thumb = thumb;
+        self
+    }
+
+    /// Overrides the hover or drag value bubble colors `(fill, border, text)`.
+    pub fn popover(mut self, fill: Hsla, border: Hsla, text: Hsla) -> Self {
+        self.popover = Some((fill, border, text));
         self
     }
 
@@ -258,10 +266,9 @@ impl RenderOnce for Scrubber {
         let pin = thumb(pad);
         let reach = hit(pad);
         let bubble_width = px((pad / px(1.) * BUBBLE).round());
-        let popover = cx.theme().popover;
-        let popover_border = cx.theme().border;
-        let popover_text = cx.theme().popover_foreground;
-        let text_size = cx.theme().text(Text::Tiny);
+        let theme = cx.theme();
+        let default_popover = (theme.popover, theme.border, theme.popover_foreground);
+        let text_size = theme.text(Text::Tiny);
 
         let Self {
             mut base,
@@ -271,6 +278,7 @@ impl RenderOnce for Scrubber {
             filled,
             empty,
             thumb,
+            popover,
             enabled,
             vertical,
             name,
@@ -284,6 +292,7 @@ impl RenderOnce for Scrubber {
             on_move,
             on_release,
         } = self;
+        let (popover, popover_border, popover_text) = popover.unwrap_or(default_popover);
         let line = track(pad) * thickness;
         let layered = off_grid && thumb_scale != 1.;
         let dot = match layered {

@@ -687,6 +687,196 @@ impl PageWidth {
     }
 }
 
+/// Preset sizes for the floating mini player window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MiniPlayerSize {
+    Compact,
+    #[default]
+    Standard,
+    Large,
+}
+
+impl MiniPlayerSize {
+    pub const ALL: [Self; 3] = [Self::Compact, Self::Standard, Self::Large];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Standard => "standard",
+            Self::Large => "large",
+        }
+    }
+
+    /// Fluent key for this size preset, resolved by views.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Compact => "settings-mini-player-size-compact",
+            Self::Standard => "settings-mini-player-size-standard",
+            Self::Large => "settings-mini-player-size-large",
+        }
+    }
+
+    /// Parses a stored size id, falling back to [`Self::Standard`] for unknown values.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "compact" => Self::Compact,
+            "large" => Self::Large,
+            _ => Self::Standard,
+        }
+    }
+}
+
+/// Card layout orientation of the floating mini player window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MiniPlayerOrientation {
+    #[default]
+    Landscape,
+    Portrait,
+}
+
+impl MiniPlayerOrientation {
+    pub const ALL: [Self; 2] = [Self::Landscape, Self::Portrait];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Landscape => "landscape",
+            Self::Portrait => "portrait",
+        }
+    }
+
+    /// Fluent key for this orientation preset, resolved by views.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Landscape => "settings-mini-player-orientation-landscape",
+            Self::Portrait => "settings-mini-player-orientation-portrait",
+        }
+    }
+
+    /// Parses a stored orientation id, falling back to [`Self::Landscape`].
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "portrait" => Self::Portrait,
+            _ => Self::Landscape,
+        }
+    }
+}
+
+/// Lyrics presentation mode in the floating mini player.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MiniPlayerLyricsMode {
+    #[default]
+    Off,
+    Bar,
+    Fullscreen,
+}
+
+impl MiniPlayerLyricsMode {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Bar, Self::Fullscreen];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Bar => "bar",
+            Self::Fullscreen => "fullscreen",
+        }
+    }
+
+    /// Fluent key for this mode, resolved by views.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Off => "settings-mini-player-lyrics-off",
+            Self::Bar => "settings-mini-player-lyrics-bar",
+            Self::Fullscreen => "settings-mini-player-lyrics-fullscreen",
+        }
+    }
+
+    /// Parses a stored mode id, falling back to [`Self::Off`] for unknown values.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "bar" => Self::Bar,
+            "fullscreen" => Self::Fullscreen,
+            _ => Self::Off,
+        }
+    }
+}
+
+/// Text scale preset for lyrics inside the floating mini player.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MiniPlayerLyricsSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl MiniPlayerLyricsSize {
+    pub const ALL: [Self; 3] = [Self::Small, Self::Medium, Self::Large];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+        }
+    }
+
+    /// Fluent key for this size preset, resolved by views.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Small => "settings-mini-player-lyrics-size-small",
+            Self::Medium => "settings-mini-player-lyrics-size-medium",
+            Self::Large => "settings-mini-player-lyrics-size-large",
+        }
+    }
+
+    /// Parses a stored lyrics size id, falling back to [`Self::Medium`].
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "small" => Self::Small,
+            "large" => Self::Large,
+            _ => Self::Medium,
+        }
+    }
+}
+
+/// Preferences governing the floating mini player window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MiniPlayerPrefs {
+    pub ambient: bool,
+    pub always_on_top: bool,
+    pub minimize_main: bool,
+    pub shuffle_button: bool,
+    pub repeat_button: bool,
+    pub volume_button: bool,
+    pub lyrics_mode: MiniPlayerLyricsMode,
+    pub lyrics_blur: bool,
+    pub lyrics_karaoke: bool,
+    pub lyrics_size: MiniPlayerLyricsSize,
+    pub orientation: MiniPlayerOrientation,
+    pub size: MiniPlayerSize,
+    pub rounding: Rounding,
+}
+
+impl Default for MiniPlayerPrefs {
+    fn default() -> Self {
+        Self {
+            ambient: true,
+            always_on_top: true,
+            minimize_main: false,
+            shuffle_button: false,
+            repeat_button: false,
+            volume_button: true,
+            lyrics_mode: MiniPlayerLyricsMode::Off,
+            lyrics_blur: true,
+            lyrics_karaoke: true,
+            lyrics_size: MiniPlayerLyricsSize::Medium,
+            orientation: MiniPlayerOrientation::Landscape,
+            size: MiniPlayerSize::Standard,
+            rounding: Rounding::Round,
+        }
+    }
+}
+
 /// The `appearance` block of `settings.json`. Fixed choices are stored by id, removed variant
 /// falls back to the default instead of failing the parse.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -711,6 +901,19 @@ struct Appearance {
     /// Whether the player bar's right clock counts down what is left of the track instead of
     /// showing its length.
     player_bar_time_left: bool,
+    mini_player_ambient: bool,
+    mini_player_always_on_top: bool,
+    mini_player_minimize_main: bool,
+    mini_player_shuffle: bool,
+    mini_player_repeat: bool,
+    mini_player_volume: bool,
+    mini_player_lyrics_mode: String,
+    mini_player_lyrics_blur: bool,
+    mini_player_lyrics_karaoke: bool,
+    mini_player_lyrics_size: String,
+    mini_player_orientation: String,
+    mini_player_size: String,
+    mini_player_rounding: String,
     icons: String,
     rounding: String,
     /// How tall table rows stand, by its id. See `RowSize`.
@@ -935,6 +1138,7 @@ struct StateValues {
     sidebar_pin_reversed: bool,
     resume: Option<Resume>,
     window: Option<Frame>,
+    mini_player_origin: Option<(f32, f32)>,
     system_theme: String,
     /// The variant last chosen in each theme family, by family id.
     theme_variants: HashMap<String, String>,
@@ -968,6 +1172,7 @@ impl Default for StateValues {
             sidebar_pin_reversed: false,
             resume: None,
             window: None,
+            mini_player_origin: None,
             system_theme: ThemeKind::Dark.id().to_owned(),
             theme_variants: HashMap::new(),
             picks: Vec::new(),
@@ -1053,6 +1258,19 @@ impl Default for Appearance {
             player_bar_island_page: true,
             player_bar_transparent: true,
             player_bar_time_left: false,
+            mini_player_ambient: true,
+            mini_player_always_on_top: true,
+            mini_player_minimize_main: false,
+            mini_player_shuffle: false,
+            mini_player_repeat: false,
+            mini_player_volume: true,
+            mini_player_lyrics_mode: MiniPlayerLyricsMode::default().id().to_owned(),
+            mini_player_lyrics_blur: true,
+            mini_player_lyrics_karaoke: true,
+            mini_player_lyrics_size: MiniPlayerLyricsSize::default().id().to_owned(),
+            mini_player_orientation: MiniPlayerOrientation::default().id().to_owned(),
+            mini_player_size: MiniPlayerSize::default().id().to_owned(),
+            mini_player_rounding: Rounding::Round.id().to_owned(),
             icons: icons::BASE.to_owned(),
             rounding: Rounding::Rounded.id().to_owned(),
             row_size: RowSize::default().id().to_owned(),
@@ -1649,6 +1867,34 @@ impl AppSettings {
     /// Whether the player bar shows the time left in the track where it would show its length.
     pub fn player_bar_time_left(&self) -> bool {
         self.values.appearance.player_bar_time_left
+    }
+
+    /// Reads the floating mini player preferences.
+    pub fn mini_player(&self) -> MiniPlayerPrefs {
+        let appearance = &self.values.appearance;
+        MiniPlayerPrefs {
+            ambient: appearance.mini_player_ambient,
+            always_on_top: appearance.mini_player_always_on_top,
+            minimize_main: appearance.mini_player_minimize_main,
+            shuffle_button: appearance.mini_player_shuffle,
+            repeat_button: appearance.mini_player_repeat,
+            volume_button: appearance.mini_player_volume,
+            lyrics_mode: match self.lyrics_enabled() {
+                true => MiniPlayerLyricsMode::from_id(&appearance.mini_player_lyrics_mode),
+                false => MiniPlayerLyricsMode::Off,
+            },
+            lyrics_blur: appearance.mini_player_lyrics_blur,
+            lyrics_karaoke: appearance.mini_player_lyrics_karaoke,
+            lyrics_size: MiniPlayerLyricsSize::from_id(&appearance.mini_player_lyrics_size),
+            orientation: MiniPlayerOrientation::from_id(&appearance.mini_player_orientation),
+            size: MiniPlayerSize::from_id(&appearance.mini_player_size),
+            rounding: Rounding::from_id(&appearance.mini_player_rounding),
+        }
+    }
+
+    /// Last saved logical `(x, y)` origin of the floating mini player window.
+    pub fn mini_player_origin(&self) -> Option<(f32, f32)> {
+        self.state.mini_player_origin
     }
 
     /// Whether fullscreen paints the ambient background sampled from the cover.
@@ -2649,6 +2895,105 @@ impl AppSettings {
     pub fn set_player_bar_time_left(&mut self, time_left: bool, cx: &mut Context<Self>) {
         self.values.appearance.player_bar_time_left = time_left;
         self.schedule_save(cx);
+    }
+
+    /// Toggles the cover-sampled ambient background on the floating mini player.
+    pub fn set_mini_player_ambient(&mut self, ambient: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_ambient = ambient;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles keeping the floating mini player above other windows.
+    pub fn set_mini_player_always_on_top(&mut self, always_on_top: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_always_on_top = always_on_top;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles minimizing the main window when the mini player opens.
+    pub fn set_mini_player_minimize_main(&mut self, minimize: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_minimize_main = minimize;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles the shuffle button in the mini player transport row.
+    pub fn set_mini_player_shuffle(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_shuffle = shown;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles the repeat button in the mini player transport row.
+    pub fn set_mini_player_repeat(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_repeat = shown;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles the hover-expanding volume button in the mini player transport row.
+    pub fn set_mini_player_volume(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_volume = shown;
+        self.schedule_save(cx);
+    }
+
+    /// Sets the card orientation preset of the floating mini player.
+    pub fn set_mini_player_orientation(
+        &mut self,
+        orientation: MiniPlayerOrientation,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.mini_player_orientation = orientation.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Sets the lyrics presentation mode in the floating mini player.
+    pub fn set_mini_player_lyrics_mode(
+        &mut self,
+        mode: MiniPlayerLyricsMode,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.mini_player_lyrics_mode = mode.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Toggles blurring inactive lyric lines in the immersive mini player.
+    pub fn set_mini_player_lyrics_blur(&mut self, blur: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_lyrics_blur = blur;
+        self.schedule_save(cx);
+    }
+
+    /// Toggles word-by-word karaoke sweep in the immersive mini player.
+    pub fn set_mini_player_lyrics_karaoke(&mut self, karaoke: bool, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_lyrics_karaoke = karaoke;
+        self.schedule_save(cx);
+    }
+
+    /// Sets the lyric text scale preset in the floating mini player.
+    pub fn set_mini_player_lyrics_size(
+        &mut self,
+        size: MiniPlayerLyricsSize,
+        cx: &mut Context<Self>,
+    ) {
+        self.values.appearance.mini_player_lyrics_size = size.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Sets the size preset of the floating mini player.
+    pub fn set_mini_player_size(&mut self, size: MiniPlayerSize, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_size = size.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Sets the corner rounding preset of the floating mini player.
+    pub fn set_mini_player_rounding(&mut self, rounding: Rounding, cx: &mut Context<Self>) {
+        self.values.appearance.mini_player_rounding = rounding.id().to_owned();
+        self.schedule_save(cx);
+    }
+
+    /// Persists the mini player window origin into runtime state without rewriting `settings.json`.
+    pub fn set_mini_player_origin(&mut self, origin: Option<(f32, f32)>, cx: &mut Context<Self>) {
+        if self.state.mini_player_origin == origin {
+            return;
+        }
+        self.state.mini_player_origin = origin;
+        self.save_state_quietly(cx);
     }
 
     pub fn set_ambient_motion(&mut self, motion: bool, cx: &mut Context<Self>) {

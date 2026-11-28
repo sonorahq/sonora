@@ -12,6 +12,7 @@ mod gestures;
 mod http;
 mod logging;
 mod memory;
+mod mini_player;
 mod single;
 #[cfg(windows)]
 mod thumbbar;
@@ -211,6 +212,7 @@ fn main() -> ExitCode {
             cx.set_quit_mode(QuitMode::Explicit);
         }
         actions::register(lingers, cx);
+        mini_player::init(lingers, cx);
         #[cfg(target_os = "macos")]
         gestures::install(cx);
         memory::watch(cx);
@@ -319,12 +321,10 @@ fn destination(linked: &Linked) -> Option<Destination> {
     }
 }
 
-fn show_window(cx: &mut App) {
-    match cx.windows().first() {
+pub(crate) fn show_window(cx: &mut App) {
+    match mini_player::main_window(cx) {
         Some(window) => {
-            window
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
+            mini_player::restore_window(window, cx);
         }
         None => {
             dock::show(true);
@@ -343,9 +343,7 @@ enum WindowAction {
 
 /// Shows the window when it is hidden, minimized or closed, and hides it when it is visible.
 fn toggle_window(cx: &mut App) {
-    let visible = cx
-        .windows()
-        .first()
+    let visible = mini_player::main_window(cx)
         .and_then(|window| window.update(cx, |_, window, _| window.is_visible()).ok());
     match window_action(visible) {
         WindowAction::Show => reveal_window(visible, cx),
@@ -370,7 +368,7 @@ fn hide_window(cx: &mut App) {
 
 #[cfg(not(target_os = "linux"))]
 fn hide_window(cx: &mut App) {
-    if let Some(window) = cx.windows().first() {
+    if let Some(window) = mini_player::main_window(cx) {
         window
             .update(cx, |_, window, _| window.minimize_window())
             .ok();
@@ -419,51 +417,54 @@ fn open_window(cx: &mut App) {
     let look = settings.look();
     let background = ui::backdrop(look.blur_window, look.transparent);
 
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(placement),
-            display_id,
-            window_background: background,
-            titlebar: Some(TitlebarOptions {
-                title: Some("Sonora".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(traffic_lights),
-            }),
-            inactive_frame_interval: saver.interval(),
-            // Low Power Mode and power-saver profiles would otherwise cap every frame at 30 fps.
-            low_power_frame_interval: None,
-            is_movable: true,
-            is_resizable: true,
-            app_owns_titlebar_drag: true,
-            app_id: Some(assets::app_id().into()),
-            window_min_size: Some(LEAST_SIZE),
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            window_decorations: Some(decorations),
-            ..Default::default()
-        },
-        |window, cx| {
-            #[cfg(target_os = "linux")]
-            x11_icon::install(window);
-            window.set_rem_size(cx.theme().font_size);
-            #[cfg(target_os = "windows")]
-            set_corner_preference(
-                window,
-                Sonora::global(cx).settings.read(cx).window_rounding(),
-            );
-            let handle = platform_handle(window);
-            state::attach_remote(handle, cx);
-            #[cfg(windows)]
-            if let Some(handle) = handle {
-                app_icon::install(handle);
-                thumbbar::install(window.window_handle().window_id(), handle, cx);
-            }
-            #[cfg(windows)]
-            window_title::install(window.window_handle(), cx);
-            state::remember_window(window, cx);
-            cx.new(|cx| Root::new(session, library, playback, queue, window, cx))
-        },
-    )
-    .expect("failed to open window");
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(placement),
+                display_id,
+                window_background: background,
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Sonora".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(traffic_lights),
+                }),
+                inactive_frame_interval: saver.interval(),
+                // Low Power Mode and power-saver profiles would otherwise cap every frame at 30 fps.
+                low_power_frame_interval: None,
+                is_movable: true,
+                is_resizable: true,
+                app_owns_titlebar_drag: true,
+                app_id: Some(assets::app_id().into()),
+                window_min_size: Some(LEAST_SIZE),
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                window_decorations: Some(decorations),
+                ..Default::default()
+            },
+            |window, cx| {
+                #[cfg(target_os = "linux")]
+                x11_icon::install(window);
+                window.set_rem_size(cx.theme().font_size);
+                #[cfg(target_os = "windows")]
+                set_corner_preference(
+                    window,
+                    Sonora::global(cx).settings.read(cx).window_rounding(),
+                );
+                let handle = platform_handle(window);
+                state::attach_remote(handle, cx);
+                #[cfg(windows)]
+                if let Some(handle) = handle {
+                    app_icon::install(handle);
+                    thumbbar::install(window.window_handle().window_id(), handle, cx);
+                }
+                #[cfg(windows)]
+                window_title::install(window.window_handle(), cx);
+                state::remember_window(window, cx);
+                cx.new(|cx| Root::new(session, library, playback, queue, window, cx))
+            },
+        )
+        .expect("failed to open window");
+    cx.set_global(mini_player::MainWindow(handle.into()));
+    actions::clear_tray_hide(cx);
 }
 
 // DWM only offers two rounded presets (no arbitrary radius), so the four `Rounding` choices

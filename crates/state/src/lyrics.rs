@@ -262,7 +262,7 @@ impl Lyrics {
         cx.notify();
     }
 
-    pub fn active_line(&self, cx: &Context<Self>) -> Option<usize> {
+    pub fn active_line(&self, cx: &App) -> Option<usize> {
         let music::Lyrics::Synced { lines } = &self.current()?.lyrics else {
             return None;
         };

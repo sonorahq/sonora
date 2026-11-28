@@ -11,7 +11,7 @@ use gpui::{
 };
 use gpui::{Div, Window, deferred, div, px, rems};
 use i18n::t;
-use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleQueue};
+use input::{ShowMembers, ToggleFullscreen, ToggleLyrics, ToggleMiniPlayer, ToggleQueue};
 use state::{
     AppSettings, Playback, PlayerBarIsland, PlayerBarLayout, Queue, QueuePosition, SideTab, Sonora,
 };
@@ -380,6 +380,41 @@ impl PlayerBar {
         }
     }
 
+    fn mini_player_button(&self) -> AnyElement {
+        Button::new("toggle-mini-player")
+            .ghost()
+            .small()
+            .icon("icons/mini-player.svg")
+            .tooltip_above("player-mini-player")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleMiniPlayer), cx))
+            .into_any_element()
+    }
+
+    fn corner_buttons(&self, cx: &gpui::App) -> AnyElement {
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(Self::corner_gap())
+            .child(self.mini_player_button())
+            .child(self.fullscreen_button(cx))
+            .into_any_element()
+    }
+
+    /// Gap between the mini-player and fullscreen buttons in [`Self::corner_buttons`].
+    pub(crate) fn corner_gap() -> gpui::Rems {
+        rems(TOOL_GAP)
+    }
+
+    /// Empty slot matching the mini-player button width so fullscreen's bottom bar aligns with
+    /// the main player bar's controls.
+    pub(crate) fn corner_spacer(cx: &App) -> AnyElement {
+        div()
+            .flex_none()
+            .size(cx.theme().metrics.control_small)
+            .into_any_element()
+    }
+
     fn now_playing(&self, room: bool, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let playback = self.playback.read(cx);
         let recommended = playback
@@ -499,9 +534,9 @@ impl PlayerBar {
         let button = px(ICON_BUTTON);
         let row = row - rem * COLUMN_GAP * 2.;
         let tools = button * tools as f32 + rem * TOOL_GAP * tools.saturating_sub(1) as f32;
-        // The right side without its slider: the buttons, the mute and fullscreen buttons and
-        // the gaps between them.
-        let rising = tools + button * 2. + rem * SIDE_GAP * 2.;
+        // The right side without its slider: the buttons, the mute, mini player and fullscreen
+        // buttons and the gaps between them.
+        let rising = tools + button * 3. + rem * TOOL_GAP + rem * SIDE_GAP * 2.;
         let around = rising + rem * VOLUME_GAP;
         let keep = (row / 3.).max(px(SEEK_KEEP)).min(px(SEEK_MAX));
         let slider = (row - keep) / 2. - around;
@@ -601,12 +636,17 @@ impl PlayerBar {
     }
 
     /// How wide the bar's right side stands with its volume folded into a button: the icon
-    /// buttons `TOOL_GAP` apart, then the mute and fullscreen buttons `SIDE_GAP` on from them.
+    /// buttons `TOOL_GAP` apart, then the mute, mini player and fullscreen buttons `SIDE_GAP` on
+    /// from them.
     fn rising_side(window: &Window, cx: &App) -> Pixels {
         let rem = window.rem_size();
         let button = px(ICON_BUTTON);
         let tools = Self::tool_count(window, cx) as f32;
-        button * tools + rem * TOOL_GAP * (tools - 1.).max(0.) + button * 2. + rem * SIDE_GAP * 2.
+        button * tools
+            + rem * TOOL_GAP * (tools - 1.).max(0.)
+            + button * 3.
+            + rem * TOOL_GAP
+            + rem * SIDE_GAP * 2.
     }
 
     /// Whether the whole island fits on a sheet `sheet_width` wide. One that does not widens over
@@ -1045,7 +1085,7 @@ impl Render for PlayerBar {
                     + Self::transport_width(window);
                 left.max(Self::rising_side(window, cx))
             }
-            false => theme.metrics.control * 4. + px(VOLUME_WIDTH) + theme.metrics.pad * 3.,
+            false => theme.metrics.control * 5. + px(VOLUME_WIDTH) + theme.metrics.pad * 4.,
         };
         // The island keeps to the minimal row's width in every layout, so its volume is a button
         // with a slider that rises, as the minimal row's is.
@@ -1197,7 +1237,7 @@ impl Render for PlayerBar {
                             island_volume.unwrap_or(Volume::Slider(px(VOLUME_WIDTH))),
                             cx,
                         ))
-                        .child(self.fullscreen_button(cx)),
+                        .child(self.corner_buttons(cx)),
                 ),
             (false, PlayerBarLayout::Minimal) => {
                 let shown = self.playback.read(cx).shown_track(cx);
@@ -1250,7 +1290,7 @@ impl Render for PlayerBar {
                             .gap_2()
                             .child(buttons)
                             .child(self.sound(Volume::Rising, cx))
-                            .child(self.fullscreen_button(cx)),
+                            .child(self.corner_buttons(cx)),
                     )
             }
             _ => {
@@ -1271,7 +1311,7 @@ impl Render for PlayerBar {
                         island_volume.unwrap_or_else(|| Self::volume_in(row, window, cx)),
                         cx,
                     ),
-                    corner: self.fullscreen_button(cx),
+                    corner: self.corner_buttons(cx),
                 };
                 let slim = opened.filter(|_| floating);
                 Self::lay_out(base, parts, row, slim, window, cx)
