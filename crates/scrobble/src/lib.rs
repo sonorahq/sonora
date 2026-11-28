@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 mod audioscrobbler;
 mod listenbrainz;
 mod maloja;
+mod musicbrainz;
 mod tealfm;
 
 /// A track shorter than this never counts, and a play this long always does. Last.fm wrote both
@@ -91,6 +92,9 @@ pub struct Play {
     pub album: Option<String>,
     pub duration: Duration,
     pub at: SystemTime,
+    /// The recording's ISRC, when the provider knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isrc: Option<String>,
 }
 
 impl Play {

@@ -697,6 +697,7 @@ fn played(track: &Track, at: SystemTime) -> Option<Play> {
         album: Some(track.album.clone()).filter(|album| !album.is_empty()),
         duration: track.duration,
         at,
+        isrc: track.isrc.clone().filter(|isrc| !isrc.is_empty()),
     })
 }
 
