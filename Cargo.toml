@@ -255,22 +255,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 ] }
 
 [patch.crates-io]
-# Symphonia 0.6.1 plus a fix that decodes the 33-bit side channel of 32-bit stereo FLAC. Every
-# Symphonia crate comes from the fork, so the codec traits rodio and Sonora share stay one type.
-symphonia = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-core = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-common = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-metadata = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-bundle-flac = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-bundle-mp3 = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-codec-aac = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-codec-alac = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-codec-pcm = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-codec-vorbis = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-format-isomp4 = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-format-mkv = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-format-ogg = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
-symphonia-format-riff = { git = "https://github.com/sonorahq/Symphonia", rev = "b8600e881fdecd27a77925b7f74119efa8630c3a" }
 # RustAudio/rodio#920, which moves rodio to Symphonia 0.6, with its seeks fixed to keep the channel
 # order and to end the track when a seek lands past what the demuxer can reach.
 rodio = { git = "https://github.com/sonorahq/rodio", rev = "aae5ad20127b258f293c1a073d3692bfa81c52ac" }

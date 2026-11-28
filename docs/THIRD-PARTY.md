@@ -18,10 +18,9 @@ The binary embeds:
 - Libre.fm, Maloja and teal.fm marks — redrawn from each project's own logo, `assets/icons/common/LICENSE`
 
 Several dependencies are covered by the Mozilla Public License 2.0 — notably the
-Symphonia decoders, `option-ext` and `priority-queue`. Symphonia is built from
-<https://github.com/sonorahq/Symphonia>, whose FLAC decoder is modified to read
-32-bit stereo streams. The others are used unmodified, and their source is
-available from the upstream repositories linked below and from <https://crates.io>.
+Symphonia decoders, `option-ext` and `priority-queue`. They are used unmodified,
+and their source is available from the upstream repositories linked below and
+from <https://crates.io>.
 
 Where a dependency offers a choice of licenses, Sonora relies on the permissive
 option: Apache-2.0 for `self_cell`, MPL-2.0 for `priority-queue`.
