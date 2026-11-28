@@ -53,7 +53,7 @@ Signing in to YouTube Music, Apple Music, Deezer or Plex opens the service's own
 
 ## Protected playback
 
-Apple Music tracks are encrypted, and playing them needs Google's Widevine module. When no browser on the device already has a copy, Sonora asks before downloading it from Google (update.googleapis.com), then shows Google's terms from the download and installs the module only once the user accepts them. Google receives the operating system and processor architecture. After the first download, Sonora asks Google for a newer version each time it starts.
+Apple Music tracks are encrypted, and playing them needs Google's Widevine module. When no browser on the device already has a copy, Sonora asks before downloading it from Google (update.googleapis.com), then shows Google's terms from the download and installs the module only once the user accepts them. Google receives the operating system and processor architecture. After Sonora installs the module, it asks Google for a newer version each time it starts.
 
 Spotify plays through Spotify's own player program. Sonora asks before downloading it from Spotify (soloist-builds.spotifycdn.com) and afterwards downloads new versions without asking.
 
