@@ -66,6 +66,7 @@ lyrics-missing = No se encontró la letra, ¡lo sentimos!
 lyrics-instrumental = Esta canción es instrumental
 lyrics-failed = No se pudo conectar con el servicio de letras
 lyrics-follow = Volver a seguir la canción
+lyrics-copy = Copiar letra
 lyrics-source = Letra de { $source }
 lyrics-source-local = Letra del archivo
 lyrics-writers = Escrita por { $writers }

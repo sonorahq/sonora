@@ -1,13 +1,13 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Entity, FontWeight, Pixels, Point, Render, SharedString, WeakEntity,
-    Window, div, px,
+    AnyElement, App, ClipboardItem, Context, Entity, FontWeight, Pixels, Point, Render,
+    SharedString, WeakEntity, Window, div, px,
 };
 use i18n::t;
-use music::{Credit, Track};
+use music::{Credit, Lyrics, Track};
 use router::{Destination, Link as _};
-use state::{Playback, SongDetail, Sonora};
+use state::{LyricsState, Outcome, Playback, SongDetail, SongPageChanged, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, Fact, Glowing as _, InfoCard, Initials, Popup, Scrollbar,
     Scroller, Skeleton, Tails as _, Text, clock,
@@ -66,18 +66,20 @@ impl SongView {
         playback: Entity<Playback>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&detail, |this, _, cx| {
+        cx.subscribe(&detail, |this, _, _: &SongPageChanged, cx| {
             this.scrollbar
                 .read(cx)
                 .scroll()
                 .set_offset(gpui::Point::default());
             this.about_open = false;
-            cx.notify();
         })
         .detach();
+        cx.observe(&detail, |_, _, cx| cx.notify()).detach();
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
+        let settings = Sonora::global(cx).settings.clone();
+        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         let chrome = crate::chrome::Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
@@ -118,6 +120,7 @@ impl SongView {
 
         let actions = div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_3()
             .child(HeroPlayButton::new(
@@ -134,7 +137,11 @@ impl SongView {
                             router::navigate(Destination::Album(album_id.clone().into()), cx);
                         }),
                 )
-            });
+            })
+            .when(
+                Sonora::global(cx).settings.read(cx).lyrics_enabled(),
+                |this| this.child(self.copy_lyrics_button(cx)),
+            );
 
         let pin = track.pin().map(|pin| pin.cover(cover.clone()));
         let view = self.me.clone();
@@ -156,6 +163,36 @@ impl SongView {
                 .ok();
             })
             .into_any_element()
+    }
+
+    fn copy_lyrics_button(&self, cx: &Context<Self>) -> Button {
+        let detail = self.detail.clone();
+        let loading = detail.read(cx).lyrics_loading();
+        Button::new("copy-song-lyrics")
+            .icon("icons/copy.svg")
+            .label(match loading {
+                true => t!("lyrics-loading"),
+                false => t!("lyrics-copy"),
+            })
+            .outline()
+            .disabled(loading)
+            .on_click(move |_, _, cx| {
+                detail.update(cx, |detail, cx| {
+                    detail.load_lyrics(
+                        |result, cx| match result {
+                            Ok(sheet) => copy_lyrics(sheet, cx),
+                            Err(LyricsState::Instrumental) => {
+                                Toasts::show(Outcome::Info, "lyrics-instrumental", cx)
+                            }
+                            Err(LyricsState::Failed(_)) => {
+                                Toasts::show(Outcome::Failed, "lyrics-failed", cx)
+                            }
+                            Err(_) => Toasts::show(Outcome::Info, "lyrics-missing", cx),
+                        },
+                        cx,
+                    );
+                });
+            })
     }
 
     fn menu(&self, cx: &mut Context<Self>) -> Option<Popup> {
@@ -635,4 +672,25 @@ impl Render for SongView {
             .children(self.about_dialog(cx))
             .into_any_element()
     }
+}
+
+/// Copies the original text of the whole sheet, including any backing vocals.
+fn copy_lyrics(lyrics: Lyrics, cx: &mut App) {
+    let text = match lyrics {
+        Lyrics::Plain { text, .. } => text,
+        Lyrics::Synced { lines } => lines
+            .iter()
+            .flat_map(|line| {
+                std::iter::once(line.text.as_str())
+                    .chain(line.secondary.iter().map(|lane| lane.text.as_str()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    if text.trim().is_empty() {
+        Toasts::show(Outcome::Info, "lyrics-missing", cx);
+        return;
+    }
+    cx.write_to_clipboard(ClipboardItem::new_string(text));
+    Toasts::show(Outcome::Done, "toast-lyrics-copied", cx);
 }

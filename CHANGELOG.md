@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Copy the full lyrics from the song details page.
+
 ## [0.51.0] - 2026-11-28
 
 ### Added

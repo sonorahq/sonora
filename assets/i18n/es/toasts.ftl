@@ -129,6 +129,7 @@ toast-downloads-cancelled = { $count ->
 toast-settings-broken = Corrige la línea { $name } de settings.json para guardar los cambios
 toast-tray-unavailable = No hay ninguna bandeja del sistema donde poner el icono
 toast-link-copied = Enlace copiado
+toast-lyrics-copied = Letra copiada
 toast-link-sign-in = Inicia sesión en { $name } para abrir este enlace
 toast-link-unreadable = Ese enlace no lleva a nada que Sonora pueda abrir
 toast-code-copied = Código copiado

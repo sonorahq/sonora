@@ -96,6 +96,7 @@ lyrics-missing = No lyrics found, sorry!
 lyrics-instrumental = This song is instrumental
 lyrics-failed = Could not reach the lyrics service
 lyrics-follow = Follow the song again
+lyrics-copy = Copy lyrics
 lyrics-source = Lyrics from { $source }
 lyrics-source-local = Lyrics from the local file
 lyrics-writers = Written by { $writers }

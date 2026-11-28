@@ -188,6 +188,7 @@ toast-downloads-cancelled = { $count ->
 toast-settings-broken = Fix line { $name } of settings.json to save changes
 toast-tray-unavailable = There is no system tray to put the icon in
 toast-link-copied = Link copied
+toast-lyrics-copied = Lyrics copied
 toast-link-sign-in = Sign in to { $name } to open this link
 toast-keybind-taken = { $name } no longer has that shortcut
 toast-link-unreadable = That link does not lead anywhere Sonora can open
