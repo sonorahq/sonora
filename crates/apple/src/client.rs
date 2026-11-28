@@ -18,7 +18,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use engine::Loudness;
-use futures::future::try_join_all;
 use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use music::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Found, Genre,
@@ -62,9 +61,10 @@ const CLOCK_SKEW: i64 = 120;
 /// How many search hits to ask for. Apple refuses a search page larger than this outright.
 const HITS: usize = 25;
 
-/// How many pages one listing will walk before it stops. A library of a hundred thousand songs
-/// is not something to pull into memory in one go.
-const PAGES: usize = 40;
+/// How many pages one listing will walk before it stops. Apple keeps at most a hundred thousand
+/// songs in a library, so this reaches the end of any real listing and only stops one whose
+/// `next` link never runs out.
+const PAGES: usize = 1_000;
 
 /// How many pages of one listing are in flight at once, after the first.
 ///
@@ -80,12 +80,10 @@ const FAN: usize = 12;
 ///
 /// A library song carries no date of its own, on any route or with any `extend`. Apple lists
 /// songs by name unless told otherwise, so the listing asks to be sorted by date added, newest
-/// first, and a Date added sort follows that order. Newest first means the [`PAGES`] cap drops
-/// the oldest songs of a huge library rather than its latest additions. The songs still ask for
-/// the library album they sit under, so a song with no catalog copy keeps its album, cut down
-/// to one field. The include is scoped to the library rows on purpose: an untyped
-/// `include=catalog` would expand the catalog of every included album too, and a page grows
-/// fivefold.
+/// first, and a Date added sort follows that order. The songs still ask for the library album
+/// they sit under, so a song with no catalog copy keeps its album, cut down to one field. The
+/// include is scoped to the library rows on purpose: an untyped `include=catalog` would expand
+/// the catalog of every included album too, and a page grows fivefold.
 const SONGS: &str = "/me/library/songs";
 const ALBUMS: &str = "/me/library/albums";
 const ARTISTS: &str = "/me/library/artists";
@@ -736,8 +734,8 @@ impl AppleClient {
         }
     }
 
-    /// Fetches every page of a listing and hands back their bodies in order. Stops at
-    /// [`PAGES`] pages so one enormous library cannot run away with the process.
+    /// Fetches every page of a listing and hands back their bodies in order, up to [`PAGES`]
+    /// pages.
     ///
     /// Only the first page is asked for on its own. A library listing answers it with
     /// `meta.total`, which says exactly how many pages are left, and they all go out together,
@@ -831,7 +829,8 @@ impl AppleClient {
     /// Apple keeps a favorite as a personal rating of 1 on the library resource and never
     /// inlines it into a listing, so it is a second request over the listing's ids, asked
     /// `batch` at a time: `/me/library?ids[library-albums]=…&fields[library-albums]=personalRating`,
-    /// which is how the web player draws its stars. Only the rated resources come back.
+    /// which is how the web player draws its stars. Only the rated resources come back. At most
+    /// [`FAN`] batches are in flight at once, so a huge library does not fire them all together.
     async fn rated<T>(&self, kind: &str, batch: usize, items: Vec<(String, T)>) -> Result<Vec<T>> {
         let key = format!("ids[library-{kind}]");
         let field = format!("fields[library-{kind}]");
@@ -845,14 +844,15 @@ impl AppleClient {
                     .join(",")
             })
             .collect();
-        let answers = try_join_all(batches.iter().map(|ids| {
-            let query = [
-                (key.as_str(), ids.as_str()),
-                (field.as_str(), "personalRating"),
-            ];
-            async move { self.get("/me/library", &query).await }
-        }))
-        .await?;
+        let (key, field) = (key.as_str(), field.as_str());
+        let answers: Vec<String> = stream::iter(batches)
+            .map(|ids| async move {
+                let query = [(key, ids.as_str()), (field, "personalRating")];
+                self.get("/me/library", &query).await
+            })
+            .buffer_unordered(FAN)
+            .try_collect()
+            .await?;
         let mut loved = HashSet::new();
         for body in &answers {
             let answered: wire::Answer = wire::answer(body);
