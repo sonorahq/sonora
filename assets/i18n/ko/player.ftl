@@ -96,6 +96,7 @@ lyrics-missing = 죄송합니다. 가사를 찾을 수 없습니다.
 lyrics-instrumental = 연주곡입니다.
 lyrics-failed = 가사 서비스에 연결할 수 없습니다.
 lyrics-follow = 곡 진행에 맞춰 가사 따라가기
+lyrics-copy = 가사 복사
 lyrics-source = 가사 제공: { $source }
 lyrics-source-local = 로컬 파일의 가사
 lyrics-writers = 작사: { $writers }
