@@ -1,4 +1,4 @@
-use gpui::{App, Context, Global, Menu, MenuItem, OsAction};
+use gpui::{App, Context, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
     CloseMiniPlayer, CloseWindow, DecreaseFontSize, ExpandMiniPlayer, Hide, HideOthers,
@@ -13,12 +13,27 @@ use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
 /// How far one font size shortcut moves the size, the same step as the buttons in Settings.
 const FONT_STEP: f32 = 1.;
 
-/// Present while a tray click closes a main window, so Sonora stays in the tray even with close to
-/// tray turned off.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-struct HidingToTray(gpui::WindowId);
+/// Tracks an explicit tray hide on Linux so Sonora stays in the tray even while the mini player
+/// stays open and `close_to_tray` is off.
+#[cfg(target_os = "linux")]
+enum TrayHide {
+    Pending(gpui::WindowId),
+    Hidden,
+}
 
-impl Global for HidingToTray {}
+#[cfg(target_os = "linux")]
+impl gpui::Global for TrayHide {}
+
+/// Clears any remembered tray-hide state once a new main window opens or the last window hides.
+#[cfg(target_os = "linux")]
+pub(crate) fn clear_tray_hide(cx: &mut App) {
+    if cx.has_global::<TrayHide>() {
+        cx.remove_global::<TrayHide>();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn clear_tray_hide(_cx: &mut App) {}
 
 /// Closes the window into the tray. Sonora keeps running whatever the close to tray setting says,
 /// since the tray it was hidden from brings it back.
@@ -27,7 +42,7 @@ pub fn hide_to_tray(cx: &mut App) {
     let Some(window) = crate::mini_player::main_window(cx) else {
         return;
     };
-    cx.set_global(HidingToTray(window.window_id()));
+    cx.set_global(TrayHide::Pending(window.window_id()));
     window
         .update(cx, |_, window, _| window.remove_window())
         .ok();
@@ -46,17 +61,21 @@ pub fn register(lingers: bool, cx: &mut App) {
     cx.on_action(|_: &CloseMiniPlayer, cx: &mut App| crate::mini_player::close(cx));
 
     cx.on_window_closed(move |cx, closed_id| {
-        crate::mini_player::on_window_closed(cx, closed_id);
-        let hid_this_window = cx
-            .try_global::<HidingToTray>()
-            .is_some_and(|marked| marked.0 == closed_id);
-        if hid_this_window {
-            cx.remove_global::<HidingToTray>();
-        }
+        #[cfg(target_os = "linux")]
+        let tray_hidden = {
+            if matches!(cx.try_global::<TrayHide>(), Some(TrayHide::Pending(id)) if *id == closed_id) {
+                cx.set_global(TrayHide::Hidden);
+            }
+            matches!(cx.try_global::<TrayHide>(), Some(TrayHide::Hidden))
+        };
+        #[cfg(not(target_os = "linux"))]
+        let tray_hidden = false;
+        crate::mini_player::on_window_closed(cx, closed_id, tray_hidden);
         if !cx.windows().is_empty() {
             return;
         }
-        let close_to_tray = hid_this_window || Sonora::global(cx).settings.read(cx).close_to_tray();
+        clear_tray_hide(cx);
+        let close_to_tray = tray_hidden || Sonora::global(cx).settings.read(cx).close_to_tray();
         match lingers && close_to_tray {
             true => crate::dock::show(false),
             false => cx.quit(),

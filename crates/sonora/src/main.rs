@@ -464,6 +464,7 @@ fn open_window(cx: &mut App) {
         )
         .expect("failed to open window");
     cx.set_global(mini_player::MainWindow(handle.into()));
+    actions::clear_tray_hide(cx);
 }
 
 // DWM only offers two rounded presets (no arbitrary radius), so the four `Rounding` choices

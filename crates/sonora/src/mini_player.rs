@@ -155,7 +155,7 @@ pub fn expand(cx: &mut App) {
 }
 
 /// Keeps main and mini player lifecycles consistent when either window closes from the OS.
-pub fn on_window_closed(cx: &mut App, closed_id: WindowId) {
+pub fn on_window_closed(cx: &mut App, closed_id: WindowId, stay_in_tray: bool) {
     let Some(state) = cx.try_global::<MiniPlayerState>() else {
         return;
     };
@@ -184,7 +184,7 @@ pub fn on_window_closed(cx: &mut App, closed_id: WindowId) {
         .try_global::<MiniPlayerState>()
         .is_some_and(|state| state.can_linger);
     if main_window(cx).is_none()
-        && !(can_linger && Sonora::global(cx).settings.read(cx).close_to_tray())
+        && !(can_linger && (stay_in_tray || Sonora::global(cx).settings.read(cx).close_to_tray()))
         && live_window(cx).is_some()
     {
         close_window(cx, None);
