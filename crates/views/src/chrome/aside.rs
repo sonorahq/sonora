@@ -29,7 +29,6 @@ use ui::{
 use unicode_bidi::{BidiClass, Direction};
 
 use crate::chrome::{Chrome, PlayerBar, section_label};
-use crate::shared::lyrics::copy_lyrics;
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::{effects, quiet};
@@ -1084,7 +1083,8 @@ impl Aside {
         )
     }
 
-    /// The panel's title and controls. A queue from another device is shown read only.
+    /// The panel's title and, over this app's own queue, the controls that change it. They go
+    /// while another device has playback, since its queue is shown read only.
     fn header(
         &self,
         sections: &Sections,
@@ -1117,27 +1117,6 @@ impl Aside {
             .when(!self.titled, |this| {
                 this.justify_end().pr(theme.metrics.control + px(8.))
             })
-            .when(
-                self.tab == SideTab::Lyrics && *self.lyrics.read(cx).state() == LyricsState::Ready,
-                |this| {
-                    this.child(
-                        Button::new("copy-playing-lyrics")
-                            .ghost()
-                            .small()
-                            .icon("icons/copy.svg")
-                            .tooltip("lyrics-copy")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let lyrics = this.lyrics.read(cx);
-                                if *lyrics.state() == LyricsState::Ready
-                                    && let Some(hit) = lyrics.current()
-                                {
-                                    let sheet = hit.lyrics.clone();
-                                    copy_lyrics(sheet, cx);
-                                }
-                            })),
-                    )
-                },
-            )
             .when(self.tab == SideTab::Queue && !remote, |this| {
                 this.child(
                     div()
@@ -2531,7 +2510,7 @@ impl Render for Aside {
                     }
                 }),
             )
-            .when(self.titled || self.tab != SideTab::Members, |this| {
+            .when(self.titled || self.tab == SideTab::Queue, |this| {
                 this.child(self.header(&sections, remote, window, cx))
             })
             .child(

@@ -1,11 +1,11 @@
 use gpui::accesskit::Role;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Entity, FontWeight, Pixels, Point, Render, SharedString, WeakEntity,
-    Window, div, px,
+    AnyElement, App, ClipboardItem, Context, Entity, FontWeight, Pixels, Point, Render,
+    SharedString, WeakEntity, Window, div, px,
 };
 use i18n::t;
-use music::{Credit, Track};
+use music::{Credit, Lyrics, Track};
 use router::{Destination, Link as _};
 use state::{LyricsState, Outcome, Playback, SongDetail, SongPageChanged, Sonora, Toasts};
 use ui::{
@@ -18,7 +18,6 @@ use crate::shared::cells;
 use crate::shared::hero::{
     HeroMetaStrip, HeroPlayButton, PageHero, copyright_notice, release_date_label,
 };
-use crate::shared::lyrics::copy_lyrics;
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::trouble;
@@ -673,4 +672,25 @@ impl Render for SongView {
             .children(self.about_dialog(cx))
             .into_any_element()
     }
+}
+
+/// Copies the original text of the whole sheet, including any backing vocals.
+fn copy_lyrics(lyrics: Lyrics, cx: &mut App) {
+    let text = match lyrics {
+        Lyrics::Plain { text, .. } => text,
+        Lyrics::Synced { lines } => lines
+            .iter()
+            .flat_map(|line| {
+                std::iter::once(line.text.as_str())
+                    .chain(line.secondary.iter().map(|lane| lane.text.as_str()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    if text.trim().is_empty() {
+        Toasts::show(Outcome::Info, "lyrics-missing", cx);
+        return;
+    }
+    cx.write_to_clipboard(ClipboardItem::new_string(text));
+    Toasts::show(Outcome::Done, "toast-lyrics-copied", cx);
 }
