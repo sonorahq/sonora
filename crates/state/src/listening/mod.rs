@@ -673,7 +673,8 @@ impl Listening {
             self.waiting = Some(state);
             return self.read_own(unread, cx);
         }
-        let state = self.with_own(state);
+        let private = !self.session.read(cx).public_art();
+        let state = self.with_own(state, private);
         self.apply(state, cx);
     }
 
@@ -719,16 +720,16 @@ impl Listening {
         ));
     }
 
-    /// `state` with this app's own copy of each track it read. A track it could not read shows
-    /// no cover rather than whatever url another member sent.
-    fn with_own(&self, mut state: Shared) -> Shared {
+    /// `state` with this app's own copy of each track it read. When the provider's artwork is
+    /// `private`, any other track shows no cover rather than whatever url another member sent.
+    fn with_own(&self, mut state: Shared, private: bool) -> Shared {
         let own = |track: Track| match track.id.as_deref().and_then(|id| self.own.get(id)) {
             Some(Some(copy)) => copy.clone(),
-            Some(None) => Track {
+            _ if private => Track {
                 cover: None,
                 ..track
             },
-            None => track,
+            _ => track,
         };
         state.track = state.track.map(own);
         state.upcoming = state.upcoming.into_iter().map(own).collect();
