@@ -47,13 +47,13 @@ When you use Spotify, Apple Music, YouTube Music, Deezer, Tidal, Subsonic, Jelly
 
 Some services are told what you play. Apple Music receives a report for every catalog track played. Subsonic, Jellyfin and Plex servers receive now-playing and stop reports with the playback position. To check that the network is up, Sonora opens a connection to the current service's host.
 
-Plex and Jellyfin receive the computer's hostname as the device name with their requests, and Jellyfin also receives a random device identifier created at sign-in.
+Plex and Jellyfin receive the computer's hostname as the device name with their requests, along with a random identifier Sonora keeps on the device. Plex sees the same identifier for every Plex account on the device, and Jellyfin gets a new one at each sign-in.
 
-Signing in to YouTube Music, Apple Music or Deezer opens the service's own sign-in page in a separate window that keeps no cookies or data after it closes. To play YouTube tracks, Sonora may load a YouTube page in a hidden window of the same kind, where Google's own scripts check that playback comes from a real client.
+Signing in to YouTube Music, Apple Music, Deezer or Plex opens the service's own sign-in page in a separate window that keeps no cookies or data after it closes. To play YouTube tracks, Sonora may load a YouTube page in a hidden window of the same kind, where Google's own scripts check that playback comes from a real client.
 
 ## Protected playback
 
-Apple Music tracks are encrypted, and playing them needs Google's Widevine module. When no browser on the device already has a copy, Sonora asks before downloading it from Google (update.googleapis.com), and the download only goes ahead once the user accepts Google's terms. Google receives the operating system and processor architecture. After the first download, Sonora asks Google for a newer version each time it starts.
+Apple Music tracks are encrypted, and playing them needs Google's Widevine module. When no browser on the device already has a copy, Sonora asks before downloading it from Google (update.googleapis.com), then shows Google's terms from the download and installs the module only once the user accepts them. Google receives the operating system and processor architecture. After the first download, Sonora asks Google for a newer version each time it starts.
 
 Spotify plays through Spotify's own player program. Sonora asks before downloading it from Spotify (soloist-builds.spotifycdn.com) and afterwards downloads new versions without asking.
 
