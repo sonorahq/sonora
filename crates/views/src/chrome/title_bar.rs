@@ -544,7 +544,7 @@ impl Render for TitleBar {
                     .gap_1()
                     .items_center()
                     .when(navigation, |this| this.child(self.history(window, cx)))
-                    .when(cfg!(debug_assertions), |this| this.child(dev_badge()))
+                    .when(dev_badge_shown(), |this| this.child(dev_badge()))
                     .child(div().flex_1())
                     .when(navigation, |this| {
                         this.child(
@@ -634,6 +634,14 @@ fn traffic_lights_inset(settings: &AppSettings, height: Pixels) -> Option<Pixels
     #[cfg(not(target_os = "macos"))]
     let _ = (settings, height);
     None
+}
+
+/// Whether the title bar shows the dev badge. A debug build shows it unless `SONORA_DEV_BADGE=0`
+/// hides it, for screenshots that should look like a release.
+fn dev_badge_shown() -> bool {
+    static SHOWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    cfg!(debug_assertions)
+        && *SHOWN.get_or_init(|| std::env::var("SONORA_DEV_BADGE").as_deref() != Ok("0"))
 }
 
 /// The tag a debug build carries in its title bar, so it is never mistaken for a release. It names
