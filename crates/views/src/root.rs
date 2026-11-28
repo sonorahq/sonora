@@ -842,6 +842,11 @@ impl Root {
     /// workspace plays the entrance over the whole window, a move within the workspace plays it
     /// over the page, and reduced motion skips them all.
     fn transition_to(&mut self, destination: Destination, cx: &mut Context<Self>) {
+        if self.screens.song_detail.read(cx).lyrics_loading() {
+            self.screens
+                .song_detail
+                .update(cx, SongDetail::cancel_lyrics);
+        }
         self.navigation_transition = None;
         self.shell_entrance = None;
         self.shell_zoom = None;

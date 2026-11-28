@@ -7,7 +7,7 @@ use gpui::{
 use i18n::t;
 use music::{Credit, Track};
 use router::{Destination, Link as _};
-use state::{Playback, SongDetail, Sonora};
+use state::{LyricsState, Outcome, Playback, SongDetail, Sonora, Toasts};
 use ui::{
     ActiveTheme as _, Avatar, Button, Fact, Glowing as _, InfoCard, Initials, Popup, Scrollbar,
     Scroller, Skeleton, Tails as _, Text, clock,
@@ -18,6 +18,7 @@ use crate::shared::cells;
 use crate::shared::hero::{
     HeroMetaStrip, HeroPlayButton, PageHero, copyright_notice, release_date_label,
 };
+use crate::shared::lyrics::copy_lyrics;
 use crate::shared::menus::ItemMenu;
 use crate::shared::pins::Pinned as _;
 use crate::shared::trouble;
@@ -78,6 +79,8 @@ impl SongView {
         cx.observe(&playback, |_, _, cx| cx.notify()).detach();
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |_, _, cx| cx.notify()).detach();
+        let settings = Sonora::global(cx).settings.clone();
+        cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         let chrome = crate::chrome::Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
         let me = cx.entity_id();
@@ -118,6 +121,7 @@ impl SongView {
 
         let actions = div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_3()
             .child(HeroPlayButton::new(
@@ -134,7 +138,11 @@ impl SongView {
                             router::navigate(Destination::Album(album_id.clone().into()), cx);
                         }),
                 )
-            });
+            })
+            .when(
+                Sonora::global(cx).settings.read(cx).lyrics_enabled(),
+                |this| this.child(self.copy_lyrics_button(cx)),
+            );
 
         let pin = track.pin().map(|pin| pin.cover(cover.clone()));
         let view = self.me.clone();
@@ -156,6 +164,36 @@ impl SongView {
                 .ok();
             })
             .into_any_element()
+    }
+
+    fn copy_lyrics_button(&self, cx: &Context<Self>) -> Button {
+        let detail = self.detail.clone();
+        let loading = detail.read(cx).lyrics_loading();
+        Button::new("copy-song-lyrics")
+            .icon("icons/copy.svg")
+            .label(match loading {
+                true => t!("lyrics-loading"),
+                false => t!("lyrics-copy"),
+            })
+            .outline()
+            .disabled(loading)
+            .on_click(move |_, _, cx| {
+                detail.update(cx, |detail, cx| {
+                    detail.load_lyrics(
+                        |result, cx| match result {
+                            Ok(sheet) => copy_lyrics(sheet, cx),
+                            Err(LyricsState::Instrumental) => {
+                                Toasts::show(Outcome::Info, "lyrics-instrumental", cx)
+                            }
+                            Err(LyricsState::Failed(_)) => {
+                                Toasts::show(Outcome::Failed, "lyrics-failed", cx)
+                            }
+                            Err(_) => Toasts::show(Outcome::Info, "lyrics-missing", cx),
+                        },
+                        cx,
+                    );
+                });
+            })
     }
 
     fn menu(&self, cx: &mut Context<Self>) -> Option<Popup> {

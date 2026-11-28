@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use music::{AlbumDetail, ArtistProfile, Track};
 use tokio::task::AbortHandle;
 
 use crate::catalog::SongPage;
-use crate::{Io, Session, SessionEvent, join};
+use crate::{Io, LyricsState, Session, SessionEvent, Sonora, join};
 
 pub struct SongDetail {
     id: Option<String>,
@@ -17,6 +17,7 @@ pub struct SongDetail {
     io: Io,
     task: Option<Task<()>>,
     request: Option<AbortHandle>,
+    lyrics_task: Option<Task<()>>,
 }
 
 impl SongDetail {
@@ -50,6 +51,7 @@ impl SongDetail {
             io,
             task: None,
             request: None,
+            lyrics_task: None,
         }
     }
 
@@ -80,6 +82,44 @@ impl SongDetail {
     }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    pub fn lyrics_loading(&self) -> bool {
+        self.lyrics_task.is_some()
+    }
+
+    /// Finds the open song's lyrics on demand. Leaving or clearing the page cancels the request.
+    pub fn load_lyrics(
+        &mut self,
+        done: impl FnOnce(Result<music::Lyrics, LyricsState>, &mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let sonora = Sonora::global(cx);
+        if self.lyrics_loading() || !sonora.settings.read(cx).lyrics_enabled() {
+            return;
+        }
+        let (Some(id), Some(track)) = (self.id(), self.track()) else {
+            return;
+        };
+        let lookup = sonora.lyrics.read(cx).for_song(id, track, cx);
+        self.lyrics_task = Some(cx.spawn(async move |this, cx| {
+            let result = lookup.await;
+            this.update(cx, |this, cx| {
+                this.lyrics_task = None;
+                if Sonora::global(cx).settings.read(cx).lyrics_enabled() {
+                    done(result, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    pub fn cancel_lyrics(&mut self, cx: &mut Context<Self>) {
+        if self.lyrics_task.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -151,6 +191,7 @@ impl SongDetail {
 
     fn clear(&mut self) {
         self.task = None;
+        self.lyrics_task = None;
         if let Some(request) = self.request.take() {
             request.abort();
         }

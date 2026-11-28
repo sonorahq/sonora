@@ -3,7 +3,7 @@ use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use logic::lyrics::{awaits_better, gather, ordered};
 use lyrics::LOCAL;
 use music::{LyricsHit, LyricsProvider, LyricsQuery, Track, TrackKey};
@@ -187,6 +187,55 @@ impl Lyrics {
         self.hits.get(self.chosen)
     }
 
+    /// Looks up the lyrics for a song without changing the sheet the player follows.
+    pub(crate) fn for_song(
+        &self,
+        id: &str,
+        track: &Track,
+        cx: &App,
+    ) -> Task<Result<music::Lyrics, LyricsState>> {
+        let query = self.query(track, id, cx);
+        if self.following.as_deref() == Some(id)
+            && self.following_query.as_ref() == Some(&query)
+            && self.state == LyricsState::Ready
+            && let Some(hit) = self.current()
+        {
+            return Task::ready(Ok(hit.lyrics.clone()));
+        }
+
+        let settings = self.settings.read(cx);
+        let priority = settings.lyrics_provider_priority();
+        let worded_first = settings.lyrics_word_synced_first();
+        let (enabled, asked) = self.sources(id, cx);
+        let cached = match self.recent.iter().find(|(held, _)| held == id) {
+            Some((_, found)) => Task::ready(Some(found.clone())),
+            None => self.stored(id, track, cx),
+        };
+        let io = self.io.clone();
+
+        cx.background_executor().spawn(async move {
+            let cached = cached.await.unwrap_or_default();
+            let providers = cached.pending(asked, &query, &enabled);
+            let mut hits = cached.held(&enabled, &providers);
+            if !providers.is_empty() {
+                let (sender, mut incoming) = tokio::sync::mpsc::unbounded_channel();
+                let search = query.clone();
+                let worker = io.spawn(async move { gather(providers, search, sender).await });
+                while let Some((_, mut found)) = incoming.recv().await {
+                    hits.append(&mut found);
+                }
+                join(worker)
+                    .await
+                    .map_err(|error| LyricsState::Failed(error.to_string()))?;
+            }
+
+            let instrumental = lyrics::instrumental(&query, &hits);
+            let ranked = ordered(&query, hits, &priority, worded_first);
+            let state = state_for(&ranked, instrumental);
+            ranked.into_iter().next().map(|hit| hit.lyrics).ok_or(state)
+        })
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -296,7 +345,7 @@ impl Lyrics {
     }
 
     /// Reads the answer stored for `id` off the main thread.
-    fn stored(&self, id: &str, track: &Track, cx: &Context<Self>) -> Task<Option<Found>> {
+    fn stored(&self, id: &str, track: &Track, cx: &App) -> Task<Option<Found>> {
         let key = self.key(id, track, cx);
         let known: Vec<&'static str> = self
             .providers
@@ -314,7 +363,7 @@ impl Lyrics {
     /// One key per track. The stored answer covers every service that has replied, whichever
     /// are enabled now, and the selection is applied when it is shown. Services that replied
     /// empty are asked again while the stored answer holds nothing usable.
-    fn key(&self, id: &str, track: &Track, cx: &Context<Self>) -> String {
+    fn key(&self, id: &str, track: &Track, cx: &App) -> String {
         let key = match self.session.read(cx).slug_for(id) {
             Some(slug) => format!("{slug}:{id}:lyrics"),
             None => format!("{id}:lyrics"),
@@ -329,7 +378,7 @@ impl Lyrics {
 
     /// The providers a lookup for `id` may ask. The file's own lyrics are read only for a local
     /// file, and the services only when its metadata may go online.
-    fn asked(&self, id: &str, cx: &Context<Self>) -> Vec<Arc<dyn LyricsProvider>> {
+    fn asked(&self, id: &str, cx: &App) -> Vec<Arc<dyn LyricsProvider>> {
         let online = self.online(id, cx);
         let reads_file = self.reads_file(id, cx);
         let settings = self.settings.read(cx);
@@ -344,7 +393,23 @@ impl Lyrics {
             .collect()
     }
 
-    fn query(&self, track: &Track, id: &str, cx: &Context<Self>) -> LyricsQuery {
+    /// Sources whose cached sheets may be shown and sources this lookup may contact.
+    fn sources(&self, id: &str, cx: &App) -> (Vec<&'static str>, Vec<Arc<dyn LyricsProvider>>) {
+        let settings = self.settings.read(cx);
+        let enabled = self
+            .providers
+            .iter()
+            .map(|provider| provider.name())
+            .filter(|name| settings.lyrics_provider_enabled(name))
+            .collect();
+        let mut asked = self.asked(id, cx);
+        if crate::Network::offline(cx) {
+            asked.retain(|provider| provider.name() == LOCAL);
+        }
+        (enabled, asked)
+    }
+
+    fn query(&self, track: &Track, id: &str, cx: &App) -> LyricsQuery {
         let key = self.session.read(cx).slug_for(id).map(|provider| TrackKey {
             provider,
             id: id.to_owned(),
@@ -354,11 +419,11 @@ impl Lyrics {
 
     /// Whether the services may be asked about this track, which a local file only allows when
     /// the user lets its metadata go online.
-    fn online(&self, id: &str, cx: &Context<Self>) -> bool {
+    fn online(&self, id: &str, cx: &App) -> bool {
         !music::is_local_id(id) || self.settings.read(cx).lyrics_for_local_files()
     }
 
-    fn reads_file(&self, id: &str, cx: &Context<Self>) -> bool {
+    fn reads_file(&self, id: &str, cx: &App) -> bool {
         music::is_local_id(id) && self.settings.read(cx).lyrics_provider_enabled(LOCAL)
     }
 
@@ -430,17 +495,7 @@ impl Lyrics {
         let settings = self.settings.read(cx);
         let priority = settings.lyrics_provider_priority();
         let worded_first = settings.lyrics_word_synced_first();
-        let enabled: Vec<&'static str> = self
-            .providers
-            .iter()
-            .map(|provider| provider.name())
-            .filter(|name| settings.lyrics_provider_enabled(name))
-            .collect();
-        let mut asked = self.asked(&id, cx);
-        // Offline mode reads a file's own lyrics and what the cache kept, and asks no service.
-        if crate::Network::offline(cx) {
-            asked.retain(|provider| provider.name() == LOCAL);
-        }
+        let (enabled, asked) = self.sources(&id, cx);
         let key = self.key(&id, &track, cx);
         let remembered = self.recall(&id);
         let stored = remembered.is_none().then(|| self.stored(&id, &track, cx));
@@ -457,14 +512,7 @@ impl Lyrics {
                 this.update(cx, |this, _| this.hold(id, held)).ok();
             }
             let cached = cached.unwrap_or_default();
-            // Services that replied empty are asked again while nothing usable is stored:
-            // catalogues grow, and the one source that had anything may since have been
-            // switched off, leaving a stored answer with no enabled hits.
-            let stored = cached.usable(&query, &enabled);
-            let providers: Vec<Arc<dyn LyricsProvider>> = asked
-                .into_iter()
-                .filter(|provider| !stored || !cached.covers(provider))
-                .collect();
+            let providers = cached.pending(asked, &query, &enabled);
             if providers.is_empty() {
                 this.update(cx, |this, cx| {
                     if this.finished(&id) {
@@ -477,17 +525,7 @@ impl Lyrics {
             }
 
             // The cached hits from enabled sources go in first, as if they had just arrived.
-            let held: Vec<LyricsHit> = cached
-                .hits
-                .iter()
-                .filter(|hit| enabled.contains(&hit.source))
-                .filter(|hit| {
-                    !providers
-                        .iter()
-                        .any(|provider| provider.name() == hit.source)
-                })
-                .cloned()
-                .collect();
+            let held = cached.held(&enabled, &providers);
             let (sender, mut incoming) = tokio::sync::mpsc::unbounded_channel();
             if !held.is_empty() {
                 sender.send((None, held)).ok();
@@ -731,6 +769,29 @@ struct Found {
 }
 
 impl Found {
+    /// Sources that still need asking. Retry empty answers when none can be shown.
+    fn pending(
+        &self,
+        mut asked: Vec<Arc<dyn LyricsProvider>>,
+        query: &LyricsQuery,
+        enabled: &[&str],
+    ) -> Vec<Arc<dyn LyricsProvider>> {
+        if self.usable(query, enabled) {
+            asked.retain(|provider| !self.covers(provider));
+        }
+        asked
+    }
+
+    /// Enabled sheets whose sources will not be asked for a fresh answer.
+    fn held(&self, enabled: &[&str], pending: &[Arc<dyn LyricsProvider>]) -> Vec<LyricsHit> {
+        self.hits
+            .iter()
+            .filter(|hit| enabled.contains(&hit.source))
+            .filter(|hit| !pending.iter().any(|provider| provider.name() == hit.source))
+            .cloned()
+            .collect()
+    }
+
     /// Whether an enabled source has lyrics that can be shown, or confirms an instrumental.
     fn usable(&self, query: &LyricsQuery, enabled: &[impl AsRef<str>]) -> bool {
         self.hits.iter().any(|hit| {
