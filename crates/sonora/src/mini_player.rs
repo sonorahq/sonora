@@ -28,7 +28,8 @@ impl Global for MainWindow {}
 struct MiniPlayerState {
     window: Option<WindowHandle<MiniPlayerView>>,
     opening: bool,
-    minimized_main: bool,
+    can_linger: bool,
+    minimized_main: Option<AnyWindowHandle>,
     last_origin: Option<Point<Pixels>>,
     last_toggle: Option<Instant>,
     /// Preferences currently applied to the open window, used to detect live setting changes.
@@ -37,8 +38,11 @@ struct MiniPlayerState {
 impl Global for MiniPlayerState {}
 
 /// Initializes the mini player global state and observes live preference changes.
-pub fn init(cx: &mut App) {
-    cx.set_global(MiniPlayerState::default());
+pub fn init(lingers: bool, cx: &mut App) {
+    cx.set_global(MiniPlayerState {
+        can_linger: lingers,
+        ..MiniPlayerState::default()
+    });
 
     let settings = Sonora::global(cx).settings.clone();
     cx.observe(&settings, |settings, cx| {
@@ -69,7 +73,7 @@ pub fn toggle(cx: &mut App) {
     }
 
     if live_window(cx).is_some() {
-        close_window(cx, true);
+        close(cx);
     } else {
         open(cx);
     }
@@ -110,11 +114,12 @@ pub fn open(cx: &mut App) {
             }
         };
 
+        let minimized_target = prefs.minimize_main.then(|| main_window(cx)).flatten();
         {
             let state = cx.global_mut::<MiniPlayerState>();
             state.window = Some(handle);
             state.applied = Some(prefs);
-            state.minimized_main = prefs.minimize_main;
+            state.minimized_main = minimized_target;
         }
 
         let _ = handle.update(cx, |_, window, _| {
@@ -125,8 +130,8 @@ pub fn open(cx: &mut App) {
             platform::set_always_on_top(window, prefs.always_on_top);
         });
 
-        if prefs.minimize_main {
-            minimize_main(cx);
+        if let Some(target) = minimized_target {
+            minimize_window(target, cx);
         }
     });
 }
@@ -135,8 +140,18 @@ pub fn open(cx: &mut App) {
 pub fn close(cx: &mut App) {
     let restore = cx
         .try_global::<MiniPlayerState>()
-        .is_some_and(|state| state.minimized_main);
+        .and_then(|state| state.minimized_main);
     close_window(cx, restore);
+}
+
+/// Closes the mini player and focuses or reopens the main window (`ExpandMiniPlayer` action).
+pub fn expand(cx: &mut App) {
+    if let Some(state) = cx.try_global::<MiniPlayerState>()
+        && state.window.is_some()
+    {
+        close_window(cx, None);
+    }
+    crate::show_window(cx);
 }
 
 /// Keeps main and mini player lifecycles consistent when either window closes from the OS.
@@ -148,49 +163,59 @@ pub fn on_window_closed(cx: &mut App, closed_id: WindowId) {
     if let Some(handle) = state.window
         && handle.window_id() == closed_id
     {
-        let restore = state.minimized_main;
         let state = cx.global_mut::<MiniPlayerState>();
         state.window = None;
         state.applied = None;
-        state.minimized_main = false;
-        if restore {
-            restore_main(cx);
+        let restore = state.minimized_main.take();
+        if let Some(target) = restore {
+            restore_window(target, cx);
         }
         return;
     }
 
+    if state
+        .minimized_main
+        .is_some_and(|target| target.window_id() == closed_id)
+    {
+        cx.global_mut::<MiniPlayerState>().minimized_main = None;
+    }
+
+    let can_linger = cx
+        .try_global::<MiniPlayerState>()
+        .is_some_and(|state| state.can_linger);
     if main_window(cx).is_none()
-        && !Sonora::global(cx).settings.read(cx).close_to_tray()
+        && !(can_linger && Sonora::global(cx).settings.read(cx).close_to_tray())
         && live_window(cx).is_some()
     {
-        close_window(cx, false);
+        close_window(cx, None);
     }
 }
 
-/// Restores and focuses the main window if it is still alive.
-pub fn restore_main(cx: &mut App) {
-    let Some(main) = main_window(cx) else {
+/// Restores and focuses `window` if it is still alive.
+pub fn restore_window(window: AnyWindowHandle, cx: &mut App) {
+    if !is_alive(cx, window.window_id()) {
         return;
-    };
+    }
     cx.defer(move |cx| {
-        let _ = main.update(cx, |_, window, _| {
+        let _ = window.update(cx, |_, window, _| {
             platform::restore(window);
             window.activate_window();
         });
     });
 }
 
-fn close_window(cx: &mut App, restore: bool) {
+fn close_window(cx: &mut App, restore: Option<AnyWindowHandle>) {
     let handle = {
         let state = cx.global_mut::<MiniPlayerState>();
         state.applied = None;
-        state.minimized_main = false;
+        state.minimized_main = None;
         state.window.take()
     };
 
     if let Some(handle) = handle {
         cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, cx| {
+            let _ = handle.update(cx, |view, window, cx| {
+                view.finish_volume_drag(cx);
                 let origin = window.window_bounds().get_bounds().origin;
                 cx.global_mut::<MiniPlayerState>().last_origin = Some(origin);
                 let x = origin.x / px(1.);
@@ -204,15 +229,12 @@ fn close_window(cx: &mut App, restore: bool) {
         });
     }
 
-    if restore {
-        restore_main(cx);
+    if let Some(target) = restore {
+        restore_window(target, cx);
     }
 }
 
-fn minimize_main(cx: &mut App) {
-    let Some(main) = main_window(cx) else {
-        return;
-    };
+fn minimize_window(main: AnyWindowHandle, cx: &mut App) {
     cx.defer(move |cx| {
         let _ = main.update(cx, |_, window, _| window.minimize_window());
     });
@@ -288,6 +310,13 @@ fn window_options(
     }
 }
 
+fn clamp_axis(value: Pixels, origin: Pixels, window_span: Pixels, screen_span: Pixels) -> Pixels {
+    if screen_span <= window_span {
+        return origin;
+    }
+    value.clamp(origin, origin + screen_span - window_span)
+}
+
 fn initial_placement(prefs: MiniPlayerPrefs, cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
     let dims = mini_player_dimensions(prefs);
     let window_size = size(px(dims.width), px(dims.height));
@@ -311,13 +340,17 @@ fn initial_placement(prefs: MiniPlayerPrefs, cx: &App) -> (Bounds<Pixels>, Optio
             .find(|display| display.bounds().contains(&center))
         {
             let screen = display.bounds();
-            let x = origin.x.clamp(
+            let x = clamp_axis(
+                origin.x,
                 screen.origin.x,
-                screen.origin.x + screen.size.width - window_size.width,
+                window_size.width,
+                screen.size.width,
             );
-            let y = origin.y.clamp(
+            let y = clamp_axis(
+                origin.y,
                 screen.origin.y,
-                screen.origin.y + screen.size.height - window_size.height,
+                window_size.height,
+                screen.size.height,
             );
             return (Bounds::new(point(x, y), window_size), Some(display.id()));
         }
@@ -327,10 +360,12 @@ fn initial_placement(prefs: MiniPlayerPrefs, cx: &App) -> (Bounds<Pixels>, Optio
         Some(display) => {
             let screen = display.bounds();
             let origin = point(
-                screen.origin.x + screen.size.width - window_size.width - px(SCREEN_MARGIN),
-                screen.origin.y + screen.size.height
+                (screen.origin.x + screen.size.width - window_size.width - px(SCREEN_MARGIN))
+                    .max(screen.origin.x),
+                (screen.origin.y + screen.size.height
                     - window_size.height
-                    - px(SCREEN_BOTTOM_MARGIN),
+                    - px(SCREEN_BOTTOM_MARGIN))
+                .max(screen.origin.y),
             );
             (Bounds::new(origin, window_size), Some(display.id()))
         }

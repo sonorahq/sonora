@@ -395,9 +395,23 @@ impl PlayerBar {
             .flex()
             .flex_none()
             .items_center()
-            .gap_1()
+            .gap(Self::corner_gap())
             .child(self.mini_player_button())
             .child(self.fullscreen_button(cx))
+            .into_any_element()
+    }
+
+    /// Gap between the mini-player and fullscreen buttons in [`Self::corner_buttons`].
+    pub(crate) fn corner_gap() -> gpui::Rems {
+        rems(TOOL_GAP)
+    }
+
+    /// Empty slot matching the mini-player button width so fullscreen's bottom bar aligns with
+    /// the main player bar's controls.
+    pub(crate) fn corner_spacer(cx: &App) -> AnyElement {
+        div()
+            .flex_none()
+            .size(cx.theme().metrics.control_small)
             .into_any_element()
     }
 

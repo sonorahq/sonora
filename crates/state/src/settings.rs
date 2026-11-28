@@ -1879,7 +1879,10 @@ impl AppSettings {
             shuffle_button: appearance.mini_player_shuffle,
             repeat_button: appearance.mini_player_repeat,
             volume_button: appearance.mini_player_volume,
-            lyrics_mode: MiniPlayerLyricsMode::from_id(&appearance.mini_player_lyrics_mode),
+            lyrics_mode: match self.lyrics_enabled() {
+                true => MiniPlayerLyricsMode::from_id(&appearance.mini_player_lyrics_mode),
+                false => MiniPlayerLyricsMode::Off,
+            },
             lyrics_blur: appearance.mini_player_lyrics_blur,
             lyrics_karaoke: appearance.mini_player_lyrics_karaoke,
             lyrics_size: MiniPlayerLyricsSize::from_id(&appearance.mini_player_lyrics_size),

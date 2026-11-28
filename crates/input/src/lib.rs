@@ -37,6 +37,7 @@ actions!(
         OpenSettings,
         ToggleFullscreen,
         ToggleMiniPlayer,
+        ExpandMiniPlayer,
         CloseMiniPlayer,
         ToggleQueue,
         ToggleLyrics,

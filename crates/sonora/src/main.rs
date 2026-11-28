@@ -212,7 +212,7 @@ fn main() -> ExitCode {
             cx.set_quit_mode(QuitMode::Explicit);
         }
         actions::register(lingers, cx);
-        mini_player::init(cx);
+        mini_player::init(lingers, cx);
         #[cfg(target_os = "macos")]
         gestures::install(cx);
         memory::watch(cx);
@@ -321,12 +321,10 @@ fn destination(linked: &Linked) -> Option<Destination> {
     }
 }
 
-fn show_window(cx: &mut App) {
+pub(crate) fn show_window(cx: &mut App) {
     match mini_player::main_window(cx) {
         Some(window) => {
-            window
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
+            mini_player::restore_window(window, cx);
         }
         None => {
             dock::show(true);

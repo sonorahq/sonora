@@ -15,7 +15,7 @@ use gpui::{
     SharedString, Subscription, Task, Window, WindowControlArea, div, px,
 };
 use i18n::t;
-use input::{CloseMiniPlayer, MINI_PLAYER_CONTEXT, ToggleMiniPlayer};
+use input::{CloseMiniPlayer, ExpandMiniPlayer, MINI_PLAYER_CONTEXT};
 use state::{
     AppSettings, Lyrics, LyricsState, MiniPlayerLyricsMode, MiniPlayerLyricsSize,
     MiniPlayerOrientation, MiniPlayerPrefs, MiniPlayerSize, Playback, Repeat, RomanizationScripts,
@@ -293,6 +293,30 @@ fn drag_zone<E: InteractiveElement>(zone: E) -> E {
     zone.window_control_area(WindowControlArea::Drag)
 }
 
+/// Identity of the track and device a seek drag started against, so a track or device change
+/// cancels any pending release seek.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SeekTargetIdentity {
+    track_id: Option<String>,
+    title: String,
+    device_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingSeek {
+    fraction: f32,
+    target: SeekTargetIdentity,
+}
+
+fn current_seek_identity(playback: &Playback, cx: &App) -> SeekTargetIdentity {
+    let track = playback.shown_track(cx);
+    SeekTargetIdentity {
+        track_id: track.as_ref().and_then(|t| t.id.clone()),
+        title: track.map_or_else(String::new, |t| t.name),
+        device_id: steered(cx).map(|other| other.device.id),
+    }
+}
+
 /// Floating compact playback widget rendered in its own window.
 pub struct MiniPlayerView {
     playback: Entity<Playback>,
@@ -303,7 +327,7 @@ pub struct MiniPlayerView {
     ticker: Option<(Duration, Task<()>)>,
     scrubber: ScrubberState,
     volume: RisingVolume,
-    pending_seek: Option<f32>,
+    pending_seek: Option<PendingSeek>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -322,6 +346,7 @@ impl MiniPlayerView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sonora = Sonora::global(cx);
         let playback = sonora.playback.clone();
+        let devices = sonora.devices.clone();
         let lyrics = sonora.lyrics.clone();
         let settings = sonora.settings.clone();
         let ticks = playback.read(cx).ticks().clone();
@@ -340,6 +365,15 @@ impl MiniPlayerView {
                 let cover = playback.read(cx).shown_track(cx).and_then(|t| t.cover);
                 this.ambient
                     .update(cx, |ambient, cx| ambient.follow(cover, cx));
+                this.clear_stale_seek(cx);
+                this.sync_ticker(cx);
+                cx.notify();
+            }),
+            cx.observe(&devices, |this, _, cx| {
+                let cover = this.playback.read(cx).shown_track(cx).and_then(|t| t.cover);
+                this.ambient
+                    .update(cx, |ambient, cx| ambient.follow(cover, cx));
+                this.clear_stale_seek(cx);
                 this.sync_ticker(cx);
                 cx.notify();
             }),
@@ -359,6 +393,9 @@ impl MiniPlayerView {
                 this.settings.update(cx, |settings, cx| {
                     settings.set_mini_player_origin(Some((x, y)), cx);
                 });
+            }),
+            cx.on_release(|this: &mut Self, cx| {
+                this.finish_volume_drag(cx);
             }),
         ];
 
@@ -381,6 +418,25 @@ impl MiniPlayerView {
         this
     }
 
+    /// Finalizes an in-flight local volume slider drag so closing mid-drag still persists gain.
+    pub fn finish_volume_drag(&mut self, cx: &mut App) {
+        if !self.volume.held {
+            return;
+        }
+        self.volume.held = false;
+        self.playback
+            .update(cx, |playback, cx| playback.end_volume_slide(cx));
+    }
+
+    fn clear_stale_seek(&mut self, cx: &App) {
+        let Some(pending) = &self.pending_seek else {
+            return;
+        };
+        if pending.target != current_seek_identity(self.playback.read(cx), cx) {
+            self.pending_seek = None;
+        }
+    }
+
     fn sync_ambient_radius(&self, cx: &mut Context<Self>) {
         let radius = corner_radius(self.settings.read(cx).mini_player().rounding);
         self.ambient.update(cx, |ambient, cx| {
@@ -390,7 +446,10 @@ impl MiniPlayerView {
 
     /// Repaints at karaoke pace in immersive lyrics mode, 250ms while playing, idle on pause.
     fn sync_ticker(&mut self, cx: &mut Context<Self>) {
-        let playing = self.playback.read(cx).wants_playing();
+        let playing = steered(cx).as_ref().map_or_else(
+            || self.playback.read(cx).wants_playing(),
+            |other| other.state.playing,
+        );
         if !playing {
             self.ticker = None;
             return;
@@ -435,7 +494,7 @@ impl MiniPlayerView {
                     .tint(icon_color)
                     .tooltip("mini-player-restore")
                     .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ToggleMiniPlayer), cx);
+                        window.dispatch_action(Box::new(ExpandMiniPlayer), cx);
                     }),
             ))
             .child(no_drag(
@@ -496,8 +555,12 @@ impl MiniPlayerView {
         let muted = theme.foreground.opacity(0.65);
         let duration = now.duration;
         let enabled = now.has_track && !duration.is_zero();
+        let current_target = current_seek_identity(self.playback.read(cx), cx);
         let progress = self
             .pending_seek
+            .as_ref()
+            .filter(|pending| pending.target == current_target)
+            .map(|pending| pending.fraction)
             .unwrap_or_else(|| fraction(now.position, duration));
         let text_size = theme.text(ui::Text::Tiny);
         let width = clock_width(duration, time_left, text_size);
@@ -515,12 +578,18 @@ impl MiniPlayerView {
             .popover(theme.popover, theme.border, theme.popover_foreground)
             .enabled(enabled)
             .on_move(cx.listener(|this, at: &f32, _, cx| {
-                this.pending_seek = Some(*at);
+                let target = current_seek_identity(this.playback.read(cx), cx);
+                this.pending_seek = Some(PendingSeek {
+                    fraction: *at,
+                    target,
+                });
                 cx.notify();
             }))
             .on_release(cx.listener(move |this, _: &MouseUpEvent, _, cx| {
-                if let Some(at) = this.pending_seek.take() {
-                    let target = seek_target(duration, at);
+                if let Some(pending) = this.pending_seek.take()
+                    && pending.target == current_seek_identity(playback.read(cx), cx)
+                {
+                    let target = seek_target(duration, pending.fraction);
                     playback.update(cx, |playback, cx| playback.seek(target, cx));
                 }
             }));
