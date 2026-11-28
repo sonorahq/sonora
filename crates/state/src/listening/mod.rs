@@ -133,7 +133,8 @@ pub struct Listening {
     /// This app's own copies of session tracks from a provider whose artwork is private, read by
     /// id so their covers load with this account. `None` marks a track that could not be read.
     own: HashMap<String, Option<Track>>,
-    /// The read of those copies under way. Nothing is brought in step until it is done.
+    /// The read of those copies under way. Only a current track still being read holds
+    /// playback back, and the queue picks up the rest as they arrive.
     reading: Option<Task<()>>,
     /// Whether the last save was turned down. It stays so until a save goes through.
     rejected: bool,
@@ -630,7 +631,16 @@ impl Listening {
         let ours = session.provider_slug() == Some(provider.as_str());
         let gone = !session.is_pending() && (!ours || session.client().is_none());
         match event {
-            SessionEvent::SignedIn | SessionEvent::Reconnected if ours => self.catch_up(cx),
+            SessionEvent::SignedIn if ours => {
+                // copies read by the account signed in before must not show under this one
+                self.own.clear();
+                self.reading = None;
+                if let Some(shared) = self.shared.clone() {
+                    self.read_own(&shared, cx);
+                }
+                self.catch_up(cx);
+            }
+            SessionEvent::Reconnected if ours => self.catch_up(cx),
             _ if gone => self.leave(cx),
             _ => {}
         }
@@ -662,42 +672,48 @@ impl Listening {
 
     /// Brings playback in step with the state waiting for it, once that can play here.
     fn catch_up(&mut self, cx: &mut Context<Self>) {
-        if !self.ready(cx) || self.reading.is_some() {
+        if !self.ready(cx) {
             return;
         }
         let Some(state) = self.waiting.take() else {
             return;
         };
-        let unread = self.unread(&state, cx);
-        if !unread.is_empty() {
+        self.read_own(&state, cx);
+        let current = state.track.as_ref().and_then(|track| track.id.as_deref());
+        if current.is_some_and(|id| self.unread(id, cx)) {
             self.waiting = Some(state);
-            return self.read_own(unread, cx);
+            return;
         }
         let private = !self.session.read(cx).public_art();
         let state = self.with_own(state, private);
         self.apply(state, cx);
     }
 
-    /// The tracks of `state` this app still needs its own copy of. Only a provider whose
-    /// artwork is private needs one, since the session never carries such a cover.
-    fn unread(&self, state: &Shared, cx: &App) -> Vec<String> {
-        if self.session.read(cx).public_art() {
-            return Vec::new();
+    /// Whether this app still needs its own copy of track `id`. Only a provider whose artwork
+    /// is private needs one, since the session never carries such a cover.
+    fn unread(&self, id: &str, cx: &App) -> bool {
+        !music::is_local_id(id) && !self.own.contains_key(id) && !self.session.read(cx).public_art()
+    }
+
+    /// Reads the tracks of `state` this app has no copy of with its own account, unless a read
+    /// is under way. Once read, they replace the session's copies in the queue and playback is
+    /// brought in step. A track that cannot be read is remembered as such, so it is not asked
+    /// for again.
+    fn read_own(&mut self, state: &Shared, cx: &mut Context<Self>) {
+        if self.reading.is_some() {
+            return;
         }
         let mut seen = HashSet::new();
-        state
+        let ids: Vec<String> = state
             .track
             .iter()
             .chain(&state.upcoming)
             .filter_map(|track| track.id.clone())
-            .filter(|id| !music::is_local_id(id) && !self.own.contains_key(id))
-            .filter(|id| seen.insert(id.clone()))
-            .collect()
-    }
-
-    /// Reads `ids` with this app's account, then brings playback in step. A track that cannot
-    /// be read is remembered as such, so it is not asked for again.
-    fn read_own(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+            .filter(|id| self.unread(id, cx) && seen.insert(id.clone()))
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
         let Some(client) = self.session.read(cx).client() else {
             return;
         };
@@ -713,6 +729,13 @@ impl Listening {
                 for id in asked {
                     let track = read.remove(&id);
                     this.own.insert(id, track);
+                }
+                let own = &this.own;
+                this.queue.update(cx, |queue, cx| {
+                    queue.refresh(|id| own.get(id).and_then(Option::as_ref), cx)
+                });
+                if let Some(shared) = this.shared.clone() {
+                    this.read_own(&shared, cx);
                 }
                 this.catch_up(cx);
             },
