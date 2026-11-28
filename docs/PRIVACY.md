@@ -2,7 +2,7 @@
 
 Sonora does not require a Sonora account. It does not collect or store users' music libraries, listening history, streaming credentials or personal profiles on any server of its own.
 
-Sonora does reach the network on its own in a few cases: the installation count, update checks and lyrics lookups. Everything else on this page happens only when the user signs in to a service or turns a feature on. This page lists every place Sonora sends data and what it sends.
+Sonora does reach the network on its own in a few cases: the installation count, update checks and lyrics lookups. Everything else on this page happens only after the user does something that needs it, such as signing in to a service, turning a feature on, opening a shared link or opening the About page. This page lists every place Sonora sends data and what it sends.
 
 ## Installation count
 
@@ -90,7 +90,7 @@ Opening a spotify.link or Deezer short link (link.deezer.com, deezer.page.link o
 
 ## SponsorBlock
 
-SponsorBlock is off by default. When it is on, Sonora asks SponsorBlock (sponsor.ajay.app) which parts of a YouTube video to skip. The request carries only the first four characters of a hash of the video's ID, so SponsorBlock cannot tell which video it was.
+SponsorBlock is off by default. When it is on, Sonora asks SponsorBlock (sponsor.ajay.app) which parts of a YouTube video to skip. The request carries only the first four characters of a hash of the video's ID, and SponsorBlock answers with every video it knows whose hash starts the same way. SponsorBlock can only narrow the video down to those, and it can tell which one it was when no other video shares the prefix.
 
 ## Discord rich presence
 
