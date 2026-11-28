@@ -679,8 +679,14 @@ impl Listening {
             return;
         };
         self.read_own(&state, cx);
+        // a track that plays here already, as one this app started does, needs no copy first
         let current = state.track.as_ref().and_then(|track| track.id.as_deref());
-        if current.is_some_and(|id| self.unread(id, cx)) {
+        let here = self
+            .queue
+            .read(cx)
+            .current()
+            .and_then(|track| track.id.clone());
+        if current.is_some_and(|id| here.as_deref() != Some(id) && self.unread(id, cx)) {
             self.waiting = Some(state);
             return;
         }
@@ -734,6 +740,16 @@ impl Listening {
                 this.queue.update(cx, |queue, cx| {
                     queue.refresh(|id| own.get(id).and_then(Option::as_ref), cx)
                 });
+                // playback keeps a copy of its track, which may have moved on to one just read
+                let playing = this
+                    .playback
+                    .read(cx)
+                    .track()
+                    .and_then(|track| track.id.clone());
+                if let Some(Some(copy)) = playing.and_then(|id| this.own.get(&id)).cloned() {
+                    this.playback
+                        .update(cx, |playback, cx| playback.refresh_track(&copy, cx));
+                }
                 if let Some(shared) = this.shared.clone() {
                     this.read_own(&shared, cx);
                 }
