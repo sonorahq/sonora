@@ -7,11 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Copy the full lyrics from the song details page.
+
 ## [0.51.0] - 2026-11-28
 
 ### Added
 
-- Copy the full lyrics from the song details page.
 - On Navidrome 0.58 and later, limit Sonora to several libraries at once by ticking them in Manage accounts → Library.
 - Keep several Subsonic, Jellyfin and Plex servers side by side, each with its own library, downloads and queue. Add another and switch between them from the arrow on the service's card in Manage accounts or from the account menu.
 - Lyrics without timing scroll on their own over the length of the song, so the last line shows ten seconds before it ends. Scroll them yourself and they carry on from there at the same pace until you press the follow button. Turn it off under Settings → Lyrics → Auto-scroll plain lyrics.
