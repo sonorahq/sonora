@@ -7,18 +7,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- Copy the full lyrics from the song details page.
-
-### Changed
-
-- The app icon has thicker lines, so it reads better in the Dock, taskbar and tray.
-
-### Fixed
-
-- A Sonora Session on Subsonic, Jellyfin or Plex no longer shares your server's address, or the sign-in of a Subsonic or Plex server, with the session server and the other members. Everyone in the session sees covers loaded through their own account instead.
-
 ## [0.51.0] - 2026-11-28
 
 ### Added
@@ -50,9 +38,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
 - `"traffic_light_reversed": true` under `appearance` in settings.json swaps minimise and maximise in the traffic light window controls, so on the right they read minimise, maximise, close like the plain ones.
 - Sonora connects through a SOCKS proxy set in `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`, instead of every request failing.
+- Copy the full lyrics from the song details page.
 
 ### Changed
 
+- The app icon has thicker lines, so it reads better in the Dock, taskbar and tray.
 - Song lists follow the text size, rows and covers both, so a smaller text fits more songs on screen and a larger one gives them room.
 - Downloaded playlists stay in step with the service. Songs added to one, here or anywhere else, download in the background when Sonora starts, right after you add or like them in Sonora, and every hour, and songs taken out of it lose their download.
 - Song lists show each song's artists under its title, on an album only where they differ from the album's. Turn the Artist column back on from the column header, and pick a row height under Settings → Appearance.
@@ -111,6 +101,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Pinned playlists, albums and artists stay in the sidebar when Sonora starts without a connection, so your downloads can be opened and played offline.
+- A Sonora Session on Subsonic, Jellyfin or Plex no longer shares your server's address, or the sign-in of a Subsonic or Plex server, with the session server and the other members. Everyone in the session sees covers loaded through their own account instead.
 - On Windows, the media overlay no longer shows the previous song's cover next to the new song while its own cover loads.
 - Apple Music libraries, favorites and playlists with more than 4,000 songs load in full, instead of stopping at the first 4,000.
 - On Windows, a scrollbar no longer gets stuck so the mouse wheel jumps back to one spot, and with the wheel set to scroll one screen at a time it moves a screen per notch instead of to the far end.
