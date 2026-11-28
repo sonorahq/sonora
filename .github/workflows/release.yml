@@ -44,12 +44,8 @@ jobs:
             os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            arch: x64compatible
-            setup: Sonora-Setup
           - target: aarch64-pc-windows-msvc
             os: windows-11-arm
-            arch: arm64
-            setup: Sonora-Setup-arm64
     steps:
       - uses: actions/checkout@v7
 
