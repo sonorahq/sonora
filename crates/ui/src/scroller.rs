@@ -260,6 +260,7 @@ impl RenderOnce for Scroller {
         );
         let overrides = std::mem::take(base.style());
         bar.read(cx).sync();
+        bar.read(cx).revive(window);
         let presentation = bar.read(cx).presentation();
         let gliding = bar.clone();
 

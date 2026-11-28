@@ -369,6 +369,14 @@ impl Scrollbar {
         }
     }
 
+    /// Picks a glide back up whose frame request went missing. See [`Glide::revive`].
+    pub fn revive(&self, window: &mut Window) {
+        match &self.list {
+            Some(list) => self.glide.revive(list, window),
+            None => self.glide.revive(&self.scroll, window),
+        }
+    }
+
     /// Rounds the region's offset to whole device pixels, so a header pinned against it holds
     /// still. What the rounding takes off is added back on the next call, otherwise a touchpad
     /// moving less than half a pixel per frame would stall and a fling would stop short of the top.
@@ -644,6 +652,7 @@ pub fn update_middle_scroll(position: Point<Pixels>, window: &mut Window, cx: &m
 
 impl Render for Scrollbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.revive(window);
         let target = self.target();
         let viewport = target.viewport();
         let hidden = self.maximum.unwrap_or_else(|| target.hidden());

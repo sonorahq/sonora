@@ -119,6 +119,14 @@ impl Glide {
         }
     }
 
+    /// Asks again for a frame a glide under way has waited on for longer than `LOST`. A render
+    /// calls it, so a glide whose frame went missing carries on without new input.
+    pub fn revive(&self, scroll: &impl ScrollPosition, window: &mut Window) {
+        if self.drift.borrow().gliding {
+            self.schedule_frame(scroll, window);
+        }
+    }
+
     pub fn nudge(&self, scroll: &impl ScrollPosition, window: &mut Window) {
         {
             let mut drift = self.drift.borrow_mut();
