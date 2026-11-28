@@ -160,13 +160,90 @@ jobs:
               ;;
           esac
 
+      - uses: actions/upload-artifact@v7
+        if: ${{ !inputs.reuse || runner.os != 'macOS' }}
+        with:
+          name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || runner.os == 'Windows' && format('windows-{0}', matrix.target) || format('release-{0}', matrix.target) }}"
+          path: dist/*
+          if-no-files-found: error
+
+  # The executable is signed before the installer that wraps it is built, and the installer is
+  # signed after. This runs apart from the build because every request under the SignPath
+  # Foundation certificate waits for a manual approval.
+  windows:
+    name: "windows installer (${{ matrix.target }})"
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            arch: x64compatible
+            setup: Sonora-Setup
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            arch: arm64
+            setup: Sonora-Setup-arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: name the artifact
+        id: meta
+        shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*) version="$GITHUB_REF_NAME" ;;
+            *) version="${GITHUB_SHA:0:7}" ;;
+          esac
+          if [ -n "$NIGHTLY" ]; then version=nightly; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # A tag signs with the policy named by the SIGNPATH_RELEASE_POLICY variable, which stays unset
+      # until SignPath imports the production certificate. A manual run that publishes nothing
+      # signs with the test certificate. Nightlies stay unsigned, since each signature would need
+      # an approval every night.
+      - name: pick the signing policy
+        id: signing
+        shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+          EVENT: ${{ github.event_name }}
+          RELEASE_POLICY: ${{ vars.SIGNPATH_RELEASE_POLICY }}
+          HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: |
+          policy=""
+          if [ -z "$NIGHTLY" ] && [ "$HAS_TOKEN" = true ]; then
+            case "$GITHUB_REF" in
+              refs/tags/*) policy="$RELEASE_POLICY" ;;
+              *) if [ "$EVENT" = workflow_dispatch ]; then policy=test-signing; fi ;;
+            esac
+          fi
+          echo "policy=$policy" >> "$GITHUB_OUTPUT"
+          echo "signing policy: ${policy:-none}"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-${{ matrix.target }}
+          path: dist
+
+      - name: sign the executable
+        if: steps.signing.outputs.policy != ''
+        uses: ./.github/actions/sign
+        with:
+          file: dist/sonora-${{ steps.meta.outputs.version }}-${{ matrix.target }}.exe
+          artifact: unsigned-exe-${{ matrix.target }}
+          policy: ${{ steps.signing.outputs.policy }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+
       - name: install Inno Setup
-        if: runner.os == 'Windows'
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
       - name: build the Windows installer
-        if: runner.os == 'Windows'
         shell: pwsh
         env:
           VERSION: ${{ steps.meta.outputs.version }}
@@ -183,14 +260,22 @@ jobs:
           $channel = if ($env:NIGHTLY) { "nightly" } else { "stable" }
           @{ version = $number; channel = $channel; commit = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM build.json
           $env:SONORA_BUILD_METADATA = (Resolve-Path build.json).Path
-          $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
+          $env:SONORA_EXE = (Resolve-Path "dist/sonora-$env:VERSION-$env:TARGET.exe").Path
           $env:SONORA_DIST = (Resolve-Path "dist").Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging/windows/sonora.iss"
 
-      - uses: actions/upload-artifact@v7
-        if: ${{ !inputs.reuse || runner.os != 'macOS' }}
+      - name: sign the installer
+        if: steps.signing.outputs.policy != ''
+        uses: ./.github/actions/sign
         with:
-          name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || format('release-{0}', matrix.target) }}"
+          file: dist/${{ matrix.setup }}.exe
+          artifact: unsigned-setup-${{ matrix.target }}
+          policy: ${{ steps.signing.outputs.policy }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
@@ -819,7 +904,7 @@ jobs:
           git push --force "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY" flatpak-repo
 
   release:
-    needs: [build, bundle, appimage, flatpak, flatpak-repo]
+    needs: [build, windows, bundle, appimage, flatpak, flatpak-repo]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -864,7 +949,7 @@ jobs:
   # nightly version. Immutable releases must stay off for the repository, since an immutable
   # release freezes its tag and assets and retires the tag name for good, as it did to `nightly`.
   nightly:
-    needs: [build, bundle, appimage]
+    needs: [build, windows, bundle, appimage]
     if: ${{ inputs.nightly }}
     runs-on: ubuntu-latest
     permissions:

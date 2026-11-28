@@ -254,6 +254,9 @@ Developer ID certificate and notarized by Apple.
 - Reviewers: members of sonorahq
 - Approvers: [@nolight132](https://github.com/nolight132)
 
+What Sonora sends over the network, and to whom, is described in the
+[privacy policy](docs/PRIVACY.md).
+
 ## License
 
 Copyright (C) 2026 Sonora Contributors.
