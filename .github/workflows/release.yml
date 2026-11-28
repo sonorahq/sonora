@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign the Windows executables with the SignPath test certificate
+        type: boolean
+        default: false
   # nightly.yml builds main through here. The input is the nightly's version number, and its
   # presence publishes the build as the nightly prerelease instead of a tagged release.
   workflow_call:
@@ -199,15 +204,16 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # A tag signs with the policy named by the SIGNPATH_RELEASE_POLICY variable, which stays unset
-      # until SignPath imports the production certificate. A manual run that publishes nothing
-      # signs with the test certificate. Nightlies stay unsigned, since each signature would need
-      # an approval every night.
+      # until SignPath imports the production certificate. A manual run signs with the test
+      # certificate only when its sign input is ticked, since SignPath mails every request.
+      # Nightlies stay unsigned, since each signature would need an approval every night.
       - name: pick the signing policy
         id: signing
         shell: bash
         env:
           NIGHTLY: ${{ inputs.nightly }}
           EVENT: ${{ github.event_name }}
+          SIGN: ${{ inputs.sign }}
           RELEASE_POLICY: ${{ vars.SIGNPATH_RELEASE_POLICY }}
           HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
         run: |
@@ -215,7 +221,7 @@ jobs:
           if [ -z "$NIGHTLY" ] && [ "$HAS_TOKEN" = true ]; then
             case "$GITHUB_REF" in
               refs/tags/*) policy="$RELEASE_POLICY" ;;
-              *) if [ "$EVENT" = workflow_dispatch ]; then policy=test-signing; fi ;;
+              *) if [ "$EVENT" = workflow_dispatch ] && [ "$SIGN" = true ]; then policy=test-signing; fi ;;
             esac
           fi
           echo "policy=$policy" >> "$GITHUB_OUTPUT"
