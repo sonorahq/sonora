@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result};
 use tokio::sync::mpsc::UnboundedSender;
 use tray_icon::menu::{
@@ -74,11 +76,11 @@ impl Icon {
         }
 
         let menus = sender.clone();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        MenuEvent::set_event_handler(Some(Arc::new(move |event: MenuEvent| {
             if let Some(event) = translate(&event.id) {
                 menus.send(event).ok();
             }
-        }));
+        })));
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             let TrayIconEvent::Click {
                 button,

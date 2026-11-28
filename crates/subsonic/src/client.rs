@@ -1626,7 +1626,7 @@ impl MusicApi for SubsonicClient {
             .await;
         // `byYear` counts down when `fromYear` is the later year, so the newest releases come
         // first. 1900 is the floor Subsonic clients use for "every year".
-        let this_year = i32::from(jiff::Zoned::now().year());
+        let this_year = i32::from(jiff::ZonedDateTime::now().year());
         let releases = self
             .album_list(
                 AlbumListType::ByYear,

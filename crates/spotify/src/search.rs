@@ -143,7 +143,7 @@ fn album(hit: Entity) -> Option<Album> {
             let stamp = album.release_time?;
             let date = jiff::Timestamp::new(stamp.seconds, stamp.nanos)
                 .ok()?
-                .to_zoned(jiff::tz::TimeZone::UTC)
+                .to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .date();
             music::ReleaseDate::from_parts(
                 date.year().into(),

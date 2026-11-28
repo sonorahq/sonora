@@ -434,8 +434,8 @@ pub(crate) fn relative_stamp(seconds: Option<i64>) -> SharedString {
     };
     let zone = jiff::tz::TimeZone::system();
     let now = jiff::Timestamp::now();
-    let played = stamp.to_zoned(zone.clone());
-    let today = now.to_zoned(zone).date();
+    let played = stamp.to_zoned_datetime(zone.clone());
+    let today = now.to_zoned_datetime(zone).date();
     let minutes = (now.as_second() - stamp.as_second()) / 60;
     let time = played.strftime("%H:%M").to_string();
 
