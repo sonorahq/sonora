@@ -3587,16 +3587,19 @@ impl Playback {
     }
 
     /// Shows `fresh` as the playing track when it is a newer copy of the same one, leaving the
-    /// audio alone.
+    /// audio alone. The length the engine reported stays, since positions are measured against it.
     pub(crate) fn refresh_track(&mut self, fresh: &Track, cx: &mut Context<Self>) {
-        if self
-            .track
-            .as_ref()
-            .is_none_or(|track| track.id != fresh.id || track == fresh)
-        {
+        let Some(track) = self.track.as_ref().filter(|track| track.id == fresh.id) else {
+            return;
+        };
+        let fresh = Track {
+            duration: track.duration,
+            ..fresh.clone()
+        };
+        if track == &fresh {
             return;
         }
-        self.track = Some(fresh.clone());
+        self.track = Some(fresh);
         cx.notify();
     }
 
