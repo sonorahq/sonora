@@ -55,8 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Restores the packages' files instead of running apt, which spends most of its time
-      # refreshing the package index.
+      # The cache action trusts the runner image's package index and never refreshes it, so once
+      # Ubuntu replaces a package it caches an empty install and every build fails to link.
+      - name: package index
+        run: sudo apt-get update
+
+      # Restores the packages' files instead of installing them with apt.
       - name: system dependencies
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
