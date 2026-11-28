@@ -31,15 +31,15 @@ Stream from your favorite services and play local files — all in one **native*
     <table>
       <tr>
         <td colspan="2">
-          <img width="1820" height="1130" alt="Fullscreen lyrics of The Emptiness Machine" src="./.github/screenshots/now-playing.png" />
+          <img width="1660" height="1030" alt="Fullscreen lyrics of The Emptiness Machine" src="./.github/screenshots/now-playing.png" />
         </td>
       </tr>
       <tr>
         <td width="50%">
-          <img width="1820" height="1130" alt="The Eternal Blue album with the queue open" src="./.github/screenshots/album.png" />
+          <img width="1660" height="1030" alt="The Eternal Blue album with the queue open" src="./.github/screenshots/album.png" />
         </td>
         <td width="50%">
-          <img width="1820" height="1130" alt="The Kinokoteikoku artist page with romanized lyrics" src="./.github/screenshots/artist.png" />
+          <img width="1660" height="1030" alt="The Kinokoteikoku artist page with romanized lyrics" src="./.github/screenshots/artist.png" />
         </td>
       </tr>
     </table>
