@@ -28,6 +28,7 @@ const SCHEMA: &str = "
         cover TEXT,
         duration_ms INTEGER NOT NULL,
         explicit INTEGER NOT NULL,
+        genres TEXT NOT NULL DEFAULT '[]',
         PRIMARY KEY (scope, provider, track_id, played_at)
     );
     CREATE INDEX IF NOT EXISTS plays_scope_time
@@ -114,8 +115,34 @@ impl Database {
     }
 
     pub fn open(&self) -> Result<Connection> {
-        connect(&self.path, SCHEMA, &self.ready, "app state")
+        let connection = connect(&self.path, SCHEMA, &self.ready, "app state")?;
+        add_genres(&connection)?;
+        Ok(connection)
     }
+}
+
+/// Adds the genres column to a play log written before a recap needed it. Fresh databases
+/// already have it from [`SCHEMA`], so the change is skipped there.
+fn add_genres(connection: &Connection) -> Result<()> {
+    let mut query = connection
+        .prepare("PRAGMA table_info(plays)")
+        .context("cannot read the play columns")?;
+    let columns = query
+        .query_map([], |row| row.get::<_, String>(1))
+        .context("cannot read the play columns")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("cannot decode a play column")?;
+    if !columns.iter().any(|column| column == "genres") {
+        // Another connection may add it between the check and the change.
+        if let Err(error) = connection.execute(
+            "ALTER TABLE plays ADD COLUMN genres TEXT NOT NULL DEFAULT '[]'",
+            [],
+        ) && !error.to_string().contains("duplicate column name")
+        {
+            return Err(error).context("cannot add play genres");
+        }
+    }
+    Ok(())
 }
 
 /// Opens `path`, applying `schema` the first time this process opens it. `what` names the

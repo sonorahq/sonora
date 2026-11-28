@@ -35,6 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
 - `"traffic_light_reversed": true` under `appearance` in settings.json swaps minimise and maximise in the traffic light window controls, so on the right they read minimise, maximise, close like the plain ones.
+- Yearly recap opens from the account menu and shows your top songs, artists, albums and genres, total listening time and a month-by-month chart for any year in your play history.
 
 ### Changed
 

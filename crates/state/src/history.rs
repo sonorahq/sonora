@@ -17,8 +17,8 @@ use crate::{
 const LOCAL_LIMIT: usize = 5000;
 /// Every column of `plays`, in the order a [`Row`] holds them.
 const COLUMNS: &str = "scope, provider, track_id, played_at, name, playable, artists, \
-                       artist_refs, album, album_id, cover, duration_ms, explicit";
-const COLUMN_COUNT: usize = 13;
+                       artist_refs, album, album_id, cover, duration_ms, explicit, genres";
+const COLUMN_COUNT: usize = 14;
 
 /// One `plays` row as stored, column by column, so a removed play goes back exactly as it was.
 type Row = Vec<Value>;
@@ -52,12 +52,14 @@ impl Store {
         };
         let artist_refs = serde_json::to_string(&track.artist_refs)
             .context("cannot encode listening history artists")?;
+        let genres = serde_json::to_string(&track.genres)
+            .context("cannot encode listening history genres")?;
         self.open()?
             .execute(
                 "INSERT OR IGNORE INTO plays (
                     scope, provider, track_id, played_at, name, playable, artists,
-                    artist_refs, album, album_id, cover, duration_ms, explicit
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    artist_refs, album, album_id, cover, duration_ms, explicit, genres
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     scope,
                     provider,
@@ -72,6 +74,7 @@ impl Store {
                     track.cover,
                     track.duration.as_millis().min(i64::MAX as u128) as i64,
                     track.explicit,
+                    genres,
                 ],
             )
             .context("cannot save listening history")?;
@@ -178,7 +181,7 @@ impl Store {
         let mut query = connection
             .prepare(
                 "SELECT track_id, played_at, name, playable, artists, artist_refs, album,
-                        album_id, cover, duration_ms, explicit
+                        album_id, cover, duration_ms, explicit, genres
                  FROM plays
                  WHERE scope = ?
                  ORDER BY played_at DESC
@@ -189,6 +192,8 @@ impl Store {
             .query_map(params![scope, LOCAL_LIMIT as i64], |row| {
                 let refs = row.get_ref(5)?.as_str()?;
                 let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
+                let genres = row.get_ref(11)?.as_str()?;
+                let genres: Vec<String> = serde_json::from_str(genres).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;
                 let duration: i64 = row.get(9)?;
                 Ok(Track {
@@ -203,6 +208,7 @@ impl Store {
                     duration: std::time::Duration::from_millis(duration.max(0) as u64),
                     added_at: Some(played_at / 1_000),
                     explicit: row.get(10)?,
+                    genres,
                     ..Default::default()
                 })
             })
@@ -626,15 +632,7 @@ impl History {
     }
 
     fn scope(&self, cx: &Context<Self>) -> Option<String> {
-        let session = self.session.read(cx);
-        let SessionState::SignedIn(profile) = session.state() else {
-            return None;
-        };
-        let provider = match session.local_only() {
-            true => session.local_slug(),
-            false => session.provider_slug()?,
-        };
-        Some(format!("{provider}:{}", profile.id))
+        store_scope(self.session.read(cx))
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
@@ -650,6 +648,19 @@ impl History {
         self.state = HistoryState::Ready;
         cx.notify();
     }
+}
+
+/// The account's `plays` scope: the provider slug and the profile it belongs to. `None` while
+/// nobody is signed in, so there is no history to read or write.
+pub(crate) fn store_scope(session: &Session) -> Option<String> {
+    let SessionState::SignedIn(profile) = session.state() else {
+        return None;
+    };
+    let provider = match session.local_only() {
+        true => session.local_slug(),
+        false => session.provider_slug()?,
+    };
+    Some(format!("{provider}:{}", profile.id))
 }
 
 /// Shows that a change to the history failed, with the error below it.

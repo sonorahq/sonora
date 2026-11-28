@@ -5,4 +5,5 @@
 
 pub mod lyrics;
 pub mod queue;
+pub mod recap;
 pub mod station;

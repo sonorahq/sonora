@@ -25,6 +25,7 @@ mod playback;
 mod potoken;
 mod profile;
 mod queue;
+mod recap;
 mod remote;
 mod requirements;
 mod scan;
@@ -66,6 +67,7 @@ pub use library::{
 pub use links::{Links, Opened};
 pub use listening::{CODE_LENGTH as SESSION_CODE_LENGTH, Listening, Member as RoomMember, Room};
 pub use logging::log_file;
+pub use logic::recap::{TopAlbum, TopArtist, TopGenre, TopSong, Year};
 pub use lyrics::{Lyrics, LyricsState};
 pub use music::connect::{Elsewhere, Repeat};
 pub use network::{Network, Reconnected};
@@ -80,6 +82,7 @@ pub use queue::{
     Queue, QueueKind, QueuePlacement, QueuePosition, QueueSections, QueueSlot, QueueView,
     RemoteQueuePick, Resume, Stub,
 };
+pub use recap::{Recap, RecapState};
 pub use remote::{Remote, attach as attach_remote};
 pub use requirements::{Requirement, Requirements};
 pub use scan::Scan;
@@ -243,6 +246,7 @@ pub struct Sonora {
     pub outputs: Entity<Outputs>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
+    pub recap: Entity<Recap>,
     pub sponsorblock: Entity<SponsorBlock>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
     /// that it keeps ticking.
@@ -384,6 +388,7 @@ pub fn init(
             cx,
         )
     });
+    let recap = cx.new(|cx| Recap::new(session.clone(), database.clone(), io.clone(), cx));
     let usage = cx.new(|cx| Usage::new(session.clone(), database, io.clone(), cx));
     let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
     let potoken = potoken::attach(cx);
@@ -458,6 +463,7 @@ pub fn init(
         outputs,
         pins,
         playback,
+        recap,
         potoken,
         queue,
         requirements,

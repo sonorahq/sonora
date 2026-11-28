@@ -16,6 +16,7 @@ use screens::history::HistoryView;
 use screens::home::HomeView;
 pub use screens::library::LibraryView;
 pub use screens::login::LoginView;
+use screens::recap::RecapView;
 pub use screens::settings::SettingsView;
 use screens::song::SongView;
 use screens::user::UserView;

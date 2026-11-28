@@ -69,6 +69,10 @@ pub fn register(lingers: bool, cx: &mut App) {
                 let history = Sonora::global(cx).history.clone();
                 history.update(cx, |history, cx| history.refresh(cx));
             }
+            Destination::Recap => {
+                let recap = Sonora::global(cx).recap.clone();
+                recap.update(cx, |recap, cx| recap.refresh(cx));
+            }
             at if !at.refreshes() => {}
             at => {
                 let library = Sonora::global(cx).library.clone();

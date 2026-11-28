@@ -9,7 +9,7 @@ use input::{
 use router::{Destination, NavigationEvent, back, forward, navigate};
 use state::{
     ArtistDetail, Detail, GenreDetails, Genres, HistoryState, Home, Io, Library, LibraryState,
-    Network, Playback, Profile, Queue, Reconnected, SYSTEM_FONT, Scan, Search, Session,
+    Network, Playback, Profile, Queue, RecapState, Reconnected, SYSTEM_FONT, Scan, Search, Session,
     SessionState, Shelf, SideTab, SongDetail, Sonora,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -39,7 +39,7 @@ use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
     Adaptive, ArtistView, DetailView, EqualizerView, FullscreenView, GenreView, HistoryView,
-    HomeView, LibraryView, LoginView, SettingsView, SongView, UserView,
+    HomeView, LibraryView, LoginView, RecapView, SettingsView, SongView, UserView,
 };
 
 /// How much smaller than its size the fullscreen player starts as it opens, zooming up to fill
@@ -54,6 +54,7 @@ const TOAST_LAYER: usize = 1;
 struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
+    recap: Entity<RecapView>,
     library: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
     artist_detail: Option<Entity<ArtistDetail>>,
@@ -276,6 +277,8 @@ impl Root {
         let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
+        let recap = Sonora::global(cx).recap.clone();
+        let recap = cx.new(|cx| RecapView::new(recap, cx));
 
         let queries = cx.new(|cx| {
             Search::new(session.clone(), library.clone(), io.clone(), cx).with_column_previews()
@@ -428,6 +431,7 @@ impl Root {
             screens: Screens {
                 home,
                 history,
+                recap,
                 library: library_view,
                 artist: None,
                 artist_detail: None,
@@ -751,6 +755,10 @@ impl Root {
                 let history = Sonora::global(cx).history.clone();
                 Box::new(move |cx| matches!(history.read(cx).state(), HistoryState::Loading))
             }
+            Destination::Recap => {
+                let recap = Sonora::global(cx).recap.clone();
+                Box::new(move |cx| matches!(recap.read(cx).state(), RecapState::Loading))
+            }
             Destination::Library(_) => {
                 let session = Sonora::global(cx).session.clone();
                 let streaming = shelf(Shelf::Streaming);
@@ -796,6 +804,10 @@ impl Root {
             Destination::History => {
                 let history = Sonora::global(cx).history.clone();
                 history.update(cx, |history, cx| history.reload(cx));
+            }
+            Destination::Recap => {
+                let recap = Sonora::global(cx).recap.clone();
+                recap.update(cx, |recap, cx| recap.refresh(cx));
             }
             Destination::Library(_) => library.update(cx, |library, cx| {
                 library.reload(Shelf::Streaming, cx);
@@ -1056,6 +1068,11 @@ impl Root {
                 history.update(cx, |history, cx| history.refresh(cx));
                 toolbar = Some(history.read(cx).toolbar());
                 history.into()
+            }
+            Destination::Recap => {
+                let recap = self.screens.recap.clone();
+                recap.update(cx, |recap, cx| recap.refresh(cx));
+                recap.into()
             }
             Destination::Library(tab) => {
                 self.screens

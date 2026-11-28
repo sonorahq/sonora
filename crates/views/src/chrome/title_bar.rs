@@ -385,6 +385,11 @@ impl TitleBar {
                             .on_click(|_, _, cx| navigate(Destination::History, cx)),
                     )
                     .item(
+                        MenuItem::new("account-recap", t!("nav-recap"))
+                            .icon("icons/sparkles.svg")
+                            .on_click(|_, _, cx| navigate(Destination::Recap, cx)),
+                    )
+                    .item(
                         MenuItem::new("account-settings", t!("nav-settings"))
                             .icon("icons/settings.svg")
                             .on_click(|_, _, cx| open_settings(cx)),

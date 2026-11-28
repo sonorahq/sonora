@@ -364,6 +364,8 @@ impl SettingsTab {
 pub enum Destination {
     Home,
     History,
+    /// The yearly listening recap, read from the local play log.
+    Recap,
     Library(LibraryTab),
     Album(SharedString),
     Song(SharedString),
