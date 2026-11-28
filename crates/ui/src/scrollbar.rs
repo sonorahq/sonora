@@ -306,7 +306,7 @@ impl Scrollbar {
         if let Some(list) = &self.list {
             self.glide.jump(list, list.scroll_px_offset_for_scrollbar());
             self.following = false;
-        } else if self.glide.stop_spring(&self.scroll) {
+        } else if self.glide.stop(&self.scroll) {
             self.following = false;
         }
         self.nudges = self.nudges.wrapping_add(1);
@@ -366,6 +366,14 @@ impl Scrollbar {
         match &self.list {
             Some(list) => self.glide.sync(list),
             None => self.glide.sync(&self.scroll),
+        }
+    }
+
+    /// Picks a glide back up whose frame request went missing. See [`Glide::revive`].
+    pub fn revive(&self, window: &mut Window) {
+        match &self.list {
+            Some(list) => self.glide.revive(list, window),
+            None => self.glide.revive(&self.scroll, window),
         }
     }
 
@@ -578,7 +586,7 @@ impl Scrollbar {
         if let Some(list) = &self.list {
             self.glide.jump(list, list.scroll_px_offset_for_scrollbar());
             self.following = false;
-        } else if self.glide.stop_spring(&self.scroll) {
+        } else if self.glide.stop(&self.scroll) {
             self.following = false;
         }
         self.nudges = self.nudges.wrapping_add(1);
@@ -644,6 +652,7 @@ pub fn update_middle_scroll(position: Point<Pixels>, window: &mut Window, cx: &m
 
 impl Render for Scrollbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.revive(window);
         let target = self.target();
         let viewport = target.viewport();
         let hidden = self.maximum.unwrap_or_else(|| target.hidden());

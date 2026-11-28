@@ -52,6 +52,9 @@ const HERTZ: f32 = 180.;
 const STALL: Duration = Duration::from_millis(64);
 const REST: Pixels = px(0.5);
 const SPRING_REST: Pixels = px(0.05);
+/// How long a requested frame may take before the glide asks for another, in case the window
+/// never delivered the first and the glide would otherwise wait on it forever.
+const LOST: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 struct Drift {
@@ -60,7 +63,10 @@ struct Drift {
     velocity: Point<f32>,
     gliding: bool,
     springing: bool,
-    armed: bool,
+    /// When the frame the glide waits on was requested, while one is outstanding.
+    armed: Option<Instant>,
+    /// Counts the frames the glide requested, so a late one that was asked for again runs once.
+    ticket: u64,
     eased: Option<f32>,
     beat: Option<Instant>,
     /// The offset the glide last wrote or started from. A step or aim that finds the scroll
@@ -110,6 +116,14 @@ impl Glide {
         if !drift.gliding {
             drift.shown = scroll.offset();
             drift.velocity = Point::default();
+        }
+    }
+
+    /// Asks again for a frame a glide under way has waited on for longer than `LOST`. A render
+    /// calls it, so a glide whose frame went missing carries on without new input.
+    pub fn revive(&self, scroll: &impl ScrollPosition, window: &mut Window) {
+        if self.drift.borrow().gliding {
+            self.schedule_frame(scroll, window);
         }
     }
 
@@ -171,9 +185,11 @@ impl Glide {
         scroll.set_offset(landed);
     }
 
-    pub fn stop_spring(&self, scroll: &impl ScrollPosition) -> bool {
+    /// Stops a glide under way where the scroll stands now, for input that places the view
+    /// itself. Returns whether there was one to stop.
+    pub fn stop(&self, scroll: &impl ScrollPosition) -> bool {
         let mut drift = self.drift.borrow_mut();
-        if !drift.springing {
+        if !drift.gliding {
             return false;
         }
         drift.shown = scroll.offset();
@@ -211,23 +227,32 @@ impl Glide {
     }
 
     fn schedule_frame(&self, scroll: &impl ScrollPosition, window: &mut Window) {
-        {
+        let ticket = {
             let mut drift = self.drift.borrow_mut();
-            if drift.armed {
+            let now = Instant::now();
+            if drift
+                .armed
+                .is_some_and(|asked| now.duration_since(asked) < LOST)
+            {
                 return;
             }
-            drift.armed = true;
-        }
+            drift.armed = Some(now);
+            drift.ticket = drift.ticket.wrapping_add(1);
+            drift.ticket
+        };
 
         let glide = self.clone();
         let scroll = scroll.clone();
-        window.on_next_frame(move |window, cx| glide.step(&scroll, window, cx));
+        window.on_next_frame(move |window, cx| glide.step(ticket, &scroll, window, cx));
     }
 
-    fn step<S: ScrollPosition>(&self, scroll: &S, window: &mut Window, cx: &mut App) {
+    fn step<S: ScrollPosition>(&self, ticket: u64, scroll: &S, window: &mut Window, cx: &mut App) {
         let landed = {
             let mut drift = self.drift.borrow_mut();
-            drift.armed = false;
+            if drift.ticket != ticket {
+                return;
+            }
+            drift.armed = None;
             if !drift.gliding {
                 return;
             }
