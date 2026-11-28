@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use super::musicbrainz::{self, Identity};
 use super::{Account, Link, Play, Rejected, Secret, Service};
 
 /// The record each listen becomes in the user's repository.
@@ -182,11 +183,12 @@ impl Service for TealFm {
             false => play.duration.saturating_sub(position),
         };
         let agent = agent();
+        let identity = musicbrainz::identify(play).await;
         let status = Status {
             kind: STATUS,
             time: datetime(now)?,
             expiry: datetime(now + lasts)?,
-            item: View::of(play, &agent, None),
+            item: View::of(play, &agent, None, identity.as_ref()),
         };
         self.write(
             account,
@@ -219,9 +221,10 @@ impl Service for TealFm {
     async fn scrobble(&self, account: &Account, plays: &[Play]) -> Result<()> {
         let agent = agent();
         for play in plays {
+            let identity = musicbrainz::identify(play).await;
             let record = Record {
                 kind: PLAY,
-                view: View::of(play, &agent, Some(datetime(play.at)?)),
+                view: View::of(play, &agent, Some(datetime(play.at)?), identity.as_ref()),
             };
             // the key comes from the play, so a retry after a lost answer rewrites the same record
             // rather than adding a second listen
@@ -347,6 +350,12 @@ struct View<'a> {
     release_name: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     duration: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    isrc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recording_mb_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_mb_id: Option<String>,
     submission_client_agent: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     played_time: Option<String>,
@@ -354,15 +363,27 @@ struct View<'a> {
 
 impl<'a> View<'a> {
     /// Spells a play, clipping names to what the lexicon accepts. `played` is the start of the
-    /// play, which only the finished listen carries.
-    fn of(play: &'a Play, agent: &'a str, played: Option<String>) -> Self {
+    /// play, which only the finished listen carries. `identity` links the play to MusicBrainz,
+    /// which is where teal.fm takes its covers and its links from.
+    fn of(
+        play: &'a Play,
+        agent: &'a str,
+        played: Option<String>,
+        identity: Option<&Identity>,
+    ) -> Self {
         Self {
             track_name: clip(&play.title),
             artists: [Artist {
                 artist_name: clip(&play.artist),
+                artist_mb_id: identity.and_then(|found| found.artist.as_deref().map(mbid)),
             }],
             release_name: play.release().map(clip),
             duration: play.seconds(),
+            isrc: identity
+                .and_then(|found| found.isrc.clone())
+                .or_else(|| play.isrc.clone()),
+            recording_mb_id: identity.map(|found| mbid(&found.recording)),
+            release_mb_id: identity.and_then(|found| found.release.as_deref().map(mbid)),
             submission_client_agent: agent,
             played_time: played,
         }
@@ -373,6 +394,8 @@ impl<'a> View<'a> {
 #[serde(rename_all = "camelCase")]
 struct Artist<'a> {
     artist_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist_mb_id: Option<String>,
 }
 
 /// Posts one repository write. An expired or rejected access token comes back as
@@ -546,6 +569,11 @@ fn agent() -> String {
 fn datetime(time: SystemTime) -> Result<String> {
     let timestamp = jiff::Timestamp::try_from(time).context("cannot date the play")?;
     Ok(timestamp.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+}
+
+/// A MusicBrainz id as the lexicon spells it, `mbid:<uuid>`.
+fn mbid(id: &str) -> String {
+    format!("mbid:{id}")
 }
 
 /// The longest prefix of `text` that fits the lexicon's byte limit without splitting a character.
