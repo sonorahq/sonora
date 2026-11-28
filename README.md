@@ -69,12 +69,6 @@ Install with [Brew](https://brew.sh/):
 brew install --cask nolight132/tap/sonora
 ```
 
-After installing (thanks Apple):
-
-```sh
-xattr -dr com.apple.quarantine /Applications/Sonora.app
-```
-
 Or install the [disk image](https://github.com/sonorahq/sonora/releases/latest), which updates itself.
 
 ### Linux
