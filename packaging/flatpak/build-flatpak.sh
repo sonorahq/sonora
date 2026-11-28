@@ -32,7 +32,6 @@ echo "==> Checking required Flatpak SDKs..."
 REQUIRED_REFS="
 org.gnome.Platform//50
 org.gnome.Sdk//50
-org.freedesktop.Sdk.Extension.rust-stable//25.08
 "
 
 MISSING_REFS=""
