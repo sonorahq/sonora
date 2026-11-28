@@ -49,6 +49,7 @@ libc.workspace = true
 souvlaki.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Media", "Storage_Streams", "Win32_System_WinRT"] }
 windows-sys.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
