@@ -663,6 +663,13 @@ impl Session {
         self.provider_for(id).map(|provider| provider.slug())
     }
 
+    /// Whether the current provider's artwork urls can be handed to someone else. A
+    /// self-hosted server's cannot, since they carry the credentials that fetch them.
+    pub fn public_art(&self) -> bool {
+        self.active
+            .is_some_and(|index| self.providers[index].public_art())
+    }
+
     /// The provider an id belongs to, whichever shelf it sits on.
     pub fn provider_for(&self, id: &str) -> Option<&dyn MusicProvider> {
         match music::is_local_id(id) {

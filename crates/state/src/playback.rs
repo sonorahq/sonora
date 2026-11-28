@@ -3586,6 +3586,25 @@ impl Playback {
         self.prepare_resume(cx);
     }
 
+    /// Shows `fresh` as the playing track when it is a newer copy of the same one, leaving the
+    /// audio alone. The length the engine reported stays, since positions are measured against it,
+    /// and so does who queued it when the copy does not say.
+    pub(crate) fn refresh_track(&mut self, fresh: &Track, cx: &mut Context<Self>) {
+        let Some(track) = self.track.as_ref().filter(|track| track.id == fresh.id) else {
+            return;
+        };
+        let fresh = Track {
+            duration: track.duration,
+            added_by: fresh.added_by.clone().or_else(|| track.added_by.clone()),
+            ..fresh.clone()
+        };
+        if track == &fresh {
+            return;
+        }
+        self.track = Some(fresh);
+        cx.notify();
+    }
+
     /// Applies rescanned tags without restarting audio; a moved file reopens at the same position.
     fn refresh_local_metadata(&mut self, cx: &mut Context<Self>) {
         let Some(previous) = self.track.as_ref() else {

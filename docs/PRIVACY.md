@@ -77,12 +77,12 @@ Sonora Sessions lets people listen together. It is the one online service Sonora
 
 While in a session, Sonora sends the server and every other member:
 
-- the display name and profile picture link of the signed-in account
+- the display name of the signed-in account, and its profile picture link when the service's pictures are public
 - which services the user is signed in to
-- the playing track and up to 100 upcoming tracks, with their title, artists, album, ISRC and cover link
+- the playing track and up to 100 upcoming tracks, with their title, artists, album, length and ISRC, and their cover link when the service's covers are public
 - whether playback is paused and where it is in the track
 
-Local files are never shared with a session.
+Local files are never shared with a session. Covers from Subsonic, Jellyfin and Plex are never sent, since their links carry the server's address, and for Subsonic and Plex its sign-in. Each member loads them through their own account instead.
 
 ## Shared links
 

@@ -150,6 +150,15 @@ impl Queue {
         self.edit(cx, Order::clear_similar);
     }
 
+    /// Swaps in the copy `fresh` gives for each track it knows, keeping every entry's place.
+    pub(crate) fn refresh<'a>(
+        &mut self,
+        fresh: impl Fn(&str) -> Option<&'a Track>,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit(cx, |order| order.refresh(fresh));
+    }
+
     /// Drops every occurrence of `ids` and says whether the current track was one of them.
     pub fn remove_tracks(&mut self, ids: &[String], cx: &mut Context<Self>) -> bool {
         self.edit(cx, |order| order.remove_tracks(ids))
