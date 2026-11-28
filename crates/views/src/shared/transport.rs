@@ -205,7 +205,7 @@ pub(crate) fn toggle(playback: &Entity<Playback>, big: bool, frosted: bool, cx: 
         })
 }
 
-fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
+pub(crate) fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
     let on = playback.read(cx).shown_shuffle(cx);
     let playback = playback.clone();
@@ -227,7 +227,7 @@ fn shuffle(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         })
 }
 
-fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
+pub(crate) fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let theme = *cx.theme();
     let repeat = playback.read(cx).shown_repeat(cx);
     let playback = playback.clone();
@@ -256,7 +256,7 @@ fn repeat(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         })
 }
 
-fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
+pub(crate) fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let queue = playback.read(cx).shown_queue(cx);
     let enabled = !queue.editable() || queue.sections.current || queue.sections.past > 0;
     let playback = playback.clone();
@@ -274,7 +274,7 @@ fn previous(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
         })
 }
 
-fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
+pub(crate) fn next(playback: &Entity<Playback>, frosted: bool, cx: &App) -> Button {
     let queue = playback.read(cx).shown_queue(cx);
     let enabled = !queue.editable() || queue.sections.upcoming > 0;
     let playback = playback.clone();

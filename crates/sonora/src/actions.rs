@@ -1,10 +1,10 @@
 use gpui::{App, Context, Global, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
-    CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize, MinimizeWindow,
-    OpenSettings, Quit, Redo, Refresh, ResetFontSize, SeekBack, SeekForward, ShowAll, SignOut,
-    SongNext, SongPrevious, TogglePlayback, ToggleRepeat, ToggleShuffle, Undo, VolumeDown,
-    VolumeUp, ZoomWindow,
+    CloseMiniPlayer, CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize,
+    MinimizeWindow, OpenSettings, Quit, Redo, Refresh, ResetFontSize, SeekBack, SeekForward,
+    ShowAll, SignOut, SongNext, SongPrevious, ToggleMiniPlayer, TogglePlayback, ToggleRepeat,
+    ToggleShuffle, Undo, VolumeDown, VolumeUp, ZoomWindow,
 };
 use router::Destination;
 use state::{AppSettings, Equalizer, Shelf, Sonora};
@@ -41,7 +41,11 @@ pub fn register(lingers: bool, cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx: &mut App| cx.unhide_other_apps());
 
-    cx.on_window_closed(move |cx, _| {
+    cx.on_action(|_: &ToggleMiniPlayer, cx: &mut App| crate::mini_player::toggle(cx));
+    cx.on_action(|_: &CloseMiniPlayer, cx: &mut App| crate::mini_player::close(cx));
+
+    cx.on_window_closed(move |cx, closed_id| {
+        crate::mini_player::on_window_closed(cx, closed_id);
         if !cx.windows().is_empty() {
             return;
         }
@@ -115,6 +119,9 @@ pub fn register(lingers: bool, cx: &mut App) {
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| playback.toggle_repeat(cx));
     });
+
+    cx.on_action(|_: &ToggleMiniPlayer, cx: &mut App| crate::mini_player::toggle(cx));
+    cx.on_action(|_: &CloseMiniPlayer, cx: &mut App| crate::mini_player::close(cx));
 
     cx.on_action(|_: &Undo, cx: &mut App| edit_equalizer(cx, Equalizer::undo));
     cx.on_action(|_: &Redo, cx: &mut App| edit_equalizer(cx, Equalizer::redo));

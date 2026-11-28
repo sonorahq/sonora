@@ -1,4 +1,5 @@
 mod chrome;
+pub mod mini_player;
 mod root;
 mod screens;
 mod shared;
@@ -7,6 +8,7 @@ mod shells;
 pub use chrome::ToastStack;
 #[cfg(target_os = "macos")]
 pub use chrome::traffic_lights;
+pub use mini_player::{MiniPlayerDimensions, MiniPlayerView, mini_player_dimensions};
 pub use root::Root;
 use screens::artist::ArtistView;
 use screens::detail::DetailView;

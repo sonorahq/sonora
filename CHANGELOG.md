@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A floating mini player opened from the player bar or keyboard shortcut lets you control playback, adjust volume, and view live or fullscreen karaoke lyrics on top of other windows, with orientation, size, theme, and control options under Settings → Player bar.
+
 ## [0.51.0] - 2026-11-28
 
 ### Added

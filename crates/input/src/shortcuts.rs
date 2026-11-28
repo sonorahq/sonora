@@ -8,11 +8,11 @@ use gpui::{Action, App, KeyBinding, KeyBindingContextPredicate, Keystroke, Opera
 use ui::{FORM_CONTEXT, INPUT_CONTEXT, MENU_CONTEXT, TABLE_CONTEXT};
 
 use crate::{
-    DecreaseFontSize, IncreaseFontSize, NavigateBack, NavigateForward, OpenFilter, OpenSearch,
-    OpenSettings, POWERBAR_CONTEXT, Refresh, ResetFontSize, SEARCH_CONTEXT, SeekBack, SeekForward,
-    SongNext, SongPrevious, ToggleFullscreen, ToggleLyrics, TogglePlayback, TogglePowerbar,
-    ToggleQueue, ToggleRepeat, ToggleShuffle, ToggleWindowFullscreen, VolumeDown, VolumeUp,
-    WORKSPACE_CONTEXT,
+    DecreaseFontSize, IncreaseFontSize, MINI_PLAYER_CONTEXT, NavigateBack, NavigateForward,
+    OpenFilter, OpenSearch, OpenSettings, POWERBAR_CONTEXT, Refresh, ResetFontSize, SEARCH_CONTEXT,
+    SeekBack, SeekForward, SongNext, SongPrevious, ToggleFullscreen, ToggleLyrics,
+    ToggleMiniPlayer, TogglePlayback, TogglePowerbar, ToggleQueue, ToggleRepeat, ToggleShuffle,
+    ToggleWindowFullscreen, VolumeDown, VolumeUp, WORKSPACE_CONTEXT,
 };
 
 /// The modifiers that make a keystroke a command rather than typing. A key pressed without any
@@ -123,7 +123,9 @@ impl Shortcut {
         match (self.scope, plain) {
             (Scope::Anywhere, false) => None,
             (Scope::Browsing, _) => Some(browsing_context()),
-            _ => Some(format!("{WORKSPACE_CONTEXT} && !{INPUT_CONTEXT}")),
+            _ => Some(format!(
+                "({WORKSPACE_CONTEXT} || {MINI_PLAYER_CONTEXT}) && !{INPUT_CONTEXT}"
+            )),
         }
     }
 }
@@ -281,6 +283,15 @@ const SHORTCUTS: &[Shortcut] = &[
         bind: bind::<ToggleFullscreen>,
         defaults: &["f"],
         mac: &[],
+    },
+    Shortcut {
+        id: "toggle-mini-player",
+        key: "keybind-toggle-mini-player",
+        section: Section::View,
+        scope: Scope::Anywhere,
+        bind: bind::<ToggleMiniPlayer>,
+        defaults: &["ctrl-m"],
+        mac: &["shift-cmd-m"],
     },
     Shortcut {
         id: "toggle-queue",

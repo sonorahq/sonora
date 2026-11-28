@@ -60,6 +60,8 @@ pub(crate) struct Ambient {
     pacing: Option<Task<()>>,
     /// The palette of the cover a framed field follows, `None` for the one behind the window.
     framed: Option<Sampled>,
+    /// Explicit corner radius for framed fields such as the floating mini player.
+    corner_radius: Option<Pixels>,
 }
 
 /// Emitted by a framed field once the colours sampled off the cover it follows land, for whatever
@@ -89,6 +91,15 @@ impl Ambient {
             washing: false,
             pacing: None,
             framed: None,
+            corner_radius: None,
+        }
+    }
+
+    /// Sets an explicit corner radius for framed fields so shaders clip transparently at the edges.
+    pub(crate) fn set_corner_radius(&mut self, radius: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.corner_radius != radius {
+            self.corner_radius = radius;
+            cx.notify();
         }
     }
 
@@ -281,11 +292,11 @@ impl Render for Ambient {
             false => 1.,
         };
         // The field reaches into the corners the chrome rounds, so it takes that radius itself.
-        // A framed field leaves its corners to the frame.
-        let radius = match self.framed {
+        // A framed field leaves its corners to the frame unless given an explicit radius.
+        let radius = self.corner_radius.or_else(|| match self.framed {
             None => window_radius(window, cx),
             Some(_) => None,
-        };
+        });
 
         let stage = shaded(Hsla {
             a: 1.,
@@ -302,7 +313,7 @@ impl Render for Ambient {
             .opacity(clarity)
             .map(|this| match self.framed {
                 // A preview is small enough to draw at full size.
-                Some(_) => this.child(waves),
+                Some(_) => this.child(waves.when_some(radius, ui::Waves::corner_radius)),
                 None => {
                     let viewport = window.viewport_size();
                     let scale = window.scale_factor();
