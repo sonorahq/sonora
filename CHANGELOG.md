@@ -95,6 +95,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On Windows, the media overlay no longer shows the previous song's cover next to the new song while its own cover loads.
 - Apple Music libraries, favorites and playlists with more than 4,000 songs load in full, instead of stopping at the first 4,000.
 - In the Flatpak on a desktop with no keyring, downloads finish and played tracks are cached, instead of every download failing.
 - 32-bit FLAC files play, from your own folders and from Subsonic servers, instead of failing to load.

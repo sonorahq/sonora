@@ -29,6 +29,9 @@ const ARTWORK: &str = "artwork";
 /// How many covers the artwork folder keeps. The widget shows only the current track's, so the
 /// rest just save a download when the listener goes back.
 const KEPT_COVERS: usize = 32;
+/// How long a cover download may take before it is given up and logged, so a stalled request
+/// does not hang until the next track replaces it.
+const COVER_TIMEOUT: Duration = Duration::from_secs(20);
 
 struct Attached {
     _remote: Entity<Remote>,
@@ -282,7 +285,7 @@ impl Remote {
             let fetched = join(io.spawn(async move { artwork(&url).await })).await;
             let path = match fetched {
                 Ok(path) => path,
-                Err(error) => return log::debug!("remote: cannot fetch the cover: {error:#}"),
+                Err(error) => return log::warn!("remote: cannot fetch the cover: {error:#}"),
             };
             this.update(cx, |this, cx| {
                 let current = this.playback.read(cx).shown_track(cx);
@@ -328,7 +331,12 @@ async fn artwork(url: &str) -> Result<PathBuf> {
         }
     }
 
-    let bytes = reqwest::get(url)
+    let bytes = reqwest::Client::builder()
+        .timeout(COVER_TIMEOUT)
+        .build()
+        .context("cannot build the cover client")?
+        .get(url)
+        .send()
         .await
         .context("cannot request the cover")?
         .error_for_status()
