@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-11-28
+
 ### Added
 
 - On Navidrome 0.58 and later, limit Sonora to several libraries at once by ticking them in Manage accounts → Library.
@@ -35,6 +37,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Continue offline on the sign-in screen, or pick Offline in Settings → Streaming services, to play only your music folders without a streaming account.
 - Playlists, favorites and play history stay with a local song when its file moves within your music folders.
 - `"traffic_light_reversed": true` under `appearance` in settings.json swaps minimise and maximise in the traffic light window controls, so on the right they read minimise, maximise, close like the plain ones.
+- Sonora connects through a SOCKS proxy set in `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`, instead of every request failing.
 
 ### Changed
 
@@ -110,7 +113,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Opening the font or language picker in Settings no longer crashes while keyboard focus moves to its search field.
 - An Apple Music album you took out of your library can be added back from its menu, and pinning it from its page no longer fails.
 - Removing a YouTube Music favorite you liked as a music video now takes it out of your likes, instead of the heart filling again on the next reload.
-
+- When the sleep timer stops playback at the end of a song, the player no longer shows the next song as playing.
 - YouTube Music tracks start right away again for a signed-in account, in the 256 kbps stream on Premium, instead of waiting several seconds or failing with "could not be played".
 - Interrupted or failed app updates, Soloist installs, theme saves and offline downloads no longer leave partial files behind.
 - Liking, saving or creating a playlist as a YouTube Music guest now asks you to sign in, with a button that takes you there, instead of saying the change could not be saved.
@@ -154,13 +157,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When a queue ends without repeat, its last song moves to history instead of staying as now playing. Play button starts the queue over and Previous button brings that song back.
 - A song whose tags changed shows its new title and artist in the player, queue and lyrics after a rescan.
 - Songs in a music folder that is unavailable stay listed, and Sonora tells you which files it could not read.
-
-### Fixed
-
 - The − and + buttons beside sample rate, buffer, font size and lyrics size stay in place while you step through values.
-
-### Fixed
-
 - On Linux, "Continue with Google" and the other buttons of a sign-in page that open a window of their own now open it instead of doing nothing.
 - With Soloist off, you can seek ahead in Spotify tracks while they download.
 - Spotify Connect follows Soloist playback and queue changes, keeps your position when switching players, and lets you jump to a specific queue entry on another device, including duplicates. Shuffled albums and playlists keep their context.
@@ -2977,7 +2974,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.50.3...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/sonorahq/sonora/compare/v0.50.3...v0.51.0
 [0.50.3]: https://github.com/sonorahq/sonora/compare/v0.50.2...v0.50.3
 [0.50.2]: https://github.com/sonorahq/sonora/compare/v0.50.1...v0.50.2
 [0.50.1]: https://github.com/sonorahq/sonora/compare/v0.50.0...v0.50.1
