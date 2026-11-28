@@ -306,7 +306,7 @@ impl Scrollbar {
         if let Some(list) = &self.list {
             self.glide.jump(list, list.scroll_px_offset_for_scrollbar());
             self.following = false;
-        } else if self.glide.stop_spring(&self.scroll) {
+        } else if self.glide.stop(&self.scroll) {
             self.following = false;
         }
         self.nudges = self.nudges.wrapping_add(1);
@@ -578,7 +578,7 @@ impl Scrollbar {
         if let Some(list) = &self.list {
             self.glide.jump(list, list.scroll_px_offset_for_scrollbar());
             self.following = false;
-        } else if self.glide.stop_spring(&self.scroll) {
+        } else if self.glide.stop(&self.scroll) {
             self.following = false;
         }
         self.nudges = self.nudges.wrapping_add(1);
