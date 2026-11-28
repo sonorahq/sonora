@@ -4,8 +4,6 @@ branch: stable
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
 
 command: sonora
 finish-args:
@@ -46,11 +44,26 @@ modules:
   - name: sonora
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin
+      append-path: /run/build/sonora/rust/bin
       env:
         CARGO_HOME: /run/build/sonora/cargo
         CARGO_NET_OFFLINE: 'true'
+        # .cargo/config.toml links x86_64 with mold, which the SDK does not ship.
+        RUSTFLAGS: ''
     sources:
+      # The toolchain rust-toolchain.toml pins, since Flathub's rust-stable extension lags behind
+      # it. It is unpacked into the build directory and never reaches /app.
+      - type: archive
+        only-arches: [x86_64]
+        url: https://static.rust-lang.org/dist/rust-1.100.0-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 98ee6bec240e1cfe944f17e7092412dc5ef6e008484bb668c6936d35a7d15acd
+        dest: rust-installer
+      - type: archive
+        only-arches: [aarch64]
+        url: https://static.rust-lang.org/dist/rust-1.100.0-aarch64-unknown-linux-gnu.tar.xz
+        sha256: a21f6a21818df07c1e2e7addb570af5444b3fa9dd61e3a207f4fb1c5a5e665c9
+        dest: rust-installer
+
       # Use source from GitHub:
       #- type: git
       #  url: https://github.com/sonorahq/sonora.git
@@ -73,6 +86,9 @@ modules:
       # Sources to build with Cargo:
       - cargo-sources.json
     build-commands:
+      - rust-installer/install.sh --prefix="$PWD/rust" --components="rustc,cargo,rust-std-$(uname -m)-unknown-linux-gnu" --disable-ldconfig
+      - rm -rf rust-installer
+
       # Symlink/move cargo/config to config.toml to fix deprecation warning
       - test -f cargo/config && mv cargo/config cargo/config.toml || true
 
