@@ -15,6 +15,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The app icon has thicker lines, so it reads better in the Dock, taskbar and tray.
 
+### Fixed
+
+- A Sonora Session on Subsonic, Jellyfin or Plex no longer shares your server's address, or the sign-in of a Subsonic or Plex server, with the session server and the other members. Everyone in the session sees covers loaded through their own account instead.
+
 ## [0.51.0] - 2026-11-28
 
 ### Added

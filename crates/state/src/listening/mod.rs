@@ -7,7 +7,7 @@ mod link;
 mod server;
 mod wire;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Entity, Task};
@@ -130,6 +130,11 @@ pub struct Listening {
     http: reqwest::Client,
     /// The health check of a server the listener asked to save.
     saving: Option<Task<()>>,
+    /// This app's own copies of session tracks from a provider whose artwork is private, read by
+    /// id so their covers load with this account. `None` marks a track that could not be read.
+    own: HashMap<String, Option<Track>>,
+    /// The read of those copies under way. Nothing is brought in step until it is done.
+    reading: Option<Task<()>>,
     /// Whether the last save was turned down. It stays so until a save goes through.
     rejected: bool,
 }
@@ -181,6 +186,8 @@ impl Listening {
             http: reqwest::Client::new(),
             saving: None,
             rejected: false,
+            own: HashMap::new(),
+            reading: None,
         }
     }
 
@@ -296,12 +303,15 @@ impl Listening {
         cx.notify();
     }
 
-    /// The listener's name and picture, as the others in the session see them.
+    /// The listener's name and picture, as the others in the session see them. A self-hosted
+    /// server's picture url carries its credentials, so it is left out.
     fn me(&self, cx: &App) -> (String, Option<String>) {
-        match self.session.read(cx).state() {
-            SessionState::SignedIn(profile) => {
-                (profile.display_name.clone(), profile.avatar.clone())
-            }
+        let session = self.session.read(cx);
+        match session.state() {
+            SessionState::SignedIn(profile) => (
+                profile.display_name.clone(),
+                profile.avatar.clone().filter(|_| session.public_art()),
+            ),
             _ => (String::new(), None),
         }
     }
@@ -591,6 +601,8 @@ impl Listening {
         self.starting = false;
         self.deferred = None;
         self.code_shown = false;
+        self.own.clear();
+        self.reading = None;
         cx.notify();
     }
 
@@ -650,13 +662,77 @@ impl Listening {
 
     /// Brings playback in step with the state waiting for it, once that can play here.
     fn catch_up(&mut self, cx: &mut Context<Self>) {
-        if !self.ready(cx) {
+        if !self.ready(cx) || self.reading.is_some() {
             return;
         }
         let Some(state) = self.waiting.take() else {
             return;
         };
+        let unread = self.unread(&state, cx);
+        if !unread.is_empty() {
+            self.waiting = Some(state);
+            return self.read_own(unread, cx);
+        }
+        let state = self.with_own(state);
         self.apply(state, cx);
+    }
+
+    /// The tracks of `state` this app still needs its own copy of. Only a provider whose
+    /// artwork is private needs one, since the session never carries such a cover.
+    fn unread(&self, state: &Shared, cx: &App) -> Vec<String> {
+        if self.session.read(cx).public_art() {
+            return Vec::new();
+        }
+        let mut seen = HashSet::new();
+        state
+            .track
+            .iter()
+            .chain(&state.upcoming)
+            .filter_map(|track| track.id.clone())
+            .filter(|id| !music::is_local_id(id) && !self.own.contains_key(id))
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    }
+
+    /// Reads `ids` with this app's account, then brings playback in step. A track that cannot
+    /// be read is remembered as such, so it is not asked for again.
+    fn read_own(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        let Some(client) = self.session.read(cx).client() else {
+            return;
+        };
+        let asked = ids.clone();
+        self.reading = Some(self.io.load(
+            async move { client.tracks_by_id(&ids).await },
+            move |this: &mut Self, read, cx| {
+                this.reading = None;
+                let mut read = read.unwrap_or_else(|error| {
+                    log::warn!("listening: cannot read the session's tracks: {error:#}");
+                    HashMap::new()
+                });
+                for id in asked {
+                    let track = read.remove(&id);
+                    this.own.insert(id, track);
+                }
+                this.catch_up(cx);
+            },
+            cx,
+        ));
+    }
+
+    /// `state` with this app's own copy of each track it read. A track it could not read shows
+    /// no cover rather than whatever url another member sent.
+    fn with_own(&self, mut state: Shared) -> Shared {
+        let own = |track: Track| match track.id.as_deref().and_then(|id| self.own.get(id)) {
+            Some(Some(copy)) => copy.clone(),
+            Some(None) => Track {
+                cover: None,
+                ..track
+            },
+            None => track,
+        };
+        state.track = state.track.map(own);
+        state.upcoming = state.upcoming.into_iter().map(own).collect();
+        state
     }
 
     /// Plays what `state` says, from where the session is now. Only what differs is touched, so
@@ -834,12 +910,19 @@ impl Listening {
     fn snapshot(&self, cx: &App) -> Shared {
         let queue = self.queue.read(cx);
         let playback = self.playback.read(cx);
+        let public_art = self.session.read(cx).public_art();
         let (upcoming, queued) = shared_upcoming(queue)
             .into_iter()
             .unzip::<_, _, Vec<_>, Vec<_>>();
         Shared {
-            track: queue.current().filter(|track| shareable(track)).cloned(),
-            upcoming,
+            track: queue
+                .current()
+                .filter(|track| shareable(track))
+                .map(|track| outgoing(track, public_art)),
+            upcoming: upcoming
+                .iter()
+                .map(|track| outgoing(track, public_art))
+                .collect(),
             queued: queued
                 .into_iter()
                 .enumerate()
@@ -967,6 +1050,27 @@ fn shareable(track: &Track) -> bool {
         .id
         .as_deref()
         .is_some_and(|id| !music::is_local_id(id))
+}
+
+/// What the session is told of `track`: the fields that let the other members find and show it,
+/// so a field added to `Track` later never reaches the server unseen. The cover goes only when
+/// it is public, since a self-hosted server's carries the credentials that fetch it.
+fn outgoing(track: &Track, public_art: bool) -> Track {
+    Track {
+        id: track.id.clone(),
+        name: track.name.clone(),
+        playable: track.playable,
+        artists: track.artists.clone(),
+        artist_refs: track.artist_refs.clone(),
+        album: track.album.clone(),
+        album_artist: track.album_artist.clone(),
+        album_id: track.album_id.clone(),
+        cover: track.cover.clone().filter(|_| public_art),
+        duration: track.duration,
+        explicit: track.explicit,
+        isrc: track.isrc.clone(),
+        ..Track::default()
+    }
 }
 
 /// The upcoming tracks of `queue` a session sees: those queued by hand and the next `WINDOW` of
